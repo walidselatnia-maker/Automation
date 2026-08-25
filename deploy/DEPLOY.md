@@ -3,22 +3,16 @@
 ## Before you start: two network facts
 
 **1. The UI has no login screen.** It must never listen on a public interface.
-The bootstrap script binds it to `127.0.0.1`, and you reach it through an SSH
-tunnel or Tailscale. If you publish port 8080 to the internet, anyone who finds
-it can read your credentials and publish to your sites.
+The bootstrap script binds it to `127.0.0.1` and you reach it over an SSH
+tunnel. If you publish port 8080 to the internet, anyone who finds it can read
+your credentials and publish to your sites.
 
-**2. The VPS must be able to reach your Ollama servers.** Their addresses were
-never in the n8n export — n8n keeps credential URLs in its encrypted store — so
-check where they actually are before deploying:
+**2. Ollama runs in the cloud.** The models are called at `https://ollama.com`
+with an API key, so the VPS needs nothing but ordinary outbound internet. No
+VPN, no tunnel, no GPU on the server.
 
-| Where Ollama runs | What the VPS needs |
-|---|---|
-| Public URL with TLS + auth | Nothing; use the URL directly |
-| Private LAN / localhost | A VPN, tunnel, or a VPS on the same network |
-| Tailscale or similar mesh | Join the VPS to that network |
-
-Find the URLs in n8n under **Credentials → your Ollama account → Base URL**.
-See [Connecting to Ollama](#connecting-to-ollama).
+Multiple API keys are used to spread the provider's rate limits. Add each one
+as its own endpoint; the pool rotates between them and fails over on `429`.
 
 ---
 
@@ -88,60 +82,40 @@ Leave that running and browse to <http://localhost:8080>.
 
 ---
 
-## Connecting to Ollama
+## Configuring Ollama endpoints
 
-The VPS needs a route to your Ollama servers. Pick one.
+Add one endpoint per API key under **Settings → LLM endpoints**:
 
-### Tailscale or another mesh VPN
+| Field | Value |
+|---|---|
+| Name | `ollama-03`, `ollama-04`, … (any label; reusing one updates it) |
+| Base URL | `https://ollama.com` |
+| API key | that account's key |
+| Models | `gemma4:31b, gpt-oss:120b, gpt-oss:20b` |
 
-Relevant only if your Ollama boxes are not publicly reachable. It has a useful
-side effect: the VPS reaches Ollama *and* you reach the UI without an SSH
-tunnel.
+All nine keys use the same base URL. They are separate endpoints because the
+pool rotates between them least-recently-used, which is what spreads the rate
+limit — the same thing the old workflow did by pinning a different credential
+into each node, except failover now actually works.
 
-```bash
-curl -fsSL https://tailscale.com/install.sh | sh
-sudo tailscale up
-```
+Requests go to `POST {baseUrl}/api/chat` with `Authorization: Bearer <key>`.
 
-Approve the machine in your Tailscale admin console. Then:
+### Behaviour under rate limits
 
-- In **Settings → LLM endpoints**, use the tailnet hostname:
-  `http://YOUR-OLLAMA-HOST.your-tailnet.ts.net:11434`
-- Reach the UI at `http://<vps-tailscale-name>:8080` from any device on your
-  tailnet — but only after changing the port binding:
+1. `429` → that key cools down (honouring `Retry-After`) and the **same
+   request is retried on the next key**.
+2. Three consecutive failures → the key is marked unhealthy and skipped until
+   a background check restores it.
+3. Only when every key for that model is exhausted does the step fail — and
+   the error names each one tried.
 
-  ```yaml
-  # docker-compose.yml
-  ports:
-    - "100.x.y.z:8080:8080"   # your VPS's Tailscale IP, NOT 0.0.0.0
-  ```
+The health column on the Settings page shows which key is throttled and when
+it last succeeded.
 
-Verify before configuring endpoints:
+### Self-hosted Ollama instead
 
-```bash
-curl http://YOUR-OLLAMA-HOST.your-tailnet.ts.net:11434/api/tags
-```
-
-That should list your models. If it hangs, Tailscale is not connected.
-
-### Ollama reachable over the public internet
-
-Only if it already has TLS and authentication. Use the public URL and put the
-token in the endpoint's API key field. **Do not** open port 11434 to the world
-to make this work.
-
-### Ollama on the same VPS
-
-Only viable if the VPS has a GPU big enough for `gemma4:31b` and
-`gpt-oss:120b`. Most cheap VPSes do not. If you do:
-
-```yaml
-# docker-compose.yml
-extra_hosts:
-  - "host.docker.internal:host-gateway"
-```
-
-then use `http://host.docker.internal:11434` as the base URL.
+If you ever run Ollama yourself, use its address as the base URL and leave the
+API key blank. Endpoints in the pool can mix cloud and self-hosted freely.
 
 ---
 
@@ -226,7 +200,7 @@ Do **not** add a rule for 8080.
 | Symptom | Cause |
 |---|---|
 | `/healthz` lists problems | Credentials missing — Settings |
-| Endpoint shows unhealthy | VPS cannot reach Ollama; check Tailscale |
+| Endpoint shows unhealthy | Bad API key, or the account is rate limited |
 | `HTTP 401` on fetch-categories | Wrong site API token |
 | Nothing publishes, no runs | Automation off, or no eligible pair — see **Decisions** |
 | Runs stop after one article | Expected: daily target or interval reached |

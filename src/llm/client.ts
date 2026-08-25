@@ -154,29 +154,3 @@ export async function chat(request: ChatRequest, encryptionKey: Buffer): Promise
 
   throw new NoEndpointAvailableError(request.model, tried, lastError);
 }
-
-/** Liveness probe used by the Settings page. */
-export async function probeEndpoint(
-  baseUrl: string,
-  apiKey: string,
-): Promise<{ ok: boolean; models: string[]; error?: string }> {
-  try {
-    const headers: Record<string, string> = {};
-    if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
-
-    const response = await fetch(`${baseUrl.replace(/\/+$/, '')}/api/tags`, {
-      headers,
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!response.ok) return { ok: false, models: [], error: `HTTP ${response.status}` };
-
-    const json = (await response.json()) as { models?: { name?: string }[] };
-    const models = (json.models ?? [])
-      .map((m) => m.name)
-      .filter((n): n is string => typeof n === 'string');
-
-    return { ok: true, models };
-  } catch (err) {
-    return { ok: false, models: [], error: errorMessage(err) };
-  }
-}
