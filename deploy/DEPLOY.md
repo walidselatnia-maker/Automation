@@ -7,10 +7,18 @@ The bootstrap script binds it to `127.0.0.1`, and you reach it through an SSH
 tunnel or Tailscale. If you publish port 8080 to the internet, anyone who finds
 it can read your credentials and publish to your sites.
 
-**2. Your Ollama servers are on Tailscale.** The old workflow used
-`YOUR-OLLAMA-HOST.your-tailnet.ts.net`, which is a Tailscale hostname — it does
-not resolve from the public internet. A VPS cannot reach your Ollama boxes
-unless it joins your tailnet. See [Connecting to Ollama](#connecting-to-ollama).
+**2. The VPS must be able to reach your Ollama servers.** Their addresses were
+never in the n8n export — n8n keeps credential URLs in its encrypted store — so
+check where they actually are before deploying:
+
+| Where Ollama runs | What the VPS needs |
+|---|---|
+| Public URL with TLS + auth | Nothing; use the URL directly |
+| Private LAN / localhost | A VPN, tunnel, or a VPS on the same network |
+| Tailscale or similar mesh | Join the VPS to that network |
+
+Find the URLs in n8n under **Credentials → your Ollama account → Base URL**.
+See [Connecting to Ollama](#connecting-to-ollama).
 
 ---
 
@@ -84,10 +92,11 @@ Leave that running and browse to <http://localhost:8080>.
 
 The VPS needs a route to your Ollama servers. Pick one.
 
-### Tailscale (recommended)
+### Tailscale or another mesh VPN
 
-Solves both problems at once — the VPS reaches Ollama, and you reach the UI
-without an SSH tunnel.
+Relevant only if your Ollama boxes are not publicly reachable. It has a useful
+side effect: the VPS reaches Ollama *and* you reach the UI without an SSH
+tunnel.
 
 ```bash
 curl -fsSL https://tailscale.com/install.sh | sh
