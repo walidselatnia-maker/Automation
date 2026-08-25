@@ -1,0 +1,21 @@
+node_modules/
+dist/
+
+# Runtime data: database, imported CSVs, test fixtures. Never committed.
+data/
+!data/.gitkeep
+
+# Secrets
+.env
+*.pem
+*.key
+
+# Tooling noise
+.claude-flow/
+*.log
+.DS_Store
+
+# Tooling artifacts
+ruvector.db
+*.db
+!data/.gitkeep

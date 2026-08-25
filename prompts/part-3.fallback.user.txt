@@ -1,0 +1,251 @@
+Generate ONLY Part 3 of a recipe article — the core recipe data, instructions, nutrition, and all remaining fields.
+
+═══════════════════════════════════════════════════════════════
+SOURCE DATA — USE EXACTLY, DO NOT DEVIATE
+═══════════════════════════════════════════════════════════════
+
+SEO Keyword: {{seo.keyword}}
+SEO Title: {{seo.title}}
+Category: {{seo.category}}
+
+FULL RECIPE (parse and consume every field):
+{{recipe.raw}}
+
+═══════════════════════════════════════════════════════════════
+INGREDIENT LOCKING — MANDATORY
+═══════════════════════════════════════════════════════════════
+
+Before writing ANY content, extract the exact ingredients from the recipe above. These are UNCHANGEABLE:
+
+1. List EVERY ingredient with its exact quantity and form from the source.
+2. Use these EXACT phrases in ALL text fields.
+3. Do NOT substitute, rename, or reimagine any ingredient.
+
+═══════════════════════════════════════════════════════════════
+OUTPUT — EXACT JSON STRUCTURE
+═══════════════════════════════════════════════════════════════
+
+Return ONLY this JSON object. No extra keys. No missing keys. Every key must exist.
+
+{
+  "timing": {
+    "prepTime": "",
+    "cookTime": "",
+    "totalTime": ""
+  },
+  "recipeInfo": {
+    "difficulty": "",
+    "cuisine": "",
+    "servings": "",
+    "dietary": ""
+  },
+  "ingredients": [],
+  "instructions": [],
+  "notes": [],
+  "tools": [],
+  "mustKnowTips": [],
+  "professionalSecrets": [],
+  "serving": "",
+  "storage": "",
+  "allergyInfo": "",
+  "nutritionDisclaimer": "",
+  "videoUrl": "",
+  "videoDuration": "",
+  "nutrition": {
+    "calories": "",
+    "fatContent": "",
+    "saturatedFatContent": "",
+    "carbohydrateContent": "",
+    "sugarContent": "",
+    "fiberContent": "",
+    "proteinContent": "",
+    "sodiumContent": "",
+    "cholesterolContent": "",
+    "servingSize": ""
+  },
+  "aggregateRating": 4.8,
+  "reviewCount": 124,
+  "keywords": [],
+  "tasteProfile": {
+    "sweet": "",
+    "salty": "",
+    "spicy": "",
+    "sour": "",
+    "umami": "",
+    "overall": ""
+  },
+  "textureProfile": {
+    "outside": "",
+    "inside": "",
+    "bite": "",
+    "overall": ""
+  },
+  "recipeOrigin": "",
+  "variations": [],
+  "substitutions": [],
+  "dietaryAdaptations": [],
+  "pairings": [],
+  "shoppingList": [],
+  "makeAhead": "",
+  "leftovers": "",
+  "equipmentNotes": [],
+  "ingredientPrep": [],
+  "temperatureNotes": {
+    "stovetopHeatLevel": "",
+    "ovenTemperature": "",
+    "safeInternalTemp": ""
+  },
+  "timeline": [],
+  "commonMistakes": [],
+  "flavorBoosters": [],
+  "specialNotes": [],
+  "difficultyReasoning": "",
+  "servingSuggestions": [],
+  "seasonality": ""
+}
+
+═══════════════════════════════════════════════════════════════
+FIELD REQUIREMENTS — CRITICAL: FOLLOW EXACT FORMATS
+═══════════════════════════════════════════════════════════════
+
+timing:
+- prepTime, cookTime, totalTime: exact from source, format as "XX Minutes"
+
+recipeInfo:
+- difficulty: exact from source
+- cuisine: infer from recipe style (e.g., "American", "Italian", "Mediterranean")
+- servings: exact from source
+- dietary: infer (e.g., "None", "Gluten-Free", "Dairy-Free") or "None"
+
+ingredients:
+- MUST be array of objects: [{"section": "Main Ingredients", "items": ["1 cup...", "2 tbsp..."]}, {"section": "For the Sauce", "items": ["..."]}]
+- Use EXACT quantities and names from source
+- Group logically (Main, Sauce, Garnish, etc.)
+- NEVER output flat array of strings
+
+instructions:
+- MUST be array of objects: [{"step": "Step 01", "instruction": "..."}, {"step": "Step 02", "instruction": "..."}]
+- Minimum 4 steps. If source has more, include ALL.
+- Expand descriptions in persona voice (warm, sensory, reflective)
+- BUT preserve exact technique, temperature, timing from source
+- Use "Step 01", "Step 02", etc. format
+- NEVER output flat array of strings
+
+notes:
+- 3+ strings, practical cooking tips from source data
+
+tools:
+- Array of strings, exact equipment from source, expanded descriptions
+
+mustKnowTips:
+- 3+ strings, critical tips from source, formatted as "Tip, Explanation..."
+
+professionalSecrets:
+- 3+ strings, pro-level insights from steps and tips
+
+serving:
+- 1-2 sentences, warm and inviting, from serving suggestions
+
+storage:
+- 1-2 sentences, from storage data
+
+allergyInfo:
+- From nutritional notes, list allergens clearly
+
+nutritionDisclaimer:
+- "Nutritional information is approximate and may vary based on ingredients and portion sizes."
+
+nutrition:
+- Infer realistic values from ingredients and servings. Do not leave empty.
+- Example: calories "350", fatContent "12g", etc.
+
+aggregateRating:
+- Number, e.g. 4.5 to 4.9
+
+reviewCount:
+- Number, e.g. 85 to 200
+
+keywords:
+- Array of 5-8 strings, include SEO Keyword, dish type, main ingredients, cuisine
+
+tasteProfile:
+- sweet/salty/spicy/sour/umami: "Low", "Medium", "High", or "None"
+- overall: 1 sentence summary
+
+textureProfile:
+- outside/inside/bite/overall: sensory descriptions
+
+recipeOrigin:
+- 2-3 paragraphs, cultural or historical background, warm informative tone
+
+variations:
+- MUST be array of objects: [{"title": "...", "description": "..."}, {"title": "...", "description": "..."}]
+- From source variations, expanded
+- NEVER use "name" key — use "title"
+
+substitutions:
+- Array of 2-3 objects: [{"ingredient": "...", "substitute": "...", "note": "..."}]
+- Based on common swaps for this recipe
+
+dietaryAdaptations:
+- Array of 3 objects: [{"diet": "...", "howToAdapt": "..."}]
+- Gluten-Free, Dairy-Free, Keto (or others relevant)
+
+pairings:
+- Array of 3 strings, serving suggestions expanded
+
+shoppingList:
+- Array of strings, clean ingredient names only (no quantities)
+
+makeAhead:
+- From storage data, expanded
+
+leftovers:
+- From storage data, how to reheat/store
+
+equipmentNotes:
+- Array of 3 strings, from equipment list, expanded with tips
+
+ingredientPrep:
+- Array of 4-6 strings, prep steps from source steps
+
+temperatureNotes:
+- MUST have keys: stovetopHeatLevel, ovenTemperature, safeInternalTemp
+- From source steps
+- ovenTemperature: "Not required" if not used
+
+timeline:
+- Array of 5 objects: [{"time": "0-5 min", "action": "..."}, ...]
+- Break down total time into phases
+
+commonMistakes:
+- Array of 3 strings, from steps and tips
+
+flavorBoosters:
+- Array of 3 strings, from tips and variations
+
+specialNotes:
+- Array of 3 strings, from nutritional notes and tips
+
+difficultyReasoning:
+- 1-2 sentences explaining why difficulty level fits
+
+servingSuggestions:
+- Array of 4 strings, from serving suggestions expanded
+
+seasonality:
+- 1-2 sentences, when this dish is best enjoyed
+
+═══════════════════════════════════════════════════════════════
+CRITICAL FORMAT REMINDERS
+═══════════════════════════════════════════════════════════════
+
+1. ingredients = [{"section": "...", "items": [...]}] — NOT flat strings
+2. instructions = [{"step": "Step 01", "instruction": "..."}] — NOT flat strings
+3. variations = [{"title": "...", "description": "..."}] — use "title" not "name"
+4. temperatureNotes must have "ovenTemperature" not "ovenTemp"
+5. Every key in the output schema MUST exist — even if empty string/array
+6. No trailing commas
+7. Escape quotes with backslash: \"
+
+Output ONLY the JSON object. Start with { and end with }.

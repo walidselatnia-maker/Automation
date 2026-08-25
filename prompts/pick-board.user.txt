@@ -1,0 +1,27 @@
+Task: Analyze the provided SEO Title for a recipe and select the single most appropriate Pinterest board from the provided list.
+
+SEO Title: {{seo.title}}
+
+Pinterest boards list:
+{{boardsJson}}
+
+Matching Guidelines:
+1. Analyze the core ingredients, flavor profile, and cooking style of the recipe title.
+2. Evaluate the theme of each available board name:
+   - "Botanical Bites Recipes": Best for salads, plant-based, raw, vegetable-forward, or fresh garden dishes.
+   - "Heritage Harvest": Best for traditional, rustic, classic, autumnal, or wholesome grain/vegetable dishes.
+   - "Hearth & Home Recipes": Best for comfort food, baking, cozy dinners, and family-style meals.
+   - "The Global Pantry Food": Best for international cuisines, exotic spices, or fusion dishes.
+   - "The Sweet Archive Recipes": Best for desserts, baking, sweets, and treats.
+   - "Midnight Morsels Food": Best for late-night snacks, rich comfort foods, or cocktails/appetizers.
+3. Select the board that shares the highest conceptual overlap with the recipe. (e.g., A fresh carrot summer salad fits best under "Botanical Bites Recipes").
+
+Output Rules (Zero Exceptions):
+- You must respond ONLY with a raw, single-line, valid JSON object.
+- Use double quotes for all keys and string values.
+- Do not wrap the response in markdown code blocks (No ```json).
+- Do not include trailing commas, explanations, comments, or any extra text.
+- Map "serviceId" from the input list to "id" in your output.
+
+Output Format:
+{"name":"Exact Board Name","id":"serviceId"}

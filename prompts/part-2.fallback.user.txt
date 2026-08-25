@@ -1,0 +1,85 @@
+Generate ONLY Part 2 of a recipe article — content cards, process guide, sections, and FAQ.
+
+═══════════════════════════════════════════════════════════════
+SOURCE DATA — USE EXACTLY, DO NOT DEVIATE
+═══════════════════════════════════════════════════════════════
+
+SEO Keyword: {{seo.keyword}}
+SEO Title: {{seo.title}}
+Category: {{seo.category}}
+
+FULL RECIPE (parse and consume every field):
+{{recipe.raw}}
+
+IMAGES:
+Feature/Hero Image:{{images.feature}}
+Cooking Image: {{images.topShot}}
+Preparation Image: {{images.textureMacro}} 
+Final Presentation Image: {{images.beforeAfter}} 
+
+═══════════════════════════════════════════════════════════════
+INGREDIENT LOCKING — MANDATORY
+═══════════════════════════════════════════════════════════════
+
+Before writing ANY content, extract the exact ingredients from the recipe above. These are UNCHANGEABLE:
+
+1. List EVERY ingredient with its exact quantity and form from the source.
+2. Use these EXACT phrases in ALL text fields — description, intro, story, sections, instructions, notes, etc.
+3. Do NOT substitute, rename, or reimagine any ingredient.
+4. If the recipe calls for "semisweet chocolate chips," never write "dark chocolate" or "chocolate chunks."
+
+
+═══════════════════════════════════════════════════════════════
+OUTPUT — ONLY THESE KEYS
+═══════════════════════════════════════════════════════════════
+
+Return ONLY this JSON structure. No extra keys. No missing keys.
+
+{
+  "whyYouLove": {
+    "type": "Card",
+    "title": "Why You'll Love It",
+    "items": []
+  },
+  "essIngredientGuide": [],
+  "completeProcess": [],
+  "sections": [],
+  "questions": {
+    "title": "Frequently Asked Questions",
+    "items": []
+  }
+}
+
+═══════════════════════════════════════════════════════════════
+FIELD REQUIREMENTS
+═══════════════════════════════════════════════════════════════
+
+whyYouLove:
+- title: "Why You'll Love It"
+- items: 4 detailed bullet strings, each starting with "- "
+- Each bullet: 1-2 sentences, sensory, warm, why this recipe is special
+- Use persona voice, conversational fillers
+
+essIngredientGuide:
+- Array of exactly 6 objects
+- Each: {"ingredient": "name", "note": "2-3 sentences"}
+- Map to actual ingredients from source recipe
+- 1: Main ingredient — why important, how to select/prep
+- 2: Second key ingredient — choosing, preparing, handling tips
+- 3: Optional ingredient — how it affects flavor/texture/presentation
+- 4: Spices or seasoning — timing, type, impact on taste
+- 5: Acid or citrus — purpose and best use
+- 6: Sweetener — considerations for amount/type
+- Notes in persona voice, gentle sensory details
+
+completeProcess:
+- Array of 6 items
+- Items 1-5: {"title": "...", "description": "2-3 sentences"}
+  1. Ingredient Readiness — how ingredients prepared/tempered before cooking
+  2. Flavor Development — where/when flavors deepen
+  3. Texture Control — key moments affecting softness/crispness/structure
+  4. Finishing Touches — final adjustments before serving
+  5. Serving Timing — when best served for optimal results
+- Item 6: {"type": "Card", "title": "Pro Tips", "items": [], "after": ""}
+  - items: 4 strings, each a pro tip from the recipe steps/chef tips
+  - after: 

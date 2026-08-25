@@ -1,0 +1,16 @@
+services:
+  platform:
+    build: .
+    # Or, once published:  image: ghcr.io/you/article-platform:latest
+    container_name: article-platform
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"   # no login screen — never bind to 0.0.0.0
+    env_file:
+      - .env
+    environment:
+      DB_PATH: /app/data/platform.db
+    volumes:
+      - ./data:/app/data
+      # Prompts are mounted so they can be tuned without rebuilding the image.
+      - ./prompts:/app/prompts:ro

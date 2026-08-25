@@ -1,0 +1,74 @@
+{
+ "spy-validation": {
+  "sourceNode": "Spy Validation",
+  "model": "gpt-oss:120b",
+  "format": null,
+  "hasSystem": true
+ },
+ "pick-board": {
+  "sourceNode": "Extact the best board",
+  "model": "gpt-oss:120b",
+  "format": null,
+  "hasSystem": false
+ },
+ "recipe-generator": {
+  "sourceNode": "Recipe generator ",
+  "model": "gpt-oss:20b",
+  "format": null,
+  "hasSystem": true
+ },
+ "pin-description": {
+  "sourceNode": "PIN desc Gen",
+  "model": "gpt-oss:120b",
+  "format": null,
+  "hasSystem": false
+ },
+ "part-2": {
+  "sourceNode": "Part 2",
+  "model": "gemma4:31b",
+  "format": "json",
+  "hasSystem": true
+ },
+ "part-1": {
+  "sourceNode": "Part 1",
+  "model": "gemma4:31b",
+  "format": "json",
+  "hasSystem": true
+ },
+ "image-prompts": {
+  "sourceNode": "Prompt generator ",
+  "model": "gemma4:31b",
+  "format": null,
+  "hasSystem": true
+ },
+ "part-3": {
+  "sourceNode": "Part 3",
+  "model": "gemma4:31b",
+  "format": "json",
+  "hasSystem": true
+ },
+ "part-1.fallback": {
+  "sourceNode": "Part 1 -",
+  "model": "gemma4:31b",
+  "format": "json",
+  "hasSystem": true
+ },
+ "part-2.fallback": {
+  "sourceNode": "Part 2 - ",
+  "model": "gemma4:31b",
+  "format": "json",
+  "hasSystem": true
+ },
+ "part-3.fallback": {
+  "sourceNode": "Part 3 -",
+  "model": "gemma4:31b",
+  "format": "json",
+  "hasSystem": true
+ },
+ "repair-json": {
+  "sourceNode": "Article Json",
+  "model": "gpt-oss:120b",
+  "format": null,
+  "hasSystem": true
+ }
+}

@@ -1,0 +1,3 @@
+- you will recive a json code with a problem that identified with with an error message i want you to fix that json based on the error message 
+{{postError}}
+- Your task is to fix only the errors that make it invalid JSON. Do not modify values, keys, order, spacing, or structure. Do not add or remove any fields. Output the corrected JSON only.

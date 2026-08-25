@@ -1,0 +1,7 @@
+Generate 6 locked, consistent DALL-E 3 prompts for this recipe:
+
+RECIPE TITLE: {{seo.title}}
+SEO KEYWORD: {{seo.keyword}}
+DESCRIPTION: {{seo.description}}
+Full recipe details: {{recipeJson}}
+Now execute Phase 1: Extract and lock every ingredient detail. Then generate all 6 prompts with those exact locked phrases hardcoded.

@@ -1,0 +1,78 @@
+Generate ONLY Part 1 of a recipe article — metadata, images, descriptions, intro, story, and testimonial.
+
+═══════════════════════════════════════════════════════════════
+SOURCE DATA — USE EXACTLY, DO NOT DEVIATE
+═══════════════════════════════════════════════════════════════
+
+SEO Keyword: {{seo.keyword}}
+SEO Title: {{seo.title}}
+Category: {{seo.category}}
+
+FULL RECIPE (parse and consume every field):
+{{recipe.raw}}
+
+IMAGES:
+Feature/Hero Image:{{images.feature}}
+Cooking Image: {{images.topShot}}
+Preparation Image: {{images.textureMacro}} 
+Final Presentation Image: {{images.beforeAfter}} 
+
+═══════════════════════════════════════════════════════════════
+INGREDIENT LOCKING — MANDATORY
+═══════════════════════════════════════════════════════════════
+
+Before writing ANY content, extract the exact ingredients from the recipe above. These are UNCHANGEABLE:
+
+1. List EVERY ingredient with its exact quantity and form from the source.
+2. Use these EXACT phrases in ALL text fields — description, intro, story, sections, instructions, notes, etc.
+3. Do NOT substitute, rename, or reimagine any ingredient.
+4. If the recipe calls for "semisweet chocolate chips," never write "dark chocolate" or "chocolate chunks."
+
+
+═══════════════════════════════════════════════════════════════
+OUTPUT — ONLY THESE KEYS
+═══════════════════════════════════════════════════════════════
+
+Return ONLY this JSON structure. No extra keys. No missing keys.
+
+{
+  "slug": "",
+  "title": "",
+  "category": "",
+  "img": "",
+  "heroImage": "",
+  "featureImage": "",
+  "preparationImage": "",
+  "cookingImage": "",
+  "finalPresentationImage": "",
+  "images": [],
+  "description": "",
+  "shortDescription": "",
+  "featuredText": "",
+  "intro": "",
+  "story": "",
+  "testimonial": ""
+ }
+
+═══════════════════════════════════════════════════════════════
+FIELD REQUIREMENTS
+═══════════════════════════════════════════════════════════════
+
+- slug: from SEO Title, lowercase, hyphens
+- title: exact SEO Title
+- category: exact Category
+- img/heroImage/featureImage: Feature/Hero Image URL
+- preparationImage: Preparation Image URL
+- cookingImage: Cooking Image URL 
+- finalPresentationImage: Final Presentation Image URL
+- images: [Feature/Hero, Preparation, Cooking, Final Presentation] URLs in this order
+- description: 2-3 sentences, sensory, warm, weave in SEO Keyword naturally
+- shortDescription: 3 sentences, hook, different from description
+- featuredText: 2 punchy teaser sentence, different from both above
+- intro: 2-3 paragraphs, warm and inviting, persona voice, "I remember when..." moments, gentle sensory details (scent, warmth, texture), small emotional notes, conversational fillers
+- story: 3-4 paragraphs, historical or cultural angle about this dish, reflective tone, no first-person, warm and informative, real historical detail or cultural origin, opening sentence captures attention
+- testimonial: 10-30 words, italic style, personal-sounding quote about the recipe
+
+SEO: Weave SEO Keyword naturally into title, description, intro, and story.
+
+Output ONLY the JSON object. Start with { and end with }.

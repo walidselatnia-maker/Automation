@@ -1,0 +1,4 @@
+Link: {{spy.articleUrl}}
+Title:{{spy.title}}
+Categories:
+{{categoryTitles}}
