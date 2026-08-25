@@ -6,6 +6,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { layout } from './views/layout.js';
+import { registerAuth, type AuthOptions } from './auth.js';
 import {
   dashboardPage,
   decisionsPage,
@@ -77,7 +78,11 @@ const asNumber = (value: unknown, fallback: number): number => {
   return Number.isFinite(n) ? n : fallback;
 };
 
-export function buildServer(settings: Settings, encryptionKey: Buffer): FastifyInstance {
+export function buildServer(
+  settings: Settings,
+  encryptionKey: Buffer,
+  auth: AuthOptions,
+): FastifyInstance {
   const app = Fastify({ logger: false, bodyLimit: 20 * 1024 * 1024 });
 
   void app.register(formbody);
@@ -86,6 +91,9 @@ export function buildServer(settings: Settings, encryptionKey: Buffer): FastifyI
     root: resolve(dirname(fileURLToPath(import.meta.url)), 'public'),
     prefix: '/static/',
   });
+
+  // Must come after formbody so the login form body is parsed.
+  registerAuth(app, auth);
 
   const page = (
     reply: FastifyReply,

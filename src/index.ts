@@ -26,9 +26,32 @@ async function main(): Promise<void> {
 
   const settings = new Settings(config.encryptionKey);
 
-  const server = buildServer(settings, config.encryptionKey);
-  await server.listen({ port: config.port, host: '0.0.0.0' });
-  log.info(`Web UI listening on http://localhost:${config.port}`);
+  const server = buildServer(settings, config.encryptionKey, {
+    password: config.authPassword,
+    secret: config.encryptionKey,
+    generated: config.authPasswordGenerated,
+  });
+  await server.listen({ port: config.port, host: config.host });
+  log.info(`Web UI listening on port ${config.port}`);
+
+  if (config.authPasswordGenerated) {
+    // Printed on every start: on a hosted Docker platform the logs are the
+    // only way in, and there is no shell to cat the file from.
+    console.log(
+      [
+        '',
+        '  ┌─────────────────────────────────────────────────────────┐',
+        '  │  ADMIN PASSWORD (generated on first start)              │',
+        '  ├─────────────────────────────────────────────────────────┤',
+        `  │  ${config.authPassword.padEnd(55)}│`,
+        '  ├─────────────────────────────────────────────────────────┤',
+        '  │  Set AUTH_PASSWORD in your environment to choose your   │',
+        '  │  own. This one is stored in the data volume.            │',
+        '  └─────────────────────────────────────────────────────────┘',
+        '',
+      ].join(String.fromCharCode(10)),
+    );
+  }
 
   const problems = settings.validate();
   if (problems.length > 0) {

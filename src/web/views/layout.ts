@@ -98,7 +98,11 @@ export function layout(options: LayoutOptions): string {
 <body>
 <header class="topbar">
   <div class="brand"><a href="/">Article Platform</a>${status}</div>
-  <nav>${nav.map((n) => n.value).join('')}</nav>
+  <nav>${nav.map((n) => n.value).join('')}
+    <form method="post" action="/logout" style="display:inline">
+      <button class="small" type="submit">Sign out</button>
+    </form>
+  </nav>
 </header>
 <main>
 ${flash.value}

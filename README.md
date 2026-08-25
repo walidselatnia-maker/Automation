@@ -4,48 +4,41 @@ Self-hosted article generation and publishing for a set of recipe websites.
 Replaces three n8n workflows — Master Orchestrator, Article generator, and
 Daily Reset — with one application.
 
-Each person runs their own copy on their own VPS with their own sites. There
-are no accounts, no roles, and no shared state between installations.
+Each person runs their own copy on their own server with their own sites.
+Access is one shared password — no user accounts, no roles, no shared state
+between installations.
 
 ---
 
 ## Install
 
-You need Docker and Docker Compose. Nothing else.
-
-```bash
-cp .env.example .env
-```
-
-Generate the one value `.env` needs:
-
-```bash
-node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-```
-
-Paste it as `ENCRYPTION_KEY`, then start:
+Point any Docker platform (Coolify, Dokploy, Portainer, CapRover) at this
+repository, or run:
 
 ```bash
 docker compose up -d
 ```
 
-Open <http://localhost:8080>. Everything else is configured in the UI.
+No environment variables required. On first boot the app generates its own
+encryption key and admin password into the data volume.
 
-> **Keep the encryption key safe.** It encrypts stored credentials. If you lose
-> it, every credential must be re-entered.
+**The admin password is printed in the container logs** — search for
+`ADMIN PASSWORD`. Set `AUTH_PASSWORD` to choose your own.
+
+> The `platform-data` volume holds the database, encryption key and password.
+> Back it up; losing it means re-entering every credential.
+
+See [deploy/DEPLOY.md](deploy/DEPLOY.md) for the full guide.
 
 ## First-time setup
 
-1. **Settings** — enter the site API token, image service URL and key, and the
-   Buffer token. Set your timezone.
-2. **Settings → LLM endpoints** — add each Ollama server. List the models each
-   one serves, or leave models blank if it serves everything.
-3. **Sites** — add your websites with a daily target and minimum hours between
-   posts.
+1. **Settings** — site API token, image service URL and key, Buffer token, timezone.
+2. **Settings → LLM endpoints** — one endpoint per Ollama API key, all with base
+   URL `https://ollama.com`. Leave Models blank so any key serves any operation;
+   keys exist to spread rate limits, not to pick models.
+3. **Sites** — your websites, with a daily target and minimum hours between posts.
 4. **Keywords** — import a CSV.
-5. **Settings → General** — turn **Automation enabled** on.
-
-Use **Run once now** on the dashboard to test before enabling automation.
+5. **Settings → General** — enable automation, once a manual **Run once now** succeeds.
 
 ## Migrating from Google Sheets
 
@@ -136,7 +129,13 @@ when every endpoint for that model is exhausted — and the error names each one
 tried.
 
 Every step records which endpoint served it, so **Settings → LLM endpoints**
-shows exactly which box is misbehaving.
+shows exactly which key is throttled.
+
+Which *model* runs which operation is separate, and follows the original
+workflow: `gpt-oss:120b` for spy validation, pin descriptions, board selection
+and JSON repair; `gpt-oss:20b` for the recipe; `gemma4:31b` for image prompts
+and the three article parts. Any key can serve any model — keys spread rate
+limits, the model table decides quality.
 
 ---
 
@@ -171,8 +170,8 @@ shorter prompt. The primary is tried first; the fallback runs only if the
 primary fails or returns unusable JSON. This preserves the degradation
 strategy the original encoded as duplicate nodes.
 
-Prompts are mounted read-only into the container, so they can be edited and
-the container restarted without a rebuild.
+Prompts are baked into the image for deployment. `docker-compose.local.yml`
+mounts them read-write so they can be edited without a rebuild.
 
 ### Tests
 
@@ -181,7 +180,10 @@ test/selector.test.ts     the selection rules, including regressions for
                           every production bug found in the old system
 test/integration.test.ts  real database: derived counters, the matrix
                           constraint, checkpoints
+test/pipeline.test.ts     the full pipeline against a mocked world
 test/pool.test.ts         endpoint failover, rate limits, health
+test/auth.test.ts         every route is closed without a session
+test/prompts.test.ts      every prompt placeholder is supplied by its step
 test/units.test.ts        crypto, CSV, LLM JSON parsing, templating
 ```
 
@@ -198,7 +200,7 @@ satisfied but was retried forever.
 |---|---|
 | Why did nothing publish? | **Decisions** — every site and keyword with its reason |
 | Why did a run fail? | **Runs → open the run** — per-step status, timing, input, output |
-| Is an Ollama box down? | **Settings → LLM endpoints** — health and last success |
+| Is an API key throttled? | **Settings → LLM endpoints** — health and last success |
 | Technical errors | **/events** |
 | Machine-readable status | `GET /healthz` |
 
@@ -206,17 +208,18 @@ satisfied but was retried forever.
 
 Everything is in one SQLite file:
 
+Back up the `platform-data` volume — it holds the database, the encryption key
+and the admin password. Your Docker platform likely has volume backups built
+in; otherwise:
+
 ```bash
-docker compose stop
-cp data/platform.db data/platform.db.backup
-docker compose start
+docker run --rm -v platform-data:/data -v "$PWD:/backup" alpine   tar czf /backup/platform-$(date +%F).tar.gz -C /data .
 ```
 
 ### Security notes
 
-- Credentials are encrypted at rest (AES-256-GCM) with `ENCRYPTION_KEY`.
-- The UI has **no authentication**. Do not expose port 8080 to the internet —
-  bind it to localhost and reach it over SSH or a private network such as
-  Tailscale.
-- The site API token is shared across all sites, so rotating it means updating
-  one field in Settings.
+- The UI is password-protected; sessions are HMAC-signed `HttpOnly` cookies.
+- Credentials are encrypted at rest (AES-256-GCM).
+- Only `/healthz` and `/static/*` are public. `/healthz` never returns secrets.
+- Let your platform terminate TLS.
+- The site API token is shared across all sites, so rotating it is one field.
