@@ -12,6 +12,7 @@ code that ships in the image — and the routes are only reachable from inside
 the container unless someone publishes the port without a proxy.
 """
 import logging
+import os
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -21,7 +22,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/ext", tags=["ext"])
 
-DIST = Path("/app/ext-dist")
+# Where pack-extension.sh writes the CRX at build time. Overridable so the
+# routes can be exercised outside a container.
+DIST = Path(os.environ.get("EXT_DIST_DIR", "/app/ext-dist"))
 
 
 @router.get("/update.xml")
