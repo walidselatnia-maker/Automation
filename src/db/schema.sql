@@ -227,3 +227,19 @@ CREATE TABLE IF NOT EXISTS events (
   detail     TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_events_created ON events (created_at DESC);
+
+-- ---------------------------------------------------------------------------
+-- Prompt overrides.
+--
+-- The prompt files ship inside the image, which makes them read-only in any
+-- practical sense: a container filesystem is discarded on redeploy, so an edit
+-- made there survives until the next deploy and then silently reverts.
+--
+-- An edit lives here instead. The file remains the default and the fallback,
+-- so deleting a row restores the shipped prompt exactly.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS prompt_overrides (
+  name       TEXT PRIMARY KEY,
+  body       TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);

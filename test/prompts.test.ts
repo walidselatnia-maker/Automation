@@ -1,6 +1,7 @@
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { describe, expect, it, beforeAll } from 'vitest';
 import { configurePrompts, missingVariables, PROMPT_MODELS } from '../src/pipeline/prompts.js';
+import { PIN_GRAPHIC_CONTEXT, STEP_CONTEXTS } from '../src/pipeline/prompt-contexts.js';
 
 /**
  * Guards the contract between prompt files and the steps that render them.
@@ -15,54 +16,8 @@ import { configurePrompts, missingVariables, PROMPT_MODELS } from '../src/pipeli
 
 const PROMPTS_DIR = './prompts';
 
-/** Exactly what each step passes to `ctx.prompt(...)`. Keep in sync. */
-const STEP_CONTEXTS: Record<string, Record<string, unknown>> = {
-  'spy-validation': {
-    spy: { title: 't', articleUrl: 'u', annotation: 'a', description: 'd' },
-    categoryTitles: '[]',
-    site: { domain: 'example.com' },
-  },
-  'recipe-generator': {
-    seo: { keyword: 'k', title: 't', description: 'd', category: 'c' },
-    spy: { title: 't', description: 'd', annotation: 'a' },
-  },
-  'image-prompts': {
-    seo: { keyword: 'k', title: 't', description: 'd', category: 'c' },
-    recipe: { raw: '{}' },
-    recipeJson: '{}',
-  },
-  'pin-description': {
-    seo: { keyword: 'k', title: 't', description: 'd', category: 'c' },
-    cta: 'Try it!',
-    site: { domain: 'example.com' },
-    spy: { title: 't', description: 'd', annotation: 'a' },
-  },
-  'pick-board': {
-    seo: { keyword: 'k', title: 't', description: 'd', category: 'c' },
-    boardsJson: '{}',
-  },
-  'repair-json': { postError: 'e', articleJson: '{}' },
-};
-
-/** The three article parts and their fallbacks share one context. */
-const ARTICLE_CONTEXT = {
-  seo: { keyword: 'k', title: 't', description: 'd', category: 'c' },
-  recipe: { raw: '{}' },
-  images: { feature: '/a.webp', topShot: '/b.webp', textureMacro: '/c.webp', beforeAfter: '/d.webp' },
-};
-
-for (const part of ['part-1', 'part-2', 'part-3']) {
-  STEP_CONTEXTS[part] = ARTICLE_CONTEXT;
-  STEP_CONTEXTS[`${part}.fallback`] = ARTICLE_CONTEXT;
-}
-
-const PIN_GRAPHIC_CONTEXT = {
-  seo: { keyword: 'k', title: 't', description: 'd', category: 'c' },
-  cta: 'Try it!',
-  site: { domain: 'example.com' },
-  imagePrompts: { feature: 'f', textureMacro: 'm' },
-};
-
+// The contexts now live in src, so the prompt editor can show the same list to
+// whoever is writing a prompt and flag anything outside it. One definition.
 describe('prompt files', () => {
   beforeAll(() => {
     configurePrompts(PROMPTS_DIR);

@@ -876,3 +876,150 @@ export function eventsPage(events: EventRow[]): Html {
     </div>
   `;
 }
+
+/* =========================================================================
+ * Prompts
+ * ====================================================================== */
+
+export interface PromptSummary {
+  /** File name, e.g. "part-1.user.txt". */
+  file: string;
+  /** Prompt it belongs to, e.g. "part-1". */
+  prompt: string;
+  /** "system", "user", or "template". */
+  half: string;
+  model: string;
+  edited: boolean;
+  lines: number;
+}
+
+export function promptsPage(prompts: PromptSummary[]): Html {
+  const byPrompt = new Map<string, PromptSummary[]>();
+  for (const p of prompts) {
+    const list = byPrompt.get(p.prompt) ?? [];
+    list.push(p);
+    byPrompt.set(p.prompt, list);
+  }
+
+  const editedCount = prompts.filter((p) => p.edited).length;
+
+  return html`
+    <h1>Prompts</h1>
+    <p class="subtitle">
+      These are the product. Article quality lives here, not in the code that
+      sends them. Every edit is stored in the database, so it survives a
+      redeploy &mdash; the shipped text stays underneath as the version you can
+      always revert to.
+    </p>
+
+    ${editedCount > 0
+      ? html`<div class="flash ok">
+          ${editedCount} prompt file(s) edited. The rest are exactly as shipped.
+        </div>`
+      : raw('')}
+
+    ${[...byPrompt.entries()].map(
+      ([name, parts]) => html`
+        <div class="card">
+          <div class="spread">
+            <div>
+              <strong>${name}</strong>
+              ${parts.some((p) => p.edited)
+                ? html` <span class="badge ok">edited</span>`
+                : raw('')}
+              <div class="muted small">${parts[0]?.model ?? ''}</div>
+            </div>
+            <div class="row">
+              ${parts.map(
+                (p) => html`<a class="button small" href="/prompts/${p.file}"
+                  >${p.half} &middot; ${p.lines} lines</a
+                >`,
+              )}
+            </div>
+          </div>
+        </div>
+      `,
+    )}
+  `;
+}
+
+export function promptEditPage(
+  file: string,
+  body: string,
+  options: {
+    model: string;
+    variables: string[];
+    unknown: string[];
+    edited: boolean;
+    shipped: string;
+  },
+): Html {
+  return html`
+    <div class="spread">
+      <div>
+        <h1>${file}</h1>
+        <p class="subtitle">
+          ${options.model ? html`Sent to <span class="mono">${options.model}</span>. ` : raw('')}
+          ${options.edited
+            ? 'Edited — the shipped version is still available below.'
+            : 'Exactly as shipped.'}
+        </p>
+      </div>
+      <a class="button" href="/prompts">All prompts</a>
+    </div>
+
+    ${options.unknown.length
+      ? html`<div class="flash warn">
+          <strong>Unknown placeholder(s):</strong>
+          <span class="mono">${options.unknown.join(', ')}</span>
+          <div class="small" style="margin-top:6px">
+            Nothing supplies these, so they render as empty text rather than
+            failing &mdash; the article just quietly comes out worse. Use one of
+            the variables listed below, or add it to the step that renders this
+            prompt.
+          </div>
+        </div>`
+      : raw('')}
+
+    <div class="card">
+      <form method="post" action="/prompts/${file}">
+        <div class="field">
+          <textarea name="body" rows="24" spellcheck="false"
+                    class="mono" style="width:100%">${body}</textarea>
+        </div>
+        <div class="row">
+          <button class="primary" type="submit">Save</button>
+          ${options.edited
+            ? html`<button class="danger" type="submit" name="action" value="revert"
+                     formnovalidate
+                     onclick="return confirm('Discard your edit and restore the shipped prompt?')">
+                Revert to shipped
+              </button>`
+            : raw('')}
+        </div>
+      </form>
+    </div>
+
+    <h2>Variables you can use</h2>
+    <div class="card">
+      ${options.variables.length === 0
+        ? html`<p class="muted small">
+            No variable list is defined for this file, so placeholders are not checked here.
+          </p>`
+        : html`<p class="muted small">
+              Write them as <span class="mono">{{name}}</span>. Nothing else is
+              interpreted &mdash; no expressions, no conditionals.
+            </p>
+            <div class="row wrap">
+              ${options.variables.map((v) => html`<span class="badge muted mono">${v}</span>`)}
+            </div>`}
+    </div>
+
+    ${options.edited
+      ? html`<h2>As shipped</h2>
+          <div class="card">
+            <pre class="mono small" style="white-space:pre-wrap;margin:0">${options.shipped}</pre>
+          </div>`
+      : raw('')}
+  `;
+}

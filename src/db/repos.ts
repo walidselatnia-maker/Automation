@@ -645,3 +645,36 @@ export const listEvents = (limit = 200, level?: string): EventRow[] =>
 
 export const pruneEvents = (keepDays: number): number =>
   run("DELETE FROM events WHERE created_at < datetime('now', ?)", `-${keepDays} days`).changes;
+
+/* =========================================================================
+ * Prompt overrides
+ *
+ * An edited prompt lives in the database because the files ship inside the
+ * image, where an edit lasts only until the next redeploy. The file stays the
+ * default: deleting the row restores the shipped text exactly.
+ * ====================================================================== */
+
+export interface PromptOverrideRow {
+  name: string;
+  body: string;
+  updated_at: string;
+}
+
+export const getPromptOverride = (name: string): string | undefined =>
+  get<{ body: string }>('SELECT body FROM prompt_overrides WHERE name = ?', name)?.body;
+
+export const listPromptOverrides = (): PromptOverrideRow[] =>
+  all<PromptOverrideRow>('SELECT * FROM prompt_overrides ORDER BY name');
+
+export const setPromptOverride = (name: string, body: string): void => {
+  run(
+    `INSERT INTO prompt_overrides (name, body) VALUES (?, ?)
+     ON CONFLICT (name) DO UPDATE SET body = excluded.body, updated_at = datetime('now')`,
+    name,
+    body,
+  );
+};
+
+export const deletePromptOverride = (name: string): void => {
+  run('DELETE FROM prompt_overrides WHERE name = ?', name);
+};

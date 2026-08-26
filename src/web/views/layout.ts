@@ -56,6 +56,7 @@ const NAV: NavItem[] = [
   { href: '/runs', label: 'Runs' },
   { href: '/sites', label: 'Sites' },
   { href: '/keywords', label: 'Keywords' },
+  { href: '/prompts', label: 'Prompts' },
   { href: '/decisions', label: 'Decisions' },
   // A live browser session is something you keep open beside the dashboard
   // while you work, not somewhere you navigate to and back from.

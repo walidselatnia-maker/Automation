@@ -1,4 +1,8 @@
-import Fastify, { type FastifyInstance, type FastifyReply } from 'fastify';
+import Fastify, {
+  type FastifyInstance,
+  type FastifyReply,
+  type FastifyRequest,
+} from 'fastify';
 import formbody from '@fastify/formbody';
 import multipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
@@ -16,6 +20,8 @@ import {
   accountPage,
   keysPage,
   keywordsPage,
+  promptEditPage,
+  promptsPage,
   runDetailPage,
   runsPage,
   settingsPage,
@@ -38,8 +44,11 @@ import {
   listRuns,
   listSites,
   listSteps,
+  deletePromptOverride,
+  getPromptOverride,
   loadLinkGrid,
   loadSiteViews,
+  setPromptOverride,
   getRun,
   setKeywordShareImages,
   setKeywordStatus,
@@ -56,6 +65,9 @@ import {
 } from '../llm/pool.js';
 import { evaluateSite, localDateKey } from '../core/selector.js';
 import { readSupply, supplyWarning } from '../core/supply.js';
+import { listPromptFiles } from '../pipeline/prompt-files.js';
+import { invalidatePromptCache, PROMPT_MODELS, readShippedPrompt } from '../pipeline/prompts.js';
+import { unknownVariables, variablesFor } from '../pipeline/prompt-contexts.js';
 import { SETTING_SPECS, type Settings } from '../settings.js';
 import { lockStatus, resumeRun, tick } from '../scheduler/index.js';
 import { createLogger, errorMessage } from '../lib/logger.js';
@@ -77,6 +89,17 @@ const redirect = (reply: FastifyReply, path: string, flash?: Flash): FastifyRepl
   const url = flash ? `${path}?${flash.kind}=${encodeURIComponent(flash.message)}` : path;
   return reply.redirect(url, 303);
 };
+
+/**
+ * A form body that is always an object.
+ *
+ * Fastify leaves `request.body` undefined when nothing parsed it — a POST with
+ * no content-type, or a client that sent none. Reading a field off that throws,
+ * and the user gets a 500 stack page for what is really "that submission was
+ * malformed". Every handler here reads fields, so they all go through this.
+ */
+const formBody = (request: FastifyRequest): Record<string, unknown> =>
+  (request.body as Record<string, unknown> | undefined) ?? {};
 
 const asString = (value: unknown, fallback = ''): string =>
   typeof value === 'string' ? value : fallback;
@@ -286,7 +309,7 @@ export function buildServer(
 
   app.post('/sites', async (request, reply) => {
     try {
-      saveSite(request.body as Record<string, unknown>);
+      saveSite(formBody(request));
       return redirect(reply, '/sites', { kind: 'ok', message: 'Site added.' });
     } catch (err) {
       return redirect(reply, '/sites', { kind: 'error', message: errorMessage(err) });
@@ -298,7 +321,7 @@ export function buildServer(
     const site = getSite(id);
     if (!site) return redirect(reply, '/sites', { kind: 'error', message: 'Site not found' });
 
-    const body = request.body as Record<string, unknown>;
+    const body = formBody(request);
     const newDomain = normaliseDomain(asString(body.domain));
 
     // Renaming onto a domain another site already owns would violate the
@@ -390,14 +413,14 @@ export function buildServer(
 
   app.post('/keywords/:id/status', async (request, reply) => {
     const id = asNumber((request.params as { id: string }).id, 0);
-    const status = asString((request.body as Record<string, unknown>).status, 'no');
+    const status = asString(formBody(request).status, 'no');
     if (status === 'go' || status === 'done' || status === 'no') setKeywordStatus(id, status);
     return redirect(reply, '/keywords');
   });
 
   app.post('/keywords/:id/link', async (request, reply) => {
     const id = asNumber((request.params as { id: string }).id, 0);
-    const body = request.body as Record<string, unknown>;
+    const body = formBody(request);
     const siteId = asNumber(body.site_id, 0);
     const status = asString(body.status, 'no');
     if (siteId && (status === 'go' || status === 'done' || status === 'no')) {
@@ -410,7 +433,7 @@ export function buildServer(
 
   app.post('/keywords/:id/share', async (request, reply) => {
     const id = asNumber((request.params as { id: string }).id, 0);
-    const share = asString((request.body as Record<string, unknown>).share, '1') === '1';
+    const share = asString(formBody(request).share, '1') === '1';
     setKeywordShareImages(id, share);
     return redirect(reply, '/keywords');
   });
@@ -468,6 +491,88 @@ export function buildServer(
       ['longlivo', 'longlivo.com', 'paused', '0', '8', 'prepplat', ''],
     ]),
   );
+
+  /* -- Prompts ----------------------------------------------------------- */
+
+  /**
+   * Editing the prompts is editing the product, so it gets a real page rather
+   * than a note telling someone to rebuild the image.
+   */
+  const promptFile = (name: string): string | null => {
+    // Only files that actually ship. Without this the name is a path fragment
+    // reaching anywhere on disk.
+    const allowed = listPromptFiles().map((p) => p.file);
+    return allowed.includes(name) ? name : null;
+  };
+
+  app.get('/prompts', async (request, reply) =>
+    page(reply, 'Prompts', '/prompts', promptsPage(listPromptFiles()), readFlash(request.query)),
+  );
+
+  app.get('/prompts/:file', async (request, reply) => {
+    const file = promptFile(asString((request.params as { file: string }).file));
+    if (!file) {
+      return redirect(reply, '/prompts', { kind: 'error', message: 'No such prompt file.' });
+    }
+
+    const override = getPromptOverride(file);
+    const shipped = readShippedPrompt(file);
+    const body = override ?? shipped;
+    const promptName = file.replace(/\.(system|user)\.txt$/, '').replace(/\.txt$/, '');
+
+    return page(
+      reply,
+      file,
+      '/prompts',
+      promptEditPage(file, body, {
+        model: PROMPT_MODELS[promptName]?.model ?? '',
+        variables: variablesFor(promptName),
+        unknown: unknownVariables(promptName, body),
+        edited: override !== undefined,
+        shipped,
+      }),
+      readFlash(request.query),
+    );
+  });
+
+  app.post('/prompts/:file', async (request, reply) => {
+    const file = promptFile(asString((request.params as { file: string }).file));
+    if (!file) {
+      return redirect(reply, '/prompts', { kind: 'error', message: 'No such prompt file.' });
+    }
+
+    const body = formBody(request);
+
+    if (asString(body.action) === 'revert') {
+      deletePromptOverride(file);
+      invalidatePromptCache();
+      return redirect(reply, `/prompts/${file}`, {
+        kind: 'ok',
+        message: 'Reverted to the shipped prompt.',
+      });
+    }
+
+    const text = asString(body.body);
+    if (text.trim() === '') {
+      return redirect(reply, `/prompts/${file}`, {
+        kind: 'error',
+        message: 'An empty prompt would silently produce nothing. Revert instead if that is what you want.',
+      });
+    }
+
+    setPromptOverride(file, text);
+    invalidatePromptCache();
+
+    const promptName = file.replace(/\.(system|user)\.txt$/, '').replace(/\.txt$/, '');
+    const unknown = unknownVariables(promptName, text);
+
+    return redirect(reply, `/prompts/${file}`, {
+      kind: unknown.length ? 'warn' : 'ok',
+      message: unknown.length
+        ? `Saved, but ${unknown.join(', ')} is not supplied by any step and will render empty.`
+        : 'Saved. It applies to the next run.',
+    });
+  });
 
   /* -- Decisions --------------------------------------------------------- */
 
@@ -595,7 +700,7 @@ export function buildServer(
   );
 
   app.post('/settings/account', async (request, reply) => {
-    const body = request.body as Record<string, unknown>;
+    const body = formBody(request);
     const current = asString(body.current);
     const next = asString(body.next);
     const confirm = asString(body.confirm);
@@ -631,7 +736,7 @@ export function buildServer(
    * the provider's dashboard put on the clipboard.
    */
   app.post('/settings/endpoints/bulk', async (request, reply) => {
-    const text = asString((request.body as Record<string, unknown>).keys);
+    const text = asString(formBody(request).keys);
 
     const existing = listEndpoints(encryptionKey);
     const takenNames = new Set(existing.map((e) => e.name.toLowerCase()));
@@ -699,7 +804,7 @@ export function buildServer(
   });
 
   app.post('/settings', async (request, reply) => {
-    const body = request.body as Record<string, unknown>;
+    const body = formBody(request);
 
     for (const spec of SETTING_SPECS) {
       const submitted = body[spec.key];
@@ -716,7 +821,7 @@ export function buildServer(
   });
 
   app.post('/settings/endpoints', async (request, reply) => {
-    const body = request.body as Record<string, unknown>;
+    const body = formBody(request);
     const name = asString(body.name).trim();
     const apiKey = asString(body.api_key).trim();
 

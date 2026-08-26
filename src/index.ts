@@ -1,6 +1,7 @@
 import { loadConfig } from './config.js';
 import { openDatabase, closeDatabase } from './db/index.js';
 import { insertEvent } from './db/repos.js';
+import { configurePromptFiles } from './pipeline/prompt-files.js';
 import { configurePrompts } from './pipeline/prompts.js';
 import { Scheduler } from './scheduler/index.js';
 import { Settings } from './settings.js';
@@ -15,6 +16,7 @@ async function main(): Promise<void> {
 
   openDatabase(config.dbPath);
   configurePrompts(config.promptsDir);
+  configurePromptFiles(config.promptsDir);
 
   // Mirror warnings and errors into the database so the Events page is useful
   // without shell access to the container.
