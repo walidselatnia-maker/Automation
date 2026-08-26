@@ -110,10 +110,16 @@ a `ports:` mapping would put the app on the VPS's public interface over plain
 HTTP alongside it.
 
 The `imagegen` container is not password-protected itself, and does not need to
-be: it has no route in from outside. It lives on a Docker network declared
-`internal: true`, so the only client that can open a socket to it is the
-platform, which checks the session cookie on every request it serves. Give it a
-domain and you undo that — do not.
+be: nothing outside can open a connection to it. It publishes no ports and has
+no domain, and Docker routes inbound traffic to published ports only — so the
+platform, which checks the session cookie on every request it serves, is the
+only client that can reach it.
+
+It does have outbound internet. That is not optional: Chrome has to reach
+labs.google. An earlier version put it on a network declared `internal: true`,
+which blocks outbound as well as inbound, and Chrome came up with no DNS at all.
+
+Give it a domain and you undo all of this — do not.
 
 ---
 

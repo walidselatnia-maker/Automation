@@ -71,8 +71,8 @@ services:
       - shared-secret:/run/shared:ro
 
     networks:
-      - web       # Dokploy's proxy reaches the domain through this
-      - internal  # ...and this is the only way to imagegen
+      - web      # Traefik reaches the domain through this
+      - backend  # ...and this is the only way to imagegen
 
     depends_on:
       - imagegen
@@ -89,8 +89,10 @@ services:
     restart: unless-stopped
 
     # Deliberately no `expose`, no `ports`, and no domain. This container holds
-    # a signed-in Google session and a browser someone can drive; the only
-    # thing that may reach it is `platform`, over `internal` below.
+    # a signed-in Google session and a browser someone can drive, and that is
+    # what keeps it unreachable: Docker routes inbound traffic to published
+    # ports only, so with none published the sole client that can open a socket
+    # to it is `platform`, over the `backend` network below.
     environment:
       - API_KEY=${IMAGE_API_KEY:-}
 
@@ -130,7 +132,7 @@ services:
       - imagegen-data:/data
 
     networks:
-      - internal
+      - backend
 
     # No shm_size. Chrome runs with --disable-dev-shm-usage (see
     # docker/supervisord.conf), which puts its shared memory in /tmp instead of
@@ -156,15 +158,22 @@ services:
       start_period: 90s
 
 networks:
-  # Reachable by Dokploy's proxy. Only `platform` is on it.
+  # Reachable by Traefik. Only `platform` is on it.
   web:
 
-  # No route to or from the outside world. This is what makes it safe for
-  # imagegen to serve an unauthenticated browser view: the only client that can
-  # open a socket to it is the platform, which checks a session cookie on every
-  # request it serves.
-  internal:
-    internal: true
+  # Platform <-> imagegen.
+  #
+  # NOT `internal: true`. That was here, and it broke the service outright:
+  # `internal` blocks a network's outbound traffic as well as its inbound, and
+  # imagegen exists to talk to Google. Chrome came up with no DNS and no route,
+  # and labs.google showed the offline dinosaur.
+  #
+  # What actually keeps imagegen unreachable is that it publishes no ports and
+  # has no domain. Docker only routes inbound traffic to published ports; the
+  # outbound NAT this network provides is one-way. So the browser view can stay
+  # unauthenticated behind the platform's own login, and Chrome can still reach
+  # labs.google.
+  backend:
 
 volumes:
   platform-data:

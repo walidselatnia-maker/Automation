@@ -278,6 +278,7 @@ docker run --rm -v imagegen-data:/data -v "$PWD:/backup" alpine tar czf /backup/
 - Let your platform terminate TLS.
 - Each site carries its own API and Buffer tokens, so rotating one affects
   only that site.
-- The image service has no public route at all: it sits on a Docker network
-  declared `internal: true`, and the platform is the only thing that can reach
-  it. Do not give it a domain.
+- The image service publishes no ports and has no domain, which is what makes
+  it unreachable: Docker routes inbound traffic to published ports only. It
+  does have outbound internet, because Chrome has to reach Google. Do not give
+  it a domain.

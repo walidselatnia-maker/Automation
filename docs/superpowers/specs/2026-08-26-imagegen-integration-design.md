@@ -53,13 +53,19 @@ platform  (Node 24, existing)         imagegen  (Python + Chrome, stripped FlowK
 
 Two networks, and this is what makes the rest safe:
 
-- `web` — Dokploy's proxy network. **platform only.**
-- `internal` — `internal: true`. **platform and imagegen.**
+- `web` — Traefik's proxy network. **platform only.**
+- `backend` — **platform and imagegen.**
 
-`imagegen` is on `internal` alone, so it has no route to or from the outside
-world. Every path to it runs through the platform, which already checks a
-session cookie on every request. That is what lets us delete the VNC password
-(below) without opening anything up.
+`imagegen` publishes no ports and has no domain, so nothing outside can open a
+connection to it: Docker routes inbound traffic to published ports only. Every
+path to it runs through the platform, which already checks a session cookie on
+every request. That is what lets us delete the VNC password (below) without
+opening anything up.
+
+`backend` must **not** be declared `internal: true`. That blocks a network's
+outbound traffic as well as its inbound, and imagegen exists to reach Google —
+with it set, Chrome comes up with no DNS and labs.google shows the offline
+dinosaur.
 
 ### Repository layout
 
