@@ -37,8 +37,8 @@ services:
       # API keys at rest; changing it makes existing stored secrets unreadable.
       - ENCRYPTION_KEY
 
-      # Shared with imagegen below. Both containers read it, so it is set once
-      # here rather than typed into Settings as well.
+      # Optional. Left unset, imagegen generates one into the shared volume
+      # below and the platform reads it — nothing to invent or paste twice.
       - IMAGE_API_KEY
 
       # Optional here; Settings -> Images is the friendlier place for it.
@@ -60,6 +60,11 @@ services:
     volumes:
       # The database, the generated admin password, and the encryption key.
       - platform-data:/app/data
+
+      # Read-only: imagegen writes the shared API key here, the platform only
+      # reads it. One writer is what stops two containers starting together
+      # from racing to create different keys.
+      - shared-secret:/run/shared:ro
 
     networks:
       - web       # Dokploy's proxy reaches the domain through this
@@ -109,6 +114,9 @@ services:
       - API_COOLDOWN=${API_COOLDOWN:-10}
 
     volumes:
+      # Writable here — this is the service that generates the shared key.
+      - shared-secret:/run/shared
+
       # One volume holds everything that must survive a redeploy:
       #   /data/chrome-profile  the signed-in Google session  <- the critical part
       #   /data/flow_agent.db   the job queue (+ its -wal/-shm sidecars)
@@ -157,3 +165,7 @@ networks:
 volumes:
   platform-data:
   imagegen-data:
+
+  # Holds one file: the API key the two containers authenticate with. Delete it
+  # and a new one is generated on the next boot; nothing is lost.
+  shared-secret:

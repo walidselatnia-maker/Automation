@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { getSetting, setSetting } from './db/repos.js';
 
 /**
@@ -152,13 +153,41 @@ export const SETTING_SPECS: SettingSpec[] = [
 
 const BY_KEY = new Map(SETTING_SPECS.map((s) => [s.key, s]));
 
+/**
+ * The API key shared with the image service.
+ *
+ * The two containers must agree on it, and asking someone to invent a secret
+ * and paste it into two places is the kind of setup step that gets skipped or
+ * mistyped. So imagegen generates one on first boot into a volume mounted by
+ * both, and this reads it.
+ *
+ * Read on each call rather than cached: the containers start together, and the
+ * platform may well look before imagegen has written. Re-reading means it
+ * simply starts working a moment later instead of needing a restart.
+ */
+const SHARED_KEY_PATH = process.env.SHARED_SECRET_PATH ?? '/run/shared/image-api-key';
+
+function sharedImageApiKey(): string {
+  try {
+    return readFileSync(SHARED_KEY_PATH, 'utf8').trim();
+  } catch {
+    // Absent is normal: not deployed with the shared volume, or imagegen has
+    // not booted yet.
+    return '';
+  }
+}
+
 export class Settings {
   constructor(private readonly encryptionKey: Buffer) {}
 
   get(key: string): string {
     const spec = BY_KEY.get(key);
     const stored = getSetting(key, this.encryptionKey);
-    return stored !== '' ? stored : (spec?.default ?? '');
+    if (stored !== '') return stored;
+
+    const fallback = spec?.default ?? '';
+    if (fallback === '' && key === 'image_api_key') return sharedImageApiKey();
+    return fallback;
   }
 
   getNumber(key: string): number {

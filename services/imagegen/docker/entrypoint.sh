@@ -10,17 +10,43 @@ PROFILE_DIR="${CHROME_PROFILE_DIR:-/data/chrome-profile}"
 
 fail() { echo "ERROR: $*" >&2; exit 1; }
 
-# ─── Config ─────────────────────────────────────────────────
-# The agent enforces this too, but failing at container start gives a message
-# someone will actually see in the Dokploy log, not buried in app output.
+# --- The shared API key -------------------------------------
+# The platform and this service must agree on a secret. Asking someone to
+# invent one and paste it into two places is a setup step that gets skipped or
+# mistyped, so generate it here once and let the platform read it: SHARED_DIR
+# is a volume both containers mount.
+#
+# This service is the only writer, which is what keeps two containers starting
+# at the same time from racing to create different keys.
+#
+# Setting API_KEY explicitly still wins -- useful when the two halves are
+# deployed separately and cannot share a volume.
+SHARED_DIR="${SHARED_SECRET_DIR:-/run/shared}"
+SHARED_KEY="$SHARED_DIR/image-api-key"
+
 if [[ -z "${API_KEY:-}" ]]; then
-    fail "API_KEY is not set.
+    if [[ -d "$SHARED_DIR" ]] && [[ -w "$SHARED_DIR" ]]; then
+        if [[ ! -s "$SHARED_KEY" ]]; then
+            openssl rand -hex 32 > "$SHARED_KEY" ||
+                fail "could not write the shared API key at $SHARED_KEY"
+            # 0644, not 0600: the two containers run as different users, and
+            # the file has to be readable from the platform's side. The volume
+            # is mounted by nothing else, so the mode is not what protects it.
+            chmod 644 "$SHARED_KEY"
+            echo "imagegen: generated a shared API key at $SHARED_KEY"
+        fi
+        API_KEY="$(cat "$SHARED_KEY")"
+        export API_KEY
+    else
+        fail "API_KEY is not set and $SHARED_DIR is not writable.
 
-This service exposes an image-generation endpoint. Without a key, anyone who
-reaches the URL can spend your Google Flow credits.
+This service generates an image on request, which spends Google Flow credits.
+Without a key, anything that reaches this port can spend them.
 
-Set API_KEY in your Dokploy environment variables. Generate one with:
+Either mount a shared volume at $SHARED_DIR (see docker-compose.yml), or set
+API_KEY yourself. Generate one with:
     openssl rand -hex 32"
+    fi
 fi
 
 # ─── Writable state ─────────────────────────────────────────

@@ -76,8 +76,8 @@ RUN pip install --no-cache-dir pytest pytest-asyncio \
 # to work around that would be the wrong trade on a box holding a live Google
 # session.
 RUN useradd --create-home --shell /bin/bash flowkit \
-    && mkdir -p /data/chrome-profile /var/log/supervisor \
-    && chown -R flowkit:flowkit /app /data /var/log/supervisor \
+    && mkdir -p /data/chrome-profile /var/log/supervisor /run/shared \
+    && chown -R flowkit:flowkit /app /data /var/log/supervisor /run/shared \
     && chmod -R a+rX /etc/opt/chrome/policies
 
 USER flowkit

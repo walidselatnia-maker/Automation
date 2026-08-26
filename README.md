@@ -27,9 +27,12 @@ Two containers come up:
 | `platform` | the pipeline, dashboard and scheduler. The only one with a domain. |
 | `imagegen` | Chrome, the Google Flow extension, and an image job queue. No published port, no domain — the platform reaches it over an internal Docker network. |
 
-Set **`IMAGE_API_KEY`** to any long random string (`openssl rand -hex 32`); both
-containers read it. Everything else is optional — on first boot the platform
-generates its own encryption key and admin password into its data volume.
+No environment variables required. On first boot the platform generates its own
+encryption key and admin password, and the image service generates the API key
+the two authenticate with into a volume they both mount.
+
+**The admin password is printed in the platform's logs** — search for
+`ADMIN PASSWORD`. Set `AUTH_PASSWORD` to choose your own.
 
 **The admin password is printed in the container logs** — search for
 `ADMIN PASSWORD`. Set `AUTH_PASSWORD` to choose your own.
@@ -45,10 +48,9 @@ See [deploy/DEPLOY.md](deploy/DEPLOY.md) for the full guide.
 
 ## First-time setup
 
-1. **Settings** — LLM base URL, timezone, and under Images the **API key**
-   (same value as `IMAGE_API_KEY`) and the **Flow project ID**, which must be a
-   real project id from the Google Flow UI. The image service URL already
-   points at the `imagegen` container.
+1. **Settings** — LLM base URL, timezone, and under Images the **Flow project
+   ID**, which must be a real project id from the Google Flow UI. The image
+   service URL and API key are already filled in.
 2. **Settings → LLM API keys** — add each key one at a time. They share the base
    URL; keys exist to spread rate limits, not to pick models.
 3. **Sites** — each site carries its **own** Site API token and Buffer token, a

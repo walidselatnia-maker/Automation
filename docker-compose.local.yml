@@ -15,12 +15,12 @@ services:
     environment:
       DB_PATH: /app/data/platform.db
       LOG_LEVEL: debug
-      IMAGE_API_KEY: ${IMAGE_API_KEY:-local-dev-key}
       IMAGE_BASE_URL: http://imagegen:8100
       IMAGEGEN_VNC_URL: http://imagegen:6080
     volumes:
       - ./data:/app/data
       - ./prompts:/app/prompts
+      - shared-secret:/run/shared:ro
 
   # The image service. Chrome takes about a minute to come up, and the Google
   # sign-in is a one-time manual step through http://localhost:8080/browser.
@@ -31,7 +31,7 @@ services:
     # Not published: reach it through the platform's /browser page, the same
     # way as in production, so local testing exercises the real path.
     environment:
-      API_KEY: ${IMAGE_API_KEY:-local-dev-key}
+      API_KEY: ${IMAGE_API_KEY:-}
       FLOW_PROJECT_ID: ${FLOW_PROJECT_ID:-}
       API_HOST: 0.0.0.0
       API_PORT: 8100
@@ -42,5 +42,9 @@ services:
       MAX_CONCURRENT_REQUESTS: 1
     volumes:
       - ./data/imagegen:/data
+      - shared-secret:/run/shared
     security_opt:
       - seccomp:unconfined
+
+volumes:
+  shared-secret:
