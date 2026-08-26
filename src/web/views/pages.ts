@@ -427,7 +427,7 @@ function siteForm(site: SiteRow | null): Html {
 export function keywordsPage(
   keywords: KeywordRow[],
   sites: SiteRow[],
-  links: Map<string, string>,
+  links: Map<string, { status: string; shareImages: boolean }>,
   page: number,
   total: number,
 ): Html {
@@ -445,7 +445,9 @@ export function keywordsPage(
         Columns: <span class="mono">seed_keyword, spy_title, spy_description, annotation,
         status</span>, then one column per site domain holding go / done / no. Only
         <span class="mono">seed_keyword</span> is required, and a keyword may be set to
-        <span class="mono">go</span> on as many sites as you like.
+        <span class="mono">go</span> on as many sites as you like. Those sites reuse one set
+        of article images by default — untick <span class="mono">share</span> on a cell to
+        generate fresh ones there. Pinterest graphics are always generated per site.
       </p>
       <form method="post" action="/keywords/import" enctype="multipart/form-data">
         <div class="field"><input type="file" name="file" accept=".csv,text/csv" required /></div>
@@ -487,9 +489,22 @@ export function keywordsPage(
                         )}
                       </select>
                     </form>
+                    <form method="post" action="/keywords/${k.id}/share" class="row">
+                      <button class="small" type="submit" name="share" value="1"
+                              title="Reuse one set of article images on every site for this keyword">
+                        share all
+                      </button>
+                      <button class="small" type="submit" name="share" value="0"
+                              title="Generate fresh article images on every site for this keyword">
+                        none
+                      </button>
+                    </form>
                   </td>
                   ${sites.map((s) => {
-                    const current = links.get(`${k.id}:${s.id}`) ?? 'no';
+                    const cell = links.get(`${k.id}:${s.id}`);
+                    const current = cell?.status ?? 'no';
+                    // A pair with no row yet inherits the column default.
+                    const shared = cell?.shareImages ?? true;
                     return html`<td>
                       <form method="post" action="/keywords/${k.id}/link">
                         <input type="hidden" name="site_id" value="${s.id}" />
@@ -499,6 +514,13 @@ export function keywordsPage(
                               html`<option value="${v}" ${current === v ? raw('selected') : raw('')}>${v}</option>`,
                           )}
                         </select>
+                        <label class="muted small"
+                               title="Reuse this keyword's article images here instead of generating new ones. The Pinterest graphic is always generated fresh.">
+                          <input type="checkbox" name="share_images" value="1"
+                                 ${shared ? raw('checked') : raw('')}
+                                 onchange="this.form.submit()" />
+                          share
+                        </label>
                       </form>
                     </td>`;
                   })}

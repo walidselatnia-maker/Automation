@@ -34,11 +34,13 @@ import {
   listRuns,
   listSites,
   listSteps,
-  loadLinkViews,
+  loadLinkGrid,
   loadSiteViews,
   getRun,
+  setKeywordShareImages,
   setKeywordStatus,
   setLink,
+  setLinkShareImages,
   upsertSite,
 } from '../db/repos.js';
 import { get } from '../db/index.js';
@@ -322,7 +324,10 @@ export function buildServer(
     const q = request.query as { page?: string };
     const pageNum = Math.max(1, asNumber(q.page, 1));
     const links = new Map(
-      loadLinkViews().map((l) => [`${l.keywordId}:${l.siteId}`, l.status] as const),
+      loadLinkGrid().map(
+        (l) =>
+          [`${l.keywordId}:${l.siteId}`, { status: l.status, shareImages: l.shareImages }] as const,
+      ),
     );
 
     return page(
@@ -385,7 +390,16 @@ export function buildServer(
     const status = asString(body.status, 'no');
     if (siteId && (status === 'go' || status === 'done' || status === 'no')) {
       setLink(id, siteId, status);
+      // An unchecked checkbox submits nothing at all, so absence means off.
+      setLinkShareImages(id, siteId, body.share_images === '1');
     }
+    return redirect(reply, '/keywords');
+  });
+
+  app.post('/keywords/:id/share', async (request, reply) => {
+    const id = asNumber((request.params as { id: string }).id, 0);
+    const share = asString((request.body as Record<string, unknown>).share, '1') === '1';
+    setKeywordShareImages(id, share);
     return redirect(reply, '/keywords');
   });
 

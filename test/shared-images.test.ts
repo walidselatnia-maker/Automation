@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
+import { readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { DatabaseSync } from 'node:sqlite';
 import { closeDatabase, openDatabase, run } from '../src/db/index.js';
 import {
   clearSharedImages,
@@ -339,5 +344,75 @@ describe('generateArticleImages sharing behaviour', () => {
 
     expect(rec.saved).toHaveLength(1);
     expect(rec.saved[0]!.urls.feature).toBe('https://bitespoon.com/uploads/recipes/1.webp');
+  });
+});
+
+/* =========================================================================
+ * The migration.
+ *
+ * schema.sql only runs CREATE TABLE IF NOT EXISTS, so a database that predates
+ * share_images would never gain the column from it. This is the only path that
+ * adds it, and it runs against real user data — worth a test.
+ * ====================================================================== */
+
+describe('share_images migration', () => {
+  const dbPath = join(tmpdir(), `share-images-${randomUUID()}.db`);
+
+  /**
+   * The real schema as it stood before the column existed: schema.sql with the
+   * share_images line removed. Hand-writing a smaller fixture does not work —
+   * schema.sql builds indexes over columns a stripped-down table would lack,
+   * and the point is to migrate the shape real databases actually have.
+   */
+  const schemaWithoutShareImages = (): string => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const sql = readFileSync(resolve(here, '../src/db/schema.sql'), 'utf8');
+    return sql
+      .split('\n')
+      .filter((line) => !line.includes('share_images'))
+      .join('\n');
+  };
+
+  afterEach(() => {
+    closeDatabase();
+    for (const suffix of ['', '-wal', '-shm']) {
+      try {
+        rmSync(`${dbPath}${suffix}`);
+      } catch {
+        /* not every sidecar exists */
+      }
+    }
+  });
+
+  it('adds the column to an existing table and defaults its rows to on', () => {
+    const old = new DatabaseSync(dbPath);
+    old.exec('PRAGMA journal_mode = WAL;');
+    old.exec(schemaWithoutShareImages());
+    old.exec("INSERT INTO keywords (seed_keyword) VALUES ('legacy')");
+    old.exec("INSERT INTO sites (name, domain) VALUES ('bitespoon', 'bitespoon.com')");
+    old.exec("INSERT INTO keyword_sites (keyword_id, site_id, status) VALUES (1, 1, 'go')");
+    expect(
+      (old.prepare('PRAGMA table_info(keyword_sites)').all() as { name: string }[]).some(
+        (c) => c.name === 'share_images',
+      ),
+    ).toBe(false);
+    old.close();
+
+    openDatabase(dbPath);
+
+    const row = loadLinkGrid()[0]!;
+    expect(row.shareImages).toBe(true);
+    expect(row.status).toBe('go');
+  });
+
+  it('is safe to run twice', () => {
+    const old = new DatabaseSync(dbPath);
+    old.exec(schemaWithoutShareImages());
+    old.close();
+
+    openDatabase(dbPath);
+    closeDatabase();
+
+    expect(() => openDatabase(dbPath)).not.toThrow();
   });
 });
