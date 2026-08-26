@@ -250,14 +250,18 @@ stand on their own.
 Per keyword × site, which is the grain `keyword_sites` already has:
 
 ```sql
-ALTER TABLE keyword_sites ADD COLUMN share_images INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE keyword_sites ADD COLUMN share_images INTEGER NOT NULL DEFAULT 1;
 ```
 
 All cells on = every site reuses one set. Some cells on = those reuse, the rest
 generate fresh. All off = today's behaviour. A "share on all" control on the
 keyword row sets the whole row at once, since that is the common case.
 
-Default is off. Existing keywords keep behaving exactly as they do now.
+Default is **on** — `DEFAULT 1`, and the migration backfills existing rows to 1.
+Sharing is the behaviour that should need no thought; generating fresh is the
+exception you opt into. Note this does change what existing keywords do: any
+keyword already `go` on several sites starts reusing images from its first run
+onward.
 
 ### Pipeline
 
