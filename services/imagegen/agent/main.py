@@ -19,7 +19,7 @@ import sys
 from contextlib import asynccontextmanager
 
 import websockets
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 
 from agent import watchdog
 from agent.api.ext_host import router as ext_host_router
@@ -122,10 +122,43 @@ app.include_router(flow_router)      # health, API-key gated
 app.include_router(ext_host_router)  # loopback only: Chrome fetches its own CRX
 
 
+@app.post("/api/ext/callback")
+async def ext_callback(request: Request) -> dict:
+    """How the extension delivers an API response.
+
+    Not a duplicate of the WebSocket: background.js posts results here and only
+    falls back to the socket if the POST fails, because a response delivered
+    over HTTP survives a WebSocket that dropped between request and reply.
+    Removing this does not break generation — it just makes every single
+    response take a failed fetch first.
+
+    Unauthenticated, like the extension's own CRX route, and for the same
+    reason: Chrome is calling from inside this container and cannot carry the
+    API key. What actually protects it is that a callback is only accepted for
+    a request id currently in flight, and those are server-generated UUIDs.
+    """
+    data = await request.json()
+    client = get_flow_client()
+    request_id = data.get("id")
+
+    if request_id and request_id in client._pending:
+        future = client._pending[request_id]
+        if not future.done():
+            future.set_result(data)
+        return {"ok": True}
+
+    logger.warning("callback for unknown request id %s", str(request_id)[:8])
+    return {"ok": False, "reason": "no matching pending request"}
+
+
 @app.get("/health")
 async def health() -> dict:
-    """Unauthenticated on purpose — the container healthcheck has no key."""
-    return {"ok": True}
+    """Unauthenticated on purpose — the container healthcheck has no key.
+
+    Deliberately says nothing about the Google session; that is behind the API
+    key at /flow/status. This answers only "is the process alive".
+    """
+    return {"ok": True, "watchdog": watchdog.state.as_dict()}
 
 
 @app.websocket("/ws")
