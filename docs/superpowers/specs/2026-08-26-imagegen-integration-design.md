@@ -208,6 +208,79 @@ roughly six hours, and surfacing the deadline is how a caller learns to
 download now rather than discovering a 403 tomorrow. The platform already
 downloads immediately.
 
+## Sharing article images across sites
+
+One keyword can be `go` on several sites, and today each of them generates its
+own four article images from the same prompts. That is four Google calls per
+site for near-identical output — the expensive, rate-limited part of the
+pipeline, spent on redundancy.
+
+### How
+
+`uploadImage()` returns a permanent path on the receiving site
+(`/uploads/recipes/<uuid>.webp`), and `SiteApiClient` already holds
+`this.domain`, so `https://<domain><path>` is a stable public URL with no
+expiry. That URL is the cache. There is no image store, no data directory, no
+pruning.
+
+The first site to run a keyword generates the four images, uploads them as it
+does now, and records the four absolute URLs against the keyword. Every later
+site downloads from those URLs and uploads its own copy, under its own random
+filename, into its own media library. No Google call.
+
+Each site still serves its own file. Nothing hotlinks.
+
+```sql
+CREATE TABLE IF NOT EXISTS keyword_images (
+  keyword_id        INTEGER PRIMARY KEY REFERENCES keywords (id) ON DELETE CASCADE,
+  feature_url       TEXT    NOT NULL,
+  top_shot_url      TEXT    NOT NULL,
+  texture_macro_url TEXT    NOT NULL,
+  before_after_url  TEXT    NOT NULL,
+  source_site_id    INTEGER REFERENCES sites (id) ON DELETE SET NULL,
+  created_at        TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+```
+
+One row per keyword. `source_site_id` is recorded for diagnosis only — the URLs
+stand on their own.
+
+### The toggle
+
+Per keyword × site, which is the grain `keyword_sites` already has:
+
+```sql
+ALTER TABLE keyword_sites ADD COLUMN share_images INTEGER NOT NULL DEFAULT 0;
+```
+
+All cells on = every site reuses one set. Some cells on = those reuse, the rest
+generate fresh. All off = today's behaviour. A "share on all" control on the
+keyword row sets the whole row at once, since that is the common case.
+
+Default is off. Existing keywords keep behaving exactly as they do now.
+
+### Pipeline
+
+`generateArticleImages` gains one branch:
+
+- **Sharing off for this link** — generate, upload, write nothing. Unchanged.
+- **Sharing on, no row yet** — generate, upload, record the four URLs.
+- **Sharing on, row present** — download each URL, upload to this site, done.
+
+If a stored URL fails to download — the source site is down, or someone deleted
+the file — fall back to generating, overwrite the row, and log it. A stale
+cache must never fail a run.
+
+`generatePinImage` is deliberately excluded and always generates. It is the
+Pinterest-facing asset and has to be fresh per site; it already carries the
+site domain and a random CTA in its prompt.
+
+### Note
+
+Reused article images are a duplicate-content signal across the network. Stated
+once, not argued: it is a deliberate trade for quota, and the Pinterest graphic
+— the one that actually drives traffic — stays unique per site.
+
 ## Memory
 
 `shm_size: "2gb"` is a cap on a tmpfs, not an allocation — worth stating
@@ -335,6 +408,10 @@ end-to-end. This cannot be automated — it is a human solving a Google login.
 4. The `/browser` proxy route and page in the platform.
 5. Settings default, Flow project ID field, `/flow/status` health check, nav
    entry.
+5a. Image sharing: `keyword_images`, `keyword_sites.share_images`, the grid
+   toggle, and the branch in `generateArticleImages`. Independent of the
+   imagegen work — it touches only the platform, so it can land before or
+   after the move without interacting with it.
 6. Deploy, sign in once through `/browser`.
 7. **Diff the outgoing request against the step 0 capture.** Only `seed`,
    `batchId`, `sessionId` and the randomised headers may differ. Then run one
