@@ -86,6 +86,22 @@ fi
 # Adding a second, 8-character password on top of that would be theatre: it was
 # only ever there because this port used to have its own public domain.
 
+# --- A bus for Chrome ---------------------------------------
+# Without one, Chrome logs a dbus ERROR line for every service it cannot find
+# -- power, screensaver, network monitor -- dozens per start and again on every
+# restart. The noise is harmless in itself; what it costs is the ability to see
+# a real failure in the log next to it.
+if [[ -S /run/dbus/system_bus_socket ]]; then
+    echo "imagegen: reusing the existing dbus socket"
+elif command -v dbus-daemon >/dev/null 2>&1; then
+    if dbus-daemon --config-file=/etc/dbus-1/imagegen.conf --fork; then
+        echo "imagegen: dbus started"
+    else
+        echo "imagegen: dbus did not start; Chrome will log about it, which is harmless"
+    fi
+fi
+export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/dbus/system_bus_socket"
+
 if [[ -d "$PROFILE_DIR/Default" ]]; then
     echo "imagegen: existing Chrome profile found - Google session should persist."
 else

@@ -67,8 +67,7 @@ export function registerBrowserProxy(app: FastifyInstance, options: BrowserProxy
    * covers these, so they inherit the session check for free.
    */
   const forward = async (request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply> => {
-    // "/browser" and "/browser/" both mean noVNC's own page.
-    const suffix = request.url.replace(/^\/browser\/?/, '');
+    const suffix = (request.url.split('?')[0] ?? '').replace(/^\/browser\/?/, '');
     const path = suffix === '' ? 'vnc.html' : suffix;
 
     try {
@@ -88,7 +87,17 @@ export function registerBrowserProxy(app: FastifyInstance, options: BrowserProxy
     }
   };
 
-  app.get('/browser', forward);
+  /**
+   * The trailing slash is load-bearing.
+   *
+   * vnc.html asks for its own assets with relative URLs — `app/styles/base.css`,
+   * `core/rfb.js`, and the `websockify` socket. Served at `/browser`, a browser
+   * resolves those against `/`, so every one of them lands on the platform's
+   * own routes and 404s: the page arrives unstyled, with broken images, and the
+   * socket never opens. Served at `/browser/` they resolve under this proxy,
+   * which is where they actually live.
+   */
+  app.get('/browser', async (_request, reply) => reply.redirect('/browser/', 301));
   app.get('/browser/*', forward);
 
   /* -- The WebSocket itself -----------------------------------------------

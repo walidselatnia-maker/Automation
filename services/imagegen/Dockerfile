@@ -20,6 +20,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         xvfb x11vnc \
         novnc websockify \
         supervisor \
+        dbus \
         procps \
     && rm -rf /var/lib/apt/lists/*
 
@@ -49,6 +50,7 @@ COPY pytest.ini /app/
 COPY docker/supervisord.conf /etc/supervisor/supervisord.conf
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY docker/pack-extension.sh /usr/local/bin/pack-extension.sh
+COPY docker/dbus.conf /etc/dbus-1/imagegen.conf
 RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/pack-extension.sh
 
 # ─── Pack the extension and install the Chrome policy ────────
@@ -76,8 +78,8 @@ RUN pip install --no-cache-dir pytest pytest-asyncio \
 # to work around that would be the wrong trade on a box holding a live Google
 # session.
 RUN useradd --create-home --shell /bin/bash flowkit \
-    && mkdir -p /data/chrome-profile /var/log/supervisor /run/shared \
-    && chown -R flowkit:flowkit /app /data /var/log/supervisor /run/shared \
+    && mkdir -p /data/chrome-profile /var/log/supervisor /run/shared /run/dbus \
+    && chown -R flowkit:flowkit /app /data /var/log/supervisor /run/shared /run/dbus \
     && chmod -R a+rX /etc/opt/chrome/policies
 
 USER flowkit
@@ -91,11 +93,10 @@ ENV FLOW_AGENT_DIR=/data \
 
 EXPOSE 8100 6080
 
-# 8100 is the API and setup page; 6080 is noVNC, which needs its own Dokploy
-# domain for the one-time Google sign-in. Raw VNC (5900) and the extension
-# WebSocket (9222) stay bound to loopback and are never reachable from outside.
-# noVNC is password-protected — see entrypoint.sh — because it displays a
-# signed-in Google session.
+# 8100 is the API; 6080 is noVNC. Neither is published to the host or given a
+# domain: both are reachable only from the platform container across an
+# internal Docker network. Raw VNC (5900) and the extension WebSocket (9222)
+# stay bound to loopback and are not reachable even from there.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
     CMD wget -qO- http://127.0.0.1:8100/health || exit 1
 

@@ -32,6 +32,22 @@ logger = logging.getLogger(__name__)
 # this long is not a transient reconnect — it means Chrome itself is stuck.
 DISCONNECT_GRACE_S = int(os.environ.get("WATCHDOG_DISCONNECT_GRACE", "120"))
 
+# ...but only once the extension has connected at least once. Before that,
+# Chrome is still installing it: a force-installed extension arrives through
+# enterprise policy, and Chrome fetches the update manifest on its own delayed,
+# backing-off schedule rather than at startup.
+#
+# Restarting during that window is actively harmful. It throws away the
+# progress Chrome had made and starts the delay over, so a 120s grace on a
+# fresh profile produces a container that restarts Chrome forever and never
+# finishes installing the extension. That is a loop this watchdog caused.
+FIRST_CONNECT_GRACE_S = int(os.environ.get("WATCHDOG_FIRST_CONNECT_GRACE", "600"))
+
+# And once that longer grace expires, a restart is worth exactly one try. If
+# the extension still has not appeared, it is not installed, and no number of
+# restarts installs it.
+MAX_RESTARTS_BEFORE_FIRST_CONNECT = 1
+
 # Consecutive failures before the breaker trips. Low on purpose: an unattended
 # service that fails 500 times overnight is worse than one that stops at 5 and
 # says why.
@@ -59,6 +75,7 @@ class WatchdogState:
     consecutive_failures: int = 0
     chrome_restarts: list[float] = field(default_factory=list)
     disconnected_since: Optional[float] = None
+    ever_connected: bool = False
 
     def as_dict(self) -> dict:
         return {
@@ -67,6 +84,7 @@ class WatchdogState:
             "needs_human": self.needs_human,
             "consecutive_failures": self.consecutive_failures,
             "chrome_restarts_last_hour": len(self.chrome_restarts),
+            "ever_connected": self.ever_connected,
         }
 
 
@@ -146,8 +164,9 @@ async def _check_extension(controller) -> bool:
     """Restart Chrome if the extension has been gone too long. True if unhealthy."""
     if get_flow_client().connected:
         if state.disconnected_since is not None:
-            logger.info("Extension reconnected")
+            logger.info("Extension connected")
         state.disconnected_since = None
+        state.ever_connected = True
         return False
 
     now = time.monotonic()
@@ -156,8 +175,22 @@ async def _check_extension(controller) -> bool:
         return False
 
     gap = now - state.disconnected_since
-    if gap < DISCONNECT_GRACE_S:
+
+    # A fresh container is a different situation from a dropped connection.
+    grace = DISCONNECT_GRACE_S if state.ever_connected else FIRST_CONNECT_GRACE_S
+    if gap < grace:
         return False
+
+    if not state.ever_connected and len(state.chrome_restarts) >= MAX_RESTARTS_BEFORE_FIRST_CONNECT:
+        state.healthy = False
+        state.needs_human = True
+        state.reason = (
+            f"The extension has never connected, {int(gap)}s after Chrome started. "
+            "That means it is not installed, and restarting will not install it. "
+            "Open the Browser page and check chrome://extensions."
+        )
+        controller.pause("extension not installed")
+        return True
 
     if _restarts_in_last_hour() >= MAX_RESTARTS_PER_HOUR:
         state.healthy = False
@@ -170,7 +203,11 @@ async def _check_extension(controller) -> bool:
         return True
 
     state.healthy = False
-    state.reason = f"Browser disconnected for {int(gap)}s — restarting Chrome."
+    state.reason = (
+        f"Extension has not connected in {int(gap)}s — restarting Chrome (one attempt)."
+        if not state.ever_connected
+        else f"Browser disconnected for {int(gap)}s — restarting Chrome."
+    )
     if restart_chrome():
         state.chrome_restarts.append(now)
     state.disconnected_since = now  # restart grace before trying again

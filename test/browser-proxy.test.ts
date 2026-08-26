@@ -153,11 +153,28 @@ describe('browser proxy', () => {
   });
 
   describe('static assets', () => {
-    it('serves noVNC page for the bare path', async () => {
+    it('redirects the bare path so relative assets resolve under the proxy', async () => {
+      // vnc.html asks for `app/styles/base.css` and `core/rfb.js` relatively.
+      // Without the trailing slash a browser resolves those against `/`, and
+      // the page arrives unstyled with a socket that never opens.
       const response = await app.inject({ method: 'GET', url: '/browser' });
+
+      expect(response.statusCode).toBe(301);
+      expect(response.headers.location).toBe('/browser/');
+    });
+
+    it('serves the noVNC page at the slashed path', async () => {
+      const response = await app.inject({ method: 'GET', url: '/browser/' });
 
       expect(response.statusCode).toBe(200);
       expect(response.body).toContain('noVNC');
+      expect(response.body).toContain('/vnc.html');
+    });
+
+    it('forwards a query string without treating it as a path', async () => {
+      const response = await app.inject({ method: 'GET', url: '/browser/?autoconnect=1' });
+
+      expect(response.statusCode).toBe(200);
       expect(response.body).toContain('/vnc.html');
     });
 
@@ -176,7 +193,7 @@ describe('browser proxy', () => {
         secret: SECRET,
       });
 
-      const response = await orphan.inject({ method: 'GET', url: '/browser' });
+      const response = await orphan.inject({ method: 'GET', url: '/browser/' });
 
       // A 502 with an explanation beats a stack trace: the usual cause is
       // simply that Chrome has not finished starting.
