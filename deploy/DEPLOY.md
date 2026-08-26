@@ -13,7 +13,7 @@ Two containers come up:
 
 | Service | What it is | Reachable from outside |
 |---|---|---|
-| `platform` | pipeline, dashboard, scheduler | **yes** — attach your domain here, container port 3000 |
+| `platform` | pipeline, dashboard, scheduler | **yes** — attach your domain here, container port 8080 |
 | `imagegen` | Chrome + the Google Flow extension + an image job queue | **no** — no published port, no domain |
 
 Attach your domain to `platform` only. `imagegen` sits on an internal Docker
@@ -59,7 +59,7 @@ variables and redeploy.
 | `FLOW_PROJECT_ID` | — | Optional here; easier to set in Settings → Images |
 | `MAX_CONCURRENT_REQUESTS` | `2` | Parallel image generations. Google's own ceiling is 5 |
 | `API_COOLDOWN` | `10` | Seconds between calls to Google |
-| `PORT` | `3000` | Platform listening port |
+| `PORT` | `8080` | Platform listening port |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 
 ### The volumes are the things that matter
@@ -99,7 +99,7 @@ public URL.
 - Only `/healthz` and `/static/*` are reachable without signing in.
 - `/healthz` returns status only — never credentials.
 
-Let your platform terminate TLS. Do not expose port 3000 directly over plain
+Let your platform terminate TLS. Do not expose port 8080 directly over plain
 HTTP on a public address.
 
 The `imagegen` container is not password-protected itself, and does not need to

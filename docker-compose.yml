@@ -4,19 +4,18 @@
 #   imagegen   Chrome + the Flow extension + a small job queue (Python)
 #
 # Only `platform` is ever reachable from outside. Attach your domain to it in
-# Dokploy, service `platform`, container port 3000.
+# Dokploy, service `platform`, container port 8080.
 
 services:
   platform:
     build: .
     restart: unless-stopped
 
-    # No `ports:` mapping on purpose. Dokploy's proxy reaches the container
-    # over the Docker network and routes the domain to the port below, so
-    # publishing to the host adds nothing and collides with anything already
-    # listening there.
-    expose:
-      - "3000"
+    ports:
+      # Your platform's reverse proxy terminates TLS and forwards here. Safe to
+      # publish because the UI requires a password; also what makes a plain
+      # `docker compose up -d` reachable at http://localhost:8080.
+      - "8080:8080"
 
     environment:
       # `- NAME` with no value is pass-through: whatever the deployment
@@ -38,18 +37,29 @@ services:
       # API keys at rest; changing it makes existing stored secrets unreadable.
       - ENCRYPTION_KEY
 
-      # Shared with imagegen below — the two must match.
+      # Shared with imagegen below. Both containers read it, so it is set once
+      # here rather than typed into Settings as well.
       - IMAGE_API_KEY
 
-      - PORT=3000
+      # Optional here; Settings -> Images is the friendlier place for it.
+      - FLOW_PROJECT_ID
+
+      - PORT=8080
       - HOST=0.0.0.0
-      - DATA_DIR=/data
-      - IMAGE_BASE_URL=http://imagegen:8100
+
+      # Must point inside the mounted volume below. The default is relative to
+      # /app, which is image filesystem -- the database would be recreated
+      # empty on every redeploy.
+      - DB_PATH=/app/data/platform.db
+
+      # Where /browser proxies to. The image service's own URL and key are
+      # settings, not environment: they live in the database with the rest of
+      # the configuration.
       - IMAGEGEN_VNC_URL=http://imagegen:6080
 
     volumes:
       # The database, the generated admin password, and the encryption key.
-      - platform-data:/data
+      - platform-data:/app/data
 
     networks:
       - web       # Dokploy's proxy reaches the domain through this
@@ -59,7 +69,7 @@ services:
       - imagegen
 
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/healthz"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
       interval: 30s
       timeout: 5s
       retries: 3

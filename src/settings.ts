@@ -69,7 +69,7 @@ export const SETTING_SPECS: SettingSpec[] = [
     label: 'Image service URL',
     group: 'images',
     secret: false,
-    default: 'http://imagegen:8100',
+    default: process.env.IMAGE_BASE_URL ?? 'http://imagegen:8100',
     help:
       'Base URL of the image service. The default reaches the imagegen ' +
       'container over the internal Docker network; change it only to point at ' +
@@ -80,16 +80,19 @@ export const SETTING_SPECS: SettingSpec[] = [
     label: 'Image service API key',
     group: 'images',
     secret: true,
-    default: '',
+    // The imagegen container reads the same value from its environment, so
+    // defaulting to it here means setting it once at deploy time rather than
+    // typing the same secret into two places. Still overridable in the UI.
+    default: process.env.IMAGE_API_KEY ?? '',
     type: 'password',
-    help: 'Sent as the X-API-Key header. Must match IMAGE_API_KEY in the deployment environment.',
+    help: 'Sent as the X-API-Key header. Defaults to IMAGE_API_KEY from the environment.',
   },
   {
     key: 'flow_project_id',
     label: 'Flow project ID',
     group: 'images',
     secret: false,
-    default: '',
+    default: process.env.FLOW_PROJECT_ID ?? '',
     help:
       'A real project id from the Google Flow UI. It travels to Google with ' +
       'every generation as clientContext.projectId, so a made-up value makes ' +
