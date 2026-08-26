@@ -2,7 +2,8 @@
 
 Self-hosted article generation and publishing for a set of recipe websites.
 Replaces three n8n workflows — Master Orchestrator, Article generator, and
-Daily Reset — with one application.
+Daily Reset — with one application, and folds in the image generator that used
+to be a second system.
 
 Each person runs their own copy on their own server with their own sites.
 Access is one shared password — no user accounts, no roles, no shared state
@@ -19,26 +20,44 @@ repository, or run:
 docker compose up -d
 ```
 
-No environment variables required. On first boot the app generates its own
-encryption key and admin password into the data volume.
+Two containers come up:
+
+| | |
+|---|---|
+| `platform` | the pipeline, dashboard and scheduler. The only one with a domain. |
+| `imagegen` | Chrome, the Google Flow extension, and an image job queue. No published port, no domain — the platform reaches it over an internal Docker network. |
+
+Set **`IMAGE_API_KEY`** to any long random string (`openssl rand -hex 32`); both
+containers read it. Everything else is optional — on first boot the platform
+generates its own encryption key and admin password into its data volume.
 
 **The admin password is printed in the container logs** — search for
 `ADMIN PASSWORD`. Set `AUTH_PASSWORD` to choose your own.
 
-> The `platform-data` volume holds the database, encryption key and password.
-> Back it up; losing it means re-entering every credential.
+> Two volumes matter.
+>
+> `platform-data` holds the database, encryption key and admin password.
+> `imagegen-data` holds the **signed-in Google session**. Losing that one means
+> signing in to Google again by hand; losing the other means re-entering every
+> credential. Back up both.
 
 See [deploy/DEPLOY.md](deploy/DEPLOY.md) for the full guide.
 
 ## First-time setup
 
-1. **Settings** — LLM base URL, image service URL and key, timezone.
+1. **Settings** — LLM base URL, timezone, and under Images the **API key**
+   (same value as `IMAGE_API_KEY`) and the **Flow project ID**, which must be a
+   real project id from the Google Flow UI. The image service URL already
+   points at the `imagegen` container.
 2. **Settings → LLM API keys** — add each key one at a time. They share the base
    URL; keys exist to spread rate limits, not to pick models.
 3. **Sites** — each site carries its **own** Site API token and Buffer token, a
    daily target, and a minimum gap expressed in minutes, hours or days.
 4. **Keywords → Download template** — a CSV with a column per site, then import it.
-5. **Settings → General** — enable automation, once **Run once now** succeeds.
+5. **Browser** — sign in to Google once. This is a live Chrome session inside
+   the dashboard; the session survives redeploys as long as `imagegen-data`
+   does. The dashboard warns you here whenever it needs doing again.
+6. **Settings → General** — enable automation, once **Run once now** succeeds.
 
 ## Migrating from Google Sheets
 

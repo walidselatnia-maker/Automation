@@ -1,7 +1,7 @@
 # Folding FlowKit into the platform as an image service
 
 **Date:** 2026-08-26
-**Status:** Approved for planning
+**Status:** Implemented on `imagegen-integration`
 
 ## Why
 

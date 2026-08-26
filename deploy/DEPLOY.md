@@ -1,8 +1,7 @@
 # Deploying
 
 Built for Docker platforms — Coolify, Dokploy, Portainer, CapRover, Komodo, or
-plain `docker compose`. No SSH, no setup script, no environment variables
-required.
+plain `docker compose`. No SSH and no setup script.
 
 ---
 
@@ -10,9 +9,27 @@ required.
 
 Point your platform at the repository. It reads `docker-compose.yml` and runs.
 
-That is the whole procedure. On first boot the app generates its own
-encryption key and admin password into the data volume, so there is nothing to
-create by hand.
+Two containers come up:
+
+| Service | What it is | Reachable from outside |
+|---|---|---|
+| `platform` | pipeline, dashboard, scheduler | **yes** — attach your domain here, container port 3000 |
+| `imagegen` | Chrome + the Google Flow extension + an image job queue | **no** — no published port, no domain |
+
+Attach your domain to `platform` only. `imagegen` sits on an internal Docker
+network with no route in from anywhere; the platform is the only thing that can
+reach it, and it proxies the parts you need behind the same login.
+
+Set one environment variable before the first deploy:
+
+```
+IMAGE_API_KEY=<a long random string>
+```
+
+Generate one with `openssl rand -hex 32`. Both containers read it — it is what
+stops anything else on the Docker network spending your Flow credits.
+
+Everything else generates itself on first boot.
 
 ### Get the admin password
 
@@ -34,20 +51,40 @@ variables and redeploy.
 
 ### Environment variables
 
-All optional.
-
 | Variable | Default | Purpose |
 |---|---|---|
+| `IMAGE_API_KEY` | — | **Required.** Shared secret between the two containers |
 | `AUTH_PASSWORD` | generated | UI password |
 | `ENCRYPTION_KEY` | generated | 64 hex chars; encrypts stored credentials |
-| `DB_PATH` | `/app/data/platform.db` | Database location |
-| `PORT` | `8080` | Listening port |
+| `FLOW_PROJECT_ID` | — | Optional here; easier to set in Settings → Images |
+| `MAX_CONCURRENT_REQUESTS` | `2` | Parallel image generations. Google's own ceiling is 5 |
+| `API_COOLDOWN` | `10` | Seconds between calls to Google |
+| `PORT` | `3000` | Platform listening port |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 
-### The volume is the only thing that matters
+### The volumes are the things that matter
 
 `platform-data` holds the database, the encryption key and the admin password.
-Back it up. Deleting it means re-entering every credential.
+Deleting it means re-entering every credential.
+
+`imagegen-data` holds the **signed-in Google session** and the job queue.
+Deleting it means signing in to Google again by hand through the Browser page.
+
+Back up both. The Google session is the slower one to replace.
+
+### The Browser page
+
+`imagegen` runs a real Chrome under a virtual display, because the Google Flow
+API will not accept a request that was not made by a genuine, reCAPTCHA-scored
+browser session. There is no API key that substitutes for it.
+
+The dashboard's **Browser** page is that Chrome, live, behind the same login as
+everything else. Use it to sign in to Google the first time, and again whenever
+the dashboard warns that the session has lapsed. Refreshing the tab, checking
+`chrome://extensions` and switching Google accounts all work there.
+
+It was previously a second public domain guarded by an eight-character VNC
+password. It is not exposed at all now.
 
 ---
 
@@ -62,8 +99,14 @@ public URL.
 - Only `/healthz` and `/static/*` are reachable without signing in.
 - `/healthz` returns status only — never credentials.
 
-Let your platform terminate TLS. Do not expose port 8080 directly over plain
+Let your platform terminate TLS. Do not expose port 3000 directly over plain
 HTTP on a public address.
+
+The `imagegen` container is not password-protected itself, and does not need to
+be: it has no route in from outside. It lives on a Docker network declared
+`internal: true`, so the only client that can open a socket to it is the
+platform, which checks the session cookie on every request it serves. Give it a
+domain and you undo that — do not.
 
 ---
 
@@ -74,7 +117,13 @@ HTTP on a public address.
 - **LLM** — base URL, normally `https://ollama.com`
 - **LLM API keys** — add each key one at a time. Label plus key; nothing else.
   They all share the base URL above.
-- **Images** — image service URL (default `https://f.longlivo.com`) and API key
+- **Images** — the API key (same value as `IMAGE_API_KEY`) and the **Flow
+  project ID**. The service URL already points at the `imagegen` container.
+
+  The Flow project ID must be a **real project id from the Google Flow UI**. It
+  is sent to Google with every generation as `clientContext.projectId`; a made
+  up value makes each request look unlike one the Flow UI would send. Open a
+  project in Flow and take the id from the URL.
 - **General** — timezone
 - **Buffer / Telegram** — on/off switches
 
@@ -178,6 +227,10 @@ database, and mounts `./prompts` read-write for editing without a rebuild.
 | `HTTP 401` on fetch-categories | Wrong Site API token for that site |
 | Nothing publishes | Automation off, or no eligible pair — see **Decisions** |
 | Only one article, then stops | Expected: daily target or interval reached |
+| "browser is not signed in to Google" | Open **Browser** and sign in. The session lapsed |
+| "Image service unreachable" | `imagegen` is restarting. Chrome takes about a minute |
+| Images fail with no useful error | Check credits on the Flow account, and that the Flow project ID is real |
+| Browser page is blank | Chrome has not finished starting; reload after a minute |
 
 **Decisions** answers "why did nothing happen?" — every site checked and every
 keyword skipped, with the reason recorded when the choice was made.
