@@ -5,7 +5,33 @@ import { SiteApiClient } from '../integrations/site-api.js';
 import { TelegramClient } from '../integrations/telegram.js';
 import { chat, type ChatResult } from '../llm/client.js';
 import { loadPrompt, PROMPT_MODELS } from './prompts.js';
-import { siteSecrets, type SiteRow, type KeywordRow } from '../db/repos.js';
+import {
+  clearSharedImages,
+  getSharedImages,
+  saveSharedImages,
+  siteSecrets,
+  type SharedImageUrls,
+  type SiteRow,
+  type KeywordRow,
+} from '../db/repos.js';
+
+/**
+ * Where a keyword's already-generated article images are recorded.
+ *
+ * Behind an interface for the same reason the API clients are: a step should
+ * be testable without a database standing behind it.
+ */
+export interface SharedImageStore {
+  get(keywordId: number): SharedImageUrls | undefined;
+  save(keywordId: number, sourceSiteId: number, urls: SharedImageUrls): void;
+  clear(keywordId: number): void;
+}
+
+const databaseImageStore: SharedImageStore = {
+  get: getSharedImages,
+  save: saveSharedImages,
+  clear: clearSharedImages,
+};
 
 /**
  * Everything a pipeline step is allowed to touch.
@@ -21,6 +47,10 @@ export class PipelineContext {
   readonly encryptionKey: Buffer;
   readonly allowResume: boolean;
 
+  /** Whether this keyword-site link reuses images rather than generating them. */
+  readonly shareImages: boolean;
+  readonly sharedImages: SharedImageStore;
+
   readonly siteApi: SiteApiClient;
   readonly images: ImageClient;
   readonly buffer: BufferClient;
@@ -33,6 +63,8 @@ export class PipelineContext {
     settings: Settings;
     encryptionKey: Buffer;
     allowResume?: boolean;
+    shareImages?: boolean;
+    sharedImages?: SharedImageStore;
   }) {
     this.runId = init.runId;
     this.site = init.site;
@@ -40,6 +72,8 @@ export class PipelineContext {
     this.settings = init.settings;
     this.encryptionKey = init.encryptionKey;
     this.allowResume = init.allowResume ?? true;
+    this.shareImages = init.shareImages ?? false;
+    this.sharedImages = init.sharedImages ?? databaseImageStore;
 
     // Credentials are per site: each domain has its own publishing token and
     // its own Buffer account.

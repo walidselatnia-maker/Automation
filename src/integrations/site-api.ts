@@ -76,6 +76,19 @@ export class SiteApiClient {
     return `https://${host}${path}`;
   }
 
+  /**
+   * The public URL of something this site is serving.
+   *
+   * `uploadImage` returns a site-relative path; prefixed with the domain it
+   * becomes a permanent link any other site can download from — which is what
+   * lets one keyword's images be shared across sites without an image cache.
+   * An already-absolute URL passes through unchanged, so callers do not have
+   * to know which kind they are holding.
+   */
+  absoluteUrl(path: string): string {
+    return /^https?:\/\//i.test(path) ? path : this.url(path);
+  }
+
   private authHeaders(): Record<string, string> {
     return { Authorization: `Bearer ${this.apiToken}` };
   }

@@ -71,14 +71,38 @@ CREATE INDEX IF NOT EXISTS idx_keywords_status ON keywords (status);
 -- state is rejected by the database.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS keyword_sites (
-  keyword_id  INTEGER NOT NULL REFERENCES keywords (id) ON DELETE CASCADE,
-  site_id     INTEGER NOT NULL REFERENCES sites (id)    ON DELETE CASCADE,
-  status      TEXT    NOT NULL DEFAULT 'no'
-                      CHECK (status IN ('go', 'done', 'no')),
-  updated_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+  keyword_id   INTEGER NOT NULL REFERENCES keywords (id) ON DELETE CASCADE,
+  site_id      INTEGER NOT NULL REFERENCES sites (id)    ON DELETE CASCADE,
+  status       TEXT    NOT NULL DEFAULT 'no'
+                       CHECK (status IN ('go', 'done', 'no')),
+  -- On by default: reusing one image set across a keyword's sites is the
+  -- behaviour that should need no thought. Generating fresh is the exception.
+  share_images INTEGER NOT NULL DEFAULT 1 CHECK (share_images IN (0, 1)),
+  updated_at   TEXT    NOT NULL DEFAULT (datetime('now')),
   PRIMARY KEY (keyword_id, site_id)
 );
 CREATE INDEX IF NOT EXISTS idx_ks_site_status ON keyword_sites (site_id, status);
+
+-- ---------------------------------------------------------------------------
+-- Article images shared between the sites that publish one keyword.
+--
+-- The site API returns a permanent path, so `https://<domain><path>` is a
+-- stable public URL. Storing the URL means there is no image cache to manage,
+-- expire, or back up: the first site to publish becomes the source, and every
+-- later site downloads from it and uploads its own copy.
+--
+-- The Pinterest graphic is deliberately absent. It is the asset that has to be
+-- unique per site, so it is generated every time.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS keyword_images (
+  keyword_id        INTEGER PRIMARY KEY REFERENCES keywords (id) ON DELETE CASCADE,
+  feature_url       TEXT    NOT NULL,
+  top_shot_url      TEXT    NOT NULL,
+  texture_macro_url TEXT    NOT NULL,
+  before_after_url  TEXT    NOT NULL,
+  source_site_id    INTEGER REFERENCES sites (id) ON DELETE SET NULL,
+  created_at        TEXT    NOT NULL DEFAULT (datetime('now'))
+);
 
 -- ---------------------------------------------------------------------------
 -- Runs: one publishing attempt. The source of truth for every derived counter.

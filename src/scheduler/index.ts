@@ -3,6 +3,7 @@ import { get, run } from '../db/index.js';
 import {
   createRun,
   getKeyword,
+  getLinkShare,
   getSite,
   loadKeywordViews,
   loadLinkViews,
@@ -135,7 +136,14 @@ export async function tick(settings: Settings, encryptionKey: Buffer): Promise<T
     const runId = createRun(task.keywordId, task.siteId);
     attachRunToLock(runId);
 
-    const ctx = new PipelineContext({ runId, site, keyword, settings, encryptionKey });
+    const ctx = new PipelineContext({
+      runId,
+      site,
+      keyword,
+      settings,
+      encryptionKey,
+      shareImages: getLinkShare(keyword.id, site.id),
+    });
     const outcome = await executePipeline(ctx);
 
     return {
@@ -181,7 +189,14 @@ export async function resumeRun(
     attachRunToLock(runId);
 
     log.info(`resuming run ${runId}`);
-    const ctx = new PipelineContext({ runId, site, keyword, settings, encryptionKey });
+    const ctx = new PipelineContext({
+      runId,
+      site,
+      keyword,
+      settings,
+      encryptionKey,
+      shareImages: getLinkShare(keyword.id, site.id),
+    });
     const outcome = await executePipeline(ctx);
 
     return {

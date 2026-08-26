@@ -266,6 +266,123 @@ export const getLinksForKeyword = (keywordId: number) =>
     keywordId,
   );
 
+/**
+ * The grid the keywords page renders: status and image sharing for every pair.
+ *
+ * Separate from loadLinkViews on purpose. That one feeds selectTask, whose
+ * input type stays as small as the decision it makes — sharing has no bearing
+ * on whether a keyword may run.
+ */
+export const loadLinkGrid = (): {
+  keywordId: number;
+  siteId: number;
+  status: 'go' | 'done' | 'no';
+  shareImages: boolean;
+}[] =>
+  all<{ keyword_id: number; site_id: number; status: 'go' | 'done' | 'no'; share_images: number }>(
+    'SELECT keyword_id, site_id, status, share_images FROM keyword_sites',
+  ).map((r) => ({
+    keywordId: r.keyword_id,
+    siteId: r.site_id,
+    status: r.status,
+    shareImages: r.share_images === 1,
+  }));
+
+export const getLinkShare = (keywordId: number, siteId: number): boolean =>
+  get<{ share_images: number }>(
+    'SELECT share_images FROM keyword_sites WHERE keyword_id = ? AND site_id = ?',
+    keywordId,
+    siteId,
+  )?.share_images === 1;
+
+export const setLinkShareImages = (keywordId: number, siteId: number, share: boolean): void => {
+  run(
+    `INSERT INTO keyword_sites (keyword_id, site_id, status, share_images)
+     VALUES (?, ?, 'no', ?)
+     ON CONFLICT (keyword_id, site_id)
+       DO UPDATE SET share_images = excluded.share_images, updated_at = datetime('now')`,
+    keywordId,
+    siteId,
+    share ? 1 : 0,
+  );
+};
+
+/** The "share all" control: one keyword, every site it is linked to. */
+export const setKeywordShareImages = (keywordId: number, share: boolean): void => {
+  run(
+    `UPDATE keyword_sites SET share_images = ?, updated_at = datetime('now')
+      WHERE keyword_id = ?`,
+    share ? 1 : 0,
+    keywordId,
+  );
+};
+
+/* =========================================================================
+ * Shared article images
+ *
+ * One row per keyword, holding the public URL of each of the four article
+ * images. The first site to publish a keyword writes it; every later site
+ * reads it and copies the files into its own media library.
+ * ====================================================================== */
+
+export interface SharedImageUrls {
+  feature: string;
+  topShot: string;
+  textureMacro: string;
+  beforeAfter: string;
+}
+
+export const getSharedImages = (keywordId: number): SharedImageUrls | undefined => {
+  const row = get<{
+    feature_url: string;
+    top_shot_url: string;
+    texture_macro_url: string;
+    before_after_url: string;
+  }>(
+    `SELECT feature_url, top_shot_url, texture_macro_url, before_after_url
+       FROM keyword_images WHERE keyword_id = ?`,
+    keywordId,
+  );
+
+  return row
+    ? {
+        feature: row.feature_url,
+        topShot: row.top_shot_url,
+        textureMacro: row.texture_macro_url,
+        beforeAfter: row.before_after_url,
+      }
+    : undefined;
+};
+
+export const saveSharedImages = (
+  keywordId: number,
+  sourceSiteId: number,
+  urls: SharedImageUrls,
+): void => {
+  run(
+    `INSERT INTO keyword_images
+       (keyword_id, feature_url, top_shot_url, texture_macro_url, before_after_url, source_site_id)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT (keyword_id) DO UPDATE SET
+       feature_url       = excluded.feature_url,
+       top_shot_url      = excluded.top_shot_url,
+       texture_macro_url = excluded.texture_macro_url,
+       before_after_url  = excluded.before_after_url,
+       source_site_id    = excluded.source_site_id,
+       created_at        = datetime('now')`,
+    keywordId,
+    urls.feature,
+    urls.topShot,
+    urls.textureMacro,
+    urls.beforeAfter,
+    sourceSiteId,
+  );
+};
+
+export const clearSharedImages = (keywordId: number): void => {
+  run('DELETE FROM keyword_images WHERE keyword_id = ?', keywordId);
+};
+
 /* =========================================================================
  * Runs and steps
  * ====================================================================== */
