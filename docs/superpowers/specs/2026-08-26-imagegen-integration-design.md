@@ -115,6 +115,45 @@ to `http://imagegen:8100`.
   properly, and nothing will call them once the dashboard is gone.
 - A `GET /health`, unauthenticated, for the container healthcheck
 
+### Frozen surface — the request must stay UI-shaped
+
+Everything Google sees is byte-for-byte modelled on a captured request from
+Flow's own UI, and that is deliberate: it is what keeps the account out of the
+limited path. **None of it gets refactored, tidied, or "simplified" during the
+strip.** Moved between files if a file is deleted, yes. Changed, no.
+
+The frozen path:
+
+| File | What it fixes in place |
+|---|---|
+| `agent/services/flow_client.py` | `_image_client_context()` (no `userPaygateTier`, key order, `tool: "PINHOLE"`, `sessionId` as `";<epoch_ms>"`), the batch wrapper `clientContext` + `mediaGenerationContext.batchId` + `useNewMedia` + `requests[]` with the context repeated inside each item, the random `seed`, `_build_url()`, and `_resolve_image_model()` defaulting to `NARWHAL` |
+| `agent/services/headers.py` | The full randomised header set — `sec-ch-ua*`, `x-browser-validation`, `x-browser-copyright`, `x-client-data`, `priority`, `origin`/`referer` |
+| `agent/config.py` | `USER_AGENTS`, `CHROME_VERSIONS`, `BROWSER_VALIDATIONS`, `CLIENT_DATA`, `ENDPOINTS`, `GOOGLE_API_KEY` |
+| `agent/models.json` | The `image_models` half. The `video_models` half can go. |
+| `extension/` | Unchanged entirely — token capture, `grecaptcha.enterprise.execute()`, and the recaptcha-token walk over `clientContext` and `requests[]` |
+
+A verification step is therefore part of the build: capture one
+`batchGenerateImages` body before the strip and one after, and diff them. They
+must differ only in `seed`, `batchId`, `sessionId`, and the randomised headers.
+
+### Bug found: `projectId` is currently a fake
+
+`clientContext.projectId` is sent to Google on every generation, and the worker
+takes it straight from the **local** SQLite project row
+(`processor.py:322` → `generate_images(project_id=pid)`). For `/v1` calls that
+value is `_API_PROJECT_ID` — the hardcoded `00000000-0000-4000-8000-0000000a9100`
+invented so the local schema had a row to hang a scene off.
+
+So every image the platform generates today announces a project id that does
+not exist on Google's side. That is precisely the kind of deviation from UI
+behaviour this section exists to prevent.
+
+The fix falls out of the redesign: with the local project table gone, there is
+nothing to take the value from, so it becomes explicit configuration —
+`FLOW_PROJECT_ID`, a real Flow project id, set in the platform's Settings and
+passed through. Optionally per-site later, since the KEYS sheet already tracked
+one per domain; a single shared value is enough to start.
+
 ### What is deleted
 
 - **ffmpeg** and the `anthropic` dependency
@@ -123,7 +162,11 @@ to `http://imagegen:8100`.
   `active_project.py`, `models.py`, `setup.py`, `requests.py`
 - `agent/services/`: `suno.py`, `post_process.py`, `scene_chain.py`,
   `video_reviewer.py`, `tts.py`
-- `agent/materials.py`, `agent/models/`, `agent/sdk/`
+- `agent/materials.py`, `agent/sdk/`
+- `agent/models/` except `request.py` and `enums.py` — the Pydantic models for
+  character, material, project, review, scene, tts and video
+- The `video_models` half of `agent/models.json`. `image_models` stays: it is
+  part of the frozen surface.
 - `dashboard/`, `skills/`, `tools/`, `scripts/` — FlowKit's own UI and
   tooling. The platform's dashboard replaces the first; the rest served a
   standalone project that no longer exists.
@@ -234,7 +277,9 @@ Small, and mostly configuration:
 
 - `ImageClient` — unchanged.
 - Settings — the image base URL defaults to `http://imagegen:8100`. Still
-  editable, so pointing at an external instance stays possible.
+  editable, so pointing at an external instance stays possible. Plus a new
+  **Flow project ID** field, required, replacing the synthetic UUID described
+  above. `problemsFor()` flags it when empty.
 - `problemsFor()` in `src/web/server.ts` — add a warning when `/flow/status`
   reports the extension is not connected, linking to `/browser`. That is the
   "you need to sign into Google again" signal, surfaced where the other
@@ -279,11 +324,19 @@ end-to-end. This cannot be automated — it is a human solving a Google login.
 
 ## Build order
 
+0. Capture a `batchGenerateImages` request body from the current deployment,
+   before touching anything. It is the reference for the diff in step 7.
 1. Vendor and strip FlowKit into `services/imagegen/`; replace the schema with
-   `job` and rewrite `/v1` against it.
+   `job` and rewrite `/v1` against it, threading `FLOW_PROJECT_ID` through to
+   `clientContext.projectId`.
 2. Chrome memory flags; drop `shm_size`.
 3. Root `docker-compose.yml` with both services and both networks; remove the
    VNC password.
 4. The `/browser` proxy route and page in the platform.
-5. Settings default, `/status` health check, nav entry.
-6. Deploy, sign in once, run one article end-to-end.
+5. Settings default, Flow project ID field, `/flow/status` health check, nav
+   entry.
+6. Deploy, sign in once through `/browser`.
+7. **Diff the outgoing request against the step 0 capture.** Only `seed`,
+   `batchId`, `sessionId` and the randomised headers may differ. Then run one
+   article end-to-end.
+8. `--disable-gpu` on its own, verified separately, or not at all.
