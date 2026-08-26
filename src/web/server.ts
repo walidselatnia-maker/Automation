@@ -413,8 +413,7 @@ export function buildServer(
   app.get('/keywords/template.csv', async (_request, reply) => {
     const domains = listSites().map((s) => s.domain);
     const headers = [
-      'seed_keyword', 'spy_title', 'spy_description', 'spy_image_url',
-      'spy_article_url', 'spy_pin_image', 'annotation', 'status', ...domains,
+      'seed_keyword', 'spy_title', 'spy_description', 'annotation', 'status', ...domains,
     ];
 
     const example = (
@@ -423,7 +422,7 @@ export function buildServer(
       status: string,
       per: (i: number) => string,
     ): string[] => [
-      keyword, title, 'Short description of the source article.', '', '', '',
+      keyword, title, 'Short description of the source article.',
       'Comma, separated, pinterest, annotations', status,
       ...domains.map((_, i) => per(i)),
     ];

@@ -442,9 +442,10 @@ export function keywordsPage(
     <div class="card">
       <h3>Import from CSV</h3>
       <p class="muted small">
-        Columns: <span class="mono">seed_keyword, spy_title, spy_description, spy_image_url,
-        spy_article_url, spy_pin_image, annotation, status</span>, then one column per site
-        domain holding go / done / no. Only <span class="mono">seed_keyword</span> is required.
+        Columns: <span class="mono">seed_keyword, spy_title, spy_description, annotation,
+        status</span>, then one column per site domain holding go / done / no. Only
+        <span class="mono">seed_keyword</span> is required, and a keyword may be set to
+        <span class="mono">go</span> on as many sites as you like.
       </p>
       <form method="post" action="/keywords/import" enctype="multipart/form-data">
         <div class="field"><input type="file" name="file" accept=".csv,text/csv" required /></div>
