@@ -159,8 +159,8 @@ describe('browser proxy', () => {
       // the page arrives unstyled with a socket that never opens.
       const response = await app.inject({ method: 'GET', url: '/browser' });
 
-      expect(response.statusCode).toBe(301);
-      expect(response.headers.location).toBe('/browser/');
+      expect(response.statusCode).toBe(302);
+      expect(response.headers.location).toBe('/browser/?autoconnect=true&resize=scale');
     });
 
     it('serves the noVNC page at the slashed path', async () => {

@@ -15,8 +15,8 @@ const log = createLogger('browser-proxy');
  * a second address to remember, a second secret to manage, and a signed-in
  * Google session guarded by the weakest credential in the system.
  *
- * Now nothing outside can reach it at all: imagegen sits on an internal Docker
- * network, and this proxy is the only route in. Everything here goes through
+ * Now nothing outside can reach it at all: imagegen publishes no ports and has
+ * no domain, so this proxy is the only route in. Everything here goes through
  * the same session cookie as the rest of the UI, so there is one login.
  *
  * Why proxy VNC rather than drive Chrome over its DevTools protocol:
@@ -96,8 +96,15 @@ export function registerBrowserProxy(app: FastifyInstance, options: BrowserProxy
    * own routes and 404s: the page arrives unstyled, with broken images, and the
    * socket never opens. Served at `/browser/` they resolve under this proxy,
    * which is where they actually live.
+   *
+   * The query string is noVNC's own, read client-side from window.location:
+   * `autoconnect` connects on load instead of showing a connect button, and
+   * `resize=scale` fits the remote screen to the tab rather than showing it at
+   * 1:1 inside a black frame.
    */
-  app.get('/browser', async (_request, reply) => reply.redirect('/browser/', 301));
+  app.get('/browser', async (_request, reply) =>
+    reply.redirect('/browser/?autoconnect=true&resize=scale', 302),
+  );
   app.get('/browser/*', forward);
 
   /* -- The WebSocket itself -----------------------------------------------

@@ -47,6 +47,8 @@ export function html(strings: TemplateStringsArray, ...values: unknown[]): Html 
 export interface NavItem {
   href: string;
   label: string;
+  /** Opens in its own tab rather than replacing the dashboard. */
+  newTab?: boolean;
 }
 
 const NAV: NavItem[] = [
@@ -55,7 +57,9 @@ const NAV: NavItem[] = [
   { href: '/sites', label: 'Sites' },
   { href: '/keywords', label: 'Keywords' },
   { href: '/decisions', label: 'Decisions' },
-  { href: '/browser', label: 'Browser' },
+  // A live browser session is something you keep open beside the dashboard
+  // while you work, not somewhere you navigate to and back from.
+  { href: '/browser', label: 'Browser', newTab: true },
   { href: '/settings', label: 'Settings' },
 ];
 
@@ -71,6 +75,7 @@ export function layout(options: LayoutOptions): string {
   const nav = NAV.map(
     (item) => html`
       <a href="${item.href}" class="${item.href === options.active ? 'active' : ''}"
+        ${item.newTab ? raw('target="_blank" rel="noopener"') : raw('')}
         >${item.label}</a
       >
     `,
