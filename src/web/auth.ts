@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual, randomBytes } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { escapeHtml } from './views/layout.js';
+import { storedPasswordHash, verifyPassword } from './password.js';
 
 /**
  * Password gate for the UI.
@@ -115,11 +116,32 @@ export function hasValidSession(
 }
 
 export interface AuthOptions {
+  /** The fallback password: AUTH_PASSWORD, or one generated into the volume. */
   password: string;
   /** HMAC secret for session cookies; the encryption key is reused. */
   secret: Buffer;
-  /** True when the password was auto-generated, so the hint can be shown. */
+  /** True when the fallback was auto-generated, so the hint can be shown. */
   generated: boolean;
+  /** Needed to read the chosen password hash out of settings. */
+  encryptionKey: Buffer;
+}
+
+/**
+ * Check a submitted password against whichever one is in force.
+ *
+ * A password chosen in the UI wins outright. Until one is set, the generated
+ * or environment-supplied fallback applies — which is what gets you in on a
+ * fresh install.
+ *
+ * Once a password has been chosen the fallback stops working entirely. That
+ * matters: the generated one is printed in the container logs, so leaving it
+ * live alongside a chosen password would mean the weaker of the two decides
+ * who gets in.
+ */
+export function passwordAccepted(submitted: string, options: AuthOptions): boolean {
+  const chosen = storedPasswordHash(options.encryptionKey);
+  if (chosen) return verifyPassword(submitted, chosen);
+  return safeEqual(submitted, options.password);
 }
 
 /** Paths reachable without a session. */
@@ -139,18 +161,24 @@ export function registerAuth(app: FastifyInstance, options: AuthOptions): void {
       return reply.status(401).type('text/html').send(loginPage('Session expired. Sign in again.'));
     }
 
-    return reply.status(401).type('text/html').send(loginPage(undefined, options.generated));
+    return reply
+      .status(401)
+      .type('text/html')
+      .send(loginPage(undefined, options.generated && !storedPasswordHash(options.encryptionKey)));
   });
 
   app.get('/login', async (_request, reply) =>
-    reply.type('text/html').send(loginPage(undefined, options.generated)),
+    // The generated-password hint is pointless once a password has been chosen.
+    reply
+      .type('text/html')
+      .send(loginPage(undefined, options.generated && !storedPasswordHash(options.encryptionKey))),
   );
 
   app.post('/login', async (request, reply) => {
     const body = request.body as { password?: string } | undefined;
     const submitted = typeof body?.password === 'string' ? body.password : '';
 
-    if (!safeEqual(submitted, options.password)) {
+    if (!passwordAccepted(submitted, options)) {
       // Slow down guessing without holding a worker for long.
       await new Promise((r) => setTimeout(r, 400));
       return reply.status(401).type('text/html').send(loginPage('Incorrect password.'));

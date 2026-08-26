@@ -16,8 +16,51 @@ import { localDateKey, selectTask } from '../core/selector.js';
 import { executePipeline, PipelineContext } from '../pipeline/index.js';
 import type { Settings } from '../settings.js';
 import { createLogger, errorMessage } from '../lib/logger.js';
+import { readSupply, supplyWarning } from '../core/supply.js';
+import { getSetting, setSetting } from '../db/repos.js';
+import { TelegramClient } from '../integrations/telegram.js';
 
 const log = createLogger('scheduler');
+
+/**
+ * Tell someone the keyword queue is running out — once.
+ *
+ * The scheduler ticks continuously, so the naive version of this sends the
+ * same message every few minutes until somebody fixes it, and a channel that
+ * cries wolf gets muted. The last level announced is remembered, so a message
+ * goes out when the situation *changes* and not again until it changes back.
+ *
+ * Recovery is announced too. Without it, "we are out of keywords" is the last
+ * thing the channel ever says on the subject, and nobody learns it was fixed.
+ */
+const SUPPLY_STATE_KEY = 'supply_last_announced_level';
+
+async function announceSupply(settings: Settings, encryptionKey: Buffer): Promise<void> {
+  if (!settings.getBool('telegram_enabled')) return;
+
+  try {
+    const supply = readSupply();
+    const previous = getSetting(SUPPLY_STATE_KEY, encryptionKey) || 'ok';
+    if (supply.level === previous) return;
+
+    setSetting(SUPPLY_STATE_KEY, supply.level, false, encryptionKey);
+
+    const telegram = new TelegramClient(
+      settings.get('telegram_bot_token'),
+      settings.get('telegram_chat_id'),
+    );
+
+    const message =
+      supply.level === 'ok'
+        ? `Keyword queue refilled — ${supply.readyPairs} article(s) queued.`
+        : supplyWarning(supply);
+
+    if (message) await telegram.sendMessage(message);
+  } catch (err) {
+    // Never let a notification failure take down a publishing run.
+    log.warn(`could not announce keyword supply: ${errorMessage(err)}`);
+  }
+}
 
 /**
  * The scheduler.
@@ -122,8 +165,13 @@ export async function tick(settings: Settings, encryptionKey: Buffer): Promise<T
     if (!task) {
       const reason = decisions.at(-1)?.reason ?? 'No valid pair';
       log.info(`nothing to publish: ${reason}`);
+      await announceSupply(settings, encryptionKey);
       return { cycleId, outcome: 'no-task', detail: reason };
     }
+
+    // Also checked on a successful tick, so "running low" is noticed while
+    // there is still time to act rather than only once it has stopped.
+    void announceSupply(settings, encryptionKey);
 
     log.info(`selected "${task.seedKeyword}" for ${task.siteDomain}`);
 

@@ -6,12 +6,15 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { layout } from './views/layout.js';
-import { registerAuth, type AuthOptions } from './auth.js';
+import { passwordAccepted, registerAuth, type AuthOptions } from './auth.js';
+import { rejectionReason, storePassword, storedPasswordHash } from './password.js';
 import { registerBrowserProxy } from './browser-proxy.js';
 import {
   dashboardPage,
   decisionsPage,
   eventsPage,
+  accountPage,
+  keysPage,
   keywordsPage,
   runDetailPage,
   runsPage,
@@ -52,6 +55,7 @@ import {
   upsertEndpoint,
 } from '../llm/pool.js';
 import { evaluateSite, localDateKey } from '../core/selector.js';
+import { readSupply, supplyWarning } from '../core/supply.js';
 import { SETTING_SPECS, type Settings } from '../settings.js';
 import { lockStatus, resumeRun, tick } from '../scheduler/index.js';
 import { createLogger, errorMessage } from '../lib/logger.js';
@@ -143,8 +147,9 @@ export function buildServer(
       get<{ n: number }>(
         `SELECT COUNT(*) AS n FROM runs WHERE status = 'failed' AND date(started_at) = date('now')`,
       )?.n ?? 0;
-    const ready =
-      get<{ n: number }>(`SELECT COUNT(*) AS n FROM keywords WHERE status = 'go'`)?.n ?? 0;
+    // Not "keywords with status go": one of those linked to nothing is not
+    // work. See src/core/supply.ts.
+    const supply = readSupply();
 
     const lock = lockStatus();
 
@@ -157,7 +162,7 @@ export function buildServer(
         eligibility,
         publishedToday: published,
         failedToday: failed,
-        keywordsReady: ready,
+        supply,
         recentRuns: listRuns(10),
         automationOn: settings.getBool('automation_enabled'),
         problems: problemsFor(settings),
@@ -540,6 +545,9 @@ export function buildServer(
 
     if (imageServiceProblem) problems.push(imageServiceProblem);
 
+    const supplyProblem = supplyWarning(readSupply());
+    if (supplyProblem) problems.push(supplyProblem);
+
     const sitesMissingToken = listSites()
       .filter((site) => site.status === 'active' && !site.api_token_encrypted.trim())
       .map((site) => site.domain);
@@ -558,14 +566,136 @@ export function buildServer(
       reply,
       'Settings',
       '/settings',
-      settingsPage(
-        SETTING_SPECS,
-        values,
-        listEndpoints(encryptionKey, settings.get('llm_base_url')),
-        problemsFor(settings),
-      ),
+      settingsPage(SETTING_SPECS, values, problemsFor(settings)),
       readFlash(request.query),
     );
+  });
+
+  app.get('/settings/keys', async (request, reply) =>
+    page(
+      reply,
+      'LLM API keys',
+      '/settings',
+      keysPage(
+        listEndpoints(encryptionKey, settings.get('llm_base_url')),
+        settings.get('llm_base_url'),
+      ),
+      readFlash(request.query),
+    ),
+  );
+
+  app.get('/settings/account', async (request, reply) =>
+    page(
+      reply,
+      'Password',
+      '/settings',
+      accountPage(auth.generated && !storedPasswordHash(encryptionKey)),
+      readFlash(request.query),
+    ),
+  );
+
+  app.post('/settings/account', async (request, reply) => {
+    const body = request.body as Record<string, unknown>;
+    const current = asString(body.current);
+    const next = asString(body.next);
+    const confirm = asString(body.confirm);
+
+    const fail = (message: string): FastifyReply =>
+      redirect(reply, '/settings/account', { kind: 'error', message });
+
+    // Checked even though the caller already holds a session: a session that
+    // was left open on a shared machine should not be able to lock the owner
+    // out of their own platform.
+    if (!passwordAccepted(current, auth)) {
+      await new Promise((r) => setTimeout(r, 400));
+      return fail('That is not the current password.');
+    }
+
+    const reason = rejectionReason(next, confirm);
+    if (reason) return fail(reason);
+
+    storePassword(next, encryptionKey);
+    log.info('admin password changed');
+
+    return redirect(reply, '/settings/account', {
+      kind: 'ok',
+      message: 'Password changed. It applies to the next sign-in; this session stays open.',
+    });
+  });
+
+  /**
+   * Add several keys at once.
+   *
+   * Pasting twenty keys one form at a time is the kind of chore that ends with
+   * someone giving up at six, so the whole point is that the input is whatever
+   * the provider's dashboard put on the clipboard.
+   */
+  app.post('/settings/endpoints/bulk', async (request, reply) => {
+    const text = asString((request.body as Record<string, unknown>).keys);
+
+    const existing = listEndpoints(encryptionKey);
+    const takenNames = new Set(existing.map((e) => e.name.toLowerCase()));
+    const seenKeys = new Set<string>();
+
+    let counter = 0;
+    const nextName = (): string => {
+      // Continue the numbering rather than restarting it, so a second paste
+      // does not collide with the first and silently replace those keys.
+      let candidate: string;
+      do {
+        counter += 1;
+        candidate = `key-${String(counter).padStart(2, '0')}`;
+      } while (takenNames.has(candidate));
+      takenNames.add(candidate);
+      return candidate;
+    };
+
+    let added = 0;
+    let skipped = 0;
+    const errors: string[] = [];
+
+    for (const [index, rawLine] of text.split('\n').entries()) {
+      const line = rawLine.trim();
+      if (line === '' || line.startsWith('#')) continue;
+
+      // "label = key", "label, key", or a bare key.
+      const separated = /^(.+?)\s*[=,]\s*(.+)$/.exec(line);
+      const name = separated ? separated[1]!.trim() : '';
+      const apiKey = (separated ? separated[2]! : line).trim();
+
+      if (!apiKey) continue;
+      if (seenKeys.has(apiKey)) {
+        skipped += 1;
+        continue;
+      }
+      seenKeys.add(apiKey);
+
+      try {
+        upsertEndpoint(
+          { name: name || nextName(), baseUrl: '', apiKey, models: [], enabled: true },
+          encryptionKey,
+        );
+        added += 1;
+      } catch (err) {
+        errors.push(`line ${index + 1}: ${errorMessage(err)}`);
+      }
+    }
+
+    if (added === 0 && errors.length === 0) {
+      return redirect(reply, '/settings/keys', {
+        kind: 'warn',
+        message: 'Nothing to add — no keys found in that text.',
+      });
+    }
+
+    const parts = [`Added ${added} key(s).`];
+    if (skipped) parts.push(`${skipped} duplicate(s) skipped.`);
+    if (errors.length) parts.push(`Failed: ${errors.slice(0, 3).join('; ')}`);
+
+    return redirect(reply, '/settings/keys', {
+      kind: errors.length ? 'warn' : 'ok',
+      message: parts.join(' '),
+    });
   });
 
   app.post('/settings', async (request, reply) => {

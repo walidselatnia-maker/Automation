@@ -21,6 +21,7 @@ import type { SiteView } from '../../core/types.js';
 import { formatMinutes } from '../../core/selector.js';
 import type { Endpoint } from '../../llm/pool.js';
 import type { SettingSpec } from '../../settings.js';
+import type { Supply } from '../../core/supply.js';
 
 /* =========================================================================
  * Dashboard
@@ -31,7 +32,7 @@ export interface DashboardData {
   eligibility: { domain: string; eligible: boolean; reason: string }[];
   publishedToday: number;
   failedToday: number;
-  keywordsReady: number;
+  supply: Supply;
   recentRuns: RunListRow[];
   automationOn: boolean;
   problems: string[];
@@ -76,7 +77,17 @@ export function dashboardPage(data: DashboardData): Html {
       <div class="stat"><div class="value">${data.publishedToday}</div><div class="label">Published today</div></div>
       <div class="stat"><div class="value">${data.failedToday}</div><div class="label">Failed today</div></div>
       <div class="stat"><div class="value">${data.eligibility.filter((e) => e.eligible).length}</div><div class="label">Sites eligible now</div></div>
-      <div class="stat"><div class="value">${data.keywordsReady}</div><div class="label">Keywords ready</div></div>
+      <div class="stat ${data.supply.level === 'ok' ? '' : `supply-${data.supply.level}`}">
+        <div class="value">${data.supply.readyPairs}</div>
+        <div class="label">Articles queued</div>
+        <div class="muted small">
+          ${data.supply.daysRemaining === null
+            ? 'no active demand'
+            : data.supply.daysRemaining >= 1
+              ? `~${Math.floor(data.supply.daysRemaining)} day(s) left`
+              : 'less than a day left'}
+        </div>
+      </div>
     </div>
 
     <h2>Site status</h2>
@@ -601,10 +612,9 @@ export function decisionsPage(
 export function settingsPage(
   specs: SettingSpec[],
   values: Map<string, string>,
-  endpoints: Endpoint[],
   problems: string[],
 ): Html {
-  const groups: { key: SettingSpec['group']; title: string }[] = [
+  const groups: { key: SettingSpec['group']; title: string; blurb?: string }[] = [
     { key: 'general', title: 'General' },
     { key: 'schedule', title: 'Schedule' },
     { key: 'llm', title: 'LLM' },
@@ -616,9 +626,14 @@ export function settingsPage(
   return html`
     <h1>Settings</h1>
     <p class="subtitle">
-      Everything is configured here. The only file you ever edit by hand is
-      <span class="mono">.env</span>, which holds one line: the encryption key.
+      Everything the platform needs, in one form. Nothing here is edited by hand
+      on the server.
     </p>
+
+    <div class="row" style="margin-bottom:16px">
+      <a class="button" href="/settings/keys">LLM API keys</a>
+      <a class="button" href="/settings/account">Change password</a>
+    </div>
 
     ${problems.length
       ? html`<div class="flash warn">
@@ -638,15 +653,26 @@ export function settingsPage(
           </div>
         `;
       })}
-      <button class="primary" type="submit">Save settings</button>
-    </form>
 
-    <h2>LLM API keys</h2>
+      <!-- Last thing on the page, deliberately: nothing should sit below the
+           button that saves the form above it. -->
+      <div class="save-bar">
+        <button class="primary" type="submit">Save settings</button>
+        <span class="muted small">Applies immediately. No restart.</span>
+      </div>
+    </form>
+  `;
+}
+
+export function keysPage(endpoints: Endpoint[], baseUrl: string): Html {
+  return html`
+    <h1>LLM API keys</h1>
     <p class="subtitle">
-      One row per API key. They all share the base URL above, because the provider is a
-      single cloud endpoint — the keys exist only to spread its rate limit. Requests go to
-      the least recently used healthy key; on a 429 the same request is retried on the next
-      one, so a throttled key never breaks a run.
+      Every key here talks to the same provider — <span class="mono">${baseUrl}</span>,
+      set under Settings &rarr; LLM. Keys exist to spread that provider's rate
+      limit, not to pick models. Requests go to the least recently used healthy
+      key; on a 429 the same request is retried on the next one, so a throttled
+      key never breaks a run.
     </p>
 
     <div class="card table-wrap">
@@ -685,7 +711,7 @@ export function settingsPage(
                     </form>
                     <form method="post" action="/settings/endpoints/${e.id}/delete" style="display:inline"
                           onsubmit="return confirm('Delete key ${e.name}?')">
-                      <button class="small danger" type="submit">×</button>
+                      <button class="small danger" type="submit">&times;</button>
                     </form>
                   </td>
                 </tr>`,
@@ -694,8 +720,29 @@ export function settingsPage(
           </table>`}
     </div>
 
+    <h2>Add several at once</h2>
     <div class="card">
-      <h3>Add an API key</h3>
+      <form method="post" action="/settings/endpoints/bulk">
+        <div class="field">
+          <label for="keys">One key per line</label>
+          <textarea id="keys" name="keys" rows="8" required
+                    placeholder="paste keys here, one per line"></textarea>
+          <div class="help">
+            Names are generated for you &mdash; <span class="mono">key-01</span>,
+            <span class="mono">key-02</span> and so on, continuing from what is
+            already here. To name one yourself, write
+            <span class="mono">label = key</span> or
+            <span class="mono">label, key</span> on that line. Blank lines and
+            lines starting with <span class="mono">#</span> are ignored, and a key
+            already stored is skipped rather than duplicated.
+          </div>
+        </div>
+        <button class="primary" type="submit">Add keys</button>
+      </form>
+    </div>
+
+    <h2>Add one</h2>
+    <div class="card">
       <form method="post" action="/settings/endpoints">
         <div class="field-row">
           <div class="field">
@@ -716,7 +763,7 @@ export function settingsPage(
             <div class="field">
               <label>Restrict to models</label>
               <input type="text" name="models" placeholder="leave blank for all models" />
-              <div class="help">Comma separated. Normally blank — any key can serve any model.</div>
+              <div class="help">Comma separated. Normally blank &mdash; any key can serve any model.</div>
             </div>
             <div class="field">
               <label>Override base URL</label>
@@ -728,6 +775,52 @@ export function settingsPage(
         <button class="primary" type="submit">Add key</button>
       </form>
     </div>
+  `;
+}
+
+export function accountPage(usingGenerated: boolean): Html {
+  return html`
+    <h1>Password</h1>
+    <p class="subtitle">
+      One password protects the whole platform: every site token, every API key,
+      and a browser signed in to Google.
+    </p>
+
+    ${usingGenerated
+      ? html`<div class="flash warn">
+          You are still on the password generated at first boot. It is printed in
+          the container logs on every start, so anyone who can read those can sign
+          in. Set your own below.
+        </div>`
+      : html`<div class="flash ok">A chosen password is in use.</div>`}
+
+    <div class="card" style="max-width:520px">
+      <form method="post" action="/settings/account">
+        <div class="field">
+          <label for="current">Current password</label>
+          <input type="password" id="current" name="current" required
+                 autocomplete="current-password" />
+        </div>
+        <div class="field">
+          <label for="next">New password</label>
+          <input type="password" id="next" name="next" required minlength="10"
+                 autocomplete="new-password" />
+          <div class="help">At least 10 characters.</div>
+        </div>
+        <div class="field">
+          <label for="confirm">New password again</label>
+          <input type="password" id="confirm" name="confirm" required minlength="10"
+                 autocomplete="new-password" />
+        </div>
+        <button class="primary" type="submit">Change password</button>
+      </form>
+    </div>
+
+    <p class="muted small" style="margin-top:14px">
+      Once set, the generated password stops working. Forgotten it? Set
+      <span class="mono">AUTH_PASSWORD</span> in the deployment environment and
+      restart — that takes over again until you choose a new one here.
+    </p>
   `;
 }
 

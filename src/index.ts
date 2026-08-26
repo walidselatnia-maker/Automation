@@ -30,6 +30,7 @@ async function main(): Promise<void> {
     password: config.authPassword,
     secret: config.encryptionKey,
     generated: config.authPasswordGenerated,
+    encryptionKey: config.encryptionKey,
   });
   await server.listen({ port: config.port, host: config.host });
   log.info(`Web UI listening on port ${config.port}`);
