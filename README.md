@@ -177,7 +177,9 @@ npm run build
 | `src/pipeline/steps/` | One file per pipeline stage |
 | `src/llm/pool.ts` | Endpoint pool and health tracking |
 | `src/web/views/` | Server-rendered HTML, no build step |
+| `src/web/browser-proxy.ts` | Serves the live Chrome session behind the login |
 | `prompts/` | LLM prompts as plain text |
+| `services/imagegen/` | The image service: Chrome, the Flow extension, a job queue (Python) |
 
 ### Prompts
 
@@ -192,6 +194,22 @@ strategy the original encoded as duplicate nodes.
 Prompts are baked into the image for deployment. `docker-compose.local.yml`
 mounts them read-write so they can be edited without a rebuild.
 
+### The image service
+
+`services/imagegen` is a separate Python service with its own tests:
+
+```bash
+cd services/imagegen
+python -m venv .venv && .venv/bin/pip install -r requirements.txt pytest pytest-asyncio
+PYTHONPATH=. .venv/bin/python -m pytest
+```
+
+`tests/test_request_shape.py` is the one that matters. It pins the exact
+payload sent to Google — key order, header set, model name, the batch wrapper —
+against what Flow's own UI sends. It runs during the Docker build too, because
+a drifted payload does not fail loudly; it quietly degrades the account's
+reCAPTCHA score.
+
 ### Tests
 
 ```
@@ -204,6 +222,8 @@ test/pool.test.ts         endpoint failover, rate limits, health
 test/auth.test.ts         every route is closed without a session
 test/prompts.test.ts      every prompt placeholder is supplied by its step
 test/units.test.ts        crypto, CSV, LLM JSON parsing, templating
+test/shared-images.test.ts  reusing one image set across a keyword's sites
+test/browser-proxy.test.ts  the browser view refuses an unsigned session
 ```
 
 The regression tests encode bugs that actually occurred: `last_publish`
@@ -225,14 +245,23 @@ satisfied but was retried forever.
 
 ### Backup
 
-Everything is in one SQLite file:
+Two volumes, and they are not equally replaceable.
 
-Back up the `platform-data` volume — it holds the database, the encryption key
-and the admin password. Your Docker platform likely has volume backups built
-in; otherwise:
+`platform-data` holds the database, the encryption key and the admin password.
+Losing it means re-entering every credential.
+
+`imagegen-data` holds the **signed-in Google session**. Losing it means signing
+in to Google again by hand through the Browser page — slower, and it needs a
+person.
+
+Your Docker platform likely has volume backups built in; otherwise:
 
 ```bash
-docker run --rm -v platform-data:/data -v "$PWD:/backup" alpine   tar czf /backup/platform-$(date +%F).tar.gz -C /data .
+docker run --rm -v platform-data:/data -v "$PWD:/backup" alpine tar czf /backup/platform-$(date +%F).tar.gz -C /data .
+```
+
+```bash
+docker run --rm -v imagegen-data:/data -v "$PWD:/backup" alpine tar czf /backup/imagegen-$(date +%F).tar.gz -C /data .
 ```
 
 ### Security notes
@@ -241,4 +270,8 @@ docker run --rm -v platform-data:/data -v "$PWD:/backup" alpine   tar czf /backu
 - Credentials are encrypted at rest (AES-256-GCM).
 - Only `/healthz` and `/static/*` are public. `/healthz` never returns secrets.
 - Let your platform terminate TLS.
-- The site API token is shared across all sites, so rotating it is one field.
+- Each site carries its own API and Buffer tokens, so rotating one affects
+  only that site.
+- The image service has no public route at all: it sits on a Docker network
+  declared `internal: true`, and the platform is the only thing that can reach
+  it. Do not give it a domain.

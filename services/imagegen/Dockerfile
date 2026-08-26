@@ -38,11 +38,6 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# ─── Tests ───────────────────────────────────────────────────
-# Copied and run at build time. The request this service sends to Google has to
-# keep looking like the one Flow's own UI sends; an image whose payload has
-# drifted is worse than one that fails to build, because it fails silently by
-# degrading the account's reCAPTCHA score.
 # ─── Application ─────────────────────────────────────────────
 # The extension ships in this repo, so it arrives with the build context.
 # Cloning it from GitHub at build time would add a network failure mode and a
@@ -65,8 +60,13 @@ RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/pack-extension.sh
 RUN /usr/local/bin/pack-extension.sh
 
 # ─── Verify the outgoing request shape ───────────────────────
-# Same reasoning as the extension pack above: finding this at deploy time, or
-# not finding it at all, costs far more than finding it here.
+# The request this service sends to Google has to keep looking like the one
+# Flow's own UI sends. Same reasoning as the extension pack above, but worse:
+# an image whose payload has drifted does not fail loudly at all — it quietly
+# degrades the account's reCAPTCHA score, and nobody finds out until the quota
+# stops going as far as it used to.
+#
+# pytest is uninstalled afterwards so it is not part of the shipped image.
 RUN pip install --no-cache-dir pytest pytest-asyncio \
     && FLOW_AGENT_DIR=/tmp PYTHONPATH=/app python -m pytest -q /app/tests \
     && pip uninstall -y -q pytest pytest-asyncio
