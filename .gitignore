@@ -19,3 +19,9 @@ data/
 ruvector.db
 *.db
 !data/.gitkeep
+
+# Python (services/imagegen)
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/

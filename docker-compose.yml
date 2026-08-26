@@ -1,44 +1,149 @@
-# Article Platform — deploy as-is on any Docker platform
-# (Coolify, Dokploy, Portainer, CapRover, Komodo, or plain `docker compose up -d`).
+# The whole platform: one file, one deploy.
 #
-# Works with ZERO environment variables. On first boot the app generates its
-# own encryption key and admin password into the data volume, so there is
-# nothing to create over SSH.
+#   platform   the article pipeline, dashboard and scheduler (Node)
+#   imagegen   Chrome + the Flow extension + a small job queue (Python)
 #
-# The admin password is printed in the container logs on startup. Look for
-# "ADMIN PASSWORD". To choose your own instead, set AUTH_PASSWORD below.
+# Only `platform` is ever reachable from outside. Attach your domain to it in
+# Dokploy, service `platform`, container port 3000.
 
 services:
   platform:
     build: .
-    # Prefer a prebuilt image if your platform pulls rather than builds:
-    #   image: ghcr.io/YOUR_USERNAME/article-platform:latest
-    container_name: article-platform
     restart: unless-stopped
 
-    ports:
-      # Your platform's reverse proxy terminates TLS and forwards here.
-      # Safe to expose because the UI requires a password.
-      - "8080:8080"
+    # No `ports:` mapping on purpose. Dokploy's proxy reaches the container
+    # over the Docker network and routes the domain to the port below, so
+    # publishing to the host adds nothing and collides with anything already
+    # listening there.
+    expose:
+      - "3000"
 
     environment:
-      DB_PATH: /app/data/platform.db
-      # ---- All optional. Delete any line to accept the default. ----
-      # AUTH_PASSWORD: choose-your-own-password
-      # ENCRYPTION_KEY: 64-hex-chars   # generated into the volume if unset
-      # LOG_LEVEL: info
+      # `- NAME` with no value is pass-through: whatever the deployment
+      # platform provides for NAME reaches the container, and nothing here
+      # overwrites it. Set these in Dokploy's Environment tab.
+      #
+      # Written this way deliberately. `NAME: "${NAME:?...}"` aborts during
+      # compose *parsing*, before any container starts, so a missing value
+      # surfaces as an interpolation error rather than a readable message.
+      # And `"${NAME:-}"` would set an empty string, clobbering the value on
+      # platforms that inject at runtime instead of through a .env file.
+
+      # Optional. Generated and written into the data volume on first boot if
+      # absent — check the logs for it. Set it to keep a password you know
+      # across a volume recreation.
+      - AUTH_PASSWORD
+
+      # Optional. Also generated on first boot. Encrypts the site tokens and
+      # API keys at rest; changing it makes existing stored secrets unreadable.
+      - ENCRYPTION_KEY
+
+      # Shared with imagegen below — the two must match.
+      - IMAGE_API_KEY
+
+      - PORT=3000
+      - HOST=0.0.0.0
+      - DATA_DIR=/data
+      - IMAGE_BASE_URL=http://imagegen:8100
+      - IMAGEGEN_VNC_URL=http://imagegen:6080
 
     volumes:
-      # Everything that must survive a redeploy: database, encryption key,
-      # admin password. Losing this volume means re-entering all credentials.
-      - platform-data:/app/data
+      # The database, the generated admin password, and the encryption key.
+      - platform-data:/data
+
+    networks:
+      - web       # Dokploy's proxy reaches the domain through this
+      - internal  # ...and this is the only way to imagegen
+
+    depends_on:
+      - imagegen
 
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/healthz"]
       interval: 30s
       timeout: 5s
-      start_period: 20s
       retries: 3
+      start_period: 20s
+
+  imagegen:
+    build: ./services/imagegen
+    restart: unless-stopped
+
+    # Deliberately no `expose`, no `ports`, and no domain. This container holds
+    # a signed-in Google session and a browser someone can drive; the only
+    # thing that may reach it is `platform`, over `internal` below.
+    environment:
+      - API_KEY=${IMAGE_API_KEY:-}
+
+      # Sent to Google as clientContext.projectId on every generation, so it
+      # has to be a real project id from the Flow UI. Generation is refused
+      # with a 503 until it is set.
+      - FLOW_PROJECT_ID
+
+      # Must be 0.0.0.0 inside a container: the default 127.0.0.1 would accept
+      # nothing from the platform container, which looks exactly like a broken
+      # deployment.
+      - API_HOST=0.0.0.0
+      - API_PORT=8100
+
+      # Extension to agent, loopback-only inside the container.
+      - WS_HOST=127.0.0.1
+      - WS_PORT=9222
+
+      - FLOW_AGENT_DIR=/data
+      - CHROME_PROFILE_DIR=/data/chrome-profile
+
+      # Google Flow's own ceiling is 5. Two is plenty for an interval-driven
+      # article pipeline, and peak memory scales with what is in flight.
+      - MAX_CONCURRENT_REQUESTS=${MAX_CONCURRENT_REQUESTS:-2}
+      - API_COOLDOWN=${API_COOLDOWN:-10}
+
+    volumes:
+      # One volume holds everything that must survive a redeploy:
+      #   /data/chrome-profile  the signed-in Google session  <- the critical part
+      #   /data/flow_agent.db   the job queue (+ its -wal/-shm sidecars)
+      #
+      # Destroy this and someone has to redo the Google sign-in by hand through
+      # the platform's Browser page. It is the one thing worth backing up.
+      - imagegen-data:/data
+
+    networks:
+      - internal
+
+    # No shm_size. Chrome runs with --disable-dev-shm-usage (see
+    # docker/supervisord.conf), which puts its shared memory in /tmp instead of
+    # /dev/shm, so Docker's 64MB default no longer matters.
+
+    # Chrome's sandbox builds a user namespace at startup, and Docker's default
+    # seccomp profile blocks the clone() flags it needs — Chrome fails a
+    # CHECK() and dies on SIGTRAP before it ever opens a window.
+    #
+    # The usual workaround is --no-sandbox, which is the worse trade: that
+    # disables Chrome's *renderer* sandbox, the layer that actually contains
+    # hostile web content, on a container holding a live Google session.
+    # Relaxing Docker's syscall filter instead leaves Chrome's own sandbox
+    # fully armed.
+    security_opt:
+      - seccomp:unconfined
+
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8100/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
+
+networks:
+  # Reachable by Dokploy's proxy. Only `platform` is on it.
+  web:
+
+  # No route to or from the outside world. This is what makes it safe for
+  # imagegen to serve an unauthenticated browser view: the only client that can
+  # open a socket to it is the platform, which checks a session cookie on every
+  # request it serves.
+  internal:
+    internal: true
 
 volumes:
   platform-data:
+  imagegen-data:

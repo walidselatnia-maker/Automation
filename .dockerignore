@@ -4,3 +4,6 @@ data
 .env
 *.log
 test
+services
+.venv
+__pycache__

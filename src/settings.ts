@@ -69,8 +69,11 @@ export const SETTING_SPECS: SettingSpec[] = [
     label: 'Image service URL',
     group: 'images',
     secret: false,
-    default: 'https://f.longlivo.com',
-    help: 'Base URL of the image generation service (no trailing slash).',
+    default: 'http://imagegen:8100',
+    help:
+      'Base URL of the image service. The default reaches the imagegen ' +
+      'container over the internal Docker network; change it only to point at ' +
+      'an instance running somewhere else.',
   },
   {
     key: 'image_api_key',
@@ -79,7 +82,18 @@ export const SETTING_SPECS: SettingSpec[] = [
     secret: true,
     default: '',
     type: 'password',
-    help: 'Sent as the X-API-Key header.',
+    help: 'Sent as the X-API-Key header. Must match IMAGE_API_KEY in the deployment environment.',
+  },
+  {
+    key: 'flow_project_id',
+    label: 'Flow project ID',
+    group: 'images',
+    secret: false,
+    default: '',
+    help:
+      'A real project id from the Google Flow UI. It travels to Google with ' +
+      'every generation as clientContext.projectId, so a made-up value makes ' +
+      'each request look unlike one the Flow UI would send.',
   },
   {
     key: 'image_poll_interval_seconds',
@@ -171,6 +185,12 @@ export class Settings {
 
     if (!this.has('image_api_key')) {
       problems.push('Image service API key is not set (Settings → Images).');
+    }
+    if (!this.has('flow_project_id')) {
+      problems.push(
+        'Flow project ID is not set (Settings → Images). Images cannot be ' +
+          'generated until it is: Google is sent this id with every request.',
+      );
     }
     if (this.getBool('telegram_enabled') && !this.has('telegram_bot_token')) {
       problems.push('Telegram notifications are on but no bot token is set.');

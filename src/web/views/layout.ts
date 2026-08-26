@@ -55,6 +55,7 @@ const NAV: NavItem[] = [
   { href: '/sites', label: 'Sites' },
   { href: '/keywords', label: 'Keywords' },
   { href: '/decisions', label: 'Decisions' },
+  { href: '/browser', label: 'Browser' },
   { href: '/settings', label: 'Settings' },
 ];
 

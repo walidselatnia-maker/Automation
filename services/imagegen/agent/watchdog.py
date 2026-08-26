@@ -1,0 +1,212 @@
+"""Unattended-operation guard.
+
+Three failures matter for a service nobody is watching:
+
+  1. Chrome wedges       — recoverable by restarting Chrome
+  2. Google logs you out — NOT recoverable by anything automatic
+  3. Everything fails    — recoverable, but grinding through it wastes credits
+
+The distinction between (1) and (2) is the whole point. Restarting Chrome on a
+sign-in wall just reopens the same wall, and the retry path drives tab creation
+— which is exactly how the runaway-tab incident happened. So SESSION_EXPIRED
+pauses and reports; it never restarts.
+
+Retry and backoff for individual requests already live in worker/processor.py
+and are covered by tests. This module deliberately does not duplicate them.
+"""
+import asyncio
+import logging
+import os
+import subprocess
+import time
+from dataclasses import dataclass, field
+from typing import Optional
+
+from agent.db import jobs
+from agent.services.flow_client import get_flow_client
+
+logger = logging.getLogger(__name__)
+
+# How long the extension may stay disconnected before we call Chrome wedged.
+# The extension retries roughly every 5s (extension/background.js), so a gap
+# this long is not a transient reconnect — it means Chrome itself is stuck.
+DISCONNECT_GRACE_S = int(os.environ.get("WATCHDOG_DISCONNECT_GRACE", "120"))
+
+# Consecutive failures before the breaker trips. Low on purpose: an unattended
+# service that fails 500 times overnight is worse than one that stops at 5 and
+# says why.
+FAILURE_THRESHOLD = int(os.environ.get("WATCHDOG_FAILURE_THRESHOLD", "5"))
+
+CHECK_INTERVAL_S = int(os.environ.get("WATCHDOG_INTERVAL", "30"))
+
+# Backstop so a persistently broken Chrome doesn't get restarted forever.
+MAX_RESTARTS_PER_HOUR = int(os.environ.get("WATCHDOG_MAX_RESTARTS", "4"))
+
+# Only a genuine sign-in wall belongs here. NO_FLOW_KEY used to be in this
+# list and should not have been: it means the extension had no bearer token in
+# memory, which it now recovers on its own by reloading the Flow tab. Treating
+# it as a session wall paused the worker and demanded a human for something
+# that resolves itself in seconds.
+_SESSION_MARKERS = ("SESSION_EXPIRED",)
+
+
+@dataclass
+class WatchdogState:
+    """Snapshot for /health and /setup to render."""
+    healthy: bool = True
+    reason: Optional[str] = None
+    needs_human: bool = False
+    consecutive_failures: int = 0
+    chrome_restarts: list[float] = field(default_factory=list)
+    disconnected_since: Optional[float] = None
+
+    def as_dict(self) -> dict:
+        return {
+            "healthy": self.healthy,
+            "reason": self.reason,
+            "needs_human": self.needs_human,
+            "consecutive_failures": self.consecutive_failures,
+            "chrome_restarts_last_hour": len(self.chrome_restarts),
+        }
+
+
+state = WatchdogState()
+
+
+def restart_chrome() -> bool:
+    """Ask supervisord to restart Chrome. False if we can't (e.g. not in Docker)."""
+    try:
+        result = subprocess.run(
+            ["supervisorctl", "-c", "/etc/supervisor/supervisord.conf", "restart", "chrome"],
+            capture_output=True, text=True, timeout=60,
+        )
+        if result.returncode == 0:
+            logger.warning("Watchdog restarted Chrome")
+            return True
+        logger.error("Chrome restart failed: %s", result.stderr.strip()[:200])
+    except FileNotFoundError:
+        logger.warning("supervisorctl not available — not running under supervisord")
+    except (subprocess.SubprocessError, OSError) as e:
+        logger.error("Chrome restart error: %s", e)
+    return False
+
+
+def _restarts_in_last_hour() -> int:
+    cutoff = time.monotonic() - 3600
+    state.chrome_restarts = [t for t in state.chrome_restarts if t > cutoff]
+    return len(state.chrome_restarts)
+
+
+async def _recent_failures(limit: int = 10) -> list[dict]:
+    """Most recent finished jobs, newest first."""
+    return await jobs.recent_finished(limit)
+
+
+async def _check_session_wall(controller) -> bool:
+    """Pause and flag if the newest failure is a sign-in wall. True if walled."""
+    recent = await _recent_failures(limit=3)
+    for request in recent:
+        if request.get("status") != "FAILED":
+            break  # a success since then means the session is fine
+        message = (request.get("error_message") or "").upper()
+        if any(marker in message for marker in _SESSION_MARKERS):
+            state.healthy = False
+            state.needs_human = True
+            state.reason = (
+                "Google signed this browser out. Open /setup and sign in again — "
+                "restarting will not fix it."
+            )
+            controller.pause("session expired")
+            return True
+    return False
+
+
+async def _check_circuit_breaker(controller) -> bool:
+    """Pause if the last N finished requests all failed. True if tripped."""
+    recent = await _recent_failures(limit=FAILURE_THRESHOLD)
+    if len(recent) < FAILURE_THRESHOLD:
+        return False
+    if not all(r.get("status") == "FAILED" for r in recent):
+        state.consecutive_failures = 0
+        return False
+
+    state.consecutive_failures = FAILURE_THRESHOLD
+    state.healthy = False
+    state.needs_human = True
+    last_error = (recent[0].get("error_message") or "unknown error")[:120]
+    state.reason = (
+        f"Stopped after {FAILURE_THRESHOLD} failures in a row. "
+        f"Most recent: {last_error}"
+    )
+    controller.pause("circuit breaker")
+    return True
+
+
+async def _check_extension(controller) -> bool:
+    """Restart Chrome if the extension has been gone too long. True if unhealthy."""
+    if get_flow_client().connected:
+        if state.disconnected_since is not None:
+            logger.info("Extension reconnected")
+        state.disconnected_since = None
+        return False
+
+    now = time.monotonic()
+    if state.disconnected_since is None:
+        state.disconnected_since = now
+        return False
+
+    gap = now - state.disconnected_since
+    if gap < DISCONNECT_GRACE_S:
+        return False
+
+    if _restarts_in_last_hour() >= MAX_RESTARTS_PER_HOUR:
+        state.healthy = False
+        state.needs_human = True
+        state.reason = (
+            f"Chrome has been restarted {MAX_RESTARTS_PER_HOUR} times in an hour "
+            f"and still isn't connecting. This needs a look — open /setup."
+        )
+        controller.pause("chrome unrecoverable")
+        return True
+
+    state.healthy = False
+    state.reason = f"Browser disconnected for {int(gap)}s — restarting Chrome."
+    if restart_chrome():
+        state.chrome_restarts.append(now)
+    state.disconnected_since = now  # restart grace before trying again
+    return True
+
+
+async def run(controller, interval: int = CHECK_INTERVAL_S):
+    """Watchdog loop. Started alongside the worker in main.lifespan."""
+    logger.info(
+        "Watchdog running (grace=%ds, failure threshold=%d)",
+        DISCONNECT_GRACE_S, FAILURE_THRESHOLD,
+    )
+    while True:
+        try:
+            await asyncio.sleep(interval)
+
+            # Order matters: a sign-in wall is checked first because it also
+            # presents as a run of failures, and its remedy is the opposite of
+            # the extension check's. Diagnosing it as "Chrome wedged" would
+            # restart into the same wall and spawn tabs doing it.
+            if await _check_session_wall(controller):
+                continue
+            if await _check_circuit_breaker(controller):
+                continue
+            if await _check_extension(controller):
+                continue
+
+            if not state.healthy and not state.needs_human:
+                logger.info("Watchdog: recovered")
+                state.healthy = True
+                state.reason = None
+                controller.resume()
+
+        except asyncio.CancelledError:
+            logger.info("Watchdog stopped")
+            raise
+        except Exception:
+            # A crashed watchdog is worse than a noisy one.
+            logger.exception("Watchdog check failed; continuing")

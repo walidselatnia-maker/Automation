@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 import { layout } from './views/layout.js';
 import { registerAuth, type AuthOptions } from './auth.js';
+import { registerBrowserProxy } from './browser-proxy.js';
 import {
   dashboardPage,
   decisionsPage,
@@ -97,6 +98,12 @@ export function buildServer(
 
   // Must come after formbody so the login form body is parsed.
   registerAuth(app, auth);
+
+  // The live Chrome session, behind the same login as everything else.
+  registerBrowserProxy(app, {
+    targetUrl: process.env.IMAGEGEN_VNC_URL ?? 'http://imagegen:6080',
+    secret: auth.secret,
+  });
 
   const page = (
     reply: FastifyReply,
@@ -482,6 +489,45 @@ export function buildServer(
   /* -- Settings ---------------------------------------------------------- */
 
   /**
+   * The image service's own health, refreshed in the background.
+   *
+   * Checked off the request path on purpose: the dashboard should not wait on
+   * a container that might be restarting, and Chrome takes about a minute to
+   * come up. Stale by up to a minute is the right trade for a page that always
+   * renders.
+   */
+  let imageServiceProblem: string | null = null;
+
+  const refreshImageServiceHealth = async (): Promise<void> => {
+    const base = settings.get('image_base_url').replace(/\/+$/, '');
+    if (!base) return;
+
+    try {
+      const response = await fetch(`${base}/flow/status`, {
+        headers: { 'X-API-Key': settings.get('image_api_key') },
+        signal: AbortSignal.timeout(5_000),
+      });
+
+      if (!response.ok) {
+        imageServiceProblem = `Image service answered HTTP ${response.status} — check it is running.`;
+        return;
+      }
+
+      const status = (await response.json()) as { connected?: boolean };
+      imageServiceProblem = status.connected
+        ? null
+        : 'The image service browser is not signed in to Google. Open Browser to sign in.';
+    } catch {
+      imageServiceProblem =
+        'Image service unreachable — no images can be generated until it is back.';
+    }
+  };
+
+  void refreshImageServiceHealth();
+  const healthTimer = setInterval(() => void refreshImageServiceHealth(), 60_000);
+  healthTimer.unref();
+
+  /**
    * Configuration problems, including ones that live outside the settings
    * table: no API keys, or sites missing their own credentials.
    */
@@ -491,6 +537,8 @@ export function buildServer(
     if (listEndpoints(encryptionKey).filter((e) => e.enabled).length === 0) {
       problems.push('No LLM API keys added — nothing can be generated.');
     }
+
+    if (imageServiceProblem) problems.push(imageServiceProblem);
 
     const sitesMissingToken = listSites()
       .filter((site) => site.status === 'active' && !site.api_token_encrypted.trim())

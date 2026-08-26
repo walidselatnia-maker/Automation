@@ -92,6 +92,28 @@ function loginPage(error?: string, generated?: boolean): string {
 </body></html>`;
 }
 
+/**
+ * Whether a raw request carries a valid session.
+ *
+ * The WebSocket proxy needs this: an upgrade never reaches Fastify's
+ * preHandler hook, so the browser view would otherwise be the one route on the
+ * server with no authentication at all.
+ */
+export function hasValidSession(
+  cookieHeader: string | undefined,
+  secret: Buffer,
+): boolean {
+  if (!cookieHeader) return false;
+
+  for (const part of cookieHeader.split(';')) {
+    const [key, ...rest] = part.trim().split('=');
+    if (key === COOKIE) {
+      return verifyToken(decodeURIComponent(rest.join('=')), secret);
+    }
+  }
+  return false;
+}
+
 export interface AuthOptions {
   password: string;
   /** HMAC secret for session cookies; the encryption key is reused. */
