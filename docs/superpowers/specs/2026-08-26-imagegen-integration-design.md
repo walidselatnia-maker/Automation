@@ -257,11 +257,7 @@ All cells on = every site reuses one set. Some cells on = those reuse, the rest
 generate fresh. All off = today's behaviour. A "share on all" control on the
 keyword row sets the whole row at once, since that is the common case.
 
-Default is **on** — `DEFAULT 1`, and the migration backfills existing rows to 1.
-Sharing is the behaviour that should need no thought; generating fresh is the
-exception you opt into. Note this does change what existing keywords do: any
-keyword already `go` on several sites starts reusing images from its first run
-onward.
+Default is **on**. Schema changes here are shipped by recreating the volume, not migrated: the database holds no data worth keeping yet.
 
 ### Pipeline
 

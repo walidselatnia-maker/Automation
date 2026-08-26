@@ -17,28 +17,6 @@ function schemaPath(): string {
   return resolve(here, 'schema.sql');
 }
 
-/**
- * Column additions for databases created before the column existed.
- *
- * schema.sql only ever runs CREATE TABLE IF NOT EXISTS, which is a no-op on a
- * table that is already there — so a new column has to be added explicitly.
- * Guarded by PRAGMA table_info rather than by catching an error, because
- * "duplicate column" and "database is locked" arrive as the same exception
- * type and swallowing the second one would hide a real failure.
- */
-function migrate(db: Db): void {
-  const columns = db.prepare('PRAGMA table_info(keyword_sites)').all() as { name: string }[];
-
-  if (columns.length > 0 && !columns.some((c) => c.name === 'share_images')) {
-    // DEFAULT 1 fills existing rows as it goes, so no separate backfill.
-    db.exec(
-      'ALTER TABLE keyword_sites ADD COLUMN share_images INTEGER NOT NULL DEFAULT 1 ' +
-        'CHECK (share_images IN (0, 1))',
-    );
-    log.info('Added keyword_sites.share_images — existing links default to sharing on');
-  }
-}
-
 export function openDatabase(dbPath: string): Db {
   mkdirSync(dirname(resolve(dbPath)), { recursive: true });
 
@@ -47,7 +25,6 @@ export function openDatabase(dbPath: string): Db {
   db.exec('PRAGMA foreign_keys = ON;');
   db.exec('PRAGMA busy_timeout = 5000;');
   db.exec(readFileSync(schemaPath(), 'utf8'));
-  migrate(db);
 
   log.info(`Database ready at ${dbPath}`);
   instance = db;
