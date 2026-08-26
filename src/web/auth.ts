@@ -66,28 +66,38 @@ function loginPage(error?: string, generated?: boolean): string {
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sign in · Article Platform</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
 <link rel="stylesheet" href="/static/style.css">
-</head><body>
-<main style="max-width:400px;margin:12vh auto">
-  <h1>Article Platform</h1>
-  <p class="subtitle">Enter the admin password to continue.</p>
-  ${error ? `<div class="flash error">${escapeHtml(error)}</div>` : ''}
-  ${
-    generated
-      ? `<div class="flash warn">A password was generated on first start. Find it in the
-         container logs (look for "ADMIN PASSWORD"), or set <span class="mono">AUTH_PASSWORD</span>
-         in your deployment's environment variables.</div>`
-      : ''
-  }
-  <div class="card">
-    <form method="post" action="/login">
-      <div class="field">
-        <label for="password">Password</label>
-        <input type="password" id="password" name="password" autofocus required
-               autocomplete="current-password">
-      </div>
-      <button class="primary" type="submit" style="width:100%">Sign in</button>
-    </form>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='3' fill='%231b2024'/><rect x='7' y='9' width='18' height='3' fill='%23e5a83a'/><rect x='7' y='15' width='18' height='2' fill='%23cfd6dc'/><rect x='7' y='20' width='12' height='2' fill='%23cfd6dc'/></svg>">
+</head><body class="signin">
+<main>
+  <div class="docket">
+    <div class="docket-head">
+      <span>Article Platform</span>
+      <span>Sign in</span>
+    </div>
+    <div class="docket-body">
+      <h1>Sign in</h1>
+      <p class="subtitle">One password covers every site, key and session behind this.</p>
+      ${error ? `<div class="flash error">${escapeHtml(error)}</div>` : ''}
+      ${
+        generated
+          ? `<div class="flash warn">A password was generated on first start. Look for
+             <span class="mono">ADMIN PASSWORD</span> in the container logs, then set your own
+             under Settings.</div>`
+          : ''
+      }
+      <form method="post" action="/login">
+        <div class="field">
+          <label for="password">Password</label>
+          <input type="password" id="password" name="password" autofocus required
+                 autocomplete="current-password">
+        </div>
+        <button class="primary" type="submit" style="width:100%">Sign in</button>
+      </form>
+    </div>
   </div>
 </main>
 </body></html>`;

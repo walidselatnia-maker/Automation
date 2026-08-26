@@ -56,7 +56,9 @@ describe('authentication', () => {
     it.each(PROTECTED)('%s requires a session', async (path) => {
       const response = await app.inject({ method: 'GET', url: path });
       expect(response.statusCode).toBe(401);
-      expect(response.body).toContain('Enter the admin password');
+      // The login form, not a particular sentence — the copy is free to change.
+      expect(response.body).toContain('action="/login"');
+      expect(response.body).toContain('name="password"');
     });
 
     it('does not leak page content in the unauthorised response', async () => {

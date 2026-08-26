@@ -99,12 +99,15 @@ export function layout(options: LayoutOptions): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(options.title)} · Article Platform</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
 <link rel="stylesheet" href="/static/style.css">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>📰</text></svg>">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='3' fill='%231b2024'/><rect x='7' y='9' width='18' height='3' fill='%23e5a83a'/><rect x='7' y='15' width='18' height='2' fill='%23cfd6dc'/><rect x='7' y='20' width='12' height='2' fill='%23cfd6dc'/></svg>">
 </head>
 <body>
 <header class="topbar">
-  <div class="brand"><a href="/">Article Platform</a>${status}</div>
+  <div class="brand"><a href="/">Article&nbsp;Platform</a>${status}</div>
   <nav>${nav.map((n) => n.value).join('')}
     <form method="post" action="/logout" style="display:inline">
       <button class="small" type="submit">Sign out</button>
@@ -115,7 +118,7 @@ export function layout(options: LayoutOptions): string {
 ${flash.value}
 ${options.body.value}
 </main>
-<footer><span>Article Platform</span></footer>
+<footer><span>One article per run. Every skip has a recorded reason.</span></footer>
 </body>
 </html>`;
 }
