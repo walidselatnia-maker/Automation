@@ -79,7 +79,7 @@ function main(): void {
       if (!existsSync(args.keys)) throw new Error(`File not found: ${args.keys}`);
 
       console.log(`\nImporting sites from ${args.keys}`);
-      const result = importSitesCsv(readFileSync(args.keys, 'utf8'));
+      const result = importSitesCsv(readFileSync(args.keys, 'utf8'), config.encryptionKey);
       console.log(`  ✓ ${result.imported} site(s) imported`);
       result.errors.forEach((e) => console.error(`  ✗ ${e}`));
 

@@ -32,13 +32,13 @@ See [deploy/DEPLOY.md](deploy/DEPLOY.md) for the full guide.
 
 ## First-time setup
 
-1. **Settings** — site API token, image service URL and key, Buffer token, timezone.
-2. **Settings → LLM endpoints** — one endpoint per Ollama API key, all with base
-   URL `https://ollama.com`. Leave Models blank so any key serves any operation;
-   keys exist to spread rate limits, not to pick models.
-3. **Sites** — your websites, with a daily target and minimum hours between posts.
-4. **Keywords** — import a CSV.
-5. **Settings → General** — enable automation, once a manual **Run once now** succeeds.
+1. **Settings** — LLM base URL, image service URL and key, timezone.
+2. **Settings → LLM API keys** — add each key one at a time. They share the base
+   URL; keys exist to spread rate limits, not to pick models.
+3. **Sites** — each site carries its **own** Site API token and Buffer token, a
+   daily target, and a minimum gap expressed in minutes, hours or days.
+4. **Keywords → Download template** — a CSV with a column per site, then import it.
+5. **Settings → General** — enable automation, once **Run once now** succeeds.
 
 ## Migrating from Google Sheets
 

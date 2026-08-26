@@ -27,9 +27,18 @@ CREATE TABLE IF NOT EXISTS sites (
                          CHECK (status IN ('active', 'paused')),
   pin_username   TEXT    NOT NULL DEFAULT '',
   project_id     TEXT    NOT NULL DEFAULT '',
-  buffer_channel_id TEXT NOT NULL DEFAULT '',
+
+  -- Credentials are per site: every domain has its own publishing token and
+  -- its own Buffer account. Encrypted at rest with ENCRYPTION_KEY.
+  api_token_encrypted    TEXT NOT NULL DEFAULT '',
+  buffer_token_encrypted TEXT NOT NULL DEFAULT '',
+
   daily_target   INTEGER NOT NULL DEFAULT 0 CHECK (daily_target >= 0),
-  hours_between  REAL    NOT NULL DEFAULT 8 CHECK (hours_between >= 0),
+
+  -- Minimum gap between posts, in minutes. Stored as minutes rather than
+  -- hours so any cadence is expressible: 20 minutes, 90 minutes, 3 days.
+  interval_minutes INTEGER NOT NULL DEFAULT 480 CHECK (interval_minutes >= 0),
+
   created_at     TEXT    NOT NULL DEFAULT (datetime('now')),
   updated_at     TEXT    NOT NULL DEFAULT (datetime('now'))
 );
@@ -149,10 +158,14 @@ CREATE TABLE IF NOT EXISTS settings (
 -- LLM endpoint pool. Replaces nine hand-pinned Ollama credentials.
 -- `models` is a JSON array of model names this endpoint can serve.
 -- ---------------------------------------------------------------------------
+-- One row per API KEY, not per server. All keys share the base URL held in
+-- settings (`llm_base_url`), because the provider is one cloud endpoint; the
+-- keys exist only to spread its rate limit. base_url stays per-row so a
+-- self-hosted instance can be mixed in later, but is blank in normal use.
 CREATE TABLE IF NOT EXISTS llm_endpoints (
   id                INTEGER PRIMARY KEY AUTOINCREMENT,
   name              TEXT    NOT NULL UNIQUE,
-  base_url          TEXT    NOT NULL,
+  base_url          TEXT    NOT NULL DEFAULT '',
   api_key_encrypted TEXT    NOT NULL DEFAULT '',
   models            TEXT    NOT NULL DEFAULT '[]',
   enabled           INTEGER NOT NULL DEFAULT 1,

@@ -13,12 +13,38 @@ export interface SiteRow {
   status: 'active' | 'paused';
   pin_username: string;
   project_id: string;
-  buffer_channel_id: string;
+  api_token_encrypted: string;
+  buffer_token_encrypted: string;
   daily_target: number;
-  hours_between: number;
+  interval_minutes: number;
   created_at: string;
   updated_at: string;
 }
+
+/** A site's credentials, decrypted for use. Never logged, never rendered. */
+export interface SiteSecrets {
+  apiToken: string;
+  bufferToken: string;
+}
+
+export function siteSecrets(site: SiteRow, key: Buffer): SiteSecrets {
+  const safely = (value: string): string => {
+    try {
+      return decrypt(value, key);
+    } catch {
+      // A credential encrypted under a different key should surface as a
+      // clear auth failure at call time, not crash page rendering.
+      return '';
+    }
+  };
+  return {
+    apiToken: safely(site.api_token_encrypted),
+    bufferToken: safely(site.buffer_token_encrypted),
+  };
+}
+
+/** True when a secret column holds something, without decrypting it. */
+export const hasSecret = (value: string): boolean => value.trim() !== '';
 
 export const listSites = (): SiteRow[] =>
   all<SiteRow>('SELECT * FROM sites ORDER BY name');
@@ -29,22 +55,47 @@ export const getSite = (id: number): SiteRow | undefined =>
 export const getSiteByDomain = (domain: string): SiteRow | undefined =>
   get<SiteRow>('SELECT * FROM sites WHERE domain = ?', domain);
 
-export function upsertSite(input: Omit<SiteRow, 'id' | 'created_at' | 'updated_at'>): number {
-  const existing = getSiteByDomain(input.domain);
+export interface SiteInput {
+  name: string;
+  domain: string;
+  status: 'active' | 'paused';
+  pin_username: string;
+  project_id: string;
+  daily_target: number;
+  interval_minutes: number;
+  /** Plaintext. Blank on update means "keep the stored one". */
+  apiToken?: string;
+  bufferToken?: string;
+}
+
+/**
+ * Create or update a site.
+ *
+ * `id` identifies the row when supplied, so the domain can be renamed. Without
+ * it the domain is the key, which is what CSV import needs.
+ */
+export function upsertSite(input: SiteInput, key: Buffer, id?: number): number {
+  const existing = id ? getSite(id) : getSiteByDomain(input.domain);
+
+  const encryptOrKeep = (plain: string | undefined, stored: string): string =>
+    plain && plain.trim() !== '' ? encrypt(plain.trim(), key) : stored;
 
   if (existing) {
     run(
-      `UPDATE sites SET name = ?, status = ?, pin_username = ?, project_id = ?,
-         buffer_channel_id = ?, daily_target = ?, hours_between = ?,
+      `UPDATE sites SET name = ?, domain = ?, status = ?, pin_username = ?,
+         project_id = ?, daily_target = ?, interval_minutes = ?,
+         api_token_encrypted = ?, buffer_token_encrypted = ?,
          updated_at = datetime('now')
        WHERE id = ?`,
       input.name,
+      input.domain,
       input.status,
       input.pin_username,
       input.project_id,
-      input.buffer_channel_id,
       input.daily_target,
-      input.hours_between,
+      input.interval_minutes,
+      encryptOrKeep(input.apiToken, existing.api_token_encrypted),
+      encryptOrKeep(input.bufferToken, existing.buffer_token_encrypted),
       existing.id,
     );
     return existing.id;
@@ -52,16 +103,17 @@ export function upsertSite(input: Omit<SiteRow, 'id' | 'created_at' | 'updated_a
 
   return run(
     `INSERT INTO sites (name, domain, status, pin_username, project_id,
-       buffer_channel_id, daily_target, hours_between)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+       daily_target, interval_minutes, api_token_encrypted, buffer_token_encrypted)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     input.name,
     input.domain,
     input.status,
     input.pin_username,
     input.project_id,
-    input.buffer_channel_id,
     input.daily_target,
-    input.hours_between,
+    input.interval_minutes,
+    encryptOrKeep(input.apiToken, ''),
+    encryptOrKeep(input.bufferToken, ''),
   ).lastInsertRowid;
 }
 
@@ -104,7 +156,7 @@ export function loadSiteViews(dayKey: string, timezone: string): SiteView[] {
     domain: r.domain,
     status: r.status,
     dailyTarget: r.daily_target,
-    hoursBetween: r.hours_between,
+    intervalMinutes: r.interval_minutes,
     publishedToday: Number(r.published_today ?? 0),
     lastPublishAt: r.last_publish_at,
   }));

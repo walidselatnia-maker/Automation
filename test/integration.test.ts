@@ -19,21 +19,25 @@ import {
   getCompletedStep,
 } from '../src/db/repos.js';
 import { localDateKey, selectTask } from '../src/core/selector.js';
+import { randomBytes } from 'node:crypto';
 
 const TZ = 'Africa/Algiers';
+const KEY = randomBytes(32);
 
 function seedSite(domain: string, over: Partial<Parameters<typeof upsertSite>[0]> = {}): number {
-  return upsertSite({
-    name: domain.split('.')[0]!,
-    domain,
-    status: 'active',
-    pin_username: '',
-    project_id: '',
-    buffer_channel_id: '',
-    daily_target: 3,
-    hours_between: 1,
-    ...over,
-  });
+  return upsertSite(
+    {
+      name: domain.split('.')[0]!,
+      domain,
+      status: 'active',
+      pin_username: '',
+      project_id: '',
+      daily_target: 3,
+      interval_minutes: 60,
+      ...over,
+    },
+    KEY,
+  );
 }
 
 describe('database integration', () => {
@@ -156,7 +160,7 @@ describe('database integration', () => {
     });
 
     it('stops offering a site once it reaches its daily target', () => {
-      const siteId = seedSite('bitespoon.com', { daily_target: 1, hours_between: 0 });
+      const siteId = seedSite('bitespoon.com', { daily_target: 1, interval_minutes: 0 });
       const keywordId = insertKeyword({ seed_keyword: 'chicken' });
       const second = insertKeyword({ seed_keyword: 'beef' });
       setLink(keywordId, siteId, 'go');
@@ -180,7 +184,7 @@ describe('database integration', () => {
     it('REGRESSION: repeated selection terminates instead of looping', () => {
       // Emulates the scheduler running many ticks against a world where one
       // keyword can never be satisfied. The old orchestrator span forever here.
-      const siteId = seedSite('bitespoon.com', { daily_target: 100, hours_between: 0 });
+      const siteId = seedSite('bitespoon.com', { daily_target: 100, interval_minutes: 0 });
       const stuck = insertKeyword({ seed_keyword: 'stuck', status: 'go' });
       setLink(stuck, siteId, 'done'); // linked, but already used
 

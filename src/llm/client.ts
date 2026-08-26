@@ -95,16 +95,20 @@ async function callOllama(
  * The caller never learns which endpoint served it until it succeeds — and
  * the endpoint name comes back in the result so the run log can record it.
  */
-export async function chat(request: ChatRequest, encryptionKey: Buffer): Promise<ChatResult> {
+export async function chat(
+  request: ChatRequest,
+  encryptionKey: Buffer,
+  baseUrl = '',
+): Promise<ChatResult> {
   const started = Date.now();
-  const candidates = candidatesFor(request.model, encryptionKey);
+  const candidates = candidatesFor(request.model, encryptionKey, baseUrl);
   const tried: string[] = [];
   let lastError = '';
 
   // If health has knocked everything out, fall back to trying them anyway
   // rather than failing the run outright — a stale health flag should never
   // be the sole reason nothing can publish.
-  const pool = candidates.length > 0 ? candidates : allFor(request.model, encryptionKey);
+  const pool = candidates.length > 0 ? candidates : allFor(request.model, encryptionKey, baseUrl);
   if (candidates.length === 0 && pool.length > 0) {
     log.warn(`All endpoints for "${request.model}" are marked unhealthy; retrying anyway`);
   }

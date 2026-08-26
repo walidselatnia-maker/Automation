@@ -60,18 +60,18 @@ export const resolveBufferTarget: Step<SeoData, BufferTarget> = {
       throw new Error('Buffer returned no channels for this organization');
     }
 
-    const configured = ctx.site.buffer_channel_id.trim();
+    // The Buffer token is this site's own, so its channel list belongs to this
+    // site. Match the Pinterest username when there is more than one.
     const byPinUsername = ctx.site.pin_username.trim().toLowerCase();
-
     const channel =
-      channels.find((c) => c.id === configured) ??
-      channels.find((c) => c.name.toLowerCase() === byPinUsername) ??
-      channels[0]!;
+      (byPinUsername
+        ? channels.find((c) => c.name.toLowerCase() === byPinUsername)
+        : undefined) ?? channels[0]!;
 
-    if (configured && channel.id !== configured) {
+    if (channels.length > 1 && !byPinUsername) {
       log.warn(
-        `Configured Buffer channel "${configured}" not found for ${ctx.site.domain}; ` +
-          `using "${channel.name}" instead.`,
+        `Buffer token for ${ctx.site.domain} exposes ${channels.length} channels and no ` +
+          `Pinterest username is set; using "${channel.name}".`,
       );
     }
 

@@ -43,8 +43,8 @@ export function localDateKey(date: Date, timezone: string): string {
   return `${get('year')}-${get('month')}-${get('day')}`;
 }
 
-/** Hours elapsed between two instants; null when `since` is unusable. */
-function hoursSince(since: string | null, now: Date): number | null {
+/** Minutes elapsed between two instants; null when `since` is unusable. */
+function minutesSince(since: string | null, now: Date): number | null {
   if (!since) return null;
 
   const parsed = new Date(since);
@@ -55,7 +55,15 @@ function hoursSince(since: string | null, now: Date): number | null {
     return null;
   }
 
-  return (now.getTime() - parsed.getTime()) / 3_600_000;
+  return (now.getTime() - parsed.getTime()) / 60_000;
+}
+
+/** Render a minute count the way a person would say it. */
+export function formatMinutes(minutes: number): string {
+  if (minutes < 60) return `${minutes}m`;
+  if (minutes % 1440 === 0) return `${minutes / 1440}d`;
+  if (minutes % 60 === 0) return `${minutes / 60}h`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
 export interface SiteEligibility {
@@ -86,7 +94,7 @@ export function evaluateSite(site: SiteView, options: SelectorOptions): SiteElig
     );
   }
 
-  const elapsed = hoursSince(site.lastPublishAt, options.now);
+  const elapsed = minutesSince(site.lastPublishAt, options.now);
 
   if (site.lastPublishAt !== null && elapsed === null) {
     // Explicitly a rejection, not a free pass. An unreadable timestamp is a
@@ -94,11 +102,11 @@ export function evaluateSite(site: SiteView, options: SelectorOptions): SiteElig
     return reject(`Unreadable last_publish value: ${JSON.stringify(site.lastPublishAt)}`);
   }
 
-  if (elapsed !== null && elapsed < site.hoursBetween) {
-    const wait = (site.hoursBetween - elapsed).toFixed(1);
+  if (elapsed !== null && elapsed < site.intervalMinutes) {
     return reject(
-      `Minimum interval not elapsed (${elapsed.toFixed(1)}h of ` +
-        `${site.hoursBetween}h; ${wait}h remaining)`,
+      `Minimum interval not elapsed (${formatMinutes(Math.floor(elapsed))} of ` +
+        `${formatMinutes(site.intervalMinutes)}; ` +
+        `${formatMinutes(Math.ceil(site.intervalMinutes - elapsed))} remaining)`,
     );
   }
 

@@ -213,12 +213,10 @@ describe('pipeline end to end', () => {
     configurePrompts(PROMPT_DIR);
 
     settings = new Settings(KEY);
-    settings.set('site_api_token', 'test-token');
     settings.set('image_api_key', 'image-key');
     settings.set('image_base_url', 'https://imggen.test');
     settings.set('image_poll_interval_seconds', '0');
     settings.set('image_poll_max_attempts', '5');
-    settings.set('buffer_api_token', 'buffer-token');
     settings.set('buffer_enabled', 'true');
     settings.set('telegram_enabled', 'false');
 
@@ -227,16 +225,20 @@ describe('pipeline end to end', () => {
       KEY,
     );
 
-    siteId = upsertSite({
-      name: 'testsite',
-      domain: 'testsite.com',
-      status: 'active',
-      pin_username: 'testsite',
-      project_id: 'p1',
-      buffer_channel_id: 'chan-1',
-      daily_target: 5,
-      hours_between: 0,
-    });
+    siteId = upsertSite(
+      {
+        name: 'testsite',
+        domain: 'testsite.com',
+        status: 'active',
+        pin_username: 'testsite',
+        project_id: 'p1',
+        daily_target: 5,
+        interval_minutes: 0,
+        apiToken: 'test-token',
+        bufferToken: 'buffer-token',
+      },
+      KEY,
+    );
 
     keywordId = insertKeyword({ seed_keyword: 'chicken breast', spy_title: 'Test Chicken' });
     setLink(keywordId, siteId, 'go');

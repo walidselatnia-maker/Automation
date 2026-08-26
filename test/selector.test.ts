@@ -12,7 +12,7 @@ function site(over: Partial<SiteView> = {}): SiteView {
     domain: 'bitespoon.com',
     status: 'active',
     dailyTarget: 10,
-    hoursBetween: 1,
+    intervalMinutes: 60,
     publishedToday: 0,
     lastPublishAt: null,
     ...over,
@@ -65,17 +65,44 @@ describe('evaluateSite', () => {
 
   it('rejects a site still inside its minimum interval', () => {
     const result = evaluateSite(
-      site({ hoursBetween: 8, lastPublishAt: '2026-08-25T10:00:00Z' }),
+      site({ intervalMinutes: 480, lastPublishAt: '2026-08-25T10:00:00Z' }),
       OPTS,
     );
     expect(result.eligible).toBe(false);
     expect(result.reason).toContain('Minimum interval not elapsed');
-    expect(result.reason).toContain('2.0h of 8h');
+    expect(result.reason).toContain('2h of 8h');
+  });
+
+  it('supports intervals finer than an hour', () => {
+    // 20 minutes was impossible to express when the column was hours.
+    const twelveMinutesAgo = new Date(NOW.getTime() - 12 * 60_000).toISOString();
+    const result = evaluateSite(
+      site({ intervalMinutes: 20, lastPublishAt: twelveMinutesAgo }),
+      OPTS,
+    );
+    expect(result.eligible).toBe(false);
+    expect(result.reason).toContain('12m of 20m');
+
+    const thirtyMinutesAgo = new Date(NOW.getTime() - 30 * 60_000).toISOString();
+    expect(
+      evaluateSite(site({ intervalMinutes: 20, lastPublishAt: thirtyMinutesAgo }), OPTS)
+        .eligible,
+    ).toBe(true);
+  });
+
+  it('supports intervals measured in days', () => {
+    const oneDayAgo = new Date(NOW.getTime() - 24 * 3_600_000).toISOString();
+    const result = evaluateSite(
+      site({ intervalMinutes: 4320, lastPublishAt: oneDayAgo }),
+      OPTS,
+    );
+    expect(result.eligible).toBe(false);
+    expect(result.reason).toContain('of 3d');
   });
 
   it('accepts a site once the interval has elapsed', () => {
     expect(
-      evaluateSite(site({ hoursBetween: 8, lastPublishAt: '2026-08-25T03:00:00Z' }), OPTS)
+      evaluateSite(site({ intervalMinutes: 480, lastPublishAt: '2026-08-25T03:00:00Z' }), OPTS)
         .eligible,
     ).toBe(true);
   });
@@ -87,7 +114,7 @@ describe('evaluateSite', () => {
     // `if (isNaN(last.getTime())) return true`, which silently disabled the
     // interval check entirely. An unreadable timestamp must be surfaced.
     const result = evaluateSite(
-      site({ hoursBetween: 8, lastPublishAt: '{{ $json.now_iso }}' }),
+      site({ intervalMinutes: 480, lastPublishAt: '{{ $json.now_iso }}' }),
       OPTS,
     );
     expect(result.eligible).toBe(false);
@@ -95,7 +122,7 @@ describe('evaluateSite', () => {
   });
 
   it('treats a genuinely empty last_publish as never published', () => {
-    expect(evaluateSite(site({ lastPublishAt: null, hoursBetween: 8 }), OPTS).eligible).toBe(
+    expect(evaluateSite(site({ lastPublishAt: null, intervalMinutes: 480 }), OPTS).eligible).toBe(
       true,
     );
   });

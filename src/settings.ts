@@ -8,7 +8,7 @@ import { getSetting, setSetting } from './db/repos.js';
 export interface SettingSpec {
   key: string;
   label: string;
-  group: 'general' | 'sites' | 'images' | 'buffer' | 'telegram' | 'schedule';
+  group: 'general' | 'llm' | 'images' | 'buffer' | 'telegram' | 'schedule';
   secret: boolean;
   default: string;
   help?: string;
@@ -53,15 +53,14 @@ export const SETTING_SPECS: SettingSpec[] = [
     type: 'number',
   },
 
-  // -- Sites ---------------------------------------------------------------
+  // -- LLM -----------------------------------------------------------------
   {
-    key: 'site_api_token',
-    label: 'Site API token',
-    group: 'sites',
-    secret: true,
-    default: '',
-    type: 'password',
-    help: 'Bearer token for /api/recipe, /api/upload and /api/categories. Shared by all sites.',
+    key: 'llm_base_url',
+    label: 'LLM base URL',
+    group: 'llm',
+    secret: false,
+    default: 'https://ollama.com',
+    help: 'Shared by every API key. Requests go to {base URL}/api/chat.',
   },
 
   // -- Image generation ----------------------------------------------------
@@ -101,14 +100,6 @@ export const SETTING_SPECS: SettingSpec[] = [
   },
 
   // -- Buffer --------------------------------------------------------------
-  {
-    key: 'buffer_api_token',
-    label: 'Buffer API token',
-    group: 'buffer',
-    secret: true,
-    default: '',
-    type: 'password',
-  },
   {
     key: 'buffer_enabled',
     label: 'Publish to Buffer',
@@ -178,17 +169,14 @@ export class Settings {
   validate(): string[] {
     const problems: string[] = [];
 
-    if (!this.has('site_api_token')) {
-      problems.push('Site API token is not set (Settings → Sites).');
-    }
     if (!this.has('image_api_key')) {
       problems.push('Image service API key is not set (Settings → Images).');
     }
-    if (this.getBool('buffer_enabled') && !this.has('buffer_api_token')) {
-      problems.push('Buffer publishing is on but no Buffer token is set.');
-    }
     if (this.getBool('telegram_enabled') && !this.has('telegram_bot_token')) {
       problems.push('Telegram notifications are on but no bot token is set.');
+    }
+    if (!this.has('llm_base_url')) {
+      problems.push('LLM base URL is not set (Settings → LLM).');
     }
     try {
       new Intl.DateTimeFormat('en-CA', { timeZone: this.get('timezone') });

@@ -7,6 +7,7 @@ import {
   statusBadge,
   timeAgo,
 } from './layout.js';
+import { hasSecret } from '../../db/repos.js';
 import type {
   DecisionRow,
   EventRow,
@@ -17,6 +18,7 @@ import type {
   StepRow,
 } from '../../db/repos.js';
 import type { SiteView } from '../../core/types.js';
+import { formatMinutes } from '../../core/selector.js';
 import type { Endpoint } from '../../llm/pool.js';
 import type { SettingSpec } from '../../settings.js';
 
@@ -257,7 +259,7 @@ export function sitesPage(sites: SiteRow[], views: SiteView[]): Html {
             <thead>
               <tr>
                 <th>Name</th><th>Domain</th><th>Status</th><th>Target</th>
-                <th>Interval</th><th>Today</th><th>Last publish</th><th></th>
+                <th>Interval</th><th>Credentials</th><th>Today</th><th>Last publish</th><th></th>
               </tr>
             </thead>
             <tbody>
@@ -268,7 +270,15 @@ export function sitesPage(sites: SiteRow[], views: SiteView[]): Html {
                   <td class="mono">${s.domain}</td>
                   <td>${statusBadge(s.status)}</td>
                   <td>${s.daily_target}</td>
-                  <td class="nowrap">${s.hours_between}h</td>
+                  <td class="nowrap">${formatMinutes(s.interval_minutes)}</td>
+                  <td class="nowrap small">
+                    ${hasSecret(s.api_token_encrypted)
+                      ? html`<span class="badge ok">API</span>`
+                      : html`<span class="badge error">API</span>`}
+                    ${hasSecret(s.buffer_token_encrypted)
+                      ? html`<span class="badge ok">Buffer</span>`
+                      : html`<span class="badge muted">Buffer</span>`}
+                  </td>
                   <td>${v?.publishedToday ?? 0}</td>
                   <td class="nowrap muted">${timeAgo(v?.lastPublishAt ?? null)}</td>
                   <td class="nowrap"><a class="button small" href="/sites/${s.id}">Edit</a></td>
@@ -303,6 +313,36 @@ export function siteEditPage(site: SiteRow): Html {
 
 function siteForm(site: SiteRow | null): Html {
   const action = site ? `/sites/${site.id}` : '/sites';
+
+  // Show the interval in the largest unit that divides evenly, so 1440
+  // minutes comes back as "1 day" rather than "1440 minutes".
+  const minutes = site?.interval_minutes ?? 480;
+  const [amount, unit] =
+    minutes % 1440 === 0 && minutes >= 1440
+      ? [minutes / 1440, 'days']
+      : minutes % 60 === 0 && minutes >= 60
+        ? [minutes / 60, 'hours']
+        : [minutes, 'minutes'];
+
+  const secretField = (
+    name: string,
+    label: string,
+    stored: string,
+    help: string,
+  ): Html => html`
+    <div class="field">
+      <label>${label}</label>
+      <input type="password" name="${name}" autocomplete="new-password"
+             placeholder="${hasSecret(stored) ? 'saved — leave blank to keep' : 'not set'}" />
+      <div class="help">
+        ${help}
+        ${hasSecret(stored)
+          ? html`<span class="badge ok" style="margin-left:6px">saved</span>`
+          : html`<span class="badge muted" style="margin-left:6px">missing</span>`}
+      </div>
+    </div>
+  `;
+
   return html`
     <form method="post" action="${action}">
       <div class="field-row">
@@ -314,8 +354,8 @@ function siteForm(site: SiteRow | null): Html {
         <div class="field">
           <label>Domain</label>
           <input type="text" name="domain" required value="${site?.domain ?? ''}"
-                 placeholder="example.com" ${site ? raw('readonly') : raw('')} />
-          <div class="help">Without https://</div>
+                 placeholder="example.com" />
+          <div class="help">Without https://. Renaming keeps this site's history.</div>
         </div>
         <div class="field">
           <label>Status</label>
@@ -325,6 +365,8 @@ function siteForm(site: SiteRow | null): Html {
           </select>
         </div>
       </div>
+
+      <h3>Publishing schedule</h3>
       <div class="field-row">
         <div class="field">
           <label>Daily target</label>
@@ -332,25 +374,47 @@ function siteForm(site: SiteRow | null): Html {
           <div class="help">Articles per day. 0 means never publish.</div>
         </div>
         <div class="field">
-          <label>Hours between posts</label>
-          <input type="number" name="hours_between" min="0" step="0.5" value="${site?.hours_between ?? 8}" />
+          <label>Minimum gap between posts</label>
+          <div class="row" style="flex-wrap:nowrap">
+            <input type="number" name="interval_amount" min="0" step="1" value="${amount}"
+                   style="flex:1" />
+            <select name="interval_unit" style="width:auto">
+              <option value="minutes" ${unit === 'minutes' ? raw('selected') : raw('')}>minutes</option>
+              <option value="hours" ${unit === 'hours' ? raw('selected') : raw('')}>hours</option>
+              <option value="days" ${unit === 'days' ? raw('selected') : raw('')}>days</option>
+            </select>
+          </div>
+          <div class="help">Any cadence: 20 minutes, 90 minutes, 3 days.</div>
         </div>
+      </div>
+
+      <h3>Credentials for this site</h3>
+      <div class="field-row">
+        ${secretField(
+          'api_token',
+          'Site API token',
+          site?.api_token_encrypted ?? '',
+          'Bearer token for the /api/recipe, /api/upload and /api/categories endpoints on this domain.',
+        )}
+        ${secretField(
+          'buffer_token',
+          'Buffer API token',
+          site?.buffer_token_encrypted ?? '',
+          'The Buffer account belonging to this site. Its channel is resolved automatically.',
+        )}
+      </div>
+      <div class="field-row">
         <div class="field">
           <label>Pinterest username</label>
           <input type="text" name="pin_username" value="${site?.pin_username ?? ''}" />
+          <div class="help">Used to pick the right Buffer channel when there is more than one.</div>
         </div>
-      </div>
-      <div class="field-row">
         <div class="field">
           <label>Project ID</label>
           <input type="text" name="project_id" value="${site?.project_id ?? ''}" />
         </div>
-        <div class="field">
-          <label>Buffer channel ID</label>
-          <input type="text" name="buffer_channel_id" value="${site?.buffer_channel_id ?? ''}" />
-          <div class="help">Optional. Matched by Pinterest username when blank.</div>
-        </div>
       </div>
+
       <button class="primary" type="submit">${site ? 'Save changes' : 'Add site'}</button>
     </form>
   `;
@@ -384,7 +448,14 @@ export function keywordsPage(
       </p>
       <form method="post" action="/keywords/import" enctype="multipart/form-data">
         <div class="field"><input type="file" name="file" accept=".csv,text/csv" required /></div>
-        <button class="primary" type="submit">Import CSV</button>
+        <div class="row">
+          <button class="primary" type="submit">Import CSV</button>
+          <a class="button" href="/keywords/template.csv" download>Download template</a>
+        </div>
+        <div class="help" style="margin-top:8px">
+          The template already contains a column for every site you have added, with example
+          rows showing go / done / no.
+        </div>
       </form>
     </div>
 
@@ -513,7 +584,7 @@ export function settingsPage(
   const groups: { key: SettingSpec['group']; title: string }[] = [
     { key: 'general', title: 'General' },
     { key: 'schedule', title: 'Schedule' },
-    { key: 'sites', title: 'Sites' },
+    { key: 'llm', title: 'LLM' },
     { key: 'images', title: 'Image generation' },
     { key: 'buffer', title: 'Buffer' },
     { key: 'telegram', title: 'Telegram' },
@@ -547,38 +618,50 @@ export function settingsPage(
       <button class="primary" type="submit">Save settings</button>
     </form>
 
-    <h2>LLM endpoints</h2>
+    <h2>LLM API keys</h2>
     <p class="subtitle">
-      Requests are routed to the least recently used healthy endpoint that serves the requested
-      model. If one is rate limited or fails, the same request is retried on the next one, so a
-      single unavailable endpoint never breaks a run.
+      One row per API key. They all share the base URL above, because the provider is a
+      single cloud endpoint — the keys exist only to spread its rate limit. Requests go to
+      the least recently used healthy key; on a 429 the same request is retried on the next
+      one, so a throttled key never breaks a run.
     </p>
 
     <div class="card table-wrap">
       ${endpoints.length === 0
-        ? emptyState('No endpoints yet. Add at least one below or nothing can be generated.')
+        ? emptyState('No API keys yet. Nothing can be generated until you add at least one.')
         : html`<table>
             <thead>
-              <tr><th>Name</th><th>URL</th><th>Models</th><th>Health</th><th>Last success</th><th></th></tr>
+              <tr><th>Name</th><th>Health</th><th>Last success</th><th>Last error</th><th></th></tr>
             </thead>
             <tbody>
               ${endpoints.map(
                 (e) => html`<tr>
-                  <td><strong>${e.name}</strong>${e.enabled ? raw('') : html` <span class="badge muted">disabled</span>`}</td>
-                  <td class="mono small">${e.baseUrl}</td>
-                  <td class="small">${e.models.length ? e.models.join(', ') : html`<span class="muted">all</span>`}</td>
                   <td>
-                    ${e.healthy ? html`<span class="badge ok">healthy</span>` : html`<span class="badge error">unhealthy</span>`}
-                    ${e.consecutiveFails > 0 ? html`<div class="muted small">${e.consecutiveFails} consecutive failure(s)</div>` : raw('')}
-                    ${e.lastError ? html`<div class="muted small">${e.lastError.slice(0, 90)}</div>` : raw('')}
+                    <strong>${e.name}</strong>
+                    ${e.enabled ? raw('') : html` <span class="badge muted">disabled</span>`}
+                    ${e.models.length
+                      ? html`<div class="muted small">only: ${e.models.join(', ')}</div>`
+                      : raw('')}
+                  </td>
+                  <td>
+                    ${e.healthy
+                      ? html`<span class="badge ok">healthy</span>`
+                      : html`<span class="badge error">unhealthy</span>`}
+                    ${e.consecutiveFails > 0
+                      ? html`<div class="muted small">${e.consecutiveFails} consecutive failure(s)</div>`
+                      : raw('')}
+                    ${e.cooldownUntil && e.cooldownUntil > new Date()
+                      ? html`<div class="muted small">cooling down</div>`
+                      : raw('')}
                   </td>
                   <td class="muted small nowrap">${timeAgo(e.lastSuccessAt)}</td>
+                  <td class="muted small">${e.lastError ? e.lastError.slice(0, 80) : '—'}</td>
                   <td class="nowrap">
                     <form method="post" action="/settings/endpoints/${e.id}/reset" style="display:inline">
-                      <button class="small" type="submit">Reset health</button>
+                      <button class="small" type="submit">Reset</button>
                     </form>
                     <form method="post" action="/settings/endpoints/${e.id}/delete" style="display:inline"
-                          onsubmit="return confirm('Delete endpoint ${e.name}?')">
+                          onsubmit="return confirm('Delete key ${e.name}?')">
                       <button class="small danger" type="submit">×</button>
                     </form>
                   </td>
@@ -589,29 +672,37 @@ export function settingsPage(
     </div>
 
     <div class="card">
-      <h3>Add or update an endpoint</h3>
+      <h3>Add an API key</h3>
       <form method="post" action="/settings/endpoints">
         <div class="field-row">
           <div class="field">
-            <label>Name</label>
-            <input type="text" name="name" required placeholder="ollama-01" />
-            <div class="help">Reusing a name updates that endpoint.</div>
-          </div>
-          <div class="field">
-            <label>Base URL</label>
-            <input type="text" name="base_url" required placeholder="http://10.0.0.5:11434" />
+            <label>Label</label>
+            <input type="text" name="name" required placeholder="key-01" />
+            <div class="help">Any name. Reusing one replaces that key.</div>
           </div>
           <div class="field">
             <label>API key</label>
-            <input type="password" name="api_key" placeholder="leave blank to keep existing" />
+            <input type="password" name="api_key" required autocomplete="new-password"
+                   placeholder="paste the key" />
+            <div class="help">Stored encrypted. Never displayed again.</div>
           </div>
         </div>
-        <div class="field">
-          <label>Models</label>
-          <input type="text" name="models" placeholder="gemma4:31b, gpt-oss:120b" />
-          <div class="help">Comma separated. Leave blank if this endpoint serves every model.</div>
-        </div>
-        <button class="primary" type="submit">Save endpoint</button>
+        <details>
+          <summary class="muted small">Advanced</summary>
+          <div class="field-row" style="margin-top:10px">
+            <div class="field">
+              <label>Restrict to models</label>
+              <input type="text" name="models" placeholder="leave blank for all models" />
+              <div class="help">Comma separated. Normally blank — any key can serve any model.</div>
+            </div>
+            <div class="field">
+              <label>Override base URL</label>
+              <input type="text" name="base_url" placeholder="leave blank to use the shared URL" />
+              <div class="help">Only for mixing in a self-hosted instance.</div>
+            </div>
+          </div>
+        </details>
+        <button class="primary" type="submit">Add key</button>
       </form>
     </div>
   `;

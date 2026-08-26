@@ -10,7 +10,8 @@ export interface SiteView {
   domain: string;
   status: SiteStatus;
   dailyTarget: number;
-  hoursBetween: number;
+  /** Minimum gap between posts, in minutes. */
+  intervalMinutes: number;
   /** Derived: COUNT(runs published today). Never stored. */
   publishedToday: number;
   /** Derived: MAX(runs.published_at). Never stored. ISO string or null. */

@@ -147,7 +147,10 @@ export function importKeywordsCsv(csv: string): ImportReport {
 }
 
 /** Import sites from the old KEYS sheet layout. */
-export function importSitesCsv(csv: string): { imported: number; errors: string[] } {
+export function importSitesCsv(
+  csv: string,
+  encryptionKey: Buffer,
+): { imported: number; errors: string[] } {
   const { rows } = parseCsvTable(csv);
   const errors: string[] = [];
   let imported = 0;
@@ -174,16 +177,26 @@ export function importSitesCsv(csv: string): { imported: number; errors: string[
           return Number.isFinite(n) ? n : fallback;
         };
 
-        upsertSite({
-          name: pick('Website Name', 'name') || domain,
-          domain,
-          status: pick('status').toLowerCase() === 'active' ? 'active' : 'paused',
-          pin_username: pick('Pin username'),
-          project_id: pick('Project ID'),
-          buffer_channel_id: pick('buffer ID', 'buffer_channel_id'),
-          daily_target: toNumber(pick('daily_target'), existing?.daily_target ?? 0),
-          hours_between: toNumber(pick('hours_between'), existing?.hours_between ?? 8),
-        });
+        // The old sheet expressed the gap in hours; store it as minutes.
+        const hours = pick('hours_between');
+        const intervalMinutes = hours
+          ? Math.round(toNumber(hours, 8) * 60)
+          : (existing?.interval_minutes ?? 480);
+
+        upsertSite(
+          {
+            name: pick('Website Name', 'name') || domain,
+            domain,
+            status: pick('status').toLowerCase() === 'active' ? 'active' : 'paused',
+            pin_username: pick('Pin username'),
+            project_id: pick('Project ID'),
+            daily_target: toNumber(pick('daily_target'), existing?.daily_target ?? 0),
+            interval_minutes: intervalMinutes,
+            // Credentials are entered per site in the UI, never imported: the
+            // old sheet repeated one token across every row.
+          },
+          encryptionKey,
+        );
         imported++;
       } catch (err) {
         errors.push(`${domain}: ${err instanceof Error ? err.message : String(err)}`);

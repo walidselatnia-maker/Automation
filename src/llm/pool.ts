@@ -62,7 +62,7 @@ function parseModels(json: string): string[] {
   }
 }
 
-export function rowToEndpoint(row: EndpointRow, key: Buffer): Endpoint {
+export function rowToEndpoint(row: EndpointRow, key: Buffer, fallbackBaseUrl = ''): Endpoint {
   let apiKey = '';
   try {
     apiKey = decrypt(row.api_key_encrypted, key);
@@ -73,7 +73,7 @@ export function rowToEndpoint(row: EndpointRow, key: Buffer): Endpoint {
   return {
     id: row.id,
     name: row.name,
-    baseUrl: row.base_url.replace(/\/+$/, ''),
+    baseUrl: (row.base_url || fallbackBaseUrl).replace(/\/+$/, ''),
     apiKey,
     models: parseModels(row.models),
     enabled: row.enabled === 1,
@@ -91,8 +91,8 @@ export function rowToEndpoint(row: EndpointRow, key: Buffer): Endpoint {
 export const listEndpointRows = (): EndpointRow[] =>
   all<EndpointRow>('SELECT * FROM llm_endpoints ORDER BY name');
 
-export const listEndpoints = (key: Buffer): Endpoint[] =>
-  listEndpointRows().map((r) => rowToEndpoint(r, key));
+export const listEndpoints = (key: Buffer, fallbackBaseUrl = ''): Endpoint[] =>
+  listEndpointRows().map((r) => rowToEndpoint(r, key, fallbackBaseUrl));
 
 export function upsertEndpoint(
   input: { name: string; baseUrl: string; apiKey: string; models: string[]; enabled: boolean },
@@ -181,8 +181,13 @@ export function resetEndpointHealth(id: number): void {
  * An endpoint with no declared models is treated as serving everything,
  * which keeps a single-endpoint setup working with no configuration.
  */
-export function candidatesFor(model: string, key: Buffer, now = new Date()): Endpoint[] {
-  return listEndpoints(key)
+export function candidatesFor(
+  model: string,
+  key: Buffer,
+  fallbackBaseUrl = '',
+  now = new Date(),
+): Endpoint[] {
+  return listEndpoints(key, fallbackBaseUrl)
     .filter((e) => e.enabled)
     .filter((e) => e.models.length === 0 || e.models.includes(model))
     .filter((e) => !e.cooldownUntil || e.cooldownUntil <= now)
@@ -196,8 +201,8 @@ export function candidatesFor(model: string, key: Buffer, now = new Date()): End
 }
 
 /** Everything configured for a model, ignoring health — used for diagnostics. */
-export function allFor(model: string, key: Buffer): Endpoint[] {
-  return listEndpoints(key).filter(
+export function allFor(model: string, key: Buffer, fallbackBaseUrl = ''): Endpoint[] {
+  return listEndpoints(key, fallbackBaseUrl).filter(
     (e) => e.enabled && (e.models.length === 0 || e.models.includes(model)),
   );
 }
