@@ -14,10 +14,14 @@ between installations.
 ## Install
 
 Point any Docker platform (Coolify, Dokploy, Portainer, CapRover) at this
-repository, or run:
+repository. Attach your domain to the `platform` service, container port 8080 —
+the proxy reaches it over the Docker network, so nothing is published to the
+host.
+
+To run it on your own machine instead:
 
 ```bash
-docker compose up -d
+docker compose -f docker-compose.local.yml up -d --build
 ```
 
 Two containers come up:

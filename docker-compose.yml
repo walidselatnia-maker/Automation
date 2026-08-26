@@ -11,11 +11,15 @@ services:
     build: .
     restart: unless-stopped
 
-    ports:
-      # Your platform's reverse proxy terminates TLS and forwards here. Safe to
-      # publish because the UI requires a password; also what makes a plain
-      # `docker compose up -d` reachable at http://localhost:8080.
-      - "8080:8080"
+    # No `ports:` mapping on purpose. Traefik reaches the container over the
+    # Docker network and routes the domain to the port below, so publishing to
+    # the host adds nothing -- and it would also put the app on the VPS's
+    # public interface over plain HTTP, next to the HTTPS Traefik terminates.
+    #
+    # For running this on your own machine use docker-compose.local.yml, which
+    # binds to 127.0.0.1.
+    expose:
+      - "8080"
 
     environment:
       # `- NAME` with no value is pass-through: whatever the deployment

@@ -104,8 +104,10 @@ public URL.
 - Only `/healthz` and `/static/*` are reachable without signing in.
 - `/healthz` returns status only — never credentials.
 
-Let your platform terminate TLS. Do not expose port 8080 directly over plain
-HTTP on a public address.
+Let your platform terminate TLS. The compose file publishes nothing to the
+host: Traefik routes the domain to the container over the Docker network, and
+a `ports:` mapping would put the app on the VPS's public interface over plain
+HTTP alongside it.
 
 The `imagegen` container is not password-protected itself, and does not need to
 be: it has no route in from outside. It lives on a Docker network declared
