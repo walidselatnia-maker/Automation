@@ -1,5 +1,6 @@
 import type { Step } from '../engine.js';
 import { parseJson, requireFields } from '../json.js';
+import { parseJsonOrRepair } from '../parse-with-repair.js';
 import type { Category } from '../../integrations/site-api.js';
 
 /**
@@ -70,7 +71,12 @@ export const validateSpy: Step<Category[], SeoData> = {
       throw new SpyRejectedError(result.content.slice(0, 300));
     }
 
-    const parsed = parseJson<Record<string, string>>(result.content, 'Spy validation output');
+    const parsed = await parseJsonOrRepair<Record<string, string>>(
+      ctx,
+      result.content,
+      'Spy validation output',
+      { requiredFields: ['keyword', 'title', 'description', 'category'] },
+    );
     requireFields(parsed, ['keyword', 'title', 'description', 'category'], 'Spy validation');
 
     return {
@@ -106,10 +112,17 @@ export const generateRecipe: Step<SeoData, RecipeData> = {
 
     // Parsed for validation; the raw string is what later prompts interpolate,
     // matching the original which passed Recipe generator's content through.
-    const parsed = parseJson<Record<string, unknown>>(result.content, 'Recipe output');
+    const parsed = await parseJsonOrRepair<Record<string, unknown>>(
+      ctx,
+      result.content,
+      'Recipe output',
+    );
 
+    // The repaired document is what downstream prompts see. Passing the
+    // original raw text on would hand every later step the same broken JSON
+    // this step just spent a model call fixing.
     return {
-      value: { raw: result.content, parsed },
+      value: { raw: JSON.stringify(parsed), parsed },
       endpoint: result.endpoint,
       model: result.model,
     };
@@ -129,7 +142,11 @@ export const generateImagePrompts: Step<
       recipeJson: JSON.stringify(input.recipe.parsed),
     });
 
-    const parsed = parseJson<Record<string, string>>(result.content, 'Image prompt output');
+    const parsed = await parseJsonOrRepair<Record<string, string>>(
+      ctx,
+      result.content,
+      'Image prompt output',
+    );
     requireFields(
       parsed,
       [

@@ -1,5 +1,14 @@
 import { parseCsvTable } from '../lib/csv.js';
-import { getSiteByDomain, insertKeyword, listSites, setLink, upsertSite } from '../db/repos.js';
+import {
+  getKeywordBySeed,
+  getSiteByDomain,
+  insertKeyword,
+  listSites,
+  setLink,
+  updateKeywordFields,
+  upsertSite,
+} from '../db/repos.js';
+import { normaliseDomain } from '../lib/domain.js';
 import { transaction } from '../db/index.js';
 import { createLogger } from '../lib/logger.js';
 
@@ -52,6 +61,9 @@ const normaliseStatus = (value: string): 'go' | 'done' | 'no' => {
 
 export interface ImportReport {
   imported: number;
+  updated: number;
+  /** Site columns that matched a configured site. */
+  matchedDomains: number;
   skipped: number;
   linksSet: number;
   unknownDomains: string[];
@@ -63,6 +75,8 @@ export function importKeywordsCsv(csv: string): ImportReport {
 
   const report: ImportReport = {
     imported: 0,
+    updated: 0,
+    matchedDomains: 0,
     skipped: 0,
     linksSet: 0,
     unknownDomains: [],
@@ -83,7 +97,14 @@ export function importKeywordsCsv(csv: string): ImportReport {
   }
 
   // Any header that is not a known keyword field is treated as a site domain.
-  const knownDomains = new Map(listSites().map((s) => [s.domain.toLowerCase(), s.id]));
+  //
+  // Both sides are normalised. A column heading is typed by a person into a
+  // spreadsheet and a stored domain is typed by a person into a form, so the
+  // same site turns up as bitespoon.com, https://bitespoon.com, www., a
+  // trailing slash, or any mix. Comparing raw strings meant one spelling
+  // matched and the rest silently did not — the import then reported success
+  // while linking every keyword to nothing.
+  const knownDomains = new Map(listSites().map((s) => [normaliseDomain(s.domain), s.id]));
   const domainColumns: { header: string; siteId: number }[] = [];
   const unknown = new Set<string>();
 
@@ -91,12 +112,13 @@ export function importKeywordsCsv(csv: string): ImportReport {
     const key = normalised[index]!;
     if (KEYWORD_FIELDS.has(key) || key === '') return;
 
-    const siteId = knownDomains.get(header.trim().toLowerCase());
+    const siteId = knownDomains.get(normaliseDomain(header));
     if (siteId) domainColumns.push({ header, siteId });
     else unknown.add(header);
   });
 
   report.unknownDomains = [...unknown];
+  report.matchedDomains = domainColumns.length;
 
   transaction(() => {
     rows.forEach((row, rowIndex) => {
@@ -112,8 +134,7 @@ export function importKeywordsCsv(csv: string): ImportReport {
       }
 
       try {
-        const keywordId = insertKeyword({
-          seed_keyword: seed,
+        const fields = {
           spy_title: value('spy_title'),
           spy_description: value('spy_description'),
           spy_image_url: value('spy_image_url'),
@@ -121,7 +142,21 @@ export function importKeywordsCsv(csv: string): ImportReport {
           spy_pin_image: value('spy_pin_image'),
           annotation: value('annotation'),
           status: normaliseStatus(value('status') || 'go'),
-        });
+        };
+
+        // Importing the same file twice is normal — the first attempt is often
+        // the one where the site columns did not match. Updating the existing
+        // keyword makes that a correction rather than 24 more rows.
+        const existing = getKeywordBySeed(seed);
+        let keywordId: number;
+        if (existing) {
+          updateKeywordFields(existing.id, fields);
+          keywordId = existing.id;
+          report.updated++;
+        } else {
+          keywordId = insertKeyword({ seed_keyword: seed, ...fields });
+          report.imported++;
+        }
 
         for (const column of domainColumns) {
           const cell = (row[column.header] ?? '').trim();
@@ -129,8 +164,6 @@ export function importKeywordsCsv(csv: string): ImportReport {
           setLink(keywordId, column.siteId, normaliseStatus(cell));
           report.linksSet++;
         }
-
-        report.imported++;
       } catch (err) {
         report.skipped++;
         report.errors.push(
@@ -167,7 +200,11 @@ export function importSitesCsv(
         return '';
       };
 
-      const domain = pick('Domain', 'domain').trim();
+      // Normalised on the way in, for the same reason headings are normalised
+      // on the way out: a domain typed into a spreadsheet carries a scheme,
+      // www, or a trailing slash about half the time, and a stored domain that
+      // keeps them cannot be matched by anything typed the other way.
+      const domain = normaliseDomain(pick('Domain', 'domain'));
       if (!domain) continue;
 
       try {

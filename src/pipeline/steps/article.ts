@@ -1,6 +1,7 @@
 import type { Step } from '../engine.js';
 import { createLogger, errorMessage } from '../../lib/logger.js';
 import { LlmJsonError, parseJson } from '../json.js';
+import { parseJsonOrRepair } from '../parse-with-repair.js';
 import type { PipelineContext } from '../context.js';
 import type { ArticleImages } from './images.js';
 import type { RecipeData, SeoData } from './content.js';
@@ -53,7 +54,7 @@ async function generatePart(
   try {
     const result = await ctx.prompt(part, variables);
     return {
-      data: parseJson<Record<string, unknown>>(result.content, `${part} output`),
+      data: await parseJsonOrRepair<Record<string, unknown>>(ctx, result.content, `${part} output`),
       endpoint: result.endpoint,
       model: result.model,
     };
@@ -62,7 +63,11 @@ async function generatePart(
 
     const result = await ctx.prompt(`${part}.fallback`, variables);
     return {
-      data: parseJson<Record<string, unknown>>(result.content, `${part} fallback output`),
+      data: await parseJsonOrRepair<Record<string, unknown>>(
+        ctx,
+        result.content,
+        `${part} fallback output`,
+      ),
       endpoint: result.endpoint,
       model: result.model,
     };

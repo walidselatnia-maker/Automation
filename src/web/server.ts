@@ -71,6 +71,7 @@ import { unknownVariables, variablesFor } from '../pipeline/prompt-contexts.js';
 import { SETTING_SPECS, type Settings } from '../settings.js';
 import { lockStatus, resumeRun, tick } from '../scheduler/index.js';
 import { createLogger, errorMessage } from '../lib/logger.js';
+import { normaliseDomain } from '../lib/domain.js';
 
 const log = createLogger('web');
 
@@ -286,9 +287,6 @@ export function buildServer(
     return Math.round(amount * factor);
   };
 
-  const normaliseDomain = (value: string): string =>
-    value.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/+$/, '');
-
   const saveSite = (body: Record<string, unknown>, id?: number): number =>
     upsertSite(
       {
@@ -396,14 +394,36 @@ export function buildServer(
         });
       }
 
-      let message = `Imported ${report.imported} keyword(s) and ${report.linksSet} site link(s).`;
-      if (report.skipped) message += ` Skipped ${report.skipped}.`;
-      if (report.unknownDomains.length) {
-        message += ` Unrecognised columns ignored: ${report.unknownDomains.join(', ')}.`;
+      const parts: string[] = [];
+      if (report.imported) parts.push(`${report.imported} keyword(s) added`);
+      if (report.updated) parts.push(`${report.updated} updated`);
+      parts.push(`${report.linksSet} site link(s) set`);
+      if (report.skipped) parts.push(`${report.skipped} row(s) skipped`);
+
+      let message = `${parts.join(', ')}.`;
+
+      // A keyword linked to no site is not work — it will sit there looking
+      // like supply and publish nothing. Say so plainly rather than reporting
+      // a successful import and leaving the queue empty.
+      if (report.matchedDomains === 0) {
+        message +=
+          ' No column matched a site, so nothing will publish yet.' +
+          (report.unknownDomains.length
+            ? ` These headings match no site you have configured: ${report.unknownDomains.join(', ')}.` +
+              ' Check the domains under Sites, or download the template — its columns always match.'
+            : ' Add one column per site domain.');
+      } else if (report.linksSet === 0) {
+        message +=
+          ` ${report.matchedDomains} site column(s) matched, but every cell was empty.` +
+          ' Put go, done or no in the cells to say where each keyword should run.';
+      } else if (report.unknownDomains.length) {
+        message += ` Columns matching no site were ignored: ${report.unknownDomains.join(', ')}.`;
       }
 
+      const wrong = report.matchedDomains === 0 || report.linksSet === 0;
+
       return redirect(reply, '/keywords', {
-        kind: report.unknownDomains.length ? 'warn' : 'ok',
+        kind: wrong ? 'warn' : report.unknownDomains.length ? 'warn' : 'ok',
         message,
       });
     } catch (err) {

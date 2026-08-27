@@ -2,6 +2,8 @@ import { loadConfig } from './config.js';
 import { openDatabase, closeDatabase } from './db/index.js';
 import { insertEvent } from './db/repos.js';
 import { configurePromptFiles } from './pipeline/prompt-files.js';
+import { normaliseStoredDomains } from './db/repos.js';
+import { normaliseDomain } from './lib/domain.js';
 import { configurePrompts } from './pipeline/prompts.js';
 import { Scheduler } from './scheduler/index.js';
 import { Settings } from './settings.js';
@@ -15,6 +17,21 @@ async function main(): Promise<void> {
   setLogLevel(config.logLevel);
 
   openDatabase(config.dbPath);
+  // Sites stored with a scheme cannot be matched by a bare CSV column heading,
+  // which silently produced keywords linked to nothing.
+  try {
+    const domains = normaliseStoredDomains(normaliseDomain);
+    if (domains.changed.length) {
+      log.info(`normalised ${domains.changed.length} site domain(s): ${domains.changed.join(', ')}`);
+    }
+    for (const clash of domains.conflicted) {
+      log.warn(`site domain left as-is, another site already uses the normalised form: ${clash}`);
+    }
+  } catch (err) {
+    // A tidy-up must never be the reason the platform will not start.
+    log.warn(`could not normalise stored domains: ${errorMessage(err)}`);
+  }
+
   configurePrompts(config.promptsDir);
   configurePromptFiles(config.promptsDir);
 

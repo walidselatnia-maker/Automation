@@ -678,3 +678,71 @@ export const setPromptOverride = (name: string, body: string): void => {
 export const deletePromptOverride = (name: string): void => {
   run('DELETE FROM prompt_overrides WHERE name = ?', name);
 };
+
+/** Look a keyword up by its seed text, so a re-import corrects rather than duplicates. */
+export const getKeywordBySeed = (seed: string): KeywordRow | undefined =>
+  get<KeywordRow>('SELECT * FROM keywords WHERE seed_keyword = ? COLLATE NOCASE', seed.trim());
+
+/** Overwrite a keyword's imported fields, leaving its id and links intact. */
+export function updateKeywordFields(
+  id: number,
+  fields: Omit<Partial<KeywordRow>, 'id' | 'seed_keyword'>,
+): void {
+  run(
+    `UPDATE keywords SET spy_title = ?, spy_description = ?, spy_image_url = ?,
+       spy_article_url = ?, spy_pin_image = ?, annotation = ?, status = ?,
+       updated_at = datetime('now')
+     WHERE id = ?`,
+    fields.spy_title ?? '',
+    fields.spy_description ?? '',
+    fields.spy_image_url ?? '',
+    fields.spy_article_url ?? '',
+    fields.spy_pin_image ?? '',
+    fields.annotation ?? '',
+    fields.status ?? 'go',
+    id,
+  );
+}
+
+/**
+ * Bring stored domains to one spelling.
+ *
+ * Sites entered before the form normalised, or imported from a KEYS sheet that
+ * did not, are stored as `https://bitespoon.com`. A CSV column headed
+ * `bitespoon.com` then matches nothing, the import reports success, and every
+ * keyword lands linked to no site. Running this once at boot means the repair
+ * does not depend on someone re-saving eleven sites by hand.
+ *
+ * Idempotent: a domain already normalised is left alone. A domain that would
+ * collide with another row is left alone too and reported, because silently
+ * merging two sites is worse than the inconsistency.
+ */
+export function normaliseStoredDomains(
+  normalise: (value: string) => string,
+): { changed: string[]; conflicted: string[] } {
+  const sites = listSites();
+  const changed: string[] = [];
+  const conflicted: string[] = [];
+
+  // Keyed by the domain as it stands, not by its normalised form: keying by
+  // the target collapses both spellings of a colliding pair into one entry, so
+  // the guard below never fires and the UPDATE hits the UNIQUE constraint.
+  const occupied = new Set(sites.map((s) => s.domain));
+
+  for (const site of sites) {
+    const target = normalise(site.domain);
+    if (target === '' || target === site.domain) continue;
+
+    if (occupied.has(target)) {
+      conflicted.push(`${site.domain} -> ${target}`);
+      continue;
+    }
+
+    run("UPDATE sites SET domain = ?, updated_at = datetime('now') WHERE id = ?", target, site.id);
+    occupied.delete(site.domain);
+    occupied.add(target);
+    changed.push(`${site.domain} -> ${target}`);
+  }
+
+  return { changed, conflicted };
+}
