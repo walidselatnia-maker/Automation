@@ -3,73 +3,103 @@
  * This is a control desk for a kitchen that never stops: keywords come in as
  * tickets, one is fired per tick, across stations. That is not a metaphor
  * bolted on afterwards — it is what the scheduler literally does, and the
- * Decisions page is expo calling why a ticket did not go.
+ * Decisions section on the dashboard is expo calling why a ticket did not go.
  *
- * So the chrome is stainless and the content is paper. Labels are set in the
- * monospace a ticket printer would use. The one flourish is the perforated
- * edge on the service docket, and everything else stays quiet behind it.
+ * The chrome is a deep indigo rail; the content is paper. Each station on the
+ * rail carries its own hue, and those same hues come back on the dashboard
+ * counters, so a colour means the same thing wherever you meet it.
+ *
+ * Type is Plus Jakarta Sans over Inter. An earlier version set every label in
+ * uppercase monospace, which read as a terminal emulator rather than a
+ * product; mono is now reserved for things that are literally code — domains,
+ * env vars, prompt bodies, JSON.
  *
  * One file, no build step, no framework.
  */
 
 :root {
-  /* Stainless: the rail, the chrome, the parts you don't write on. */
-  --pass: #1b2024;
-  --pass-hi: #2b333a;
-  --pass-ink: #cfd6dc;
+  /* The rail. */
+  --rail-top: #1e1b4b;
+  --rail-bottom: #2a1f52;
+  --rail-hi: rgba(255, 255, 255, 0.09);
+  --rail-ink: #c7c9e8;
+  --rail-ink-dim: #8f92c4;
 
-  /* Paper: a cool prep surface, not cream. */
-  --paper: #f1f2ef;
+  /* Paper. */
+  --paper: #f4f5fa;
   --card: #ffffff;
-  --line: #dee0dc;
-  --line-soft: #eaebe8;
+  --line: #e3e5ee;
+  --line-soft: #eef0f6;
 
-  --ink: #14181c;
-  --muted: #69717a;
+  --ink: #171a2b;
+  --muted: #6a7085;
 
-  /* Service states, taken from the pass: the heat lamp, the go, the scrap.
-     These sit as 10.5px uppercase on their own tints, so each pair is checked
-     against 4.5:1 rather than eyeballed. Measured: amber 5.12, teal 5.67,
-     red 5.40, blue 5.29. */
-  --amber: #8f5a00;
-  --amber-bg: #fdf0d5;
-  --teal: #0b6759;
-  --teal-bg: #d8f0eb;
-  --red: #b42318;
-  --red-bg: #fdE3e0;
+  /* Brand. */
+  --brand: #4f46e5;
+  --brand-hi: #4338ca;
+  --brand-bg: #eceafe;
+
+  /* Service states. Each pair is measured against its own tint for 4.5:1. */
+  --amber: #a35a00;
+  --amber-bg: #fdf0d7;
+  --teal: #0b7561;
+  --teal-bg: #d6f2ea;
+  --red: #c22a1f;
+  --red-bg: #fde5e2;
   --blue: #1f5fa8;
-  --blue-bg: #dfeaf7;
+  --blue-bg: #e0eaf8;
+  --violet: #6d3bd4;
+  --violet-bg: #ece4fd;
+  --pink: #bf2d78;
+  --pink-bg: #fce3ef;
 
-  --radius: 3px;
-  --rail-w: 224px;
+  --shadow: 0 1px 2px rgba(23, 26, 43, 0.05), 0 6px 18px -12px rgba(23, 26, 43, 0.28);
+  --shadow-lift: 0 2px 4px rgba(23, 26, 43, 0.06), 0 14px 32px -18px rgba(23, 26, 43, 0.4);
 
-  --display: "IBM Plex Sans Condensed", "Helvetica Neue", Arial, sans-serif;
-  --body: "IBM Plex Sans", system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --radius: 10px;
+  --radius-sm: 7px;
+  --rail-w: 232px;
+
+  --display: "Plus Jakarta Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --body: Inter, "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --pass: #0f1316;
-    --pass-hi: #1f272d;
-    --pass-ink: #c3ccd4;
+    --rail-top: #12102b;
+    --rail-bottom: #191436;
+    --rail-hi: rgba(255, 255, 255, 0.08);
+    --rail-ink: #b9bce0;
+    --rail-ink-dim: #7e82b4;
 
-    --paper: #15191d;
-    --card: #1b2126;
-    --line: #2a333a;
-    --line-soft: #232b31;
+    --paper: #101321;
+    --card: #171b2c;
+    --line: #262b40;
+    --line-soft: #1f2436;
 
-    --ink: #e4e8ea;
-    --muted: #949da6;
+    --ink: #e8eaf2;
+    --muted: #9aa1b8;
 
-    --amber: #e5a83a;
-    --amber-bg: #33280f;
-    --teal: #4fc3ac;
-    --teal-bg: #0e2e29;
-    --red: #f08a80;
-    --red-bg: #351a18;
+    --brand: #8b83f8;
+    --brand-hi: #a099ff;
+    --brand-bg: #241f4d;
+
+    --amber: #f0b355;
+    --amber-bg: #372709;
+    --teal: #52c7ae;
+    --teal-bg: #0c2f29;
+    --red: #f28b80;
+    --red-bg: #391b19;
     --blue: #7db0e8;
     --blue-bg: #14283d;
+    --violet: #b39bfa;
+    --violet-bg: #261c4a;
+    --pink: #f086bb;
+    --pink-bg: #3a1330;
+
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-lift: 0 12px 30px -18px rgba(0, 0, 0, 0.8);
   }
 }
 
@@ -91,16 +121,16 @@ body {
   position: fixed;
   inset: 0 auto 0 0;
   width: var(--rail-w);
-  background: var(--pass);
-  color: var(--pass-ink);
+  background: linear-gradient(170deg, var(--rail-top), var(--rail-bottom));
+  color: var(--rail-ink);
   display: flex;
   flex-direction: column;
-  padding: 22px 0 16px;
+  padding: 20px 0 18px;
   z-index: 20;
 }
 
 .brand {
-  padding: 0 20px 20px;
+  padding: 0 18px 18px;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -109,71 +139,109 @@ body {
 
 .brand a {
   font-family: var(--display);
-  font-weight: 600;
+  font-weight: 800;
   font-size: 19px;
-  letter-spacing: 0.02em;
+  letter-spacing: -0.015em;
   color: #fff;
   text-decoration: none;
-  line-height: 1.1;
+  line-height: 1.15;
+  display: flex;
+  align-items: center;
+  gap: 9px;
 }
 
-/* The rail is a list of stations, so it reads like signage: small, spaced,
-   uppercase, monospace. */
+/* The mark: three ticket lines, the same shape as the favicon. */
+.brand a::before {
+  content: "";
+  width: 26px;
+  height: 26px;
+  flex: none;
+  border-radius: 8px;
+  background:
+    linear-gradient(140deg, #6366f1, #a855f7 55%, #ec4899);
+  box-shadow: 0 4px 12px -4px rgba(139, 92, 246, 0.8);
+}
+
+/* Stations. Sentence case, not shouting; the colour does the work. */
 .topbar nav {
   display: flex;
   flex-direction: column;
   flex: 1;
-  gap: 1px;
-  padding: 8px 10px;
+  gap: 2px;
+  padding: 6px 12px;
   overflow-y: auto;
 }
 
 .topbar nav a {
-  font-family: var(--mono);
-  font-size: 12px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--pass-ink);
+  --station: var(--rail-ink-dim);
+  position: relative;
+  font-family: var(--display);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  color: var(--rail-ink);
   text-decoration: none;
-  padding: 8px 10px;
-  border-radius: var(--radius);
-  border-left: 2px solid transparent;
+  padding: 9px 12px 9px 30px;
+  border-radius: var(--radius-sm);
 }
 
-.topbar nav a:hover { background: var(--pass-hi); color: #fff; }
+/* The station dot. */
+.topbar nav a::before {
+  content: "";
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  margin-top: -3.5px;
+  border-radius: 50%;
+  background: var(--station);
+  opacity: 0.65;
+}
+
+.topbar nav a:nth-child(1) { --station: #818cf8; }
+.topbar nav a:nth-child(2) { --station: #34d399; }
+.topbar nav a:nth-child(3) { --station: #f472b6; }
+.topbar nav a:nth-child(4) { --station: #fbbf24; }
+.topbar nav a:nth-child(5) { --station: #22d3ee; }
+.topbar nav a:nth-child(6) { --station: #c084fc; }
+
+.topbar nav a:hover { background: var(--rail-hi); color: #fff; }
 
 .topbar nav a.active {
-  background: var(--pass-hi);
+  background: var(--rail-hi);
   color: #fff;
-  border-left-color: var(--amber);
 }
 
-.topbar nav form { margin-top: auto; padding-top: 12px; }
-
-.topbar nav form button {
-  width: 100%;
-  background: transparent;
-  border-color: var(--pass-hi);
-  color: var(--pass-ink);
+.topbar nav a.active::before {
+  opacity: 1;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--station) 22%, transparent);
 }
 
-.topbar nav form button:hover { background: var(--pass-hi); color: #fff; }
+.rail-foot {
+  padding: 14px 18px 0;
+  margin-top: auto;
+  font-size: 11.5px;
+  color: var(--rail-ink-dim);
+  line-height: 1.5;
+}
 
 main {
   margin-left: var(--rail-w);
-  padding: 34px 40px 80px;
-  max-width: 1180px;
+  /* The old cap was 1180px, which left a desert on the right of any real
+     monitor while the keyword matrix scrolled sideways inside it. */
+  max-width: 1680px;
+  padding: 22px clamp(20px, 3vw, 48px) 70px;
 }
 
 footer {
   margin-left: var(--rail-w);
-  padding: 0 40px 32px;
-  font-family: var(--mono);
-  font-size: 12px;
+  padding: 0 clamp(20px, 3vw, 48px) 30px;
+  font-size: 12.5px;
   color: var(--muted);
 }
 
-@media (max-width: 860px) {
+@media (max-width: 900px) {
   .topbar {
     position: static;
     width: auto;
@@ -185,48 +253,83 @@ footer {
   }
   .brand { padding: 0; flex-direction: row; align-items: center; gap: 12px; }
   .topbar nav { flex-direction: row; flex-wrap: wrap; padding: 0; flex: 1 100%; }
-  .topbar nav form { margin-top: 0; padding-top: 0; }
-  .topbar nav form button { width: auto; }
-  main { margin-left: 0; padding: 20px 16px 60px; }
+  .rail-foot { display: none; }
+  main { margin-left: 0; padding: 14px 16px 60px; }
   footer { margin-left: 0; padding: 0 16px 24px; }
 }
+
+/* --------------------------------------------------- the top-right actions */
+
+.pagebar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-bottom: 18px;
+  min-height: 34px;
+}
+
+.pagebar form { display: inline; }
+
+/* The live Chrome session. It is the one control that opens something outside
+   the dashboard, so it looks like a destination rather than a nav item. */
+.button.browser {
+  background: linear-gradient(135deg, #6366f1, #a855f7);
+  border-color: transparent;
+  color: #fff;
+  font-weight: 600;
+  box-shadow: 0 6px 16px -8px rgba(124, 58, 237, 0.9);
+}
+.button.browser:hover { filter: brightness(1.07); border-color: transparent; }
+.button.browser::after { content: " ↗"; opacity: 0.8; }
 
 /* -------------------------------------------------------------- typography */
 
 h1 {
   font-family: var(--display);
-  font-size: 30px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
+  font-size: 29px;
+  font-weight: 800;
+  letter-spacing: -0.025em;
   margin: 0 0 4px;
 }
 
 h2 {
-  font-family: var(--mono);
-  font-size: 12px;
-  font-weight: 500;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--muted);
-  margin: 34px 0 12px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--line);
+  font-family: var(--display);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  margin: 30px 0 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* A short coloured rule after every section heading, so the page reads as a
+   sequence of sections rather than one long scroll. */
+h2::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, var(--line), transparent);
 }
 
 h3 {
   font-family: var(--display);
-  font-size: 17px;
-  font-weight: 600;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
   margin: 0 0 12px;
 }
 
-.subtitle { color: var(--muted); margin: 0 0 22px; max-width: 62ch; }
+.subtitle { color: var(--muted); margin: 0 0 20px; max-width: 68ch; }
 .muted { color: var(--muted); }
 .small { font-size: 12.5px; }
-.mono { font-family: var(--mono); font-size: 0.92em; }
+.mono { font-family: var(--mono); font-size: 0.9em; }
 .nowrap { white-space: nowrap; }
 
-a { color: var(--blue); text-underline-offset: 2px; }
+a { color: var(--brand); text-underline-offset: 2px; }
+a:hover { color: var(--brand-hi); }
 
 /* ------------------------------------------------------------------ layout */
 
@@ -240,72 +343,88 @@ a { color: var(--blue); text-underline-offset: 2px; }
   border-radius: var(--radius);
   padding: 18px;
   margin-bottom: 12px;
+  box-shadow: var(--shadow);
 }
 
 .table-wrap { overflow-x: auto; padding: 0; }
 
-/* ------------------------------------------------ the docket (signature) */
-
-/* The stat row is one ticket torn off the printer, not four cards. The
-   perforation is the single flourish in this interface; everything else is
-   deliberately flat so this is the thing you remember. */
-.grid {
-  position: relative;
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+/* A table that would otherwise grow without limit. The header stays put so
+   you always know which column you are reading. */
+.scroll-y {
+  max-height: 430px;
+  overflow-y: auto;
+}
+.scroll-y thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
   background: var(--card);
-  border: 1px solid var(--line);
-  border-top: none;
-  border-radius: 0 0 var(--radius) var(--radius);
+  box-shadow: inset 0 -1px 0 var(--line);
+}
+
+/* Two sections side by side on a wide screen, stacked on a narrow one. */
+.split {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+  gap: 0 22px;
+  align-items: start;
+}
+
+/* -------------------------------------------------------- the counter row */
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
   margin: 14px 0 8px;
 }
 
-.grid::before {
-  content: "";
-  position: absolute;
-  left: -1px;
-  right: -1px;
-  top: -9px;
-  height: 9px;
-  background:
-    radial-gradient(circle at 5px 0, transparent 0 4.5px, var(--card) 4.6px) repeat-x
-      0 0 / 10px 9px;
-  border-left: 1px solid var(--line);
-  border-right: 1px solid var(--line);
+.stat {
+  position: relative;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 16px 18px 16px 20px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
 }
 
-.stat {
-  padding: 18px 20px;
-  border-right: 1px solid var(--line-soft);
+/* Each counter carries its own hue on the leading edge. */
+.stat::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: var(--tone, var(--brand));
 }
-.stat:last-child { border-right: none; }
+
+.stat:nth-child(1) { --tone: #6366f1; }
+.stat:nth-child(2) { --tone: #f472b6; }
+.stat:nth-child(3) { --tone: #22c55e; }
+.stat:nth-child(4) { --tone: #f59e0b; }
 
 .stat .value {
   font-family: var(--display);
-  font-size: 38px;
-  font-weight: 600;
+  font-size: 36px;
+  font-weight: 800;
   line-height: 1;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.035em;
   font-variant-numeric: tabular-nums;
+  color: var(--tone, var(--ink));
 }
 
 .stat .label {
-  font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
+  font-family: var(--display);
+  font-size: 12.5px;
+  font-weight: 600;
   color: var(--muted);
-  margin-top: 7px;
+  margin-top: 8px;
 }
 
 /* Supply running out is the one number that should shout. */
-.stat.supply-low .value { color: var(--amber); }
-.stat.supply-empty .value { color: var(--red); }
-
-@media (max-width: 620px) {
-  .stat { border-right: none; border-bottom: 1px solid var(--line-soft); }
-  .stat:last-child { border-bottom: none; }
-}
+.stat.supply-low { --tone: #d97706; }
+.stat.supply-empty { --tone: #dc2626; }
+.stat.supply-empty { background: var(--red-bg); }
 
 /* ------------------------------------------------------------------ tables */
 
@@ -313,27 +432,30 @@ table { width: 100%; border-collapse: collapse; font-size: 14px; }
 
 th {
   text-align: left;
-  font-family: var(--mono);
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
+  font-family: var(--display);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
   color: var(--muted);
   padding: 11px 14px;
   border-bottom: 1px solid var(--line);
   white-space: nowrap;
 }
 
-td { padding: 11px 14px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+td { padding: 10px 14px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
 tbody tr:last-child td { border-bottom: none; }
-tbody tr:hover { background: var(--paper); }
+tbody tr:hover { background: var(--line-soft); }
 
-.matrix td, .matrix th { padding: 8px 10px; }
+.matrix td, .matrix th { padding: 7px 10px; }
 .matrix select { min-width: 74px; }
+.matrix tbody tr.picked { background: var(--brand-bg); }
+
+/* First column of a selectable table: just wide enough for the box. */
+.pick { width: 34px; }
+.pick input[type="checkbox"] { width: auto; margin: 0; }
 
 /* ------------------------------------------------------------- ticket stub */
 
-/* A run's status is a colour on its edge, the way a ticket is marked. */
 .card[class*="step-"] { border-left: 3px solid var(--line); }
 .step-ok { border-left-color: var(--teal); }
 .step-failed { border-left-color: var(--red); }
@@ -343,13 +465,12 @@ tbody tr:hover { background: var(--paper); }
 
 .badge, .pill {
   display: inline-block;
-  font-family: var(--mono);
-  font-size: 10.5px;
-  font-weight: 500;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-  padding: 3px 7px;
-  border-radius: var(--radius);
+  font-family: var(--display);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0;
+  padding: 2px 8px;
+  border-radius: 999px;
   white-space: nowrap;
 }
 
@@ -358,28 +479,29 @@ tbody tr:hover { background: var(--paper); }
 .badge.warn { background: var(--amber-bg); color: var(--amber); }
 .badge.busy { background: var(--blue-bg); color: var(--blue); }
 .badge.muted { background: var(--line-soft); color: var(--muted); }
+.badge.brand { background: var(--brand-bg); color: var(--brand); }
 
-.pill { background: rgba(255, 255, 255, 0.08); color: var(--pass-ink); }
-.pill.ok { background: var(--teal); color: #fff; }
-.pill.off { background: var(--pass-hi); color: var(--pass-ink); }
+.pill { background: rgba(255, 255, 255, 0.1); color: var(--rail-ink); }
+.pill.ok { background: rgba(52, 211, 153, 0.18); color: #6ee7b7; }
+.pill.off { background: rgba(255, 255, 255, 0.08); color: var(--rail-ink-dim); }
 
 /* ------------------------------------------------------------------ flashes */
 
 .flash {
   border: 1px solid var(--line);
   border-left: 3px solid var(--muted);
-  border-radius: var(--radius);
+  border-radius: var(--radius-sm);
   padding: 12px 15px;
   margin-bottom: 16px;
   background: var(--card);
   font-size: 14px;
 }
 
-.flash.ok { border-left-color: var(--teal); background: var(--teal-bg); color: var(--teal); }
-.flash.error { border-left-color: var(--red); background: var(--red-bg); color: var(--red); }
-.flash.warn { border-left-color: var(--amber); background: var(--amber-bg); color: var(--amber); }
+.flash.ok { border-color: transparent; border-left-color: var(--teal); background: var(--teal-bg); color: var(--teal); }
+.flash.error { border-color: transparent; border-left-color: var(--red); background: var(--red-bg); color: var(--red); }
+.flash.warn { border-color: transparent; border-left-color: var(--amber); background: var(--amber-bg); color: var(--amber); }
 .flash ul { margin: 8px 0 0; padding-left: 18px; }
-.flash strong { font-family: var(--display); font-size: 15px; }
+.flash strong { font-family: var(--display); font-size: 15px; font-weight: 700; }
 
 /* ------------------------------------------------------------------- forms */
 
@@ -389,11 +511,10 @@ tbody tr:hover { background: var(--paper); }
 
 label {
   display: block;
-  font-family: var(--mono);
-  font-size: 10.5px;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-  color: var(--muted);
+  font-family: var(--display);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink);
   margin-bottom: 5px;
 }
 
@@ -404,56 +525,63 @@ input, select, textarea {
   color: var(--ink);
   background: var(--card);
   border: 1px solid var(--line);
-  border-radius: var(--radius);
+  border-radius: var(--radius-sm);
   padding: 8px 10px;
 }
+
+input:hover, select:hover, textarea:hover { border-color: #c9cddd; }
 
 textarea { font-family: var(--mono); font-size: 13px; line-height: 1.6; resize: vertical; }
 
 input:focus, select:focus, textarea:focus, button:focus-visible, a:focus-visible {
-  outline: 2px solid var(--amber);
+  outline: 2px solid var(--brand);
   outline-offset: 1px;
+  border-color: var(--brand);
 }
 
 .help { font-size: 12px; color: var(--muted); margin-top: 5px; }
 
-/* A checkbox in a grid cell should not stretch to the cell's width. */
 .matrix input[type="checkbox"], label input[type="checkbox"] {
   width: auto;
   margin-right: 4px;
 }
 
-.matrix label { display: inline-flex; align-items: center; text-transform: none; letter-spacing: 0; }
+.matrix label { display: inline-flex; align-items: center; font-weight: 400; font-size: 12px; }
 
 button, .button {
   display: inline-block;
-  font-family: var(--mono);
-  font-size: 12px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  font-family: var(--display);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
   color: var(--ink);
   background: var(--card);
   border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 8px 14px;
+  border-radius: var(--radius-sm);
+  padding: 7px 13px;
   cursor: pointer;
   text-decoration: none;
   line-height: 1.4;
 }
 
-button:hover, .button:hover { border-color: var(--muted); }
+button:hover, .button:hover { border-color: #b9bfd4; background: var(--line-soft); }
 
 button.primary, .button.primary {
-  background: var(--ink);
-  border-color: var(--ink);
-  color: var(--paper);
+  background: var(--brand);
+  border-color: var(--brand);
+  color: #fff;
+  box-shadow: 0 6px 16px -10px var(--brand);
 }
-button.primary:hover { background: var(--pass-hi); border-color: var(--pass-hi); }
+button.primary:hover, .button.primary:hover {
+  background: var(--brand-hi);
+  border-color: var(--brand-hi);
+  color: #fff;
+}
 
-button.danger, .button.danger { color: var(--red); border-color: var(--red-bg); }
-button.danger:hover { border-color: var(--red); }
+button.danger, .button.danger { color: var(--red); border-color: var(--red-bg); background: var(--card); }
+button.danger:hover { border-color: var(--red); background: var(--red-bg); }
 
-button.small, .button.small { padding: 4px 9px; font-size: 11px; }
+button.small, .button.small { padding: 4px 9px; font-size: 12px; }
 
 button:disabled { opacity: 0.45; cursor: not-allowed; }
 
@@ -463,9 +591,39 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   align-items: center;
   gap: 14px;
   margin-top: 22px;
-  padding-top: 18px;
-  border-top: 1px solid var(--line);
+  padding: 14px 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--card);
+  box-shadow: var(--shadow-lift);
+  position: sticky;
+  bottom: 14px;
 }
+
+/* Bulk actions on the keywords page: one bar that acts on every ticked row. */
+.bulkbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: linear-gradient(90deg, var(--brand-bg), var(--card) 70%);
+  margin-bottom: 12px;
+}
+.bulkbar select, .bulkbar input { width: auto; }
+.bulkbar .count { font-weight: 700; font-family: var(--display); }
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: flex-end;
+  margin-bottom: 12px;
+}
+.toolbar .field { margin-bottom: 0; }
+.toolbar input, .toolbar select { width: auto; min-width: 180px; }
 
 details summary { cursor: pointer; }
 details[open] summary { margin-bottom: 4px; }
@@ -485,7 +643,7 @@ pre {
   overflow-x: auto;
   background: var(--paper);
   border: 1px solid var(--line-soft);
-  border-radius: var(--radius);
+  border-radius: var(--radius-sm);
   padding: 12px;
 }
 
@@ -495,10 +653,10 @@ pre {
 
 /* --------------------------------------------------------------- sign in */
 
-/* The one screen with a single job, so the signature is spent here in full:
-   a docket on the stainless, perforated where it was torn off. */
 body.signin {
-  background: var(--pass);
+  background:
+    radial-gradient(1000px 600px at 20% -10%, #3b2f7a 0%, transparent 60%),
+    linear-gradient(170deg, var(--rail-top), var(--rail-bottom));
   min-height: 100vh;
   display: grid;
   place-items: center;
@@ -509,39 +667,36 @@ body.signin main {
   margin: 0;
   padding: 0;
   width: 100%;
-  max-width: 380px;
+  max-width: 390px;
 }
 
 .docket {
   background: var(--card);
-  border-radius: 0 0 var(--radius) var(--radius);
-  position: relative;
+  border-radius: var(--radius);
+  box-shadow: 0 30px 70px -30px rgba(0, 0, 0, 0.7);
+  overflow: hidden;
 }
 
+/* The one flourish left from the ticket-printer idea: a coloured tear at the
+   top of the sign-in card. */
 .docket::before {
   content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: -9px;
-  height: 9px;
-  background:
-    radial-gradient(circle at 5px 0, transparent 0 4.5px, var(--card) 4.6px) repeat-x
-      0 0 / 10px 9px;
+  display: block;
+  height: 4px;
+  background: linear-gradient(90deg, #6366f1, #a855f7, #ec4899);
 }
 
 .docket-head {
   display: flex;
   justify-content: space-between;
   gap: 12px;
-  font-family: var(--mono);
-  font-size: 10.5px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+  font-family: var(--display);
+  font-size: 12px;
+  font-weight: 600;
   color: var(--muted);
   padding: 16px 24px 0;
 }
 
 .docket-body { padding: 14px 24px 26px; }
-.docket-body h1 { font-size: 34px; margin-bottom: 6px; }
+.docket-body h1 { font-size: 30px; margin-bottom: 6px; }
 .docket-body .subtitle { margin-bottom: 20px; font-size: 14px; }

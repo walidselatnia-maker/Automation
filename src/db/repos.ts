@@ -752,3 +752,158 @@ export function normaliseStoredDomains(
 
   return { changed, conflicted };
 }
+
+/* =========================================================================
+ * Keywords: searching and bulk edits
+ *
+ * A hundred keywords across five sites is five hundred cells, and changing
+ * them one select at a time is how a page stops being used. Filtering narrows
+ * the table to the rows you mean; the bulk writes then act on exactly those.
+ * ====================================================================== */
+
+export interface KeywordFilter {
+  /** Matched against the keyword and its spy title, case-insensitively. */
+  q?: string;
+  /** Keyword-global status, or blank for any. */
+  status?: string;
+  /** Only keywords linked to this site with the given link status. */
+  siteId?: number;
+  linkStatus?: string;
+}
+
+/** WHERE clause and parameters shared by the list and its count. */
+function keywordWhere(filter: KeywordFilter): { sql: string; params: (string | number)[] } {
+  const clauses: string[] = [];
+  const params: (string | number)[] = [];
+
+  const q = (filter.q ?? '').trim();
+  if (q) {
+    clauses.push('(k.seed_keyword LIKE ? COLLATE NOCASE OR k.spy_title LIKE ? COLLATE NOCASE)');
+    params.push(`%${q}%`, `%${q}%`);
+  }
+
+  if (filter.status === 'go' || filter.status === 'done' || filter.status === 'no') {
+    clauses.push('k.status = ?');
+    params.push(filter.status);
+  }
+
+  if (filter.siteId) {
+    if (filter.linkStatus === 'none') {
+      // "Not linked here at all" — the state that looks like supply and is not.
+      clauses.push(
+        'NOT EXISTS (SELECT 1 FROM keyword_sites ks WHERE ks.keyword_id = k.id AND ks.site_id = ?)',
+      );
+      params.push(filter.siteId);
+    } else if (
+      filter.linkStatus === 'go' ||
+      filter.linkStatus === 'done' ||
+      filter.linkStatus === 'no'
+    ) {
+      clauses.push(
+        'EXISTS (SELECT 1 FROM keyword_sites ks WHERE ks.keyword_id = k.id AND ks.site_id = ? AND ks.status = ?)',
+      );
+      params.push(filter.siteId, filter.linkStatus);
+    } else {
+      clauses.push(
+        'EXISTS (SELECT 1 FROM keyword_sites ks WHERE ks.keyword_id = k.id AND ks.site_id = ?)',
+      );
+      params.push(filter.siteId);
+    }
+  }
+
+  return { sql: clauses.length ? `WHERE ${clauses.join(' AND ')}` : '', params };
+}
+
+export const searchKeywords = (
+  filter: KeywordFilter,
+  limit = 100,
+  offset = 0,
+): KeywordRow[] => {
+  const where = keywordWhere(filter);
+  return all<KeywordRow>(
+    `SELECT k.* FROM keywords k ${where.sql} ORDER BY k.id LIMIT ? OFFSET ?`,
+    ...where.params,
+    limit,
+    offset,
+  );
+};
+
+export const countKeywordsMatching = (filter: KeywordFilter): number => {
+  const where = keywordWhere(filter);
+  return (
+    get<{ n: number }>(`SELECT COUNT(*) AS n FROM keywords k ${where.sql}`, ...where.params)?.n ?? 0
+  );
+};
+
+/** `?, ?, ?` for an IN list. Ids are numbers, so nothing is interpolated raw. */
+const placeholders = (ids: number[]): string => ids.map(() => '?').join(', ');
+
+export const bulkSetKeywordStatus = (ids: number[], status: 'go' | 'done' | 'no'): number => {
+  if (ids.length === 0) return 0;
+  return run(
+    `UPDATE keywords SET status = ?, updated_at = datetime('now')
+      WHERE id IN (${placeholders(ids)})`,
+    status,
+    ...ids,
+  ).changes;
+};
+
+export const bulkDeleteKeywords = (ids: number[]): number => {
+  if (ids.length === 0) return 0;
+  return run(`DELETE FROM keywords WHERE id IN (${placeholders(ids)})`, ...ids).changes;
+};
+
+/**
+ * Set the link status for every (keyword, site) pair in the selection.
+ *
+ * `siteIds` empty means every site, which is what "all sites" in the bulk bar
+ * sends. Wrapped in one transaction so a half-applied grid is impossible.
+ */
+export const bulkSetLinks = (
+  keywordIds: number[],
+  siteIds: number[],
+  status: 'go' | 'done' | 'no',
+): number => {
+  if (keywordIds.length === 0) return 0;
+  const targets = siteIds.length ? siteIds : listSites().map((s) => s.id);
+  if (targets.length === 0) return 0;
+
+  return transaction(() => {
+    let n = 0;
+    for (const keywordId of keywordIds) {
+      for (const siteId of targets) {
+        setLink(keywordId, siteId, status);
+        n += 1;
+      }
+    }
+    return n;
+  });
+};
+
+/** The same shape for image sharing. Only touches pairs that already exist. */
+export const bulkSetShareImages = (
+  keywordIds: number[],
+  siteIds: number[],
+  share: boolean,
+): number => {
+  if (keywordIds.length === 0) return 0;
+
+  return transaction(() => {
+    if (siteIds.length === 0) {
+      return run(
+        `UPDATE keyword_sites SET share_images = ?, updated_at = datetime('now')
+          WHERE keyword_id IN (${placeholders(keywordIds)})`,
+        share ? 1 : 0,
+        ...keywordIds,
+      ).changes;
+    }
+    return run(
+      `UPDATE keyword_sites SET share_images = ?, updated_at = datetime('now')
+        WHERE keyword_id IN (${placeholders(keywordIds)})
+          AND site_id IN (${placeholders(siteIds)})`,
+      share ? 1 : 0,
+      ...keywordIds,
+      ...siteIds,
+    ).changes;
+  });
+};

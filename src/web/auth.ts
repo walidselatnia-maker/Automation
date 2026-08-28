@@ -68,9 +68,9 @@ function loginPage(error?: string, generated?: boolean): string {
 <title>Sign in · Article Platform</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap">
 <link rel="stylesheet" href="/static/style.css">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='3' fill='%231b2024'/><rect x='7' y='9' width='18' height='3' fill='%23e5a83a'/><rect x='7' y='15' width='18' height='2' fill='%23cfd6dc'/><rect x='7' y='20' width='12' height='2' fill='%23cfd6dc'/></svg>">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='%236366f1'/><stop offset='0.55' stop-color='%23a855f7'/><stop offset='1' stop-color='%23ec4899'/></linearGradient></defs><rect width='32' height='32' rx='8' fill='url(%23g)'/><rect x='8' y='10' width='16' height='3' rx='1.5' fill='white'/><rect x='8' y='16' width='16' height='2.5' rx='1.25' fill='white' opacity='0.75'/><rect x='8' y='21' width='10' height='2.5' rx='1.25' fill='white' opacity='0.55'/></svg>">
 </head><body class="signin">
 <main>
   <div class="docket">

@@ -22,6 +22,7 @@ import { formatMinutes } from '../../core/selector.js';
 import type { Endpoint } from '../../llm/pool.js';
 import type { SettingSpec } from '../../settings.js';
 import type { Supply } from '../../core/supply.js';
+import type { DataCounts } from '../../db/maintenance.js';
 
 /* =========================================================================
  * Dashboard
@@ -38,6 +39,10 @@ export interface DashboardData {
   problems: string[];
   busy: boolean;
   lockedAt: string | null;
+  /** Scheduler checks, newest first — the Decisions page, folded in here. */
+  cycles: { cycle_id: string; created_at: string; n: number }[];
+  selectedCycle: string | null;
+  decisions: DecisionRow[];
 }
 
 export function dashboardPage(data: DashboardData): Html {
@@ -118,12 +123,71 @@ export function dashboardPage(data: DashboardData): Html {
           </table>`}
     </div>
 
-    <h2>Recent runs</h2>
-    <div class="card table-wrap">
+    <h2>Recent runs <a class="button small" href="/runs">All runs</a></h2>
+    <div class="card table-wrap scroll-y">
       ${data.recentRuns.length === 0
         ? emptyState('No runs yet.')
         : runTable(data.recentRuns)}
     </div>
+
+    ${decisionsSection(data.cycles, data.selectedCycle, data.decisions)}
+  `;
+}
+
+/**
+ * Why the scheduler did what it did.
+ *
+ * This had its own page, which meant leaving the dashboard to answer a
+ * question the dashboard had just raised — "why is nothing publishing?". It is
+ * one table and a row of buttons, so it belongs under the numbers it explains.
+ */
+function decisionsSection(
+  cycles: { cycle_id: string; created_at: string; n: number }[],
+  selected: string | null,
+  rows: DecisionRow[],
+): Html {
+  if (cycles.length === 0) {
+    return html`
+      <h2>Decisions</h2>
+      <div class="card">
+        ${emptyState('No scheduler checks recorded yet. Every skip will be explained here.')}
+      </div>
+    `;
+  }
+
+  return html`
+    <h2>Decisions</h2>
+    <p class="subtitle">
+      Every site checked and every keyword skipped, with the reason recorded at
+      the moment the choice was made. Pick a check to read it.
+    </p>
+
+    <div class="card">
+      <div class="row wrap">
+        ${cycles.map(
+          (c) => html`<a class="button small ${c.cycle_id === selected ? 'primary' : ''}"
+            href="/?cycle=${c.cycle_id}#decisions">${timeAgo(c.created_at)} (${c.n})</a>`,
+        )}
+      </div>
+    </div>
+
+    ${selected
+      ? html`<div class="card table-wrap scroll-y" id="decisions">
+          <table>
+            <thead><tr><th>Type</th><th>Subject</th><th>Decision</th><th>Reason</th></tr></thead>
+            <tbody>
+              ${rows.map(
+                (r) => html`<tr>
+                  <td class="muted small">${r.subject_type}</td>
+                  <td>${r.subject_label || '—'}</td>
+                  <td>${statusBadge(r.decision)}</td>
+                  <td class="small">${r.reason}</td>
+                </tr>`,
+              )}
+            </tbody>
+          </table>
+        </div>`
+      : raw('')}
   `;
 }
 
@@ -435,50 +499,131 @@ function siteForm(site: SiteRow | null): Html {
  * Keywords
  * ====================================================================== */
 
+export interface KeywordFilterView {
+  q: string;
+  status: string;
+  siteId: number;
+  linkStatus: string;
+}
+
+/** A <select> of go / done / no, with an explicit "no change" first option. */
+function tristate(id: string, name: string, current: string, blank: string): Html {
+  return html`
+    <select id="${id}" name="${name}">
+      <option value="">${blank}</option>
+      ${(['go', 'done', 'no'] as const).map(
+        (v) => html`<option value="${v}" ${current === v ? raw('selected') : raw('')}>${v}</option>`,
+      )}
+    </select>
+  `;
+}
+
 export function keywordsPage(
   keywords: KeywordRow[],
   sites: SiteRow[],
   links: Map<string, { status: string; shareImages: boolean }>,
   page: number,
   total: number,
+  matched: number,
+  filter: KeywordFilterView,
 ): Html {
-  const pages = Math.max(1, Math.ceil(total / 100));
+  const pages = Math.max(1, Math.ceil(matched / 100));
+  const filtered = filter.q !== '' || filter.status !== '' || filter.siteId !== 0;
+
+  // Carried through the bulk form so applying an edit returns you to the same
+  // filtered view rather than dumping you back at page one of everything.
+  const back = `/keywords${pageLink(filter, page)}`;
 
   return html`
     <h1>Keywords</h1>
     <p class="subtitle">
       ${total} keyword(s). Each cell decides whether that keyword may run on that site.
+      Tick rows to edit many of them at once.
     </p>
 
-    <div class="card">
-      <h3>Import from CSV</h3>
-      <p class="muted small">
-        Columns: <span class="mono">seed_keyword, spy_title, spy_description, annotation,
-        status</span>, then one column per site domain holding go / done / no. Only
-        <span class="mono">seed_keyword</span> is required, and a keyword may be set to
-        <span class="mono">go</span> on as many sites as you like. Those sites reuse one set
-        of article images by default — untick <span class="mono">share</span> on a cell to
-        generate fresh ones there. Pinterest graphics are always generated per site.
-      </p>
-      <form method="post" action="/keywords/import" enctype="multipart/form-data">
-        <div class="field"><input type="file" name="file" accept=".csv,text/csv" required /></div>
-        <div class="row">
-          <button class="primary" type="submit">Import CSV</button>
-          <a class="button" href="/keywords/template.csv" download>Download template</a>
-        </div>
-        <div class="help" style="margin-top:8px">
-          The template already contains a column for every site you have added, with example
-          rows showing go / done / no.
-        </div>
-      </form>
-    </div>
+    <form method="get" action="/keywords" class="toolbar">
+      <div class="field">
+        <label for="q">Search</label>
+        <input type="search" id="q" name="q" value="${filter.q}"
+               placeholder="keyword or spy title" />
+      </div>
+      <div class="field">
+        <label for="status">Keyword status</label>
+        ${tristate('status', 'status', filter.status, 'any')}
+      </div>
+      <div class="field">
+        <label for="site">On site</label>
+        <select id="site" name="site">
+          <option value="">any site</option>
+          ${sites.map(
+            (s) =>
+              html`<option value="${s.id}" ${filter.siteId === s.id ? raw('selected') : raw('')}>${s.domain}</option>`,
+          )}
+        </select>
+      </div>
+      <div class="field">
+        <label for="link">Where it stands there</label>
+        <select id="link" name="link">
+          <option value="">linked, any status</option>
+          <option value="go" ${filter.linkStatus === 'go' ? raw('selected') : raw('')}>go</option>
+          <option value="done" ${filter.linkStatus === 'done' ? raw('selected') : raw('')}>done</option>
+          <option value="no" ${filter.linkStatus === 'no' ? raw('selected') : raw('')}>no</option>
+          <option value="none" ${filter.linkStatus === 'none' ? raw('selected') : raw('')}>not linked at all</option>
+        </select>
+      </div>
+      <button class="primary" type="submit">Filter</button>
+      ${filtered ? html`<a class="button" href="/keywords">Clear</a>` : raw('')}
+    </form>
+
+    ${filtered
+      ? html`<p class="muted small" style="margin-top:-4px">
+          ${matched} of ${total} keyword(s) match.
+        </p>`
+      : raw('')}
+
+    <form method="post" action="/keywords/bulk" id="bulk" class="bulkbar">
+      <input type="hidden" name="back" value="${back}" />
+      <span><span class="count" id="pick-count">0</span> selected</span>
+
+      <label for="bulk-status" style="margin:0">Status</label>
+      ${tristate('bulk-status', 'keyword_status', '', 'leave as is')}
+
+      <label for="bulk-site" style="margin:0">On</label>
+      <select id="bulk-site" name="site_id">
+        <option value="">all sites</option>
+        ${sites.map((s) => html`<option value="${s.id}">${s.domain}</option>`)}
+      </select>
+
+      <label for="bulk-link" style="margin:0">set to</label>
+      ${tristate('bulk-link', 'link_status', '', 'leave as is')}
+
+      <label for="bulk-share" style="margin:0">Share images</label>
+      <select id="bulk-share" name="share">
+        <option value="">leave as is</option>
+        <option value="1">on</option>
+        <option value="0">off</option>
+      </select>
+
+      <button class="primary" type="submit" name="action" value="apply">Apply</button>
+      <button class="danger" type="submit" name="action" value="delete" formnovalidate
+              onclick="return confirm('Delete every ticked keyword? This cannot be undone.')">
+        Delete
+      </button>
+    </form>
 
     <div class="card table-wrap">
       ${keywords.length === 0
-        ? emptyState('No keywords yet. Import a CSV to get started.')
+        ? emptyState(
+            filtered
+              ? 'No keyword matches this filter.'
+              : 'No keywords yet. Import a CSV below to get started.',
+          )
         : html`<table class="matrix">
             <thead>
               <tr>
+                <th class="pick">
+                  <input type="checkbox" id="pick-all" title="Select every row on this page" />
+                </th>
                 <th>Keyword</th><th>Status</th>
                 ${sites.map((s) => html`<th title="${s.domain}">${s.name}</th>`)}
                 <th></th>
@@ -487,6 +632,9 @@ export function keywordsPage(
             <tbody>
               ${keywords.map(
                 (k) => html`<tr>
+                  <td class="pick">
+                    <input type="checkbox" form="bulk" name="ids" value="${k.id}" />
+                  </td>
                   <td>
                     <strong>${k.seed_keyword}</strong>
                     <div class="muted small">${(k.spy_title || '').slice(0, 70)}</div>
@@ -499,16 +647,6 @@ export function keywordsPage(
                             html`<option value="${v}" ${k.status === v ? raw('selected') : raw('')}>${v}</option>`,
                         )}
                       </select>
-                    </form>
-                    <form method="post" action="/keywords/${k.id}/share" class="row">
-                      <button class="small" type="submit" name="share" value="1"
-                              title="Reuse one set of article images on every site for this keyword">
-                        share all
-                      </button>
-                      <button class="small" type="submit" name="share" value="0"
-                              title="Generate fresh article images on every site for this keyword">
-                        none
-                      </button>
                     </form>
                   </td>
                   ${sites.map((s) => {
@@ -538,7 +676,7 @@ export function keywordsPage(
                   <td>
                     <form method="post" action="/keywords/${k.id}/delete"
                           onsubmit="return confirm('Delete this keyword?')">
-                      <button class="small danger" type="submit">×</button>
+                      <button class="small danger" type="submit">&times;</button>
                     </form>
                   </td>
                 </tr>`,
@@ -549,61 +687,96 @@ export function keywordsPage(
 
     ${pages > 1
       ? html`<div class="row">
-          ${page > 1 ? html`<a class="button small" href="/keywords?page=${page - 1}">Previous</a>` : raw('')}
+          ${page > 1
+            ? html`<a class="button small" href="/keywords${pageLink(filter, page - 1)}">Previous</a>`
+            : raw('')}
           <span class="muted small">Page ${page} of ${pages}</span>
-          ${page < pages ? html`<a class="button small" href="/keywords?page=${page + 1}">Next</a>` : raw('')}
+          ${page < pages
+            ? html`<a class="button small" href="/keywords${pageLink(filter, page + 1)}">Next</a>`
+            : raw('')}
         </div>`
       : raw('')}
-  `;
-}
 
-/* =========================================================================
- * Decisions
- * ====================================================================== */
-
-export function decisionsPage(
-  cycles: { cycle_id: string; created_at: string; n: number }[],
-  selected: string | null,
-  rows: DecisionRow[],
-): Html {
-  return html`
-    <h1>Decisions</h1>
-    <p class="subtitle">
-      Why the scheduler did what it did. Every site checked, every keyword skipped, with the
-      reason recorded at the moment the choice was made.
-    </p>
-
+    <h2>Import from CSV</h2>
     <div class="card">
-      <h3>Recent checks</h3>
-      ${cycles.length === 0
-        ? emptyState('No scheduler checks recorded yet.')
-        : html`<div class="row">
-            ${cycles.map(
-              (c) => html`<a class="button small ${c.cycle_id === selected ? 'primary' : ''}"
-                href="/decisions?cycle=${c.cycle_id}">${timeAgo(c.created_at)} (${c.n})</a>`,
-            )}
-          </div>`}
+      <p class="muted small" style="margin-top:0">
+        Columns: <span class="mono">seed_keyword, spy_title, spy_description, annotation,
+        status</span>, then one column per site domain holding go / done / no. Only
+        <span class="mono">seed_keyword</span> is required, and a keyword may be set to
+        <span class="mono">go</span> on as many sites as you like. Those sites reuse one set
+        of article images by default &mdash; untick <span class="mono">share</span> on a cell
+        to generate fresh ones there. Pinterest graphics are always generated per site.
+      </p>
+      <form method="post" action="/keywords/import" enctype="multipart/form-data">
+        <div class="field"><input type="file" name="file" accept=".csv,text/csv" required /></div>
+        <div class="row wrap">
+          <button class="primary" type="submit">Import CSV</button>
+          <a class="button" href="/keywords/template.csv" download>Download template</a>
+          <a class="button" href="/data/export/keywords" download>Export what is here</a>
+        </div>
+        <div class="help" style="margin-top:8px">
+          The template already has a column for every site you have added. An export uses the
+          same columns, so it can be edited in a spreadsheet and imported straight back.
+        </div>
+      </form>
     </div>
 
-    ${selected
-      ? html`<div class="card table-wrap">
-          <table>
-            <thead><tr><th>Type</th><th>Subject</th><th>Decision</th><th>Reason</th></tr></thead>
-            <tbody>
-              ${rows.map(
-                (r) => html`<tr>
-                  <td class="muted small">${r.subject_type}</td>
-                  <td>${r.subject_label || '—'}</td>
-                  <td>${statusBadge(r.decision)}</td>
-                  <td class="small">${r.reason}</td>
-                </tr>`,
-              )}
-            </tbody>
-          </table>
-        </div>`
-      : raw('')}
+    ${raw(BULK_SELECTION_SCRIPT)}
   `;
 }
+
+function pageLink(filter: KeywordFilterView, page: number): string {
+  const params = new URLSearchParams();
+  if (filter.q) params.set('q', filter.q);
+  if (filter.status) params.set('status', filter.status);
+  if (filter.siteId) params.set('site', String(filter.siteId));
+  if (filter.linkStatus) params.set('link', filter.linkStatus);
+  if (page > 1) params.set('page', String(page));
+  const query = params.toString();
+  return query ? `?${query}` : '';
+}
+
+/**
+ * Row selection, in the smallest amount of script that does the job.
+ *
+ * The checkboxes sit in the table but belong to the bulk form above it, via
+ * the HTML `form` attribute: a form inside a form is invalid, and every cell
+ * of the matrix is already its own form. This script only keeps the counter
+ * and the select-all box honest — submitting works with scripting off.
+ */
+const BULK_SELECTION_SCRIPT = `<script>
+(function () {
+  var form = document.getElementById('bulk');
+  if (!form) return;
+
+  var boxes = Array.prototype.slice.call(document.querySelectorAll('input[name="ids"]'));
+  var all = document.getElementById('pick-all');
+  var count = document.getElementById('pick-count');
+
+  function sync() {
+    var picked = 0;
+    boxes.forEach(function (box) {
+      if (box.checked) picked++;
+      var row = box.closest('tr');
+      if (row) row.classList.toggle('picked', box.checked);
+    });
+    if (count) count.textContent = String(picked);
+    if (all) {
+      all.checked = picked > 0 && picked === boxes.length;
+      all.indeterminate = picked > 0 && picked < boxes.length;
+    }
+  }
+
+  if (all) {
+    all.addEventListener('change', function () {
+      boxes.forEach(function (box) { box.checked = all.checked; });
+      sync();
+    });
+  }
+  boxes.forEach(function (box) { box.addEventListener('change', sync); });
+  sync();
+})();
+</script>`;
 
 /* =========================================================================
  * Settings
@@ -630,9 +803,11 @@ export function settingsPage(
       on the server.
     </p>
 
-    <div class="row" style="margin-bottom:16px">
+    <div class="row wrap" style="margin-bottom:16px">
       <a class="button" href="/settings/keys">LLM API keys</a>
+      <a class="button" href="/settings/prompts">Prompts</a>
       <a class="button" href="/settings/account">Change password</a>
+      <a class="button" href="/settings/data">History &amp; storage</a>
     </div>
 
     ${problems.length
@@ -981,7 +1156,7 @@ export function promptsPage(prompts: PromptSummary[]): Html {
             </div>
             <div class="row">
               ${parts.map(
-                (p) => html`<a class="button small" href="/prompts/${p.file}"
+                (p) => html`<a class="button small" href="/settings/prompts/${p.file}"
                   >${p.half} &middot; ${p.lines} lines</a
                 >`,
               )}
@@ -1015,7 +1190,7 @@ export function promptEditPage(
             : 'Exactly as shipped.'}
         </p>
       </div>
-      <a class="button" href="/prompts">All prompts</a>
+      <a class="button" href="/settings/prompts">All prompts</a>
     </div>
 
     ${options.unknown.length
@@ -1032,7 +1207,7 @@ export function promptEditPage(
       : raw('')}
 
     <div class="card">
-      <form method="post" action="/prompts/${file}">
+      <form method="post" action="/settings/prompts/${file}">
         <div class="field">
           <textarea name="body" rows="24" spellcheck="false"
                     class="mono" style="width:100%">${body}</textarea>
@@ -1071,5 +1246,164 @@ export function promptEditPage(
             <pre class="mono small" style="white-space:pre-wrap;margin:0">${options.shipped}</pre>
           </div>`
       : raw('')}
+  `;
+}
+
+/* =========================================================================
+ * History and storage
+ * ====================================================================== */
+
+/**
+ * The tables that grow forever, with a way to take them away.
+ *
+ * Everything on this page is history: runs, the steps under them, the
+ * scheduler's reasoning, the event log. None of it is derived state, so
+ * deleting any of it changes nothing about what the platform will do next —
+ * which is exactly why the export sits beside the delete rather than behind
+ * a separate page. Take the copy, then clear.
+ */
+export function dataPage(counts: DataCounts, retentionDays: number): Html {
+  const clearCard = (
+    what: 'runs' | 'decisions' | 'events',
+    title: string,
+    rows: number,
+    blurb: Html,
+    exportName: string,
+  ): Html => html`
+    <div class="card">
+      <div class="spread">
+        <div>
+          <h3 style="margin-bottom:4px">${title}</h3>
+          <div class="muted small">${rows} row(s) stored</div>
+        </div>
+        <a class="button small" href="/data/export/${exportName}" download>Export CSV</a>
+      </div>
+      <p class="muted small">${blurb}</p>
+      <form method="post" action="/data/clear" class="row wrap"
+            onsubmit="return confirm('Delete this history? The export is the only copy.')">
+        <input type="hidden" name="what" value="${what}" />
+        <label for="days-${what}" style="margin:0">Older than</label>
+        <select id="days-${what}" name="days" style="width:auto">
+          <option value="90">90 days</option>
+          <option value="30" selected>30 days</option>
+          <option value="7">7 days</option>
+          <option value="0">everything</option>
+        </select>
+        <button class="danger" type="submit">Clear</button>
+      </form>
+    </div>
+  `;
+
+  return html`
+    <div class="spread">
+      <div>
+        <h1>History &amp; storage</h1>
+        <p class="subtitle">
+          What has piled up since the platform started, and how to take it away.
+          None of this is used to decide what publishes next, so clearing it is
+          safe &mdash; but it is the only record of what happened, so export
+          first.
+        </p>
+      </div>
+      <a class="button" href="/settings">Back to settings</a>
+    </div>
+
+    <div class="grid">
+      <div class="stat"><div class="value">${counts.runs}</div><div class="label">Runs</div></div>
+      <div class="stat"><div class="value">${counts.steps}</div><div class="label">Run steps</div></div>
+      <div class="stat"><div class="value">${counts.cycles}</div><div class="label">Scheduler checks</div></div>
+      <div class="stat"><div class="value">${counts.events}</div><div class="label">Log events</div></div>
+    </div>
+
+    <p class="muted small">
+      ${counts.oldestRunAt
+        ? html`Oldest run recorded ${timeAgo(counts.oldestRunAt)}.`
+        : raw('No runs recorded yet.')}
+      Decisions and events older than ${retentionDays} day(s) are pruned
+      automatically &mdash; that number is <em>Keep logs for</em> under Settings
+      &rarr; Schedule. Runs are never pruned automatically, because a run is the
+      record of an article you published.
+    </p>
+
+    <h2>Clear history</h2>
+
+    ${clearCard(
+      'runs',
+      'Runs and their steps',
+      counts.runs,
+      html`One row per publishing attempt, plus every step underneath it &mdash;
+        prompts, model outputs, timings. This is the bulk of the database.
+        A run still in progress is never deleted.`,
+      'runs',
+    )}
+
+    ${clearCard(
+      'decisions',
+      'Scheduler decisions',
+      counts.decisions,
+      html`Why each site was picked or skipped, written on every check. At one
+        check every few minutes this is the fastest-growing table here, and it
+        is only useful while you are asking why something did not publish.`,
+      'decisions',
+    )}
+
+    ${clearCard(
+      'events',
+      'Event log',
+      counts.events,
+      html`Technical errors and scheduler activity &mdash; the Events page.`,
+      'events',
+    )}
+
+    <h2>Shared article images</h2>
+    <div class="card">
+      <div class="spread">
+        <div>
+          <h3 style="margin-bottom:4px">Remembered image sets</h3>
+          <div class="muted small">${counts.sharedImages} keyword(s) with a stored set</div>
+        </div>
+      </div>
+      <p class="muted small">
+        When a keyword runs on several sites, the first site to publish it
+        becomes the source of its four article images and the rest copy them
+        instead of asking Google again. Clearing this forgets those URLs: no
+        image is deleted anywhere, the next site to publish simply generates a
+        fresh set. Do it when you want new pictures for keywords you have
+        already run.
+      </p>
+      <form method="post" action="/data/clear"
+            onsubmit="return confirm('Forget every shared image set? Future runs will generate new images.')">
+        <input type="hidden" name="what" value="shared-images" />
+        <button class="danger" type="submit">Forget shared images</button>
+      </form>
+    </div>
+
+    <h2>Export everything</h2>
+    <div class="card">
+      <p class="muted small" style="margin-top:0">
+        Plain CSV, one file per table, nothing encrypted &mdash; site API tokens
+        and LLM keys are deliberately not included in any of these.
+      </p>
+      <div class="row wrap">
+        <a class="button" href="/data/export/runs" download>Runs</a>
+        <a class="button" href="/data/export/steps" download>Run steps</a>
+        <a class="button" href="/data/export/decisions" download>Decisions</a>
+        <a class="button" href="/data/export/events" download>Events</a>
+        <a class="button" href="/data/export/keywords" download>Keywords</a>
+        <a class="button" href="/data/export/sites" download>Sites</a>
+      </div>
+    </div>
+
+    <h2>Reclaim disk space</h2>
+    <div class="card">
+      <p class="muted small" style="margin-top:0">
+        SQLite keeps the space a delete frees and reuses it later, so the file
+        on disk does not shrink on its own. This rewrites it at its true size.
+        It takes a moment and blocks other writes while it runs.
+      </p>
+      <form method="post" action="/data/compact">
+        <button type="submit">Compact the database</button>
+      </form>
+    </div>
   `;
 }

@@ -47,20 +47,21 @@ export function html(strings: TemplateStringsArray, ...values: unknown[]): Html 
 export interface NavItem {
   href: string;
   label: string;
-  /** Opens in its own tab rather than replacing the dashboard. */
-  newTab?: boolean;
 }
 
+/**
+ * The rail holds destinations you navigate between and nothing else.
+ *
+ * Prompts moved under Settings (it is configuration, not a place you visit
+ * daily), Decisions became a section of the dashboard, and the live browser
+ * became a button in the top-right corner because it opens its own tab.
+ */
 const NAV: NavItem[] = [
   { href: '/', label: 'Dashboard' },
   { href: '/runs', label: 'Runs' },
   { href: '/sites', label: 'Sites' },
   { href: '/keywords', label: 'Keywords' },
-  { href: '/prompts', label: 'Prompts' },
-  { href: '/decisions', label: 'Decisions' },
-  // A live browser session is something you keep open beside the dashboard
-  // while you work, not somewhere you navigate to and back from.
-  { href: '/browser', label: 'Browser', newTab: true },
+  { href: '/events', label: 'Events' },
   { href: '/settings', label: 'Settings' },
 ];
 
@@ -76,7 +77,6 @@ export function layout(options: LayoutOptions): string {
   const nav = NAV.map(
     (item) => html`
       <a href="${item.href}" class="${item.href === options.active ? 'active' : ''}"
-        ${item.newTab ? raw('target="_blank" rel="noopener"') : raw('')}
         >${item.label}</a
       >
     `,
@@ -101,24 +101,27 @@ export function layout(options: LayoutOptions): string {
 <title>${escapeHtml(options.title)} · Article Platform</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap">
 <link rel="stylesheet" href="/static/style.css">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='3' fill='%231b2024'/><rect x='7' y='9' width='18' height='3' fill='%23e5a83a'/><rect x='7' y='15' width='18' height='2' fill='%23cfd6dc'/><rect x='7' y='20' width='12' height='2' fill='%23cfd6dc'/></svg>">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='%236366f1'/><stop offset='0.55' stop-color='%23a855f7'/><stop offset='1' stop-color='%23ec4899'/></linearGradient></defs><rect width='32' height='32' rx='8' fill='url(%23g)'/><rect x='8' y='10' width='16' height='3' rx='1.5' fill='white'/><rect x='8' y='16' width='16' height='2.5' rx='1.25' fill='white' opacity='0.75'/><rect x='8' y='21' width='10' height='2.5' rx='1.25' fill='white' opacity='0.55'/></svg>">
 </head>
 <body>
 <header class="topbar">
   <div class="brand"><a href="/">Article&nbsp;Platform</a>${status}</div>
-  <nav>${nav.map((n) => n.value).join('')}
-    <form method="post" action="/logout" style="display:inline">
-      <button class="small" type="submit">Sign out</button>
-    </form>
-  </nav>
+  <nav>${nav.map((n) => n.value).join('')}</nav>
+  <div class="rail-foot">One article per run.<br>Every skip has a recorded reason.</div>
 </header>
 <main>
+  <div class="pagebar">
+    <a class="button browser" href="/browser" target="_blank" rel="noopener"
+       title="The live Chrome session used to generate images">Browser</a>
+    <form method="post" action="/logout">
+      <button type="submit">Sign out</button>
+    </form>
+  </div>
 ${flash.value}
 ${options.body.value}
 </main>
-<footer><span>One article per run. Every skip has a recorded reason.</span></footer>
 </body>
 </html>`;
 }

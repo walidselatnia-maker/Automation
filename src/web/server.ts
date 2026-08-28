@@ -15,7 +15,7 @@ import { rejectionReason, storePassword, storedPasswordHash } from './password.j
 import { registerBrowserProxy } from './browser-proxy.js';
 import {
   dashboardPage,
-  decisionsPage,
+  dataPage,
   eventsPage,
   accountPage,
   keysPage,
@@ -28,9 +28,15 @@ import {
   siteEditPage,
   sitesPage,
 } from './views/pages.js';
+import type { KeywordFilterView } from './views/pages.js';
 import { importKeywordsCsv } from './import.js';
 import {
+  bulkDeleteKeywords,
+  bulkSetKeywordStatus,
+  bulkSetLinks,
+  bulkSetShareImages,
   countKeywords,
+  countKeywordsMatching,
   countRuns,
   deleteKeyword,
   deleteSite,
@@ -39,11 +45,11 @@ import {
   getSiteByDomain,
   listDecisions,
   listEvents,
-  listKeywords,
   listRecentCycles,
   listRuns,
   listSites,
   listSteps,
+  searchKeywords,
   deletePromptOverride,
   getPromptOverride,
   loadLinkGrid,
@@ -57,6 +63,14 @@ import {
   upsertSite,
 } from '../db/repos.js';
 import { get } from '../db/index.js';
+import {
+  clearHistory,
+  forgetAllSharedImages,
+  compactDatabase,
+  dataCounts,
+  exportDataset,
+  type Dataset,
+} from '../db/maintenance.js';
 import {
   deleteEndpoint,
   listEndpoints,
@@ -177,6 +191,13 @@ export function buildServer(
 
     const lock = lockStatus();
 
+    // The Decisions page used to live at /decisions. It is one table, and the
+    // question it answers ("why did nothing publish?") is asked while looking
+    // at these counters, so it is a section here instead.
+    const cycles = listRecentCycles(20);
+    const requested = (request.query as { cycle?: string }).cycle;
+    const selectedCycle = requested ?? cycles[0]?.cycle_id ?? null;
+
     return page(
       reply,
       'Dashboard',
@@ -192,6 +213,9 @@ export function buildServer(
         problems: problemsFor(settings),
         busy: Boolean(lock?.locked_at),
         lockedAt: lock?.locked_at ?? null,
+        cycles,
+        selectedCycle,
+        decisions: selectedCycle ? listDecisions(selectedCycle) : [],
       }),
       readFlash(request.query),
     );
@@ -353,9 +377,24 @@ export function buildServer(
 
   /* -- Keywords ---------------------------------------------------------- */
 
+  /** The filter the keywords page was asked for, normalised. */
+  const readKeywordFilter = (query: unknown): KeywordFilterView => {
+    const q = query as { q?: string; status?: string; site?: string; link?: string };
+    const status = asString(q.status);
+    const link = asString(q.link);
+    return {
+      q: asString(q.q).trim(),
+      status: status === 'go' || status === 'done' || status === 'no' ? status : '',
+      siteId: Math.max(0, asNumber(q.site, 0)),
+      linkStatus:
+        link === 'go' || link === 'done' || link === 'no' || link === 'none' ? link : '',
+    };
+  };
+
   app.get('/keywords', async (request, reply) => {
     const q = request.query as { page?: string };
     const pageNum = Math.max(1, asNumber(q.page, 1));
+    const filter = readKeywordFilter(request.query);
     const links = new Map(
       loadLinkGrid().map(
         (l) =>
@@ -368,14 +407,87 @@ export function buildServer(
       'Keywords',
       '/keywords',
       keywordsPage(
-        listKeywords(100, (pageNum - 1) * 100),
+        searchKeywords(filter, 100, (pageNum - 1) * 100),
         listSites(),
         links,
         pageNum,
         countKeywords(),
+        countKeywordsMatching(filter),
+        filter,
       ),
       readFlash(request.query),
     );
+  });
+
+  /**
+   * Edit every ticked keyword in one submission.
+   *
+   * Each control on the bulk bar has an explicit "leave as is", so a stray
+   * Apply with nothing chosen changes nothing rather than silently rewriting
+   * the grid. The form carries the filtered URL it came from, so you land back
+   * on the same rows.
+   */
+  app.post('/keywords/bulk', async (request, reply) => {
+    const body = formBody(request);
+
+    // Fastify's form parser gives a single string for one checkbox and an
+    // array for several; a submission with none ticked gives nothing.
+    const raw = body.ids;
+    const ids = (Array.isArray(raw) ? raw : raw === undefined ? [] : [raw])
+      .map((value) => asNumber(value, 0))
+      .filter((id) => id > 0);
+
+    // Only ever back to a path on this app.
+    const backRaw = asString(body.back, '/keywords');
+    const back = backRaw.startsWith('/keywords') ? backRaw : '/keywords';
+
+    if (ids.length === 0) {
+      return redirect(reply, back, {
+        kind: 'warn',
+        message: 'Nothing was ticked, so nothing changed.',
+      });
+    }
+
+    if (asString(body.action) === 'delete') {
+      const removed = bulkDeleteKeywords(ids);
+      return redirect(reply, back, {
+        kind: 'ok',
+        message: `Deleted ${removed} keyword(s).`,
+      });
+    }
+
+    const siteId = Math.max(0, asNumber(body.site_id, 0));
+    const siteIds = siteId ? [siteId] : [];
+    const keywordStatus = asString(body.keyword_status);
+    const linkStatus = asString(body.link_status);
+    const share = asString(body.share);
+
+    const done: string[] = [];
+
+    if (keywordStatus === 'go' || keywordStatus === 'done' || keywordStatus === 'no') {
+      const n = bulkSetKeywordStatus(ids, keywordStatus);
+      done.push(`set ${n} keyword(s) to ${keywordStatus}`);
+    }
+
+    if (linkStatus === 'go' || linkStatus === 'done' || linkStatus === 'no') {
+      const n = bulkSetLinks(ids, siteIds, linkStatus);
+      const where = siteId ? 'on that site' : 'across every site';
+      done.push(`set ${n} cell(s) ${where} to ${linkStatus}`);
+    }
+
+    if (share === '1' || share === '0') {
+      const n = bulkSetShareImages(ids, siteIds, share === '1');
+      done.push(`turned image sharing ${share === '1' ? 'on' : 'off'} for ${n} cell(s)`);
+    }
+
+    if (done.length === 0) {
+      return redirect(reply, back, {
+        kind: 'warn',
+        message: `${ids.length} keyword(s) ticked, but every control said "leave as is".`,
+      });
+    }
+
+    return redirect(reply, back, { kind: 'ok', message: `${done.join(', ')}.` });
   });
 
   app.post('/keywords/import', async (request, reply) => {
@@ -512,6 +624,94 @@ export function buildServer(
     ]),
   );
 
+  /* -- History and storage ------------------------------------------------ */
+
+  /**
+   * Runs, steps, decisions and events grow one row per attempt forever.
+   *
+   * None of it is derived state — the counters are all computed from `runs` at
+   * read time — so deleting history changes nothing about what publishes next.
+   * It is still the only record of what happened, which is why every clear on
+   * this page sits next to the export of the same table.
+   */
+  app.get('/settings/data', async (request, reply) =>
+    page(
+      reply,
+      'History & storage',
+      '/settings',
+      dataPage(dataCounts(), settings.getNumber('retention_days')),
+      readFlash(request.query),
+    ),
+  );
+
+  const DATASETS: Dataset[] = ['runs', 'steps', 'decisions', 'events', 'keywords', 'sites'];
+
+  app.get('/data/export/:dataset', async (request, reply) => {
+    const name = asString((request.params as { dataset: string }).dataset) as Dataset;
+    if (!DATASETS.includes(name)) {
+      return redirect(reply, '/settings/data', {
+        kind: 'error',
+        message: `There is nothing called "${name}" to export.`,
+      });
+    }
+
+    const data = exportDataset(name);
+    return csvFile(reply, data.filename, data.rows);
+  });
+
+  app.post('/data/clear', async (request, reply) => {
+    const body = formBody(request);
+    const what = asString(body.what);
+
+    if (what === 'shared-images') {
+      const n = forgetAllSharedImages();
+      return redirect(reply, '/settings/data', {
+        kind: 'ok',
+        message:
+          `Forgot ${n} shared image set(s). No image was deleted — the next site ` +
+          'to publish those keywords will generate fresh ones.',
+      });
+    }
+
+    if (what !== 'runs' && what !== 'decisions' && what !== 'events') {
+      return redirect(reply, '/settings/data', {
+        kind: 'error',
+        message: 'Nothing was cleared: that is not something this page manages.',
+      });
+    }
+
+    // "0" from the dropdown means everything, which is null to clearHistory.
+    const days = asNumber(body.days, 30);
+    const cutoff = days <= 0 ? null : days;
+
+    try {
+      const removed = clearHistory(what, cutoff);
+      const scope = cutoff === null ? 'all' : `older than ${cutoff} day(s)`;
+      return redirect(reply, '/settings/data', {
+        kind: 'ok',
+        message:
+          removed === 0
+            ? `Nothing to clear — no ${what} ${scope}.`
+            : `Cleared ${removed} ${what} row(s) ${scope}.` +
+              (what === 'runs' ? ' Their steps went with them.' : ''),
+      });
+    } catch (err) {
+      return redirect(reply, '/settings/data', { kind: 'error', message: errorMessage(err) });
+    }
+  });
+
+  app.post('/data/compact', async (_request, reply) => {
+    try {
+      compactDatabase();
+      return redirect(reply, '/settings/data', {
+        kind: 'ok',
+        message: 'Database compacted. The file on disk is now its true size.',
+      });
+    } catch (err) {
+      return redirect(reply, '/settings/data', { kind: 'error', message: errorMessage(err) });
+    }
+  });
+
   /* -- Prompts ----------------------------------------------------------- */
 
   /**
@@ -525,14 +725,14 @@ export function buildServer(
     return allowed.includes(name) ? name : null;
   };
 
-  app.get('/prompts', async (request, reply) =>
-    page(reply, 'Prompts', '/prompts', promptsPage(listPromptFiles()), readFlash(request.query)),
+  app.get('/settings/prompts', async (request, reply) =>
+    page(reply, 'Prompts', '/settings', promptsPage(listPromptFiles()), readFlash(request.query)),
   );
 
-  app.get('/prompts/:file', async (request, reply) => {
+  app.get('/settings/prompts/:file', async (request, reply) => {
     const file = promptFile(asString((request.params as { file: string }).file));
     if (!file) {
-      return redirect(reply, '/prompts', { kind: 'error', message: 'No such prompt file.' });
+      return redirect(reply, '/settings/prompts', { kind: 'error', message: 'No such prompt file.' });
     }
 
     const override = getPromptOverride(file);
@@ -543,7 +743,7 @@ export function buildServer(
     return page(
       reply,
       file,
-      '/prompts',
+      '/settings',
       promptEditPage(file, body, {
         model: PROMPT_MODELS[promptName]?.model ?? '',
         variables: variablesFor(promptName),
@@ -555,10 +755,10 @@ export function buildServer(
     );
   });
 
-  app.post('/prompts/:file', async (request, reply) => {
+  app.post('/settings/prompts/:file', async (request, reply) => {
     const file = promptFile(asString((request.params as { file: string }).file));
     if (!file) {
-      return redirect(reply, '/prompts', { kind: 'error', message: 'No such prompt file.' });
+      return redirect(reply, '/settings/prompts', { kind: 'error', message: 'No such prompt file.' });
     }
 
     const body = formBody(request);
@@ -566,7 +766,7 @@ export function buildServer(
     if (asString(body.action) === 'revert') {
       deletePromptOverride(file);
       invalidatePromptCache();
-      return redirect(reply, `/prompts/${file}`, {
+      return redirect(reply, `/settings/prompts/${file}`, {
         kind: 'ok',
         message: 'Reverted to the shipped prompt.',
       });
@@ -574,7 +774,7 @@ export function buildServer(
 
     const text = asString(body.body);
     if (text.trim() === '') {
-      return redirect(reply, `/prompts/${file}`, {
+      return redirect(reply, `/settings/prompts/${file}`, {
         kind: 'error',
         message: 'An empty prompt would silently produce nothing. Revert instead if that is what you want.',
       });
@@ -586,7 +786,7 @@ export function buildServer(
     const promptName = file.replace(/\.(system|user)\.txt$/, '').replace(/\.txt$/, '');
     const unknown = unknownVariables(promptName, text);
 
-    return redirect(reply, `/prompts/${file}`, {
+    return redirect(reply, `/settings/prompts/${file}`, {
       kind: unknown.length ? 'warn' : 'ok',
       message: unknown.length
         ? `Saved, but ${unknown.join(', ')} is not supplied by any step and will render empty.`
@@ -596,18 +796,11 @@ export function buildServer(
 
   /* -- Decisions --------------------------------------------------------- */
 
+  // It is a section of the dashboard now. Kept as a redirect because it was a
+  // page for long enough to be bookmarked.
   app.get('/decisions', async (request, reply) => {
-    const q = request.query as { cycle?: string };
-    const cycles = listRecentCycles(20);
-    const selected = q.cycle ?? cycles[0]?.cycle_id ?? null;
-
-    return page(
-      reply,
-      'Decisions',
-      '/decisions',
-      decisionsPage(cycles, selected, selected ? listDecisions(selected) : []),
-      readFlash(request.query),
-    );
+    const cycle = asString((request.query as { cycle?: string }).cycle);
+    return redirect(reply, cycle ? `/?cycle=${encodeURIComponent(cycle)}#decisions` : '/');
   });
 
   /* -- Events ------------------------------------------------------------ */
