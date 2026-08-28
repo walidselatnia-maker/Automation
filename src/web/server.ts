@@ -19,6 +19,7 @@ import {
   eventsPage,
   accountPage,
   keysPage,
+  keywordDetailPage,
   keywordsPage,
   promptEditPage,
   promptsPage,
@@ -27,10 +28,13 @@ import {
   settingsPage,
   siteEditPage,
   sitesPage,
+  urlCandidatesPage,
+  usagePage,
 } from './views/pages.js';
 import type { KeywordFilterView } from './views/pages.js';
 import { importKeywordsCsv } from './import.js';
 import {
+  activateSite,
   bulkDeleteKeywords,
   bulkSetKeywordStatus,
   bulkSetLinks,
@@ -46,9 +50,29 @@ import {
   listDecisions,
   listEvents,
   listRecentCycles,
+  listHeldRuns,
+  listPromptVersions,
   listRuns,
   listSites,
   listSteps,
+  getPromptVersion,
+  dailyActivity,
+  createRun,
+  discardRun,
+  getKeywordBySeed,
+  getLinkShare,
+  listRunsForKeyword,
+  publishedTitles,
+  replaceStepOutput,
+  setRunTitle,
+  type StepRow,
+  getLinksForKeyword,
+  insertKeyword,
+  pauseSite,
+  runUsage,
+  savePromptVersion,
+  setModelOverride,
+  stepCosts,
   searchKeywords,
   deletePromptOverride,
   getPromptOverride,
@@ -64,6 +88,7 @@ import {
 } from '../db/repos.js';
 import { get } from '../db/index.js';
 import {
+  backupTo,
   clearHistory,
   forgetAllSharedImages,
   compactDatabase,
@@ -71,19 +96,39 @@ import {
   exportDataset,
   type Dataset,
 } from '../db/maintenance.js';
+import { createReadStream } from 'node:fs';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   deleteEndpoint,
   listEndpoints,
   resetEndpointHealth,
   upsertEndpoint,
 } from '../llm/pool.js';
+import { executePipeline, PipelineContext } from '../pipeline/index.js';
 import { evaluateSite, localDateKey } from '../core/selector.js';
+import { diagnoseKeyword } from '../core/diagnosis.js';
+import { findDuplicate } from '../core/similar-title.js';
+import {
+  fetchCandidates,
+  MAX_URLS,
+  parseUrlList,
+  type Candidate,
+} from './url-import.js';
 import { readSupply, supplyWarning } from '../core/supply.js';
 import { listPromptFiles } from '../pipeline/prompt-files.js';
-import { invalidatePromptCache, PROMPT_MODELS, readShippedPrompt } from '../pipeline/prompts.js';
+import {
+  invalidatePromptCache,
+  KNOWN_MODELS,
+  modelChoices,
+  modelFor,
+  PROMPT_MODELS,
+  readShippedPrompt,
+} from '../pipeline/prompts.js';
 import { unknownVariables, variablesFor } from '../pipeline/prompt-contexts.js';
 import { SETTING_SPECS, type Settings } from '../settings.js';
-import { lockStatus, resumeRun, tick } from '../scheduler/index.js';
+import { lockStatus, resumeRun, setImageServiceProblem, tick } from '../scheduler/index.js';
 import { createLogger, errorMessage } from '../lib/logger.js';
 import { normaliseDomain } from '../lib/domain.js';
 
@@ -216,25 +261,57 @@ export function buildServer(
         cycles,
         selectedCycle,
         decisions: selectedCycle ? listDecisions(selectedCycle) : [],
+        held: listHeldRuns(20),
+        activity: dailyActivity(30, timezone),
       }),
       readFlash(request.query),
     );
   });
 
-  app.post('/run-now', async (_request, reply) => {
+  /** Turn a tick's outcome into something worth reading on the dashboard. */
+  const describeTick = (result: {
+    outcome: string;
+    detail?: string;
+    runId?: number;
+    hold?: string;
+  }): Flash => {
+    const messages: Record<string, string> = {
+      published: 'Published successfully.',
+      failed: `Run failed: ${result.detail ?? 'see the run detail page'}`,
+      'spy-rejected': 'Spy source rejected; the keyword was marked unusable.',
+      held:
+        result.hold === 'dry'
+          ? 'Dry run finished. The article is written and nothing was published — open the run to read it.'
+          : 'Article written and waiting for approval — open the run to read it.',
+      'no-task': `Nothing to publish: ${result.detail ?? ''}`,
+      busy: 'A run is already in progress.',
+      disabled: 'Automation is disabled. Enable it in Settings first.',
+      misconfigured: `Configuration incomplete: ${result.detail ?? ''}`,
+    };
+
+    return {
+      kind:
+        result.outcome === 'published'
+          ? 'ok'
+          : result.outcome === 'failed'
+            ? 'error'
+            : result.outcome === 'held'
+              ? 'ok'
+              : 'warn',
+      message: messages[result.outcome] ?? result.outcome,
+    };
+  };
+
+  app.post('/run-now', async (request, reply) => {
+    // A dry run exercises the whole pipeline and stops before posting, which
+    // is the only way to see what a prompt change does without a live site
+    // finding out first.
+    const mode = asString(formBody(request).mode) === 'dry' ? 'dry' : 'live';
+
     try {
-      const result = await tick(settings, encryptionKey);
-      const messages: Record<string, string> = {
-        published: 'Published successfully.',
-        failed: `Run failed: ${result.detail ?? 'see the run detail page'}`,
-        'spy-rejected': 'Spy source rejected; the keyword was marked unusable.',
-        'no-task': `Nothing to publish: ${result.detail ?? ''}`,
-        busy: 'A run is already in progress.',
-        disabled: 'Automation is disabled. Enable it in Settings first.',
-        misconfigured: `Configuration incomplete: ${result.detail ?? ''}`,
-      };
-      const kind = result.outcome === 'published' ? 'ok' : result.outcome === 'failed' ? 'error' : 'warn';
-      return redirect(reply, '/', { kind, message: messages[result.outcome] ?? result.outcome });
+      const result = await tick(settings, encryptionKey, { mode });
+      const flash = describeTick(result);
+      return redirect(reply, result.runId ? `/runs/${result.runId}` : '/', flash);
     } catch (err) {
       return redirect(reply, '/', { kind: 'error', message: errorMessage(err) });
     }
@@ -259,18 +336,121 @@ export function buildServer(
     const run = getRun(id);
     if (!run) return redirect(reply, '/runs', { kind: 'error', message: `Run ${id} not found` });
 
+    const steps = listSteps(id);
+    const article = storedArticle(steps);
+
     return page(
       reply,
-      `Run ${id}`,
+      run.title || `Run ${id}`,
       '/runs',
-      runDetailPage(
+      runDetailPage({
         run,
-        listSteps(id),
-        run.site_id ? getSite(run.site_id) : undefined,
-        run.keyword_id ? getKeyword(run.keyword_id) : undefined,
-      ),
+        steps,
+        site: run.site_id ? getSite(run.site_id) : undefined,
+        keyword: run.keyword_id ? getKeyword(run.keyword_id) : undefined,
+        usage: runUsage(id),
+        article,
+        // Only worth computing where it will be read: on a held run, next to
+        // the decision about whether to publish it.
+        duplicate:
+          run.hold && run.site_id && run.title
+            ? findDuplicate(run.title, publishedTitles(run.site_id).filter((t) => t.title !== run.title))
+            : null,
+      }),
       readFlash(request.query),
     );
+  });
+
+  /** The generated article, read back out of its checkpoint. */
+  const storedArticle = (steps: StepRow[]): Record<string, unknown> | null => {
+    const step = steps.find((s) => s.step === 'generate-article' && s.status === 'ok');
+    if (!step?.output_json) return null;
+
+    try {
+      const parsed = JSON.parse(step.output_json) as unknown;
+      return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
+    } catch {
+      // A truncated checkpoint is not worth a 500 on the page that would show
+      // you it was truncated.
+      return null;
+    }
+  };
+
+  /**
+   * Edit the generated article before it is published.
+   *
+   * Writes over the step's stored output, which is what a resume replays — so
+   * approving after an edit publishes exactly what was on screen. Refused
+   * unless it parses, because saving a malformed document here would turn a
+   * held article into a failure at the post step later.
+   */
+  app.post('/runs/:id/article', async (request, reply) => {
+    const id = asNumber((request.params as { id: string }).id, 0);
+    const run = getRun(id);
+    if (!run) return redirect(reply, '/runs', { kind: 'error', message: 'Run not found' });
+
+    if (!run.hold) {
+      return redirect(reply, `/runs/${id}`, {
+        kind: 'error',
+        message: 'This run is not waiting for anything, so its article is not editable.',
+      });
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(asString(formBody(request).article));
+    } catch (err) {
+      return redirect(reply, `/runs/${id}`, {
+        kind: 'error',
+        message: `That is not valid JSON, so it was not saved: ${errorMessage(err)}`,
+      });
+    }
+
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return redirect(reply, `/runs/${id}`, {
+        kind: 'error',
+        message: 'The article has to be a JSON object.',
+      });
+    }
+
+    const article = parsed as Record<string, unknown>;
+    replaceStepOutput(id, 'generate-article', article);
+
+    const title = typeof article.title === 'string' ? article.title.trim() : '';
+    if (title) setRunTitle(id, title);
+
+    return redirect(reply, `/runs/${id}`, {
+      kind: 'ok',
+      message: 'Saved. Approving now publishes what you edited.',
+    });
+  });
+
+  /**
+   * Throw away a held article and let the keyword be written again.
+   *
+   * The link goes back to `go` deliberately: discarding means "this attempt
+   * was not good enough", not "never publish this keyword here". Leaving it
+   * `done` would quietly retire the keyword for a rejection.
+   */
+  app.post('/runs/:id/discard', async (request, reply) => {
+    const id = asNumber((request.params as { id: string }).id, 0);
+    const run = getRun(id);
+    if (!run) return redirect(reply, '/runs', { kind: 'error', message: 'Run not found' });
+
+    if (!run.hold) {
+      return redirect(reply, `/runs/${id}`, {
+        kind: 'error',
+        message: 'Only an article waiting for approval can be discarded.',
+      });
+    }
+
+    discardRun(id);
+    if (run.keyword_id && run.site_id) setLink(run.keyword_id, run.site_id, 'go');
+
+    return redirect(reply, '/', {
+      kind: 'ok',
+      message: 'Discarded. The keyword is back to go, so it will be written again.',
+    });
   });
 
   app.post('/runs/:id/resume', async (request, reply) => {
@@ -311,6 +491,21 @@ export function buildServer(
     return Math.round(amount * factor);
   };
 
+  /**
+   * The datetime-local field back into an instant.
+   *
+   * That control submits local wall-clock time with no zone, so it is read as
+   * the server's local time — the same clock the operator's browser is on in
+   * every deployment this has. Blank means "no automatic end".
+   */
+  const readPausedUntil = (value: unknown): string | null => {
+    const text = asString(value).trim();
+    if (!text) return null;
+
+    const at = new Date(text);
+    return Number.isNaN(at.getTime()) ? null : at.toISOString();
+  };
+
   const saveSite = (body: Record<string, unknown>, id?: number): number =>
     upsertSite(
       {
@@ -321,6 +516,9 @@ export function buildServer(
         project_id: asString(body.project_id).trim(),
         daily_target: Math.max(0, asNumber(body.daily_target, 0)),
         interval_minutes: readIntervalMinutes(body),
+        paused_reason: asString(body.paused_reason).trim(),
+        paused_until: readPausedUntil(body.paused_until),
+        auto_publish: asString(body.auto_publish, '1') !== '0',
         // Blank means "keep the stored credential".
         apiToken: asString(body.api_token),
         bufferToken: asString(body.buffer_token),
@@ -368,6 +566,45 @@ export function buildServer(
     } catch (err) {
       return redirect(reply, `/sites/${id}`, { kind: 'error', message: errorMessage(err) });
     }
+  });
+
+  /**
+   * Pause a site with a note and, usually, an end.
+   *
+   * The quick control on the site page rather than the full form, because
+   * pausing is something you do in a hurry when a site starts misbehaving —
+   * and the reason is worth capturing exactly then, while you still know it.
+   */
+  app.post('/sites/:id/pause', async (request, reply) => {
+    const id = asNumber((request.params as { id: string }).id, 0);
+    const site = getSite(id);
+    if (!site) return redirect(reply, '/sites', { kind: 'error', message: 'Site not found' });
+
+    const body = formBody(request);
+    const reason = asString(body.reason).trim() || 'No reason given';
+    const hours = Math.max(0, asNumber(body.hours, 24));
+    const until = hours > 0 ? new Date(Date.now() + hours * 3_600_000).toISOString() : null;
+
+    pauseSite(id, reason, until);
+
+    return redirect(reply, `/sites/${id}`, {
+      kind: 'ok',
+      message: until
+        ? `${site.domain} is paused and will resume by itself in ${hours} hour(s).`
+        : `${site.domain} is paused until you resume it.`,
+    });
+  });
+
+  app.post('/sites/:id/activate', async (request, reply) => {
+    const id = asNumber((request.params as { id: string }).id, 0);
+    const site = getSite(id);
+    if (!site) return redirect(reply, '/sites', { kind: 'error', message: 'Site not found' });
+
+    activateSite(id);
+    return redirect(reply, `/sites/${id}`, {
+      kind: 'ok',
+      message: `${site.domain} is publishing again.`,
+    });
   });
 
   app.post('/sites/:id/delete', async (request, reply) => {
@@ -570,6 +807,191 @@ export function buildServer(
     return redirect(reply, '/keywords');
   });
 
+  /**
+   * One keyword, and why it is or is not publishing.
+   *
+   * Decisions answer that question per cycle. This answers it per keyword,
+   * which is the direction it is actually asked in — "this one has never gone
+   * out, why?" — and reuses the selector's own evaluateSite, so a verdict here
+   * and a verdict in the scheduler cannot drift apart.
+   */
+  app.get('/keywords/:id', async (request, reply) => {
+    const id = asNumber((request.params as { id: string }).id, 0);
+    const keyword = getKeyword(id);
+    if (!keyword) {
+      return redirect(reply, '/keywords', { kind: 'error', message: 'Keyword not found' });
+    }
+
+    const timezone = settings.get('timezone');
+    const now = new Date();
+    const sites = loadSiteViews(localDateKey(now, timezone), timezone);
+
+    const diagnosis = diagnoseKeyword(
+      { id: keyword.id, seedKeyword: keyword.seed_keyword, status: keyword.status },
+      sites,
+      getLinksForKeyword(id).map((l) => ({
+        siteId: l.site_id,
+        status: l.status as 'go' | 'done' | 'no',
+      })),
+      { now, timezone },
+    );
+
+    return page(
+      reply,
+      keyword.seed_keyword,
+      '/keywords',
+      keywordDetailPage(keyword, diagnosis, listRunsForKeyword(id)),
+      readFlash(request.query),
+    );
+  });
+
+  /**
+   * Write this keyword's article now, without publishing it.
+   *
+   * The scheduler picks its own pair, so "dry run" on the dashboard exercises
+   * whatever is next in the queue. Here the keyword is already chosen, which
+   * is what you want when the question is about this article rather than about
+   * the pipeline.
+   */
+  app.post('/keywords/:id/dry-run', async (request, reply) => {
+    const id = asNumber((request.params as { id: string }).id, 0);
+    const keyword = getKeyword(id);
+    if (!keyword) {
+      return redirect(reply, '/keywords', { kind: 'error', message: 'Keyword not found' });
+    }
+
+    const timezone = settings.get('timezone');
+    const now = new Date();
+    const sites = loadSiteViews(localDateKey(now, timezone), timezone);
+
+    // Whichever linked site would take it, ignoring the daily target and the
+    // interval: a dry run publishes nothing, so neither limit is protecting
+    // anything here.
+    const linked = getLinksForKeyword(id).filter((l) => l.status === 'go');
+    const target =
+      linked.map((l) => sites.find((s) => s.id === l.site_id)).find((s) => s?.status === 'active') ??
+      linked.map((l) => sites.find((s) => s.id === l.site_id)).find(Boolean);
+
+    if (!target) {
+      return redirect(reply, `/keywords/${id}`, {
+        kind: 'warn',
+        message:
+          'This keyword is not set to go on any site, so there is no site to write it for. ' +
+          'Set a cell to go first.',
+      });
+    }
+
+    const site = getSite(target.id);
+    if (!site) {
+      return redirect(reply, `/keywords/${id}`, { kind: 'error', message: 'That site vanished.' });
+    }
+
+    try {
+      const runId = createRun(id, site.id, 'dry');
+      const ctx = new PipelineContext({
+        runId,
+        site,
+        keyword,
+        settings,
+        encryptionKey,
+        shareImages: getLinkShare(id, site.id),
+        mode: 'dry',
+      });
+
+      const outcome = await executePipeline(ctx);
+      return redirect(reply, `/runs/${runId}`, {
+        kind: outcome.status === 'failed' ? 'error' : 'ok',
+        message:
+          outcome.status === 'held'
+            ? `Written for ${site.domain} and not published. Read it below.`
+            : outcome.status === 'failed'
+              ? `The dry run failed: ${outcome.error ?? ''}`
+              : `Dry run ended as "${outcome.status}".`,
+      });
+    } catch (err) {
+      return redirect(reply, `/keywords/${id}`, { kind: 'error', message: errorMessage(err) });
+    }
+  });
+
+  /* -- Keywords from a page URL ------------------------------------------ */
+
+  app.post('/keywords/from-url', async (request, reply) => {
+    const urls = parseUrlList(asString(formBody(request).urls));
+
+    if (urls.length === 0) {
+      return redirect(reply, '/keywords', { kind: 'warn', message: 'No addresses in that box.' });
+    }
+
+    try {
+      const candidates = await fetchCandidates(urls);
+      return page(
+        reply,
+        'Keyword candidates',
+        '/keywords',
+        urlCandidatesPage(candidates),
+        urls.length > MAX_URLS
+          ? {
+              kind: 'warn',
+              message: `Only the first ${MAX_URLS} addresses were read.`,
+            }
+          : null,
+      );
+    } catch (err) {
+      return redirect(reply, '/keywords', { kind: 'error', message: errorMessage(err) });
+    }
+  });
+
+  app.post('/keywords/from-url/save', async (request, reply) => {
+    const body = formBody(request);
+    const raw = body.keep;
+    const kept = (Array.isArray(raw) ? raw : raw === undefined ? [] : [raw]).map((v) =>
+      asNumber(v, -1),
+    );
+
+    let added = 0;
+    let skipped = 0;
+
+    for (const index of kept) {
+      if (index < 0) continue;
+
+      const seed = asString(body[`seed_${index}`]).trim();
+      if (!seed) continue;
+
+      // A re-read of a page already imported should correct it, not duplicate
+      // it — the same rule the CSV importer follows.
+      const existing = getKeywordBySeed(seed);
+      if (existing) {
+        skipped += 1;
+        continue;
+      }
+
+      insertKeyword({
+        seed_keyword: seed,
+        spy_title: asString(body[`title_${index}`]).trim(),
+        spy_description: asString(body[`description_${index}`]).trim(),
+        spy_article_url: asString(body[`url_${index}`]).trim(),
+        spy_image_url: asString(body[`image_${index}`]).trim(),
+        status: 'go',
+      });
+      added += 1;
+    }
+
+    if (added === 0 && skipped === 0) {
+      return redirect(reply, '/keywords', {
+        kind: 'warn',
+        message: 'Nothing was ticked, so nothing was saved.',
+      });
+    }
+
+    return redirect(reply, '/keywords', {
+      kind: 'ok',
+      message:
+        `Added ${added} keyword(s).` +
+        (skipped ? ` ${skipped} were already here and were left alone.` : '') +
+        ' They are not linked to any site yet — set the cells below.',
+    });
+  });
+
   app.post('/keywords/:id/delete', async (request, reply) => {
     deleteKeyword(asNumber((request.params as { id: string }).id, 0));
     return redirect(reply, '/keywords', { kind: 'ok', message: 'Keyword deleted.' });
@@ -643,6 +1065,47 @@ export function buildServer(
       readFlash(request.query),
     ),
   );
+
+  app.get('/settings/usage', async (request, reply) =>
+    page(reply, 'Usage', '/settings', usagePage(stepCosts(30), 30), readFlash(request.query)),
+  );
+
+  /**
+   * The whole database as one file.
+   *
+   * Written to a temporary directory with VACUUM INTO, streamed, then removed.
+   * A plain copy of the .db would be missing every write still in the WAL
+   * sidecar, which is the kind of backup you only discover is wrong when you
+   * restore it.
+   */
+  app.get('/data/backup', async (_request, reply) => {
+    const directory = await mkdtemp(join(tmpdir(), 'platform-backup-'));
+    const file = join(directory, 'platform.db');
+
+    try {
+      backupTo(file);
+    } catch (err) {
+      await rm(directory, { recursive: true, force: true });
+      return redirect(reply, '/settings/data', { kind: 'error', message: errorMessage(err) });
+    }
+
+    const stamp = new Date().toISOString().slice(0, 10);
+    const stream = createReadStream(file);
+
+    // Cleaned up once the response is done, however it ends — a client that
+    // disconnects mid-download should not leave a copy of the database in the
+    // container's temp directory.
+    const cleanup = (): void => {
+      void rm(directory, { recursive: true, force: true });
+    };
+    stream.once('close', cleanup);
+    stream.once('error', cleanup);
+
+    return reply
+      .type('application/octet-stream')
+      .header('content-disposition', `attachment; filename="platform-${stamp}.db"`)
+      .send(stream);
+  });
 
   const DATASETS: Dataset[] = ['runs', 'steps', 'decisions', 'events', 'keywords', 'sites'];
 
@@ -726,8 +1189,73 @@ export function buildServer(
   };
 
   app.get('/settings/prompts', async (request, reply) =>
-    page(reply, 'Prompts', '/settings', promptsPage(listPromptFiles()), readFlash(request.query)),
+    page(
+      reply,
+      'Prompts',
+      '/settings',
+      promptsPage(listPromptFiles(), modelChoices(), KNOWN_MODELS),
+      readFlash(request.query),
+    ),
   );
+
+  /**
+   * Point one prompt at a different model.
+   *
+   * Blank puts it back on the shipped default rather than storing an empty
+   * string, so "undo" is the same gesture as "leave it alone".
+   */
+  app.post('/settings/prompts/model', async (request, reply) => {
+    const body = formBody(request);
+    const prompt = asString(body.prompt).trim();
+    const model = asString(body.model).trim();
+
+    if (!PROMPT_MODELS[prompt]) {
+      return redirect(reply, '/settings/prompts', {
+        kind: 'error',
+        message: `There is no prompt called "${prompt}".`,
+      });
+    }
+
+    setModelOverride(prompt, model);
+    invalidatePromptCache();
+
+    return redirect(reply, '/settings/prompts', {
+      kind: 'ok',
+      message: model
+        ? `"${prompt}" now goes to ${model}. It applies to the next run.`
+        : `"${prompt}" is back on its shipped model, ${PROMPT_MODELS[prompt].model}.`,
+    });
+  });
+
+  /** Put an earlier version of a prompt back, as a new save. */
+  app.post('/settings/prompts/:file/restore', async (request, reply) => {
+    const file = promptFile(asString((request.params as { file: string }).file));
+    if (!file) {
+      return redirect(reply, '/settings/prompts', {
+        kind: 'error',
+        message: 'No such prompt file.',
+      });
+    }
+
+    const version = getPromptVersion(asNumber(formBody(request).version, 0));
+    if (!version || version.name !== file) {
+      return redirect(reply, `/settings/prompts/${file}`, {
+        kind: 'error',
+        message: 'That version is not one of this prompt&#39;s.',
+      });
+    }
+
+    // Saved as a new version rather than rewinding, so restoring is itself
+    // undoable — going back should never destroy what you were on.
+    savePromptVersion(file, getPromptOverride(file) ?? readShippedPrompt(file));
+    setPromptOverride(file, version.body);
+    invalidatePromptCache();
+
+    return redirect(reply, `/settings/prompts/${file}`, {
+      kind: 'ok',
+      message: `Restored the version saved ${version.created_at}. The one it replaced is still in the list.`,
+    });
+  });
 
   app.get('/settings/prompts/:file', async (request, reply) => {
     const file = promptFile(asString((request.params as { file: string }).file));
@@ -745,11 +1273,12 @@ export function buildServer(
       file,
       '/settings',
       promptEditPage(file, body, {
-        model: PROMPT_MODELS[promptName]?.model ?? '',
+        model: modelFor(promptName),
         variables: variablesFor(promptName),
         unknown: unknownVariables(promptName, body),
         edited: override !== undefined,
         shipped,
+        versions: listPromptVersions(file),
       }),
       readFlash(request.query),
     );
@@ -780,6 +1309,9 @@ export function buildServer(
       });
     }
 
+    // The version *before* this edit, so the list is "what I could go back
+    // to" rather than "what I have already got".
+    savePromptVersion(file, getPromptOverride(file) ?? readShippedPrompt(file));
     setPromptOverride(file, text);
     invalidatePromptCache();
 
@@ -875,6 +1407,11 @@ export function buildServer(
     } catch {
       imageServiceProblem =
         'Image service unreachable — no images can be generated until it is back.';
+    } finally {
+      // The scheduler notifies on this but must not poll it: a second poller
+      // would double the traffic to a container that is, by definition,
+      // already having a hard time.
+      setImageServiceProblem(imageServiceProblem);
     }
   };
 

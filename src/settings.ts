@@ -9,7 +9,7 @@ import { getSetting, setSetting } from './db/repos.js';
 export interface SettingSpec {
   key: string;
   label: string;
-  group: 'general' | 'llm' | 'images' | 'buffer' | 'telegram' | 'schedule';
+  group: 'general' | 'llm' | 'images' | 'buffer' | 'telegram' | 'schedule' | 'retry';
   secret: boolean;
   default: string;
   help?: string;
@@ -52,6 +52,37 @@ export const SETTING_SPECS: SettingSpec[] = [
     secret: false,
     default: '30',
     type: 'number',
+  },
+
+  // -- Retries -------------------------------------------------------------
+  {
+    key: 'auto_retry_enabled',
+    label: 'Retry failed runs automatically',
+    group: 'retry',
+    secret: false,
+    default: 'true',
+    help:
+      'Only failures that look transient — a rate limit, a timeout, the image ' +
+      'service restarting. A wrong token or a rejected article is left for you, ' +
+      'because retrying it produces the identical error.',
+  },
+  {
+    key: 'auto_retry_max',
+    label: 'Automatic attempts',
+    group: 'retry',
+    secret: false,
+    default: '1',
+    type: 'number',
+    help: 'After this many, the run waits for you. Each attempt reuses every completed step.',
+  },
+  {
+    key: 'auto_retry_delay_minutes',
+    label: 'Wait before retrying (minutes)',
+    group: 'retry',
+    secret: false,
+    default: '15',
+    type: 'number',
+    help: 'Doubled on each further attempt, so a service that is properly down is left alone.',
   },
 
   // -- LLM -----------------------------------------------------------------
@@ -148,6 +179,10 @@ export const SETTING_SPECS: SettingSpec[] = [
     group: 'telegram',
     secret: false,
     default: 'false',
+    help:
+      'Sent when something changes state and needs you: the queue running out, ' +
+      'a site failing repeatedly, image generation down, articles waiting for ' +
+      'approval. Each is sent once, and again when it recovers.',
   },
 ];
 

@@ -64,29 +64,32 @@ variables and redeploy.
 | `PORT` | `8080` | Platform listening port |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 
+Everything else is a setting in the UI, not an environment variable.
+
 ### The volumes are the things that matter
 
 `platform-data` holds the database, the encryption key and the admin password.
 Deleting it means re-entering every credential.
 
 `imagegen-data` holds the **signed-in Google session** and the job queue.
-Deleting it means signing in to Google again by hand through the Browser page.
+Deleting it means signing in to Google again by hand through the Browser button.
 
 `shared-secret` holds one generated API key. Deleting it costs nothing — a new
 one appears on the next boot.
 
 Back up the first two. The Google session is the slower one to replace.
 
-### The Browser page
+### The live browser
 
 `imagegen` runs a real Chrome under a virtual display, because the Google Flow
 API will not accept a request that was not made by a genuine, reCAPTCHA-scored
 browser session. There is no API key that substitutes for it.
 
-The dashboard's **Browser** page is that Chrome, live, behind the same login as
-everything else. Use it to sign in to Google the first time, and again whenever
-the dashboard warns that the session has lapsed. Refreshing the tab, checking
-`chrome://extensions` and switching Google accounts all work there.
+The **Browser** button in the top-right corner of every page opens that Chrome,
+live, in its own tab and behind the same login as everything else. Use it to
+sign in to Google the first time, and again whenever the dashboard warns that
+the session has lapsed. Refreshing the tab, checking `chrome://extensions` and
+switching Google accounts all work there.
 
 It was previously a second public domain guarded by an eight-character VNC
 password. It is not exposed at all now.
@@ -166,11 +169,99 @@ Fill it in, then import it with the button beside it.
 
 ### 4. Test
 
-**Dashboard → Run once now.** Enable automation only after that succeeds.
+**Dashboard → Dry run** writes a whole article and stops before publishing, so
+you can read it without a live site finding out first. It works with automation
+still switched off.
+
+When you are happy with it, **Run once now**, then turn automation on.
+
+---
+
+## Day to day
+
+### Why is nothing publishing?
+
+Two places answer that, from opposite ends:
+
+- **Dashboard → Decisions** — one scheduler check, every site and keyword it
+  looked at, with the reason recorded at the moment the choice was made.
+- **Keywords → click a keyword** — that keyword against every site, why it is
+  blocked on each, and how long the first one has left to wait.
+
+### Articles that wait for you
+
+A site set to **hold every article for approval** (Sites → Publishing) stops
+the run after the article is written. Nothing reaches the site until you read
+it. Held articles appear at the top of the dashboard under **Waiting for you**.
+
+Opening one shows the article as prose rather than JSON, flags it if this site
+already has a near-duplicate title, and offers three things: approve and
+publish, edit it first, or discard. Approving is a resume, so every completed
+step is reused — it costs one HTTP post, not another pipeline.
+
+Discarding puts the keyword back to `go`, so it will be written again.
+
+### Failures that fix themselves
+
+Failures that look transient — a rate limit, a timeout, the image service
+restarting — are retried automatically after a delay that doubles on each
+attempt. Failures that would repeat identically — a wrong token, a rejected
+payload, a model that does not exist — are left for you, because retrying them
+wastes a publishing slot and buries the real error.
+
+Settings → Retries controls it.
+
+### Pausing a site
+
+Sites → open a site → **Pause**, with a reason and a duration. The reason is
+shown next to the site everywhere, and the pause lifts by itself when its time
+is up. A pause with no end stays until you resume it.
+
+### Prompts and models
+
+Settings → Prompts & models. Each prompt has:
+
+- the text, edited in place, with the shipped version always available
+- the last 20 saves, with a diff against what is live, restorable
+- the model it is sent to
+
+The model has nothing to do with API keys: any key can serve any model. Keys
+spread a rate limit; this decides quality.
+
+### What it is costing
+
+Settings → Usage. Tokens per step over the last 30 days, taken from what the
+provider reported on each completion. This is how you find the expensive
+prompt — it is rarely the one you would guess.
+
+### Notifications
+
+Settings → Telegram. Messages are sent when something *changes* and needs you:
+
+- the keyword queue running out, and refilling
+- a site failing its last two runs in a row, and publishing again
+- image generation going down, and coming back
+- articles waiting for approval
+
+Each is sent once per change, never on a timer, so the channel stays worth
+reading.
+
+### History, backups and clearing up
+
+Settings → History & storage:
+
+- counts for every table that grows forever
+- a CSV export beside each clear, and cutoffs of 7 / 30 / 90 days or all
+- **Download the database** — the whole thing in one file, written with
+  `VACUUM INTO` so it is consistent. Site tokens inside it stay encrypted with
+  `ENCRYPTION_KEY`, which lives in the data volume and not in that file
+- forget shared image sets, so the next run generates fresh pictures
+- compact the database after a large delete
 
 ### Which model runs which step
 
-Taken from the original workflow and applied automatically:
+Taken from the original workflow and applied by default. Change any of them
+under Settings → Prompts & models:
 
 | Operation | Model |
 |---|---|
@@ -198,7 +289,12 @@ limits; this table decides quality.
 ## Migrating from Google Sheets
 
 Export both sheets as CSV. Import keywords through **Keywords → Import CSV** in
-the UI.
+the UI. Keywords → **Export what is here** produces the same columns back, so a
+round trip through a spreadsheet works.
+
+To add keywords without a spreadsheet at all, paste article addresses into
+**Keywords → Add from a page URL**: each page's own title, description and
+image are read and shown for you to check before anything is saved.
 
 For sites, if your platform offers a one-off command:
 
@@ -238,12 +334,15 @@ database, and mounts `./prompts` read-write for editing without a rebuild.
 | `/healthz` lists problems | Credentials missing — Settings |
 | API key unhealthy | Bad key, or that account is rate limited |
 | `HTTP 401` on fetch-categories | Wrong Site API token for that site |
-| Nothing publishes | Automation off, or no eligible pair — see **Decisions** |
+| Nothing publishes | Automation off, or no eligible pair — see **Decisions** on the dashboard, or open the keyword |
+| An article never appears on the site | That site holds articles for approval — see **Waiting for you** on the dashboard |
+| A run says "cancelled" | It was held for approval or was a dry run; nothing failed |
 | Only one article, then stops | Expected: daily target or interval reached |
 | "browser is not signed in to Google" | Open **Browser** and sign in. The session lapsed |
 | "Image service unreachable" | `imagegen` is restarting. Chrome takes about a minute |
 | Images fail with no useful error | Check credits on the Flow account, and that the Flow project ID is real |
-| Browser page is blank | Chrome has not finished starting; reload after a minute |
+| The browser view is blank | Chrome has not finished starting; reload after a minute |
 
-**Decisions** answers "why did nothing happen?" — every site checked and every
-keyword skipped, with the reason recorded when the choice was made.
+**Decisions** — a section of the dashboard — answers "why did nothing happen?":
+every site checked and every keyword skipped, with the reason recorded when the
+choice was made. To ask it about one keyword instead, open that keyword.

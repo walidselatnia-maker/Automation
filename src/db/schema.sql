@@ -33,6 +33,19 @@ CREATE TABLE IF NOT EXISTS sites (
   api_token_encrypted    TEXT NOT NULL DEFAULT '',
   buffer_token_encrypted TEXT NOT NULL DEFAULT '',
 
+  -- Why this site is paused, and when it comes back on its own.
+  --
+  -- "Paused" with no note is a state nobody remembers the reason for a week
+  -- later, and a pause meant to last a day lasts a month because turning it
+  -- back on is a thing someone has to remember. Both are fixed by writing the
+  -- reason down and giving the pause an end.
+  paused_reason  TEXT    NOT NULL DEFAULT '',
+  paused_until   TEXT,
+
+  -- 0 holds every article for a human to read before it is published. The
+  -- pipeline stops after the article is generated and waits.
+  auto_publish   INTEGER NOT NULL DEFAULT 1 CHECK (auto_publish IN (0, 1)),
+
   daily_target   INTEGER NOT NULL DEFAULT 0 CHECK (daily_target >= 0),
 
   -- Minimum gap between posts, in minutes. Stored as minutes rather than
@@ -119,11 +132,36 @@ CREATE TABLE IF NOT EXISTS runs (
   post_id       TEXT,
   post_url      TEXT,
   error         TEXT,
-  failed_step   TEXT
+  failed_step   TEXT,
+
+  -- 'live' publishes. 'dry' runs the whole pipeline and stops before posting,
+  -- so a prompt change can be read before it reaches a real site.
+  mode          TEXT    NOT NULL DEFAULT 'live' CHECK (mode IN ('live', 'dry')),
+
+  -- Why this run stopped short of publishing, when it did.
+  --
+  --   ''          not held
+  --   'awaiting'  the site requires approval; a person has to release it
+  --   'dry'       a dry run, which was never going to publish
+  --
+  -- A held run is `cancelled`: not published, not failed, not occupying the
+  -- scheduler lock. Approving one resumes it, and resume already reuses every
+  -- completed step — so approval costs one HTTP post, not a whole pipeline.
+  hold          TEXT    NOT NULL DEFAULT '' CHECK (hold IN ('', 'awaiting', 'dry')),
+
+  -- Automatic retries already spent on this run.
+  attempts      INTEGER NOT NULL DEFAULT 0,
+  retry_after   TEXT,
+
+  -- The generated title, kept so the next run on this site can be checked
+  -- against it without re-reading every stored step output.
+  title         TEXT    NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_runs_site_pub ON runs (site_id, published_at);
 CREATE INDEX IF NOT EXISTS idx_runs_status   ON runs (status);
 CREATE INDEX IF NOT EXISTS idx_runs_started  ON runs (started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_runs_hold     ON runs (hold) WHERE hold != '';
+CREATE INDEX IF NOT EXISTS idx_runs_retry    ON runs (retry_after) WHERE retry_after IS NOT NULL;
 
 -- ---------------------------------------------------------------------------
 -- Run steps: checkpoints AND the debugging surface.
@@ -146,6 +184,15 @@ CREATE TABLE IF NOT EXISTS run_steps (
   input_json  TEXT,
   output_json TEXT,
   error       TEXT,
+
+  -- What the step cost. Tokens come back from Ollama on every completion and
+  -- were previously thrown away, which left "which prompt is expensive?"
+  -- unanswerable. Images are counted because they are the slow, rate-limited
+  -- resource, not because they are billed here.
+  tokens_in   INTEGER NOT NULL DEFAULT 0,
+  tokens_out  INTEGER NOT NULL DEFAULT 0,
+  images      INTEGER NOT NULL DEFAULT 0,
+
   UNIQUE (run_id, step)
 );
 CREATE INDEX IF NOT EXISTS idx_steps_run ON run_steps (run_id);
@@ -241,5 +288,56 @@ CREATE INDEX IF NOT EXISTS idx_events_created ON events (created_at DESC);
 CREATE TABLE IF NOT EXISTS prompt_overrides (
   name       TEXT PRIMARY KEY,
   body       TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- ---------------------------------------------------------------------------
+-- Prompt history.
+--
+-- prompt_overrides holds the current edit and the file underneath is the
+-- shipped default, which covers "undo everything" but not "what did I have
+-- last Tuesday?". Every save appends here first, so an edit that made articles
+-- worse can be found and restored rather than reconstructed from memory.
+--
+-- Bounded by PROMPT_VERSION_LIMIT in repos.ts: prompts are large and the
+-- twentieth-newest version of a prompt has never once been wanted.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS prompt_versions (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  name       TEXT    NOT NULL,
+  body       TEXT    NOT NULL,
+  created_at TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_prompt_versions ON prompt_versions (name, id DESC);
+
+-- ---------------------------------------------------------------------------
+-- Which model runs which prompt.
+--
+-- PROMPT_MODELS in prompts.ts is the shipped default, taken from the original
+-- workflow. A row here overrides one entry of it. Separate from `settings`
+-- because the set of keys is the set of prompts, which the settings page has
+-- no business enumerating.
+--
+-- Unrelated to API keys: any key can serve any model. Keys spread a rate
+-- limit; this decides quality.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS model_overrides (
+  prompt     TEXT PRIMARY KEY,
+  model      TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- ---------------------------------------------------------------------------
+-- Notification de-duplication.
+--
+-- A scheduler that ticks every fifteen minutes will happily send the same
+-- "image service is down" message ninety-six times a day, and a channel that
+-- cries wolf gets muted — which is worse than no channel at all. One row per
+-- kind of notice holds the last state announced, so a message goes out when
+-- the situation *changes*, and recovery is announced too.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS notice_state (
+  kind       TEXT PRIMARY KEY,
+  state      TEXT NOT NULL,
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );

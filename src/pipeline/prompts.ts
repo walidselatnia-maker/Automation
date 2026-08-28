@@ -1,6 +1,6 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { getPromptOverride } from '../db/repos.js';
+import { getPromptOverride, listModelOverrides } from '../db/repos.js';
 
 /**
  * Loads and renders the prompt files extracted verbatim from the n8n
@@ -28,6 +28,7 @@ export function configurePrompts(dir: string): void {
 /** Drop the cache so the next render picks up an edit. */
 export function invalidatePromptCache(): void {
   cache.clear();
+  modelCache = null;
 }
 
 /** The prompt as shipped, ignoring any edit. */
@@ -124,3 +125,66 @@ export const PROMPT_MODELS: Record<string, { model: string; format: 'json' | nul
   'pick-board': { model: 'gpt-oss:120b', format: null },
   'repair-json': { model: 'gpt-oss:120b', format: null },
 };
+
+/* -------------------------------------------------------------------------
+ * Which model runs which prompt
+ * ---------------------------------------------------------------------- */
+
+/**
+ * PROMPT_MODELS above is the shipped default, taken from the original
+ * workflow. A row in model_overrides replaces one entry of it.
+ *
+ * Cached alongside the prompt bodies and cleared by the same call, because a
+ * run resolves a dozen of these and neither is worth a query each time.
+ */
+let modelCache: Map<string, string> | null = null;
+
+function overrides(): Map<string, string> {
+  if (modelCache) return modelCache;
+
+  try {
+    modelCache = listModelOverrides();
+  } catch {
+    // Same reason as readPromptFile: rendering must not require a database.
+    modelCache = new Map();
+  }
+  return modelCache;
+}
+
+/** The model a prompt should be sent to, override first. */
+export function modelFor(promptName: string): string {
+  const chosen = overrides().get(promptName);
+  if (chosen && chosen.trim()) return chosen.trim();
+  return PROMPT_MODELS[promptName]?.model ?? 'gemma4:31b';
+}
+
+/** Every prompt that has a model, with its default and any override. */
+export function modelChoices(): {
+  prompt: string;
+  shipped: string;
+  effective: string;
+  overridden: boolean;
+}[] {
+  const chosen = overrides();
+
+  return Object.entries(PROMPT_MODELS)
+    .map(([prompt, spec]) => {
+      const override = chosen.get(prompt)?.trim() ?? '';
+      return {
+        prompt,
+        shipped: spec.model,
+        effective: override || spec.model,
+        overridden: override !== '' && override !== spec.model,
+      };
+    })
+    .sort((a, b) => a.prompt.localeCompare(b.prompt));
+}
+
+/**
+ * Models the shipped configuration mentions, for the editor's suggestions.
+ *
+ * Not a validated allow-list — a self-hosted Ollama can serve anything, and
+ * refusing a model name because it is not in a hardcoded array would be the
+ * kind of check that only ever gets in the way.
+ */
+export const KNOWN_MODELS = [...new Set(Object.values(PROMPT_MODELS).map((m) => m.model))].sort();

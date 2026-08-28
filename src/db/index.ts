@@ -34,8 +34,35 @@ const ADDED_COLUMNS: { table: string; column: string; definition: string }[] = [
   {
     table: 'keyword_sites',
     column: 'share_images',
-    definition: "INTEGER NOT NULL DEFAULT 1 CHECK (share_images IN (0, 1))",
+    definition: 'INTEGER NOT NULL DEFAULT 1 CHECK (share_images IN (0, 1))',
   },
+
+  // A pause you can read the reason for, that ends on its own.
+  { table: 'sites', column: 'paused_reason', definition: "TEXT NOT NULL DEFAULT ''" },
+  { table: 'sites', column: 'paused_until', definition: 'TEXT' },
+  {
+    table: 'sites',
+    column: 'auto_publish',
+    definition: 'INTEGER NOT NULL DEFAULT 1 CHECK (auto_publish IN (0, 1))',
+  },
+
+  // Dry runs, approval holds, automatic retries, and the published title.
+  //
+  // The CHECK constraints from schema.sql are deliberately not repeated here.
+  // SQLite cannot add a CHECK to an existing table without rewriting it, and a
+  // table rewrite on a live database to gain a constraint the application code
+  // already enforces is a bad trade. New databases get the constraints; older
+  // ones get the columns and the same behaviour.
+  { table: 'runs', column: 'mode', definition: "TEXT NOT NULL DEFAULT 'live'" },
+  { table: 'runs', column: 'hold', definition: "TEXT NOT NULL DEFAULT ''" },
+  { table: 'runs', column: 'attempts', definition: 'INTEGER NOT NULL DEFAULT 0' },
+  { table: 'runs', column: 'retry_after', definition: 'TEXT' },
+  { table: 'runs', column: 'title', definition: "TEXT NOT NULL DEFAULT ''" },
+
+  // What each step cost.
+  { table: 'run_steps', column: 'tokens_in', definition: 'INTEGER NOT NULL DEFAULT 0' },
+  { table: 'run_steps', column: 'tokens_out', definition: 'INTEGER NOT NULL DEFAULT 0' },
+  { table: 'run_steps', column: 'images', definition: 'INTEGER NOT NULL DEFAULT 0' },
 ];
 
 function addMissingColumns(db: Db): void {

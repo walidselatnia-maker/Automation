@@ -225,3 +225,21 @@ export function exportDataset(dataset: Dataset): Export {
     }
   }
 }
+
+/**
+ * Write a consistent copy of the whole database to `path`.
+ *
+ * VACUUM INTO rather than copying the file: the database runs in WAL mode, so
+ * the .db file on disk is missing every write still sitting in the -wal
+ * sidecar. Copying it gives you a backup that is silently out of date, and the
+ * failure mode is not noticing until you restore it.
+ *
+ * The result is safe to hand over. Site tokens and API keys inside it are
+ * encrypted with ENCRYPTION_KEY, which lives in the data volume and not in
+ * here, so this file alone does not carry the credentials.
+ */
+export function backupTo(path: string): void {
+  // Parameters are not allowed in VACUUM INTO, so the path is quoted by
+  // doubling single quotes — the caller supplies it, never a request.
+  run(`VACUUM INTO '${path.replace(/'/g, "''")}'`);
+}

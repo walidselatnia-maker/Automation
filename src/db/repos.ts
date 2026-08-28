@@ -13,6 +13,12 @@ export interface SiteRow {
   status: 'active' | 'paused';
   pin_username: string;
   project_id: string;
+  /** Why it is paused, written down so it is still knowable next week. */
+  paused_reason: string;
+  /** When the pause lifts by itself. Null means "until someone says". */
+  paused_until: string | null;
+  /** 0 holds every article for a person to read before it is published. */
+  auto_publish: number;
   api_token_encrypted: string;
   buffer_token_encrypted: string;
   daily_target: number;
@@ -63,6 +69,10 @@ export interface SiteInput {
   project_id: string;
   daily_target: number;
   interval_minutes: number;
+  /** Left undefined, the stored value is kept — these are not on every form. */
+  paused_reason?: string;
+  paused_until?: string | null;
+  auto_publish?: boolean;
   /** Plaintext. Blank on update means "keep the stored one". */
   apiToken?: string;
   bufferToken?: string;
@@ -84,6 +94,7 @@ export function upsertSite(input: SiteInput, key: Buffer, id?: number): number {
     run(
       `UPDATE sites SET name = ?, domain = ?, status = ?, pin_username = ?,
          project_id = ?, daily_target = ?, interval_minutes = ?,
+         paused_reason = ?, paused_until = ?, auto_publish = ?,
          api_token_encrypted = ?, buffer_token_encrypted = ?,
          updated_at = datetime('now')
        WHERE id = ?`,
@@ -94,6 +105,13 @@ export function upsertSite(input: SiteInput, key: Buffer, id?: number): number {
       input.project_id,
       input.daily_target,
       input.interval_minutes,
+      // An active site holds no pause reason. Leaving one behind means the
+      // Sites page explains a pause that is not in effect.
+      input.status === 'active' ? '' : (input.paused_reason ?? existing.paused_reason),
+      input.status === 'active' ? null : (input.paused_until ?? existing.paused_until),
+      input.auto_publish === undefined
+        ? existing.auto_publish
+        : fromBool(input.auto_publish),
       encryptOrKeep(input.apiToken, existing.api_token_encrypted),
       encryptOrKeep(input.bufferToken, existing.buffer_token_encrypted),
       existing.id,
@@ -103,8 +121,9 @@ export function upsertSite(input: SiteInput, key: Buffer, id?: number): number {
 
   return run(
     `INSERT INTO sites (name, domain, status, pin_username, project_id,
-       daily_target, interval_minutes, api_token_encrypted, buffer_token_encrypted)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       daily_target, interval_minutes, paused_reason, paused_until, auto_publish,
+       api_token_encrypted, buffer_token_encrypted)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     input.name,
     input.domain,
     input.status,
@@ -112,6 +131,9 @@ export function upsertSite(input: SiteInput, key: Buffer, id?: number): number {
     input.project_id,
     input.daily_target,
     input.interval_minutes,
+    input.status === 'active' ? '' : (input.paused_reason ?? ''),
+    input.status === 'active' ? null : (input.paused_until ?? null),
+    fromBool(input.auto_publish ?? true),
     encryptOrKeep(input.apiToken, ''),
     encryptOrKeep(input.bufferToken, ''),
   ).lastInsertRowid;
@@ -405,24 +427,129 @@ export interface RunRow {
   post_url: string | null;
   error: string | null;
   failed_step: string | null;
+  mode: 'live' | 'dry';
+  hold: '' | 'awaiting' | 'dry';
+  attempts: number;
+  retry_after: string | null;
+  title: string;
 }
 
-export const createRun = (keywordId: number, siteId: number): number =>
-  run('INSERT INTO runs (keyword_id, site_id, status) VALUES (?, ?, ?)', keywordId, siteId, 'running')
-    .lastInsertRowid;
+export const createRun = (
+  keywordId: number,
+  siteId: number,
+  mode: 'live' | 'dry' = 'live',
+): number =>
+  run(
+    "INSERT INTO runs (keyword_id, site_id, status, mode) VALUES (?, ?, 'running', ?)",
+    keywordId,
+    siteId,
+    mode,
+  ).lastInsertRowid;
 
 export const getRun = (id: number): RunRow | undefined =>
   get<RunRow>('SELECT * FROM runs WHERE id = ?', id);
 
-export const markRunPublished = (id: number, postId: string, postUrl: string): void => {
+export const markRunPublished = (
+  id: number,
+  postId: string,
+  postUrl: string,
+  title = '',
+): void => {
   run(
     `UPDATE runs SET status = 'published', published_at = datetime('now'),
-       finished_at = datetime('now'), post_id = ?, post_url = ?, error = NULL, failed_step = NULL
+       finished_at = datetime('now'), post_id = ?, post_url = ?,
+       error = NULL, failed_step = NULL, hold = '', retry_after = NULL,
+       title = CASE WHEN ? = '' THEN title ELSE ? END
      WHERE id = ?`,
     postId,
     postUrl,
+    title,
+    title,
     id,
   );
+};
+
+/**
+ * Stop a run short of publishing, on purpose.
+ *
+ * `cancelled` rather than `failed`: nothing went wrong, and counting a held
+ * article as a failure would put it in the dashboard's failure count and in
+ * every "this site is broken" heuristic built on top of it. Resume is what
+ * releases it, and resume already reuses every completed step.
+ */
+export const markRunHeld = (id: number, hold: 'awaiting' | 'dry', title: string): void => {
+  run(
+    `UPDATE runs SET status = 'cancelled', finished_at = datetime('now'),
+       hold = ?, title = ?, error = NULL, failed_step = NULL, retry_after = NULL
+     WHERE id = ?`,
+    hold,
+    title,
+    id,
+  );
+};
+
+/** Runs stopped for a person to look at, newest first. */
+export const listHeldRuns = (limit = 50): RunListRow[] =>
+  all<RunListRow>(
+    `SELECT r.*, s.domain AS site_domain, k.seed_keyword
+       FROM runs r
+       LEFT JOIN sites s ON s.id = r.site_id
+       LEFT JOIN keywords k ON k.id = r.keyword_id
+      WHERE r.hold != ''
+      ORDER BY r.id DESC
+      LIMIT ?`,
+    limit,
+  );
+
+export const countHeldRuns = (): number =>
+  get<{ n: number }>("SELECT COUNT(*) AS n FROM runs WHERE hold != ''")?.n ?? 0;
+
+/** Titles already published on a site, for the near-duplicate check. */
+export const publishedTitles = (siteId: number, limit = 500): { title: string; url: string | null }[] =>
+  all<{ title: string; post_url: string | null }>(
+    `SELECT title, post_url FROM runs
+      WHERE site_id = ? AND status = 'published' AND title != ''
+      ORDER BY id DESC LIMIT ?`,
+    siteId,
+    limit,
+  ).map((r) => ({ title: r.title, url: r.post_url }));
+
+export const setRunTitle = (id: number, title: string): void => {
+  run('UPDATE runs SET title = ? WHERE id = ?', title, id);
+};
+
+/* -- Automatic retries ---------------------------------------------------- */
+
+/** Schedule this run to be tried again, or clear a pending schedule. */
+export const scheduleRetry = (id: number, retryAfter: string | null): void => {
+  run(
+    `UPDATE runs SET retry_after = ?,
+       attempts = CASE WHEN ? IS NULL THEN attempts ELSE attempts END
+     WHERE id = ?`,
+    retryAfter,
+    retryAfter,
+    id,
+  );
+};
+
+/**
+ * The one failed run that is due to be retried, if any.
+ *
+ * Oldest first, so a backlog drains in the order it accumulated rather than
+ * letting the newest failure starve the rest.
+ */
+export const dueRetry = (): RunRow | undefined =>
+  get<RunRow>(
+    `SELECT * FROM runs
+      WHERE status = 'failed'
+        AND retry_after IS NOT NULL
+        AND retry_after <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+      ORDER BY retry_after LIMIT 1`,
+  );
+
+/** Count this attempt and clear the schedule, so it cannot be picked twice. */
+export const consumeRetry = (id: number): void => {
+  run('UPDATE runs SET attempts = attempts + 1, retry_after = NULL WHERE id = ?', id);
 };
 
 export const markRunFailed = (id: number, error: string, failedStep: string): void => {
@@ -468,6 +595,9 @@ export interface StepRow {
   model: string | null;
   input_json: string | null;
   output_json: string | null;
+  tokens_in: number;
+  tokens_out: number;
+  images: number;
   error: string | null;
 }
 
@@ -503,11 +633,15 @@ export function finishStep(
     durationMs?: number;
     endpoint?: string;
     model?: string;
+    tokensIn?: number;
+    tokensOut?: number;
+    images?: number;
   },
 ): void {
   run(
     `UPDATE run_steps SET status = ?, finished_at = datetime('now'), duration_ms = ?,
-       endpoint = ?, model = ?, output_json = ?, error = ?
+       endpoint = ?, model = ?, output_json = ?, error = ?,
+       tokens_in = ?, tokens_out = ?, images = ?
      WHERE run_id = ? AND step = ?`,
     outcome.status,
     outcome.durationMs ?? null,
@@ -515,6 +649,9 @@ export function finishStep(
     outcome.model ?? null,
     outcome.output === undefined ? null : safeStringify(outcome.output),
     outcome.error ?? null,
+    Math.max(0, Math.round(outcome.tokensIn ?? 0)),
+    Math.max(0, Math.round(outcome.tokensOut ?? 0)),
+    Math.max(0, Math.round(outcome.images ?? 0)),
     runId,
     step,
   );
@@ -907,3 +1044,331 @@ export const bulkSetShareImages = (
     ).changes;
   });
 };
+
+/* =========================================================================
+ * Pausing a site
+ * ====================================================================== */
+
+/**
+ * Pause one site, with a note and optionally an end.
+ *
+ * The note is the point. "Paused" on its own is a state whose reason is gone
+ * within a week, and the usual outcome is that nobody dares turn it back on.
+ */
+export const pauseSite = (
+  id: number,
+  reason: string,
+  until: string | null,
+): void => {
+  run(
+    `UPDATE sites SET status = 'paused', paused_reason = ?, paused_until = ?,
+       updated_at = datetime('now')
+     WHERE id = ?`,
+    reason.trim(),
+    until,
+    id,
+  );
+};
+
+export const activateSite = (id: number): void => {
+  run(
+    `UPDATE sites SET status = 'active', paused_reason = '', paused_until = NULL,
+       updated_at = datetime('now')
+     WHERE id = ?`,
+    id,
+  );
+};
+
+/**
+ * Bring back every site whose pause has run out.
+ *
+ * A real write rather than a rule applied at read time. Deriving it would mean
+ * the Sites page showing "active" over a row that still says paused in the
+ * database, and every later query having to remember the same rule. One
+ * UPDATE, called at the top of a tick, keeps the table honest.
+ *
+ * Returns the domains resumed so the caller can log or announce them.
+ */
+export function resumeExpiredPauses(): string[] {
+  const due = all<{ id: number; domain: string }>(
+    `SELECT id, domain FROM sites
+      WHERE status = 'paused'
+        AND paused_until IS NOT NULL
+        AND paused_until <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now')`,
+  );
+
+  for (const site of due) activateSite(site.id);
+  return due.map((s) => s.domain);
+}
+
+/* =========================================================================
+ * Prompt history
+ * ====================================================================== */
+
+/**
+ * How many versions of one prompt are kept.
+ *
+ * Prompts run to thousands of characters and every save appends one. Twenty
+ * covers "put back what I had this morning", which is the whole use; keeping
+ * every version forever would make prompt_versions the largest table here.
+ */
+export const PROMPT_VERSION_LIMIT = 20;
+
+export interface PromptVersionRow {
+  id: number;
+  name: string;
+  body: string;
+  created_at: string;
+}
+
+/** Append a version, then drop everything past the limit for that prompt. */
+export function savePromptVersion(name: string, body: string): void {
+  transaction(() => {
+    // Saving the same text twice in a row is a no-op, not a new version:
+    // pressing Save without editing should not push a real version out.
+    const newest = get<{ body: string }>(
+      'SELECT body FROM prompt_versions WHERE name = ? ORDER BY id DESC LIMIT 1',
+      name,
+    );
+    if (newest?.body === body) return;
+
+    run('INSERT INTO prompt_versions (name, body) VALUES (?, ?)', name, body);
+    run(
+      `DELETE FROM prompt_versions
+        WHERE name = ?
+          AND id NOT IN (
+            SELECT id FROM prompt_versions WHERE name = ? ORDER BY id DESC LIMIT ?
+          )`,
+      name,
+      name,
+      PROMPT_VERSION_LIMIT,
+    );
+  });
+}
+
+export const listPromptVersions = (name: string): PromptVersionRow[] =>
+  all<PromptVersionRow>(
+    'SELECT * FROM prompt_versions WHERE name = ? ORDER BY id DESC',
+    name,
+  );
+
+export const getPromptVersion = (id: number): PromptVersionRow | undefined =>
+  get<PromptVersionRow>('SELECT * FROM prompt_versions WHERE id = ?', id);
+
+/* =========================================================================
+ * Which model runs which prompt
+ * ====================================================================== */
+
+export const listModelOverrides = (): Map<string, string> =>
+  new Map(
+    all<{ prompt: string; model: string }>('SELECT prompt, model FROM model_overrides').map(
+      (r) => [r.prompt, r.model] as const,
+    ),
+  );
+
+export const setModelOverride = (prompt: string, model: string): void => {
+  const trimmed = model.trim();
+
+  // Blank means "back to the shipped default", which is the absence of a row
+  // rather than a row holding an empty string.
+  if (trimmed === '') {
+    run('DELETE FROM model_overrides WHERE prompt = ?', prompt);
+    return;
+  }
+
+  run(
+    `INSERT INTO model_overrides (prompt, model) VALUES (?, ?)
+     ON CONFLICT (prompt) DO UPDATE SET model = excluded.model, updated_at = datetime('now')`,
+    prompt,
+    trimmed,
+  );
+};
+
+/* =========================================================================
+ * Notification de-duplication
+ * ====================================================================== */
+
+/**
+ * Record the state last announced for one kind of notice.
+ *
+ * Returns true when the state changed, which is exactly when a message should
+ * be sent. The check and the write are one call so there is no window where a
+ * second caller sees the old state and sends a duplicate.
+ */
+export function noticeChanged(kind: string, state: string): boolean {
+  const previous = get<{ state: string }>('SELECT state FROM notice_state WHERE kind = ?', kind);
+  if (previous?.state === state) return false;
+
+  run(
+    `INSERT INTO notice_state (kind, state) VALUES (?, ?)
+     ON CONFLICT (kind) DO UPDATE SET state = excluded.state, updated_at = datetime('now')`,
+    kind,
+    state,
+  );
+  return true;
+}
+
+/* =========================================================================
+ * Usage
+ * ====================================================================== */
+
+export interface RunUsage {
+  tokensIn: number;
+  tokensOut: number;
+  images: number;
+  durationMs: number;
+  llmCalls: number;
+}
+
+export const runUsage = (runId: number): RunUsage => {
+  const row = get<{
+    tokens_in: number;
+    tokens_out: number;
+    images: number;
+    duration_ms: number;
+    llm_calls: number;
+  }>(
+    `SELECT COALESCE(SUM(tokens_in), 0)  AS tokens_in,
+            COALESCE(SUM(tokens_out), 0) AS tokens_out,
+            COALESCE(SUM(images), 0)     AS images,
+            COALESCE(SUM(duration_ms), 0) AS duration_ms,
+            COALESCE(SUM(CASE WHEN model IS NOT NULL AND model != '' THEN 1 ELSE 0 END), 0)
+              AS llm_calls
+       FROM run_steps WHERE run_id = ?`,
+    runId,
+  );
+
+  return {
+    tokensIn: Number(row?.tokens_in ?? 0),
+    tokensOut: Number(row?.tokens_out ?? 0),
+    images: Number(row?.images ?? 0),
+    durationMs: Number(row?.duration_ms ?? 0),
+    llmCalls: Number(row?.llm_calls ?? 0),
+  };
+};
+
+export interface StepCost {
+  step: string;
+  runs: number;
+  tokensIn: number;
+  tokensOut: number;
+  avgDurationMs: number;
+}
+
+/** Which steps cost the most, across recent history. Answers "which prompt". */
+export const stepCosts = (days = 30): StepCost[] =>
+  all<{
+    step: string;
+    runs: number;
+    tokens_in: number;
+    tokens_out: number;
+    avg_duration: number;
+  }>(
+    `SELECT s.step,
+            COUNT(*)                       AS runs,
+            COALESCE(SUM(s.tokens_in), 0)  AS tokens_in,
+            COALESCE(SUM(s.tokens_out), 0) AS tokens_out,
+            COALESCE(AVG(s.duration_ms), 0) AS avg_duration
+       FROM run_steps s
+      WHERE s.started_at >= datetime('now', ?)
+      GROUP BY s.step
+      ORDER BY (COALESCE(SUM(s.tokens_in), 0) + COALESCE(SUM(s.tokens_out), 0)) DESC`,
+    `-${Math.max(1, Math.floor(days))} days`,
+  ).map((r) => ({
+    step: r.step,
+    runs: Number(r.runs),
+    tokensIn: Number(r.tokens_in),
+    tokensOut: Number(r.tokens_out),
+    avgDurationMs: Number(r.avg_duration),
+  }));
+
+/**
+ * Published and failed counts per local day, oldest first.
+ *
+ * `days` days of history, including days with nothing — a gap in the series is
+ * a day the platform did not publish, and dropping it would draw a chart that
+ * quietly hides exactly the thing you are looking for.
+ */
+export function dailyActivity(
+  days: number,
+  timezone: string,
+): { day: string; published: number; failed: number }[] {
+  const modifier = tzModifier(timezone);
+
+  const rows = all<{ day: string; published: number; failed: number }>(
+    `SELECT date(started_at, ?) AS day,
+            SUM(CASE WHEN status = 'published' THEN 1 ELSE 0 END) AS published,
+            SUM(CASE WHEN status = 'failed'    THEN 1 ELSE 0 END) AS failed
+       FROM runs
+      WHERE started_at >= datetime('now', ?)
+      GROUP BY day`,
+    modifier,
+    `-${Math.max(1, Math.floor(days))} days`,
+  );
+
+  const byDay = new Map(rows.map((r) => [r.day, r]));
+  const series: { day: string; published: number; failed: number }[] = [];
+
+  for (let back = days - 1; back >= 0; back--) {
+    const at = new Date(Date.now() - back * 86_400_000);
+    const day = get<{ d: string }>("SELECT date(?, ?) AS d", at.toISOString(), modifier)?.d ?? '';
+    const found = byDay.get(day);
+    series.push({
+      day,
+      published: Number(found?.published ?? 0),
+      failed: Number(found?.failed ?? 0),
+    });
+  }
+
+  return series;
+}
+
+/* =========================================================================
+ * Held runs: editing what was written, and throwing it away
+ * ====================================================================== */
+
+/**
+ * Overwrite a completed step's stored output.
+ *
+ * The checkpoint *is* the article: a resume replays from stored outputs, so
+ * editing one before approving is what makes the edit reach the site. Only
+ * ever called with a document the caller has already parsed.
+ */
+export const replaceStepOutput = (runId: number, step: string, output: unknown): void => {
+  run(
+    "UPDATE run_steps SET output_json = ? WHERE run_id = ? AND step = ? AND status = 'ok'",
+    safeStringify(output),
+    runId,
+    step,
+  );
+};
+
+/**
+ * Close a held run without publishing it.
+ *
+ * The steps stay. They are the record of what was written and what it cost,
+ * and deleting them to tidy up would make a discarded article invisible in the
+ * usage figures it genuinely contributed to.
+ */
+export const discardRun = (id: number): void => {
+  run(
+    `UPDATE runs SET status = 'cancelled', hold = '', finished_at = datetime('now'),
+       error = 'Discarded before publishing', retry_after = NULL
+     WHERE id = ?`,
+    id,
+  );
+};
+
+/** Every run for one keyword, newest first — the keyword's own history. */
+export const listRunsForKeyword = (keywordId: number, limit = 25): RunListRow[] =>
+  all<RunListRow>(
+    `SELECT r.*, s.domain AS site_domain, k.seed_keyword
+       FROM runs r
+       LEFT JOIN sites s ON s.id = r.site_id
+       LEFT JOIN keywords k ON k.id = r.keyword_id
+      WHERE r.keyword_id = ?
+      ORDER BY r.id DESC
+      LIMIT ?`,
+    keywordId,
+    limit,
+  );

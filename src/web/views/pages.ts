@@ -1,9 +1,13 @@
 import {
   emptyState,
+  formatCount,
   formatDuration,
+  formatTokens,
   html,
   Html,
   raw,
+  runBadge,
+  sparkline,
   statusBadge,
   timeAgo,
 } from './layout.js';
@@ -22,6 +26,9 @@ import { formatMinutes } from '../../core/selector.js';
 import type { Endpoint } from '../../llm/pool.js';
 import type { SettingSpec } from '../../settings.js';
 import type { Supply } from '../../core/supply.js';
+import type { RunUsage, StepCost } from '../../db/repos.js';
+import type { KeywordDiagnosis } from '../../core/diagnosis.js';
+import type { Candidate } from '../url-import.js';
 import type { DataCounts } from '../../db/maintenance.js';
 
 /* =========================================================================
@@ -43,6 +50,10 @@ export interface DashboardData {
   cycles: { cycle_id: string; created_at: string; n: number }[];
   selectedCycle: string | null;
   decisions: DecisionRow[];
+  /** Articles written and stopped before publishing, waiting for a person. */
+  held: RunListRow[];
+  /** Published and failed per day, oldest first. */
+  activity: { day: string; published: number; failed: number }[];
 }
 
 export function dashboardPage(data: DashboardData): Html {
@@ -69,11 +80,20 @@ export function dashboardPage(data: DashboardData): Html {
             : 'Automation is off. Turn it on in Settings when you are ready.'}
         </p>
       </div>
-      <form method="post" action="/run-now">
-        <button class="primary" type="submit" ${data.busy ? raw('disabled') : raw('')}>
-          Run once now
-        </button>
-      </form>
+      <div class="row">
+        <form method="post" action="/run-now">
+          <input type="hidden" name="mode" value="dry" />
+          <button type="submit" ${data.busy ? raw('disabled') : raw('')}
+                  title="Run the whole pipeline and stop before publishing, so you can read the article first">
+            Dry run
+          </button>
+        </form>
+        <form method="post" action="/run-now">
+          <button class="primary" type="submit" ${data.busy ? raw('disabled') : raw('')}>
+            Run once now
+          </button>
+        </form>
+      </div>
     </div>
 
     ${problems} ${busy}
@@ -94,6 +114,21 @@ export function dashboardPage(data: DashboardData): Html {
         </div>
       </div>
     </div>
+
+    ${data.activity.length
+      ? html`<div class="card">
+          <div class="spread" style="align-items:center">
+            <h3 style="margin:0">Last ${data.activity.length} days</h3>
+            <span class="muted small">
+              <span class="key brand"></span> published
+              <span class="key red"></span> failed
+            </span>
+          </div>
+          <div class="chart">${sparkline(data.activity, { width: 720, height: 52 })}</div>
+        </div>`
+      : raw('')}
+
+    ${heldSection(data.held)}
 
     <h2>Site status</h2>
     <div class="card table-wrap">
@@ -131,6 +166,42 @@ export function dashboardPage(data: DashboardData): Html {
     </div>
 
     ${decisionsSection(data.cycles, data.selectedCycle, data.decisions)}
+  `;
+}
+
+/**
+ * Articles that are finished and waiting for a person.
+ *
+ * Deliberately above the site table: an article sitting here is work already
+ * paid for that is doing nothing, and it is the one thing on this page that
+ * only moves when someone acts.
+ */
+function heldSection(held: RunListRow[]): Html {
+  if (held.length === 0) return raw('');
+
+  return html`
+    <h2>Waiting for you</h2>
+    <div class="card table-wrap">
+      <table>
+        <thead>
+          <tr><th>Article</th><th>Site</th><th>Why it stopped</th><th>Written</th><th></th></tr>
+        </thead>
+        <tbody>
+          ${held.map(
+            (run) => html`<tr>
+              <td>
+                <strong>${run.title || run.seed_keyword || `Run #${run.id}`}</strong>
+                ${run.title ? html`<div class="muted small">${run.seed_keyword ?? ''}</div>` : raw('')}
+              </td>
+              <td class="mono small">${run.site_domain ?? '—'}</td>
+              <td>${runBadge(run)}</td>
+              <td class="nowrap muted small">${timeAgo(run.started_at)}</td>
+              <td class="nowrap"><a class="button small primary" href="/runs/${run.id}">Read it</a></td>
+            </tr>`,
+          )}
+        </tbody>
+      </table>
+    </div>
   `;
 }
 
@@ -206,13 +277,18 @@ function runTable(runs: RunListRow[]): Html {
           <td class="nowrap muted">${timeAgo(r.started_at)}</td>
           <td>${r.site_domain ?? '—'}</td>
           <td>${r.seed_keyword ?? '—'}</td>
-          <td>${statusBadge(r.status)}</td>
+          <td>${runBadge(r)}</td>
           <td class="small">
             ${r.status === 'published'
               ? html`<a href="${r.post_url ?? '#'}" target="_blank" rel="noopener">view article</a>`
-              : html`<span class="muted"
-                  >${r.failed_step ? `${r.failed_step}: ` : ''}${(r.error ?? '').slice(0, 120)}</span
-                >`}
+              : r.hold
+                ? html`<span class="muted">${r.title || 'written, not published'}</span>`
+                : html`<span class="muted"
+                    >${r.failed_step ? `${r.failed_step}: ` : ''}${(r.error ?? '').slice(0, 120)}</span
+                  >
+                  ${r.retry_after
+                    ? html`<div class="badge warn">retrying ${timeAgo(r.retry_after)}</div>`
+                    : raw('')}`}
           </td>
           <td class="nowrap"><a class="button small" href="/runs/${r.id}">Open</a></td>
         </tr>`,
@@ -239,23 +315,33 @@ export function runsPage(runs: RunListRow[], page: number, total: number): Html 
   `;
 }
 
-export function runDetailPage(
-  run: RunRow,
-  steps: StepRow[],
-  site: SiteRow | undefined,
-  keyword: KeywordRow | undefined,
-): Html {
+export interface RunDetailData {
+  run: RunRow;
+  steps: StepRow[];
+  site: SiteRow | undefined;
+  keyword: KeywordRow | undefined;
+  usage: RunUsage;
+  /** The generated article, when one has been produced. */
+  article: Record<string, unknown> | null;
+  /** An existing article on this site with almost the same title. */
+  duplicate: { title: string; url: string | null; similarity: number } | null;
+}
+
+export function runDetailPage(data: RunDetailData): Html {
+  const { run, steps, site, keyword } = data;
+
   return html`
     <div class="spread">
       <div>
-        <h1>Run #${run.id}</h1>
+        <h1>${run.title || `Run #${run.id}`}</h1>
         <p class="subtitle">
           ${site?.domain ?? 'unknown site'} · ${keyword?.seed_keyword ?? 'unknown keyword'} ·
           started ${timeAgo(run.started_at)}
+          ${run.mode === 'dry' ? html` · <span class="badge brand">dry run</span>` : raw('')}
         </p>
       </div>
       <div class="row">
-        ${statusBadge(run.status)}
+        ${runBadge(run)}
         ${run.status === 'failed'
           ? html`<form method="post" action="/runs/${run.id}/resume">
               <button class="primary" type="submit">Resume from failed step</button>
@@ -264,10 +350,23 @@ export function runDetailPage(
       </div>
     </div>
 
+    ${run.hold ? approvalBar(run, data.duplicate) : raw('')}
+
     ${run.error
       ? html`<div class="flash error">
           <strong>Failed at "${run.failed_step ?? 'unknown'}"</strong>
           <div class="mono" style="margin-top:6px">${run.error}</div>
+          ${run.retry_after
+            ? html`<div class="small" style="margin-top:8px">
+                Scheduled to retry by itself ${timeAgo(run.retry_after)} — attempt
+                ${run.attempts + 1}. Resuming it here does the same thing sooner.
+              </div>`
+            : run.attempts > 0
+              ? html`<div class="small" style="margin-top:8px">
+                  Retried automatically ${run.attempts} time(s) and still failing, so it is
+                  waiting for you.
+                </div>`
+              : raw('')}
         </div>`
       : raw('')}
     ${run.post_url
@@ -276,35 +375,224 @@ export function runDetailPage(
         </div>`
       : raw('')}
 
+    ${usageRow(data.usage)}
+
+    ${data.article ? articlePreview(data.article, Boolean(run.hold), run.id) : raw('')}
+
     <h2>Steps</h2>
     ${steps.length === 0
       ? html`<div class="card">${emptyState('No steps recorded yet.')}</div>`
       : html`${steps.map(
-          (s) => html`
-            <div class="card step-${s.status}">
+          (step) => html`
+            <div class="card step-${step.status}">
               <div class="spread">
                 <div>
-                  <strong>${s.step}</strong> ${statusBadge(s.status)}
+                  <strong>${step.step}</strong> ${statusBadge(step.status)}
                   <div class="muted small">
-                    ${formatDuration(s.duration_ms)}
-                    ${s.attempt > 1 ? html` · attempt ${s.attempt}` : raw('')}
-                    ${s.endpoint ? html` · endpoint: ${s.endpoint}` : raw('')}
-                    ${s.model ? html` · ${s.model}` : raw('')}
+                    ${formatDuration(step.duration_ms)}
+                    ${step.attempt > 1 ? html` · attempt ${step.attempt}` : raw('')}
+                    ${step.endpoint ? html` · endpoint: ${step.endpoint}` : raw('')}
+                    ${step.model ? html` · ${step.model}` : raw('')}
+                    ${step.tokens_in + step.tokens_out > 0
+                      ? html` · ${formatTokens(step.tokens_in)} in / ${formatTokens(step.tokens_out)} out`
+                      : raw('')}
+                    ${step.images > 0 ? html` · ${step.images} image(s)` : raw('')}
                   </div>
                 </div>
-                <span class="muted small nowrap">${timeAgo(s.started_at)}</span>
+                <span class="muted small nowrap">${timeAgo(step.started_at)}</span>
               </div>
-              ${s.error ? html`<div class="flash error" style="margin-top:10px">${s.error}</div>` : raw('')}
-              ${s.output_json
+              ${step.error
+                ? html`<div class="flash error" style="margin-top:10px">${step.error}</div>`
+                : raw('')}
+              ${step.output_json
                 ? html`<details>
                     <summary>Output</summary>
-                    <pre>${prettyJson(s.output_json)}</pre>
+                    <pre>${prettyJson(step.output_json)}</pre>
                   </details>`
                 : raw('')}
             </div>
           `,
         )}`}
   `;
+}
+
+/**
+ * The decision bar on a held run.
+ *
+ * Approving is a resume: the article, the images and every other step are
+ * already stored, so releasing it costs one HTTP post rather than a second
+ * pipeline. That is also why discarding is offered here — the alternative to
+ * "publish" should be visible in the same place, not hidden behind the run
+ * list.
+ */
+function approvalBar(
+  run: RunRow,
+  duplicate: { title: string; url: string | null; similarity: number } | null,
+): Html {
+  return html`
+    <div class="flash warn">
+      <strong>
+        ${run.hold === 'dry'
+          ? 'Dry run — nothing was published'
+          : 'Written and waiting for your approval'}
+      </strong>
+      <div class="small" style="margin-top:6px">
+        ${run.hold === 'dry'
+          ? html`This ran the whole pipeline against ${run.title ? 'the keyword' : 'a keyword'} and
+              stopped before posting. The images were generated and uploaded; only the article
+              itself was not published. Publish it anyway if you like what you see.`
+          : html`This site has automatic publishing turned off, so every article stops here.
+              Approving publishes it and continues to Pinterest exactly as a normal run would.`}
+      </div>
+
+      ${duplicate
+        ? html`<div class="small" style="margin-top:10px">
+            <span class="badge error">possible duplicate</span>
+            ${Math.round(duplicate.similarity * 100)}% of the words overlap with
+            &ldquo;${duplicate.title}&rdquo;, already on this site.
+            ${duplicate.url
+              ? html`<a href="${duplicate.url}" target="_blank" rel="noopener">Read the existing one</a>.`
+              : raw('')}
+          </div>`
+        : raw('')}
+
+      <div class="row wrap" style="margin-top:12px">
+        <form method="post" action="/runs/${run.id}/resume">
+          <button class="primary" type="submit">
+            ${run.hold === 'dry' ? 'Publish it anyway' : 'Approve and publish'}
+          </button>
+        </form>
+        <form method="post" action="/runs/${run.id}/discard"
+              onsubmit="return confirm('Discard this article? The keyword goes back to go so it can be written again.')">
+          <button class="danger" type="submit">Discard</button>
+        </form>
+      </div>
+    </div>
+  `;
+}
+
+/** What this run cost, from the tokens the provider reported per step. */
+function usageRow(usage: RunUsage): Html {
+  if (usage.tokensIn + usage.tokensOut + usage.images === 0) return raw('');
+
+  return html`
+    <div class="grid">
+      <div class="stat">
+        <div class="value">${formatTokens(usage.tokensIn + usage.tokensOut)}</div>
+        <div class="label">Tokens</div>
+        <div class="muted small">
+          ${formatCount(usage.tokensIn)} in / ${formatCount(usage.tokensOut)} out
+        </div>
+      </div>
+      <div class="stat">
+        <div class="value">${usage.llmCalls}</div>
+        <div class="label">Model calls</div>
+      </div>
+      <div class="stat">
+        <div class="value">${usage.images}</div>
+        <div class="label">Images generated</div>
+      </div>
+      <div class="stat">
+        <div class="value">${formatDuration(usage.durationMs)}</div>
+        <div class="label">Time in steps</div>
+      </div>
+    </div>
+  `;
+}
+
+/**
+ * The generated article, as prose rather than as JSON.
+ *
+ * The step output was always here in a <pre>, which is unreadable at article
+ * length and impossible to judge — and judging it is the entire point of
+ * holding it. The fields come from the prompts, so this renders what it
+ * recognises and lists the rest rather than assuming a fixed shape.
+ */
+function articlePreview(
+  article: Record<string, unknown>,
+  editable: boolean,
+  runId: number,
+): Html {
+  const text = (key: string): string => {
+    const value = article[key];
+    return typeof value === 'string' ? value : '';
+  };
+
+  const title = text('title') || text('name');
+  const known = new Set(['title', 'name', 'description', 'intro', 'summary']);
+
+  const body = Object.entries(article)
+    .filter(([key]) => !known.has(key))
+    .map(([key, value]) => html`
+      <section class="article-block">
+        <h4>${key.replace(/[_-]/g, ' ')}</h4>
+        ${renderValue(value)}
+      </section>
+    `);
+
+  return html`
+    <h2>The article</h2>
+    <div class="card article">
+      ${title ? html`<h3 class="article-title">${title}</h3>` : raw('')}
+      ${text('description') || text('intro') || text('summary')
+        ? html`<p class="muted">${text('description') || text('intro') || text('summary')}</p>`
+        : raw('')}
+      ${body}
+    </div>
+
+    ${editable
+      ? html`<details class="card">
+          <summary>Edit the article before publishing</summary>
+          <p class="muted small" style="margin-top:10px">
+            This is the exact document that will be posted. Editing it here replaces the stored
+            step output, so approving afterwards publishes what you see. It has to stay valid
+            JSON — a malformed edit is refused rather than saved.
+          </p>
+          <form method="post" action="/runs/${runId}/article">
+            <div class="field">
+              <textarea name="article" rows="22" spellcheck="false"
+                        class="mono">${JSON.stringify(article, null, 2)}</textarea>
+            </div>
+            <button class="primary" type="submit">Save the edit</button>
+          </form>
+        </details>`
+      : raw('')}
+  `;
+}
+
+/** Render one article field, whatever shape the prompt produced. */
+function renderValue(value: unknown): Html {
+  if (typeof value === 'string') {
+    return html`${value
+      .split(/\n{2,}/)
+      .filter((p) => p.trim())
+      .map((paragraph) => html`<p>${paragraph}</p>`)}`;
+  }
+
+  if (Array.isArray(value)) {
+    return html`<ul>
+      ${value.map(
+        (item) =>
+          html`<li>${typeof item === 'string' ? item : raw(escapeForPre(JSON.stringify(item)))}</li>`,
+      )}
+    </ul>`;
+  }
+
+  if (value && typeof value === 'object') {
+    return html`<dl>
+      ${Object.entries(value as Record<string, unknown>).map(
+        ([key, inner]) => html`<dt>${key.replace(/[_-]/g, ' ')}</dt>
+          <dd>${typeof inner === 'string' ? inner : raw(escapeForPre(JSON.stringify(inner)))}</dd>`,
+      )}
+    </dl>`;
+  }
+
+  return html`<p>${String(value ?? '')}</p>`;
+}
+
+/** JSON dropped into markup still has to be escaped. */
+function escapeForPre(json: string): string {
+  return json.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 function prettyJson(json: string): string {
@@ -333,7 +621,7 @@ export function sitesPage(sites: SiteRow[], views: SiteView[]): Html {
         : html`<table>
             <thead>
               <tr>
-                <th>Name</th><th>Domain</th><th>Status</th><th>Target</th>
+                <th>Name</th><th>Domain</th><th>Status</th><th>Publishing</th><th>Target</th>
                 <th>Interval</th><th>Credentials</th><th>Today</th><th>Last publish</th><th></th>
               </tr>
             </thead>
@@ -343,7 +631,20 @@ export function sitesPage(sites: SiteRow[], views: SiteView[]): Html {
                 return html`<tr>
                   <td>${s.name}</td>
                   <td class="mono">${s.domain}</td>
-                  <td>${statusBadge(s.status)}</td>
+                  <td>
+                    ${statusBadge(s.status)}
+                    ${s.status === 'paused' && s.paused_reason
+                      ? html`<div class="muted small">${s.paused_reason}</div>`
+                      : raw('')}
+                    ${s.status === 'paused' && s.paused_until
+                      ? html`<div class="muted small">resumes ${timeAgo(s.paused_until)}</div>`
+                      : raw('')}
+                  </td>
+                  <td>
+                    ${s.auto_publish === 0
+                      ? html`<span class="badge warn">needs approval</span>`
+                      : html`<span class="badge muted">automatic</span>`}
+                  </td>
                   <td>${s.daily_target}</td>
                   <td class="nowrap">${formatMinutes(s.interval_minutes)}</td>
                   <td class="nowrap small">
@@ -368,10 +669,59 @@ export function sitesPage(sites: SiteRow[], views: SiteView[]): Html {
   `;
 }
 
+/**
+ * An ISO timestamp as <input type="datetime-local"> wants it.
+ *
+ * That control speaks local wall-clock time with no zone, so the stored UTC
+ * instant is shifted into the browser's day before it is shown. Round-tripping
+ * it back is the server's job — see readPausedUntil.
+ */
+function forDatetimeInput(iso: string | null): string {
+  if (!iso) return '';
+
+  const at = new Date(iso.includes('T') ? iso : iso.replace(' ', 'T') + 'Z');
+  if (Number.isNaN(at.getTime())) return '';
+
+  const pad = (n: number): string => String(n).padStart(2, '0');
+  return (
+    `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}` +
+    `T${pad(at.getHours())}:${pad(at.getMinutes())}`
+  );
+}
+
 export function siteEditPage(site: SiteRow): Html {
   return html`
-    <h1>${site.domain}</h1>
-    <p class="subtitle">Edit site configuration.</p>
+    <div class="spread">
+      <div>
+        <h1>${site.domain}</h1>
+        <p class="subtitle">Edit site configuration.</p>
+      </div>
+      ${site.status === 'active'
+        ? html`<form method="post" action="/sites/${site.id}/pause" class="row wrap">
+            <input type="text" name="reason" placeholder="why?" style="width:auto" required />
+            <select name="hours" style="width:auto">
+              <option value="4">4 hours</option>
+              <option value="24" selected>a day</option>
+              <option value="72">3 days</option>
+              <option value="168">a week</option>
+              <option value="0">until I say</option>
+            </select>
+            <button type="submit">Pause</button>
+          </form>`
+        : html`<form method="post" action="/sites/${site.id}/activate">
+            <button class="primary" type="submit">Resume publishing</button>
+          </form>`}
+    </div>
+
+    ${site.status === 'paused' && site.paused_reason
+      ? html`<div class="flash warn">
+          Paused: ${site.paused_reason}
+          ${site.paused_until
+            ? html` &mdash; resuming by itself ${timeAgo(site.paused_until)}.`
+            : html` &mdash; no end set, so it stays paused until you resume it.`}
+        </div>`
+      : raw('')}
+
     <div class="card">${siteForm(site)}</div>
     <div class="card">
       <h3>Delete this site</h3>
@@ -438,6 +788,39 @@ function siteForm(site: SiteRow | null): Html {
             <option value="active" ${site?.status === 'active' ? raw('selected') : raw('')}>active</option>
             <option value="paused" ${site?.status !== 'active' ? raw('selected') : raw('')}>paused</option>
           </select>
+        </div>
+      </div>
+
+      <div class="field-row">
+        <div class="field">
+          <label>Why it is paused</label>
+          <input type="text" name="paused_reason" value="${site?.paused_reason ?? ''}"
+                 placeholder="e.g. their API is down" />
+          <div class="help">
+            Only used while paused, and cleared when you set it active again. A pause with no
+            note is one nobody dares undo a fortnight later.
+          </div>
+        </div>
+        <div class="field">
+          <label>Un-pause automatically</label>
+          <input type="datetime-local" name="paused_until"
+                 value="${forDatetimeInput(site?.paused_until ?? null)}" />
+          <div class="help">Leave blank to stay paused until you say otherwise.</div>
+        </div>
+        <div class="field">
+          <label>Publishing</label>
+          <select name="auto_publish">
+            <option value="1" ${site?.auto_publish !== 0 ? raw('selected') : raw('')}>
+              publish automatically
+            </option>
+            <option value="0" ${site?.auto_publish === 0 ? raw('selected') : raw('')}>
+              hold every article for approval
+            </option>
+          </select>
+          <div class="help">
+            Holding stops the run after the article is written. Nothing reaches the site until
+            you read it and approve.
+          </div>
         </div>
       </div>
 
@@ -636,7 +1019,7 @@ export function keywordsPage(
                     <input type="checkbox" form="bulk" name="ids" value="${k.id}" />
                   </td>
                   <td>
-                    <strong>${k.seed_keyword}</strong>
+                    <a href="/keywords/${k.id}"><strong>${k.seed_keyword}</strong></a>
                     <div class="muted small">${(k.spy_title || '').slice(0, 70)}</div>
                   </td>
                   <td>
@@ -696,6 +1079,24 @@ export function keywordsPage(
             : raw('')}
         </div>`
       : raw('')}
+
+    <h2>Add from a page URL</h2>
+    <div class="card">
+      <p class="muted small" style="margin-top:0">
+        Paste the address of an article worth competing with. The page's own title,
+        description and image are read and turned into a keyword you can check before it is
+        saved &mdash; nothing is written until you confirm on the next screen.
+      </p>
+      <form method="post" action="/keywords/from-url">
+        <div class="field">
+          <label for="urls">One URL per line</label>
+          <textarea id="urls" name="urls" rows="4" required
+                    placeholder="https://example.com/best-baked-chicken"></textarea>
+          <div class="help">Up to 20 at a time. Only http and https, and no private addresses.</div>
+        </div>
+        <button class="primary" type="submit">Read these pages</button>
+      </form>
+    </div>
 
     <h2>Import from CSV</h2>
     <div class="card">
@@ -790,6 +1191,7 @@ export function settingsPage(
   const groups: { key: SettingSpec['group']; title: string; blurb?: string }[] = [
     { key: 'general', title: 'General' },
     { key: 'schedule', title: 'Schedule' },
+    { key: 'retry', title: 'Retries' },
     { key: 'llm', title: 'LLM' },
     { key: 'images', title: 'Image generation' },
     { key: 'buffer', title: 'Buffer' },
@@ -805,7 +1207,8 @@ export function settingsPage(
 
     <div class="row wrap" style="margin-bottom:16px">
       <a class="button" href="/settings/keys">LLM API keys</a>
-      <a class="button" href="/settings/prompts">Prompts</a>
+      <a class="button" href="/settings/prompts">Prompts &amp; models</a>
+      <a class="button" href="/settings/usage">Usage</a>
       <a class="button" href="/settings/account">Change password</a>
       <a class="button" href="/settings/data">History &amp; storage</a>
     </div>
@@ -1118,7 +1521,18 @@ export interface PromptSummary {
   lines: number;
 }
 
-export function promptsPage(prompts: PromptSummary[]): Html {
+export interface ModelChoice {
+  prompt: string;
+  shipped: string;
+  effective: string;
+  overridden: boolean;
+}
+
+export function promptsPage(
+  prompts: PromptSummary[],
+  models: ModelChoice[],
+  knownModels: string[],
+): Html {
   const byPrompt = new Map<string, PromptSummary[]>();
   for (const p of prompts) {
     const list = byPrompt.get(p.prompt) ?? [];
@@ -1134,7 +1548,13 @@ export function promptsPage(prompts: PromptSummary[]): Html {
       These are the product. Article quality lives here, not in the code that
       sends them. Every edit is stored in the database, so it survives a
       redeploy &mdash; the shipped text stays underneath as the version you can
-      always revert to.
+      always revert to, and the last ${PROMPT_VERSIONS_KEPT} saves of each are
+      kept so you can go back to this morning rather than all the way.
+    </p>
+    <p class="subtitle">
+      The model each prompt is sent to is set here too. It has nothing to do
+      with API keys: any key can serve any model, keys spread a rate limit, and
+      this decides quality.
     </p>
 
     ${editedCount > 0
@@ -1143,8 +1563,13 @@ export function promptsPage(prompts: PromptSummary[]): Html {
         </div>`
       : raw('')}
 
-    ${[...byPrompt.entries()].map(
-      ([name, parts]) => html`
+    <datalist id="known-models">
+      ${knownModels.map((m) => html`<option value="${m}"></option>`)}
+    </datalist>
+
+    ${[...byPrompt.entries()].map(([name, parts]) => {
+      const choice = models.find((m) => m.prompt === name);
+      return html`
         <div class="card">
           <div class="spread">
             <div>
@@ -1152,9 +1577,9 @@ export function promptsPage(prompts: PromptSummary[]): Html {
               ${parts.some((p) => p.edited)
                 ? html` <span class="badge ok">edited</span>`
                 : raw('')}
-              <div class="muted small">${parts[0]?.model ?? ''}</div>
+              ${choice?.overridden ? html` <span class="badge brand">custom model</span>` : raw('')}
             </div>
-            <div class="row">
+            <div class="row wrap">
               ${parts.map(
                 (p) => html`<a class="button small" href="/settings/prompts/${p.file}"
                   >${p.half} &middot; ${p.lines} lines</a
@@ -1162,11 +1587,32 @@ export function promptsPage(prompts: PromptSummary[]): Html {
               )}
             </div>
           </div>
+
+          ${choice
+            ? html`<form method="post" action="/settings/prompts/model" class="row wrap"
+                    style="margin-top:10px">
+                  <input type="hidden" name="prompt" value="${name}" />
+                  <label for="model-${name}" class="muted small" style="margin:0">Model</label>
+                  <input type="text" id="model-${name}" name="model" list="known-models"
+                         value="${choice.overridden ? choice.effective : ''}"
+                         placeholder="${choice.shipped}" style="width:auto;min-width:200px" />
+                  <button class="small" type="submit">Set</button>
+                  ${choice.overridden
+                    ? html`<span class="muted small">
+                        shipped default is <span class="mono">${choice.shipped}</span> &mdash;
+                        clear the box and press Set to go back to it
+                      </span>`
+                    : raw('')}
+                </form>`
+            : raw('')}
         </div>
-      `,
-    )}
+      `;
+    })}
   `;
 }
+
+/** Mirrors PROMPT_VERSION_LIMIT in repos.ts, for the copy above. */
+export const PROMPT_VERSIONS_KEPT = 20;
 
 export function promptEditPage(
   file: string,
@@ -1177,6 +1623,7 @@ export function promptEditPage(
     unknown: string[];
     edited: boolean;
     shipped: string;
+    versions: { id: number; created_at: string; body: string }[];
   },
 ): Html {
   return html`
@@ -1240,6 +1687,42 @@ export function promptEditPage(
             </div>`}
     </div>
 
+    ${options.versions.length
+      ? html`<h2>Earlier versions</h2>
+          <p class="subtitle">
+            Every save is kept, newest first, up to ${PROMPT_VERSIONS_KEPT}. Restoring one puts
+            its text in the editor as a new save &mdash; nothing is lost by trying.
+          </p>
+          ${options.versions.map(
+            (version) => html`
+              <div class="card">
+                <div class="spread">
+                  <div>
+                    <strong>Saved ${timeAgo(version.created_at)}</strong>
+                    <div class="muted small">
+                      ${version.body.split('\n').length} lines, ${version.body.length} characters
+                      ${version.body === body ? html` &middot; this is what is live now` : raw('')}
+                    </div>
+                  </div>
+                  <div class="row">
+                    <form method="post" action="/settings/prompts/${file}/restore">
+                      <input type="hidden" name="version" value="${version.id}" />
+                      <button class="small" type="submit"
+                              ${version.body === body ? raw('disabled') : raw('')}>
+                        Restore
+                      </button>
+                    </form>
+                  </div>
+                </div>
+                <details>
+                  <summary class="muted small">What changed from what is live</summary>
+                  ${diffBlock(version.body, body)}
+                </details>
+              </div>
+            `,
+          )}`
+      : raw('')}
+
     ${options.edited
       ? html`<h2>As shipped</h2>
           <div class="card">
@@ -1247,6 +1730,33 @@ export function promptEditPage(
           </div>`
       : raw('')}
   `;
+}
+
+/**
+ * A line-level diff, shown as removed-then-added blocks.
+ *
+ * Not a real diff algorithm — the useful question here is "which lines are in
+ * one and not the other", and for prompt text that is a set comparison. A
+ * proper LCS diff would be a dependency and several hundred lines for a
+ * marginally nicer rendering of a page that is read rarely.
+ */
+function diffBlock(older: string, newer: string): Html {
+  const oldLines = older.split('\n');
+  const newLines = newer.split('\n');
+  const oldSet = new Set(oldLines);
+  const newSet = new Set(newLines);
+
+  const removed = oldLines.filter((line) => line.trim() && !newSet.has(line));
+  const added = newLines.filter((line) => line.trim() && !oldSet.has(line));
+
+  if (removed.length === 0 && added.length === 0) {
+    return html`<p class="muted small">Identical to what is live.</p>`;
+  }
+
+  return html`<div class="diff">
+    ${removed.map((line) => html`<div class="del">- ${line}</div>`)}
+    ${added.map((line) => html`<div class="add">+ ${line}</div>`)}
+  </div>`;
 }
 
 /* =========================================================================
@@ -1394,6 +1904,22 @@ export function dataPage(counts: DataCounts, retentionDays: number): Html {
       </div>
     </div>
 
+    <h2>Back it all up</h2>
+    <div class="card">
+      <p class="muted small" style="margin-top:0">
+        One file holding the whole database: sites, keywords, settings, history. Written with
+        <span class="mono">VACUUM INTO</span> rather than copied, because the database runs in
+        WAL mode and a plain copy of the file silently omits every recent write.
+      </p>
+      <p class="muted small">
+        Site tokens and API keys inside it stay encrypted with
+        <span class="mono">ENCRYPTION_KEY</span>, which lives in the data volume and not in this
+        file &mdash; so restoring onto a fresh deployment needs that key as well, and this file
+        alone does not hand anyone your credentials.
+      </p>
+      <a class="button primary" href="/data/backup" download>Download the database</a>
+    </div>
+
     <h2>Reclaim disk space</h2>
     <div class="card">
       <p class="muted small" style="margin-top:0">
@@ -1405,5 +1931,231 @@ export function dataPage(counts: DataCounts, retentionDays: number): Html {
         <button type="submit">Compact the database</button>
       </form>
     </div>
+  `;
+}
+
+/* =========================================================================
+ * One keyword: why it is or is not publishing
+ * ====================================================================== */
+
+export function keywordDetailPage(
+  keyword: KeywordRow,
+  diagnosis: KeywordDiagnosis,
+  runs: RunListRow[],
+): Html {
+  return html`
+    <div class="spread">
+      <div>
+        <h1>${keyword.seed_keyword}</h1>
+        <p class="subtitle">${keyword.spy_title || 'No spy title recorded.'}</p>
+      </div>
+      <div class="row">
+        <a class="button" href="/keywords">All keywords</a>
+        <form method="post" action="/keywords/${keyword.id}/dry-run">
+          <button type="submit"
+                  title="Write this article now without publishing it, so you can read it">
+            Dry run
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <div class="flash ${diagnosis.readyCount > 0 ? 'ok' : 'warn'}">
+      ${diagnosis.summary}
+    </div>
+
+    <h2>Where it stands, site by site</h2>
+    <div class="card table-wrap">
+      ${diagnosis.sites.length === 0
+        ? emptyState('No sites yet, so there is nowhere for this to publish.')
+        : html`<table>
+            <thead>
+              <tr><th>Site</th><th>Cell</th><th>Ready now?</th><th>Why</th></tr>
+            </thead>
+            <tbody>
+              ${diagnosis.sites.map(
+                (verdict) => html`<tr>
+                  <td class="mono"><a href="/sites/${verdict.siteId}">${verdict.domain}</a></td>
+                  <td>
+                    ${verdict.link === 'unlinked'
+                      ? html`<span class="badge muted">not linked</span>`
+                      : statusBadge(verdict.link)}
+                  </td>
+                  <td>
+                    ${verdict.ready
+                      ? html`<span class="badge ok">yes</span>`
+                      : html`<span class="badge muted">no</span>`}
+                  </td>
+                  <td class="small">${verdict.reason}</td>
+                </tr>`,
+              )}
+            </tbody>
+          </table>`}
+    </div>
+
+    <h2>Its runs</h2>
+    <div class="card table-wrap">
+      ${runs.length === 0 ? emptyState('This keyword has never run.') : runTable(runs)}
+    </div>
+
+    <h2>What was imported</h2>
+    <div class="card">
+      <dl class="facts">
+        <dt>Spy title</dt><dd>${keyword.spy_title || '—'}</dd>
+        <dt>Spy description</dt><dd>${keyword.spy_description || '—'}</dd>
+        <dt>Annotation</dt><dd>${keyword.annotation || '—'}</dd>
+        <dt>Source URL</dt>
+        <dd>
+          ${keyword.spy_article_url
+            ? html`<a href="${keyword.spy_article_url}" target="_blank" rel="noopener"
+                >${keyword.spy_article_url}</a
+              >`
+            : '—'}
+        </dd>
+      </dl>
+    </div>
+  `;
+}
+
+/* =========================================================================
+ * Keyword candidates read from a URL
+ * ====================================================================== */
+
+/**
+ * The confirm screen between reading a page and saving a keyword.
+ *
+ * Every field here is editable, because metadata written for search engines is
+ * not written to be a keyword — the title carries the site's name, the
+ * description is a sales line. Reading the page saves the typing; it does not
+ * replace the judgement.
+ */
+export function urlCandidatesPage(candidates: Candidate[]): Html {
+  const usable = candidates.filter((c) => !c.error);
+  const failed = candidates.filter((c) => c.error);
+
+  return html`
+    <div class="spread">
+      <div>
+        <h1>Read ${candidates.length} page(s)</h1>
+        <p class="subtitle">
+          Check what came back, edit anything that reads badly, then untick whatever you do not
+          want. Nothing has been saved yet.
+        </p>
+      </div>
+      <a class="button" href="/keywords">Cancel</a>
+    </div>
+
+    ${failed.length
+      ? html`<div class="flash warn">
+          <strong>${failed.length} could not be read</strong>
+          <ul>
+            ${failed.map((c) => html`<li><span class="mono">${c.url}</span> — ${c.error}</li>`)}
+          </ul>
+        </div>`
+      : raw('')}
+
+    ${usable.length === 0
+      ? html`<div class="card">${emptyState('Nothing usable came back from those addresses.')}</div>`
+      : html`<form method="post" action="/keywords/from-url/save">
+          ${usable.map(
+            (candidate, index) => html`
+              <div class="card">
+                <label class="row" style="gap:8px">
+                  <input type="checkbox" name="keep" value="${index}" checked
+                         style="width:auto" />
+                  <span class="mono small">${candidate.url}</span>
+                </label>
+                <input type="hidden" name="url_${index}" value="${candidate.url}" />
+                <input type="hidden" name="image_${index}" value="${candidate.imageUrl}" />
+
+                <div class="field-row" style="margin-top:12px">
+                  <div class="field">
+                    <label>Seed keyword</label>
+                    <input type="text" name="seed_${index}" value="${candidate.seedKeyword}" />
+                    <div class="help">Stripped of the site name and the usual filler words.</div>
+                  </div>
+                  <div class="field">
+                    <label>Spy title</label>
+                    <input type="text" name="title_${index}" value="${candidate.title}" />
+                  </div>
+                </div>
+                <div class="field">
+                  <label>Spy description</label>
+                  <textarea name="description_${index}" rows="2">${candidate.description}</textarea>
+                </div>
+              </div>
+            `,
+          )}
+
+          <div class="save-bar">
+            <button class="primary" type="submit">Save the ticked keywords</button>
+            <span class="muted small">
+              Added with status <span class="mono">go</span> and linked to no site — set the
+              cells on the Keywords page.
+            </span>
+          </div>
+        </form>`}
+  `;
+}
+
+/* =========================================================================
+ * Usage
+ * ====================================================================== */
+
+export function usagePage(costs: StepCost[], days: number): Html {
+  const totalTokens = costs.reduce((sum, c) => sum + c.tokensIn + c.tokensOut, 0);
+
+  return html`
+    <div class="spread">
+      <div>
+        <h1>Usage</h1>
+        <p class="subtitle">
+          What the last ${days} days actually cost, per step, from the token counts the provider
+          reported. This is how you find the expensive prompt &mdash; it is rarely the one you
+          would guess, and a step that fails after burning its tokens still shows up here.
+        </p>
+      </div>
+      <a class="button" href="/settings">Back to settings</a>
+    </div>
+
+    ${costs.length === 0
+      ? html`<div class="card">
+          ${emptyState(
+            'Nothing recorded yet. Token counts are captured from each completion, so this ' +
+              'fills in as runs happen.',
+          )}
+        </div>`
+      : html`<div class="card table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Step</th><th>Runs</th><th>Tokens in</th><th>Tokens out</th>
+                <th>Total</th><th>Share</th><th>Average time</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${costs.map((cost) => {
+                const total = cost.tokensIn + cost.tokensOut;
+                const share = totalTokens === 0 ? 0 : (total / totalTokens) * 100;
+                return html`<tr>
+                  <td><strong>${cost.step}</strong></td>
+                  <td>${cost.runs}</td>
+                  <td class="nowrap">${formatTokens(cost.tokensIn)}</td>
+                  <td class="nowrap">${formatTokens(cost.tokensOut)}</td>
+                  <td class="nowrap"><strong>${formatTokens(total)}</strong></td>
+                  <td style="min-width:120px">
+                    <div class="bar"><span style="width:${share.toFixed(1)}%"></span></div>
+                    <div class="muted small">${share.toFixed(0)}%</div>
+                  </td>
+                  <td class="nowrap muted">${formatDuration(Math.round(cost.avgDurationMs))}</td>
+                </tr>`;
+              })}
+            </tbody>
+          </table>
+        </div>
+        <p class="muted small">
+          ${formatCount(totalTokens)} tokens across every step. A zero means the provider did
+          not report a count for that call, not that it was free.
+        </p>`}
   `;
 }

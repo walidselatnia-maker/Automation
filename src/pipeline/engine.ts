@@ -67,11 +67,14 @@ export async function runStep<TIn, TOut>(
 
   beginStep(context.runId, step.name);
   const started = Date.now();
+  // Whatever the previous step left behind is not this step's cost.
+  context.resetUsage();
   log.info(`run ${context.runId}: → ${step.name}`);
 
   try {
     const raw = await step.run(context, input);
     const result = isStepResult<TOut>(raw) ? raw : { value: raw as TOut };
+    const usage = context.takeUsage();
 
     finishStep(context.runId, step.name, {
       status: 'ok',
@@ -79,15 +82,25 @@ export async function runStep<TIn, TOut>(
       durationMs: Date.now() - started,
       endpoint: result.endpoint,
       model: result.model,
+      tokensIn: usage.tokensIn,
+      tokensOut: usage.tokensOut,
+      images: usage.images,
     });
 
     log.info(`run ${context.runId}: ✓ ${step.name} (${Date.now() - started}ms)`);
     return result.value;
   } catch (err) {
+    // A failed step still spent what it spent, and a step that burns tokens
+    // and then fails is exactly the one worth seeing in the usage table.
+    const usage = context.takeUsage();
+
     finishStep(context.runId, step.name, {
       status: 'failed',
       error: errorMessage(err),
       durationMs: Date.now() - started,
+      tokensIn: usage.tokensIn,
+      tokensOut: usage.tokensOut,
+      images: usage.images,
     });
 
     log.error(`run ${context.runId}: ✗ ${step.name}`, errorMessage(err));

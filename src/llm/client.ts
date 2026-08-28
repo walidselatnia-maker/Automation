@@ -23,6 +23,15 @@ export interface ChatResult {
   model: string;
   durationMs: number;
   attempts: number;
+  /**
+   * What the completion cost, as the provider reported it.
+   *
+   * Ollama returns these on every completion and they were previously thrown
+   * away, which left "which prompt is expensive?" unanswerable. Zero means the
+   * provider did not say, not that the call was free.
+   */
+  tokensIn: number;
+  tokensOut: number;
 }
 
 /** Raised when every endpoint able to serve the model has been tried. */
@@ -46,13 +55,25 @@ interface OllamaChatResponse {
   message?: { content?: string };
   response?: string;
   error?: string;
+  /** Ollama's own names for the token counts. */
+  prompt_eval_count?: number;
+  eval_count?: number;
 }
+
+export interface Completion {
+  content: string;
+  tokensIn: number;
+  tokensOut: number;
+}
+
+const asCount = (value: unknown): number =>
+  typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.round(value) : 0;
 
 async function callOllama(
   endpoint: { baseUrl: string; apiKey: string },
   request: ChatRequest,
   signal: AbortSignal,
-): Promise<string> {
+): Promise<Completion> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (endpoint.apiKey) headers.Authorization = `Bearer ${endpoint.apiKey}`;
 
@@ -86,7 +107,11 @@ async function callOllama(
   const content = json.message?.content ?? json.response ?? '';
   if (!content.trim()) throw new Error('Endpoint returned an empty completion');
 
-  return content;
+  return {
+    content,
+    tokensIn: asCount(json.prompt_eval_count),
+    tokensOut: asCount(json.eval_count),
+  };
 }
 
 /**
@@ -122,15 +147,17 @@ export async function chat(
     );
 
     try {
-      const content = await callOllama(endpoint, request, controller.signal);
+      const completion = await callOllama(endpoint, request, controller.signal);
       markSuccess(endpoint.id);
 
       return {
-        content,
+        content: completion.content,
         endpoint: endpoint.name,
         model: request.model,
         durationMs: Date.now() - started,
         attempts: tried.length,
+        tokensIn: completion.tokensIn,
+        tokensOut: completion.tokensOut,
       };
     } catch (err) {
       const message = errorMessage(err);

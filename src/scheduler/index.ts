@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { get, run } from '../db/index.js';
 import {
+  consumeRetry,
   createRun,
+  dueRetry,
   getKeyword,
   getLinkShare,
   getSite,
@@ -11,55 +13,54 @@ import {
   pruneDecisions,
   pruneEvents,
   recordDecisions,
+  resumeExpiredPauses,
+  scheduleRetry,
 } from '../db/repos.js';
+import { planRetry, type RetryPolicy } from '../core/retry.js';
+import { announceNotices } from '../core/notices.js';
 import { localDateKey, selectTask } from '../core/selector.js';
 import { executePipeline, PipelineContext } from '../pipeline/index.js';
 import type { Settings } from '../settings.js';
 import { createLogger, errorMessage } from '../lib/logger.js';
-import { readSupply, supplyWarning } from '../core/supply.js';
-import { getSetting, setSetting } from '../db/repos.js';
-import { TelegramClient } from '../integrations/telegram.js';
 
 const log = createLogger('scheduler');
 
 /**
- * Tell someone the keyword queue is running out — once.
+ * Everything worth interrupting someone about, sent only when it changes.
  *
- * The scheduler ticks continuously, so the naive version of this sends the
- * same message every few minutes until somebody fixes it, and a channel that
- * cries wolf gets muted. The last level announced is remembered, so a message
- * goes out when the situation *changes* and not again until it changes back.
- *
- * Recovery is announced too. Without it, "we are out of keywords" is the last
- * thing the channel ever says on the subject, and nobody learns it was fixed.
+ * This replaced a bespoke announcer that knew about one thing (the keyword
+ * queue) and carried its own de-duplication. The set of things worth an alert
+ * grew — a site that has stopped working, the image service being down,
+ * articles waiting for approval — and each of them needed the same "only when
+ * it changes" logic. See core/notices.ts.
  */
-const SUPPLY_STATE_KEY = 'supply_last_announced_level';
-
-async function announceSupply(settings: Settings, encryptionKey: Buffer): Promise<void> {
-  if (!settings.getBool('telegram_enabled')) return;
-
+async function announce(settings: Settings): Promise<void> {
   try {
-    const supply = readSupply();
-    const previous = getSetting(SUPPLY_STATE_KEY, encryptionKey) || 'ok';
-    if (supply.level === previous) return;
-
-    setSetting(SUPPLY_STATE_KEY, supply.level, false, encryptionKey);
-
-    const telegram = new TelegramClient(
-      settings.get('telegram_bot_token'),
-      settings.get('telegram_chat_id'),
-    );
-
-    const message =
-      supply.level === 'ok'
-        ? `Keyword queue refilled — ${supply.readyPairs} article(s) queued.`
-        : supplyWarning(supply);
-
-    if (message) await telegram.sendMessage(message);
+    // The image service's health is polled by the web server; the scheduler
+    // sees only what the last poll left behind.
+    await announceNotices(settings, imageServiceProblem());
   } catch (err) {
     // Never let a notification failure take down a publishing run.
-    log.warn(`could not announce keyword supply: ${errorMessage(err)}`);
+    log.warn(`could not send notifications: ${errorMessage(err)}`);
   }
+}
+
+/**
+ * The web server's view of the image service, without importing the server.
+ *
+ * The server polls it on a timer and calls setImageServiceProblem; the
+ * scheduler reads whatever that left. A getter rather than an import because
+ * the dependency only runs in that direction — the server owns the scheduler,
+ * not the other way round.
+ */
+let lastImageServiceProblem: string | null = null;
+
+export function setImageServiceProblem(problem: string | null): void {
+  lastImageServiceProblem = problem;
+}
+
+function imageServiceProblem(): string | null {
+  return lastImageServiceProblem;
 }
 
 /**
@@ -73,9 +74,49 @@ async function announceSupply(settings: Settings, encryptionKey: Buffer): Promis
 
 export interface TickResult {
   cycleId: string;
-  outcome: 'published' | 'failed' | 'spy-rejected' | 'no-task' | 'busy' | 'disabled' | 'misconfigured';
+  outcome:
+    | 'published'
+    | 'failed'
+    | 'spy-rejected'
+    | 'held'
+    | 'no-task'
+    | 'busy'
+    | 'disabled'
+    | 'misconfigured';
   runId?: number;
   detail?: string;
+  /** Set when the outcome is 'held': why it stopped before publishing. */
+  hold?: 'awaiting' | 'dry';
+}
+
+/** The automatic-retry settings, read once per tick. */
+function retryPolicy(settings: Settings): RetryPolicy {
+  return {
+    enabled: settings.getBool('auto_retry_enabled'),
+    maxAttempts: Math.max(0, settings.getNumber('auto_retry_max')),
+    delayMinutes: Math.max(1, settings.getNumber('auto_retry_delay_minutes')),
+  };
+}
+
+/**
+ * Decide what happens to a run that just failed.
+ *
+ * Called from both tick and resume, because a retry that fails should be
+ * considered for another retry on exactly the same terms.
+ */
+function considerRetry(
+  runId: number,
+  error: string,
+  attempts: number,
+  settings: Settings,
+): string {
+  const decision = planRetry(error, attempts, retryPolicy(settings), new Date());
+  scheduleRetry(runId, decision.retryAfter);
+
+  if (decision.retry) log.info(`run ${runId}: ${decision.reason}`);
+  else log.debug(`run ${runId}: not retrying — ${decision.reason}`);
+
+  return decision.reason;
 }
 
 /* -- Lock ---------------------------------------------------------------- */
@@ -123,10 +164,24 @@ export function forceReleaseLock(): void {
 
 /* -- Tick ---------------------------------------------------------------- */
 
-export async function tick(settings: Settings, encryptionKey: Buffer): Promise<TickResult> {
+export async function tick(
+  settings: Settings,
+  encryptionKey: Buffer,
+  options: { mode?: 'live' | 'dry' } = {},
+): Promise<TickResult> {
   const cycleId = randomUUID();
+  const mode = options.mode ?? 'live';
 
-  if (!settings.getBool('automation_enabled')) {
+  // Before anything else: a pause that has run out is not a pause. Done here
+  // rather than derived at read time so the sites table never says "paused"
+  // over a site the scheduler is treating as active.
+  const resumed = resumeExpiredPauses();
+  if (resumed.length > 0) log.info(`pause expired, resuming: ${resumed.join(', ')}`);
+
+  // The automation switch guards publishing. A dry run publishes nothing, and
+  // "try a prompt before turning automation on" is the main thing it is for,
+  // so it is not gated on that switch.
+  if (mode === 'live' && !settings.getBool('automation_enabled')) {
     return { cycleId, outcome: 'disabled' };
   }
 
@@ -151,6 +206,19 @@ export async function tick(settings: Settings, encryptionKey: Buffer): Promise<T
   }
 
   try {
+    // A failure that is due to be tried again takes this slot ahead of new
+    // work. It is cheaper — every completed step is reused — and leaving it
+    // behind new work would mean a busy queue never retries anything.
+    const retry = mode === 'live' ? dueRetry() : undefined;
+    if (retry) {
+      releaseLock();
+      log.info(`run ${retry.id}: automatic retry (attempt ${retry.attempts + 1})`);
+      consumeRetry(retry.id);
+      const result = await resumeRun(retry.id, settings, encryptionKey);
+      await announce(settings);
+      return { ...result, cycleId };
+    }
+
     const timezone = settings.get('timezone');
     const now = new Date();
     const dayKey = localDateKey(now, timezone);
@@ -165,13 +233,13 @@ export async function tick(settings: Settings, encryptionKey: Buffer): Promise<T
     if (!task) {
       const reason = decisions.at(-1)?.reason ?? 'No valid pair';
       log.info(`nothing to publish: ${reason}`);
-      await announceSupply(settings, encryptionKey);
+      await announce(settings);
       return { cycleId, outcome: 'no-task', detail: reason };
     }
 
-    // Also checked on a successful tick, so "running low" is noticed while
+    // Also checked on a productive tick, so "running low" is noticed while
     // there is still time to act rather than only once it has stopped.
-    void announceSupply(settings, encryptionKey);
+    void announce(settings);
 
     log.info(`selected "${task.seedKeyword}" for ${task.siteDomain}`);
 
@@ -181,7 +249,7 @@ export async function tick(settings: Settings, encryptionKey: Buffer): Promise<T
       return { cycleId, outcome: 'no-task', detail: 'Selected site or keyword disappeared' };
     }
 
-    const runId = createRun(task.keywordId, task.siteId);
+    const runId = createRun(task.keywordId, task.siteId, mode);
     attachRunToLock(runId);
 
     const ctx = new PipelineContext({
@@ -191,15 +259,16 @@ export async function tick(settings: Settings, encryptionKey: Buffer): Promise<T
       settings,
       encryptionKey,
       shareImages: getLinkShare(keyword.id, site.id),
+      mode,
     });
     const outcome = await executePipeline(ctx);
 
-    return {
-      cycleId,
-      outcome: outcome.status === 'published' ? 'published' : outcome.status,
-      runId,
-      detail: outcome.error ?? outcome.postUrl,
-    };
+    const detail =
+      outcome.status === 'failed'
+        ? `${outcome.error ?? ''} ${considerRetry(runId, outcome.error ?? '', 0, settings)}`.trim()
+        : (outcome.error ?? outcome.postUrl);
+
+    return { cycleId, outcome: outcome.status, runId, detail, hold: outcome.hold };
   } catch (err) {
     log.error('tick failed unexpectedly', errorMessage(err));
     return { cycleId, outcome: 'failed', detail: errorMessage(err) };
@@ -219,10 +288,13 @@ export async function resumeRun(
   if (!acquireLock()) return { cycleId, outcome: 'busy' };
 
   try {
-    const runRow = get<{ keyword_id: number | null; site_id: number | null }>(
-      'SELECT keyword_id, site_id FROM runs WHERE id = ?',
-      runId,
-    );
+    const runRow = get<{
+      keyword_id: number | null;
+      site_id: number | null;
+      attempts: number;
+      mode: 'live' | 'dry';
+      hold: string;
+    }>('SELECT keyword_id, site_id, attempts, mode, hold FROM runs WHERE id = ?', runId);
     if (!runRow?.site_id || !runRow.keyword_id) {
       return { cycleId, outcome: 'failed', detail: `Run ${runId} not found` };
     }
@@ -233,10 +305,19 @@ export async function resumeRun(
       return { cycleId, outcome: 'failed', detail: 'Site or keyword no longer exists' };
     }
 
-    run("UPDATE runs SET status = 'running', error = NULL, failed_step = NULL WHERE id = ?", runId);
+    run(
+      `UPDATE runs SET status = 'running', error = NULL, failed_step = NULL,
+         hold = '', retry_after = NULL
+       WHERE id = ?`,
+      runId,
+    );
     attachRunToLock(runId);
 
     log.info(`resuming run ${runId}`);
+
+    // Approving a held run means publishing it, so the resume is always live —
+    // resuming a dry run is exactly the "publish it after all" action — and it
+    // must not be stopped by the same gate a second time.
     const ctx = new PipelineContext({
       runId,
       site,
@@ -244,15 +325,22 @@ export async function resumeRun(
       settings,
       encryptionKey,
       shareImages: getLinkShare(keyword.id, site.id),
+      mode: 'live',
+      approved: true,
     });
     const outcome = await executePipeline(ctx);
 
-    return {
-      cycleId,
-      outcome: outcome.status === 'published' ? 'published' : outcome.status,
-      runId,
-      detail: outcome.error ?? outcome.postUrl,
-    };
+    const detail =
+      outcome.status === 'failed'
+        ? `${outcome.error ?? ''} ${considerRetry(
+            runId,
+            outcome.error ?? '',
+            runRow.attempts ?? 0,
+            settings,
+          )}`.trim()
+        : (outcome.error ?? outcome.postUrl);
+
+    return { cycleId, outcome: outcome.status, runId, detail, hold: outcome.hold };
   } finally {
     releaseLock();
   }

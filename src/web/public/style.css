@@ -700,3 +700,81 @@ body.signin main {
 .docket-body { padding: 14px 24px 26px; }
 .docket-body h1 { font-size: 30px; margin-bottom: 6px; }
 .docket-body .subtitle { margin-bottom: 20px; font-size: 14px; }
+
+/* ----------------------------------------------------------- the chart */
+
+.chart { margin-top: 10px; color: var(--ink); }
+.spark { display: block; overflow: visible; }
+
+.key {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  margin: 0 3px 0 10px;
+  vertical-align: baseline;
+}
+.key.brand { background: var(--brand); }
+.key.red { background: var(--red); }
+
+/* A share-of-total bar inside a table cell. */
+.bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--line-soft);
+  overflow: hidden;
+}
+.bar span {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--brand), #a855f7);
+}
+
+/* ------------------------------------------------------- article preview */
+
+/* The generated article, read as prose. It was previously a <pre> of JSON,
+   which is unreadable at article length — and reading it is the entire point
+   of holding one back for approval. */
+.article { max-width: 74ch; }
+.article-title { font-size: 24px; margin-bottom: 4px; }
+.article-block { margin-top: 20px; }
+.article-block h4 {
+  font-family: var(--display);
+  font-size: 12.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin: 0 0 6px;
+}
+.article-block p { margin: 0 0 10px; }
+.article-block ul { margin: 0; padding-left: 20px; }
+.article-block li { margin-bottom: 4px; }
+.article-block dl { margin: 0; }
+.article-block dt {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--muted);
+  margin-top: 8px;
+}
+.article-block dd { margin: 2px 0 0; }
+
+/* Key/value list on the keyword page. */
+.facts { display: grid; grid-template-columns: minmax(120px, auto) 1fr; gap: 6px 18px; margin: 0; }
+.facts dt { font-weight: 600; color: var(--muted); font-size: 13px; }
+.facts dd { margin: 0; overflow-wrap: anywhere; }
+
+/* --------------------------------------------------------------- the diff */
+
+.diff {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+  margin-top: 8px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  overflow-x: auto;
+}
+.diff div { padding: 1px 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.diff .del { background: var(--red-bg); color: var(--red); }
+.diff .add { background: var(--teal-bg); color: var(--teal); }

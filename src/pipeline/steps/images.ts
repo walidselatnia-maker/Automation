@@ -63,6 +63,12 @@ async function generateAndUpload(
   log.debug(`generating "${label}"`);
 
   const { data, contentType, jobId } = await ctx.images.generate(prompt, 'VERTICAL');
+
+  // Counted only on this path. A copied image cost a download, not a slot in
+  // Google's queue, and the number is here to answer "how many generations did
+  // this article need" rather than "how many files moved".
+  ctx.countImages(1);
+
   const uploaded = await upload(ctx, data, contentType);
 
   log.debug(`"${label}" uploaded to ${uploaded.path} (job ${jobId})`);

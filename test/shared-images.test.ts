@@ -191,6 +191,8 @@ interface Recorder {
   downloaded: string[];
   saved: { keywordId: number; siteId: number; urls: SharedImageUrls }[];
   cleared: number[];
+  /** Images reported to the run's usage figures — generated ones only. */
+  imagesCounted: number;
 }
 
 function fakeContext(
@@ -200,10 +202,22 @@ function fakeContext(
     downloadFails?: boolean;
   } = {},
 ): { ctx: PipelineContext; rec: Recorder } {
-  const rec: Recorder = { generated: [], downloaded: [], saved: [], cleared: [] };
+  const rec: Recorder = {
+    generated: [],
+    downloaded: [],
+    saved: [],
+    cleared: [],
+    imagesCounted: 0,
+  };
   let counter = 0;
 
   const ctx = {
+    // The engine reads this back per step for the usage figures. Counted here
+    // too, so the fake stays honest about which path calls it: generating an
+    // image counts, copying one does not.
+    countImages: (n: number) => {
+      rec.imagesCounted += n;
+    },
     keyword: { id: 1, seed_keyword: 'chicken' },
     site: { id: 7, domain: 'bitespoon.com' },
     projectId: { projectId: 'proj-1', source: 'site' as const },

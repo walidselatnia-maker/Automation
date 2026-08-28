@@ -162,3 +162,79 @@ export function formatDuration(ms: number | null | undefined): string {
 
 export const emptyState = (message: string): Html =>
   html`<div class="empty">${message}</div>`;
+
+/**
+ * A small inline bar chart.
+ *
+ * Four counters answer "what happened today". They cannot answer "is this
+ * actually running", which is a shape rather than a number — a week of threes
+ * and a week of nothing look identical in a counter reading 3.
+ *
+ * Inline SVG, no library: the page has no build step and a chart is not worth
+ * acquiring one for. Bars rather than a line because the series is a count per
+ * day, and a line between two days implies values in between that do not exist.
+ */
+export function sparkline(
+  series: { day: string; published: number; failed: number }[],
+  options: { width?: number; height?: number } = {},
+): Html {
+  if (series.length === 0) return raw('');
+
+  const width = options.width ?? 320;
+  const height = options.height ?? 44;
+  const gap = 2;
+  const barWidth = Math.max(2, width / series.length - gap);
+  const peak = Math.max(1, ...series.map((d) => d.published + d.failed));
+
+  const bars = series.map((day, index) => {
+    const x = index * (barWidth + gap);
+    const total = day.published + day.failed;
+
+    // A day with nothing gets a visible baseline tick rather than blank space:
+    // "we published nothing" is the reading this chart exists to make obvious.
+    if (total === 0) {
+      return html`<rect x="${x.toFixed(1)}" y="${height - 1}" width="${barWidth.toFixed(1)}"
+        height="1" fill="currentColor" opacity="0.18"></rect>`;
+    }
+
+    const publishedHeight = (day.published / peak) * (height - 2);
+    const failedHeight = (day.failed / peak) * (height - 2);
+
+    return html`<g>
+      <title>${day.day}: ${day.published} published, ${day.failed} failed</title>
+      <rect x="${x.toFixed(1)}" y="${(height - failedHeight).toFixed(1)}"
+        width="${barWidth.toFixed(1)}" height="${failedHeight.toFixed(1)}"
+        fill="var(--red)" opacity="0.85"></rect>
+      <rect x="${x.toFixed(1)}" y="${(height - failedHeight - publishedHeight).toFixed(1)}"
+        width="${barWidth.toFixed(1)}" height="${publishedHeight.toFixed(1)}"
+        fill="var(--brand)"></rect>
+    </g>`;
+  });
+
+  return html`<svg class="spark" viewBox="0 0 ${width} ${height}" width="100%" height="${height}"
+    role="img" aria-label="Articles published per day">${bars}</svg>`;
+}
+
+/** Thousands separators, so 148213 reads as a number rather than a barcode. */
+export const formatCount = (n: number): string => n.toLocaleString('en-US');
+
+/** Token counts compressed to something scannable in a table. */
+export function formatTokens(n: number): string {
+  if (n === 0) return '—';
+  if (n < 1000) return String(n);
+  if (n < 1_000_000) return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}k`;
+  return `${(n / 1_000_000).toFixed(1)}M`;
+}
+
+/**
+ * How a run ended, in the language of the thing that happened.
+ *
+ * A held run is stored as `cancelled` — see markRunHeld — and rendering it
+ * that way would tell you an article was thrown away when it is sitting there
+ * finished, waiting for you.
+ */
+export function runBadge(run: { status: string; hold?: string }): Html {
+  if (run.hold === 'awaiting') return html`<span class="badge warn">awaiting approval</span>`;
+  if (run.hold === 'dry') return html`<span class="badge brand">dry run</span>`;
+  return statusBadge(run.status);
+}
