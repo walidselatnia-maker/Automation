@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { closeDatabase, get as dbGet, openDatabase, run } from '../src/db/index.js';
 import {
+  bulkSetKeywordStatus,
   getLinkShare,
   getKeyword,
   insertKeyword,
@@ -143,45 +144,81 @@ describe('web UI after the layout changes', () => {
     });
   });
 
-  /* -- keyword filtering ------------------------------------------------ */
+  /* -- the view picker --------------------------------------------------- */
 
-  describe('keyword filtering', () => {
+  describe('choosing a view', () => {
+    let siteId: number;
+
     beforeEach(() => {
-      const site = seedSite('bitespoon.com');
-      const a = insertKeyword({ seed_keyword: 'chicken soup', status: 'go' });
+      siteId = seedSite('bitespoon.com');
+      const going = insertKeyword({ seed_keyword: 'chicken soup', status: 'go' });
       insertKeyword({ seed_keyword: 'beef stew', status: 'done' });
-      setLink(a, site, 'go');
+      // Set to go and linked to nothing — supply on paper, nothing in practice.
+      insertKeyword({ seed_keyword: 'lemon tart', status: 'go' });
+      setLink(going, siteId, 'go');
     });
 
-    it('narrows the table to matching keywords', async () => {
+    it('defaults to everything', async () => {
+      const response = await get('/keywords');
+      expect(response.body).toContain('chicken soup');
+      expect(response.body).toContain('beef stew');
+      expect(response.body).toContain('lemon tart');
+    });
+
+    it('shows only what will actually publish', async () => {
+      const response = await get('/keywords?view=queued');
+      expect(response.body).toContain('chicken soup');
+      expect(response.body).not.toContain('beef stew');
+      expect(response.body).not.toContain('lemon tart');
+    });
+
+    it('finds the keywords that are going nowhere', async () => {
+      // The state that counts as supply on the dashboard and publishes
+      // nothing. It gets a view of its own precisely because it is invisible.
+      const response = await get('/keywords?view=stuck');
+      expect(response.body).toContain('lemon tart');
+      expect(response.body).not.toContain('chicken soup');
+    });
+
+    it('shows the finished ones', async () => {
+      const response = await get('/keywords?view=done');
+      expect(response.body).toContain('beef stew');
+      expect(response.body).not.toContain('chicken soup');
+    });
+
+    it('narrows a view to one site', async () => {
+      const other = seedSite('longlivo.com');
+      const response = await get(`/keywords?view=queued&site=${other}`);
+      expect(response.body).not.toContain('chicken soup');
+      expect(response.body).toContain('longlivo.com');
+    });
+
+    it('searches the words', async () => {
       const response = await get('/keywords?q=chicken');
       expect(response.body).toContain('chicken soup');
       expect(response.body).not.toContain('beef stew');
-      expect(response.body).toContain('1 of 2 keyword(s) match');
     });
 
-    it('filters on the keyword-global status', async () => {
-      const response = await get('/keywords?status=done');
-      expect(response.body).toContain('beef stew');
-      expect(response.body).not.toContain('chicken soup');
+    it('explains what the chosen view means', async () => {
+      const response = await get('/keywords?view=stuck');
+      expect(response.body).toContain('no site is set to go for it');
     });
 
-    it('finds keywords not linked to a site at all', async () => {
-      const response = await get('/keywords?site=1&link=none');
-      expect(response.body).toContain('beef stew');
-      expect(response.body).not.toContain('chicken soup');
-    });
-
-    it('keeps the filter on the pagination links', async () => {
+    it('keeps the search on the form after a reload', async () => {
       const response = await get('/keywords?q=chicken');
-      // Nothing paginates at this size, but the filter must survive a reload.
       expect(response.body).toContain('value="chicken"');
+    });
+
+    it('falls back to everything for a view it does not know', async () => {
+      const response = await get('/keywords?view=nonsense');
+      expect(response.statusCode).toBe(200);
+      expect(response.body).toContain('beef stew');
     });
   });
 
-  /* -- bulk editing ------------------------------------------------------ */
+  /* -- bulk actions ------------------------------------------------------- */
 
-  describe('bulk editing', () => {
+  describe('bulk actions', () => {
     let siteA: number;
     let siteB: number;
     let one: number;
@@ -194,24 +231,11 @@ describe('web UI after the layout changes', () => {
       two = insertKeyword({ seed_keyword: 'beef stew', status: 'go' });
     });
 
-    it('sets the keyword status on every ticked row', async () => {
-      await post('/keywords/bulk', {
-        ids: [String(one), String(two)],
-        action: 'apply',
-        keyword_status: 'done',
-        back: '/keywords',
-      });
-
-      expect(getKeyword(one)?.status).toBe('done');
-      expect(getKeyword(two)?.status).toBe('done');
-    });
-
-    it('sets a link status across every site when no site is chosen', async () => {
+    it('publishes the ticked keywords on every site', async () => {
       await post('/keywords/bulk', {
         ids: [String(one)],
-        action: 'apply',
+        action: 'publish-on',
         site_id: '',
-        link_status: 'go',
         back: '/keywords',
       });
 
@@ -220,12 +244,11 @@ describe('web UI after the layout changes', () => {
       expect(grid.every((l) => l.status === 'go')).toBe(true);
     });
 
-    it('touches only the chosen site when one is picked', async () => {
+    it('publishes on only the site that was chosen', async () => {
       await post('/keywords/bulk', {
         ids: [String(one)],
-        action: 'apply',
+        action: 'publish-on',
         site_id: String(siteA),
-        link_status: 'go',
         back: '/keywords',
       });
 
@@ -234,15 +257,58 @@ describe('web UI after the layout changes', () => {
       expect(grid[0]?.siteId).toBe(siteA);
     });
 
-    it('turns image sharing off in bulk', async () => {
+    it('switches a keyword back on when publishing it', async () => {
+      // Setting the cell alone would leave a keyword whose own status is `no`
+      // looking correct on the page and still never being offered.
+      bulkSetKeywordStatus([one], 'no');
+
+      await post('/keywords/bulk', {
+        ids: [String(one)],
+        action: 'publish-on',
+        site_id: String(siteA),
+        back: '/keywords',
+      });
+
+      expect(getKeyword(one)?.status).toBe('go');
+    });
+
+    it('stops the ticked keywords on a site', async () => {
+      setLink(one, siteA, 'go');
+
+      await post('/keywords/bulk', {
+        ids: [String(one)],
+        action: 'stop-on',
+        site_id: String(siteA),
+        back: '/keywords',
+      });
+
+      expect(loadLinkGrid().find((l) => l.keywordId === one)?.status).toBe('no');
+    });
+
+    it('marks them finished', async () => {
+      await post('/keywords/bulk', {
+        ids: [String(one), String(two)],
+        action: 'finish',
+        back: '/keywords',
+      });
+
+      expect(getKeyword(one)?.status).toBe('done');
+      expect(getKeyword(two)?.status).toBe('done');
+    });
+
+    it('turns them off', async () => {
+      await post('/keywords/bulk', { ids: [String(one)], action: 'off', back: '/keywords' });
+      expect(getKeyword(one)?.status).toBe('no');
+    });
+
+    it('switches image reuse off', async () => {
       setLink(one, siteA, 'go');
       setLink(one, siteB, 'go');
 
       await post('/keywords/bulk', {
         ids: [String(one)],
-        action: 'apply',
+        action: 'share-off',
         site_id: '',
-        share: '0',
         back: '/keywords',
       });
 
@@ -261,51 +327,42 @@ describe('web UI after the layout changes', () => {
       expect(getKeyword(two)).toBeUndefined();
     });
 
-    it('changes nothing when every control says leave as is', async () => {
-      const response = await post('/keywords/bulk', {
-        ids: [String(one)],
-        action: 'apply',
-        keyword_status: '',
-        link_status: '',
-        share: '',
-        back: '/keywords',
-      });
-
-      expect(response.headers.location).toContain('leave%20as%20is');
-      expect(getKeyword(one)?.status).toBe('go');
-      expect(loadLinkGrid()).toHaveLength(0);
-    });
-
     it('says so rather than acting when nothing is ticked', async () => {
-      const response = await post('/keywords/bulk', {
-        action: 'delete',
-        back: '/keywords',
-      });
+      const response = await post('/keywords/bulk', { action: 'delete', back: '/keywords' });
 
       expect(response.headers.location).toContain('Nothing%20was%20ticked');
       expect(getKeyword(one)).toBeDefined();
     });
 
+    it('refuses an action it does not have', async () => {
+      const response = await post('/keywords/bulk', {
+        ids: [String(one)],
+        action: 'drop-database',
+        back: '/keywords',
+      });
+
+      expect(response.headers.location).toContain('error=');
+      expect(getKeyword(one)?.status).toBe('go');
+    });
+
     it('refuses to be redirected off this app', async () => {
       const response = await post('/keywords/bulk', {
         ids: [String(one)],
-        action: 'apply',
-        keyword_status: 'no',
+        action: 'off',
         back: 'https://example.com/evil',
       });
 
       expect(response.headers.location).toMatch(/^\/keywords/);
     });
 
-    it('returns to the filtered view it came from', async () => {
+    it('returns to the view it came from', async () => {
       const response = await post('/keywords/bulk', {
         ids: [String(one)],
-        action: 'apply',
-        keyword_status: 'no',
-        back: '/keywords?q=chicken',
+        action: 'off',
+        back: '/keywords?view=queued',
       });
 
-      expect(response.headers.location).toContain('/keywords?q=chicken');
+      expect(response.headers.location).toContain('/keywords?view=queued');
     });
   });
 

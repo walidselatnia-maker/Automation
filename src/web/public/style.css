@@ -778,3 +778,148 @@ body.signin main {
 .diff div { padding: 1px 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .diff .del { background: var(--red-bg); color: var(--red); }
 .diff .add { background: var(--teal-bg); color: var(--teal); }
+
+/* ------------------------------------------------------- the view picker */
+
+/* One question — "show me X on Y" — instead of four fields you had to hold
+   the data model in your head to combine. */
+.viewbar {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  margin-bottom: 14px;
+  box-shadow: var(--shadow);
+}
+
+.viewbar-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.viewbar-line label {
+  margin: 0;
+  font-weight: 500;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.viewbar-line select { width: auto; min-width: 170px; font-weight: 600; }
+.viewbar-line input[type="search"] { width: auto; flex: 1 1 200px; }
+
+/* The chosen view explains itself, so nobody has to guess what it selected. */
+.viewbar-blurb {
+  margin: 10px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+  max-width: 80ch;
+}
+
+/* -------------------------------------------------------- the bulk actions */
+
+/* Calm until something is ticked. It used to sit there fully lit reading
+   "1 selected" over six dropdowns, which looks like six decisions you owe it
+   before you have done anything. */
+.bulkbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 18px;
+  padding: 12px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--card);
+  margin-bottom: 12px;
+  opacity: 0.55;
+}
+
+.bulkbar.armed {
+  opacity: 1;
+  border-color: var(--brand);
+  background: linear-gradient(90deg, var(--brand-bg), var(--card) 60%);
+}
+
+.bulkbar .bulk-count {
+  font-family: var(--display);
+  font-weight: 700;
+  white-space: nowrap;
+}
+.bulkbar .bulk-count span:first-child { font-size: 17px; color: var(--brand); }
+.bulkbar .bulk-count .muted { font-weight: 400; }
+
+.bulk-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  flex: 1;
+}
+
+/* Each group is one idea: where, then the whole keyword, then images. */
+.bulk-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-right: 16px;
+  border-right: 1px solid var(--line);
+}
+.bulk-group:last-of-type { border-right: none; }
+.bulk-group select { width: auto; min-width: 150px; }
+
+/* ------------------------------------------------------- the keyword list */
+
+.kwlist td { vertical-align: middle; padding-top: 12px; padding-bottom: 12px; }
+.kwlist tr.picked { background: var(--brand-bg); }
+
+.kwtitle {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 15px;
+  color: var(--ink);
+  text-decoration: none;
+}
+.kwtitle:hover { color: var(--brand); text-decoration: underline; }
+
+/* Six sites as six marks, instead of six dropdowns and six checkboxes. */
+.dots { display: flex; gap: 5px; margin-bottom: 4px; }
+
+.dot {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  display: inline-block;
+  flex: none;
+  border: 1px solid transparent;
+}
+.dot.go       { background: var(--teal); }
+.dot.done     { background: var(--line); border-color: var(--muted); }
+.dot.no       { background: transparent; border-color: var(--red); }
+.dot.unlinked { background: transparent; border-color: var(--line); }
+
+.legend { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+.legend .dot { margin-left: 8px; }
+.legend .dot:first-child { margin-left: 0; }
+
+/* ------------------------------------------------- radio choices as cards */
+
+/* Three named options with their consequence written next to them, rather
+   than a bare go/done/no dropdown whose meanings live in your memory. */
+.choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-weight: 400;
+  text-transform: none;
+  margin: 0;
+  flex: 1 1 220px;
+}
+.choice:hover { border-color: var(--muted); }
+.choice.on { border-color: var(--brand); background: var(--brand-bg); }
+.choice input { width: auto; margin-top: 3px; }
+.choice span { display: flex; flex-direction: column; gap: 2px; }

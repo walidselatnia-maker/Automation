@@ -898,14 +898,24 @@ export function normaliseStoredDomains(
  * the table to the rows you mean; the bulk writes then act on exactly those.
  * ====================================================================== */
 
+/**
+ * A named view of the keyword list.
+ *
+ * The page used to expose the raw fields — keyword status, site, and link
+ * status — as four separate dropdowns, one of which was labelled "Where it
+ * stands there". Nobody could work out what a combination of them would show,
+ * because answering that needed the data model in your head.
+ *
+ * These are the questions people actually ask instead. Each is one option.
+ */
+export type KeywordListView = 'all' | 'queued' | 'stuck' | 'done' | 'off';
+
 export interface KeywordFilter {
   /** Matched against the keyword and its spy title, case-insensitively. */
   q?: string;
-  /** Keyword-global status, or blank for any. */
-  status?: string;
-  /** Only keywords linked to this site with the given link status. */
+  view?: KeywordListView;
+  /** Narrows every view to one site. 0 means "any site". */
   siteId?: number;
-  linkStatus?: string;
 }
 
 /** WHERE clause and parameters shared by the list and its count. */
@@ -919,36 +929,71 @@ function keywordWhere(filter: KeywordFilter): { sql: string; params: (string | n
     params.push(`%${q}%`, `%${q}%`);
   }
 
-  if (filter.status === 'go' || filter.status === 'done' || filter.status === 'no') {
-    clauses.push('k.status = ?');
-    params.push(filter.status);
-  }
+  // "Is this keyword going to publish somewhere?" — the question both `queued`
+  // and `stuck` are asking, from opposite sides. Narrowed to one site when one
+  // is chosen, so the same view reads as "here" rather than "anywhere".
+  const goesSomewhere = filter.siteId
+    ? 'EXISTS (SELECT 1 FROM keyword_sites ks WHERE ks.keyword_id = k.id AND ks.status = \'go\' AND ks.site_id = ?)'
+    : "EXISTS (SELECT 1 FROM keyword_sites ks WHERE ks.keyword_id = k.id AND ks.status = 'go')";
 
-  if (filter.siteId) {
-    if (filter.linkStatus === 'none') {
-      // "Not linked here at all" — the state that looks like supply and is not.
-      clauses.push(
-        'NOT EXISTS (SELECT 1 FROM keyword_sites ks WHERE ks.keyword_id = k.id AND ks.site_id = ?)',
-      );
-      params.push(filter.siteId);
-    } else if (
-      filter.linkStatus === 'go' ||
-      filter.linkStatus === 'done' ||
-      filter.linkStatus === 'no'
-    ) {
-      clauses.push(
-        'EXISTS (SELECT 1 FROM keyword_sites ks WHERE ks.keyword_id = k.id AND ks.site_id = ? AND ks.status = ?)',
-      );
-      params.push(filter.siteId, filter.linkStatus);
-    } else {
-      clauses.push(
-        'EXISTS (SELECT 1 FROM keyword_sites ks WHERE ks.keyword_id = k.id AND ks.site_id = ?)',
-      );
-      params.push(filter.siteId);
-    }
+  switch (filter.view ?? 'all') {
+    case 'queued':
+      clauses.push("k.status = 'go'", goesSomewhere);
+      if (filter.siteId) params.push(filter.siteId);
+      break;
+
+    case 'stuck':
+      // Set to go and linked to nothing that will take it. This is the state
+      // that looks like supply on the dashboard and publishes nothing, which
+      // is why it gets a view of its own.
+      clauses.push("k.status = 'go'", `NOT ${goesSomewhere}`);
+      if (filter.siteId) params.push(filter.siteId);
+      break;
+
+    case 'done':
+      clauses.push("k.status = 'done'");
+      if (filter.siteId) {
+        clauses.push(
+          'EXISTS (SELECT 1 FROM keyword_sites ks WHERE ks.keyword_id = k.id AND ks.site_id = ?)',
+        );
+        params.push(filter.siteId);
+      }
+      break;
+
+    case 'off':
+      clauses.push("k.status = 'no'");
+      if (filter.siteId) {
+        clauses.push(
+          'EXISTS (SELECT 1 FROM keyword_sites ks WHERE ks.keyword_id = k.id AND ks.site_id = ?)',
+        );
+        params.push(filter.siteId);
+      }
+      break;
+
+    case 'all':
+    default:
+      if (filter.siteId) {
+        clauses.push(
+          'EXISTS (SELECT 1 FROM keyword_sites ks WHERE ks.keyword_id = k.id AND ks.site_id = ?)',
+        );
+        params.push(filter.siteId);
+      }
+      break;
   }
 
   return { sql: clauses.length ? `WHERE ${clauses.join(' AND ')}` : '', params };
+}
+
+/** How many keywords each view holds, for the labels on the view picker. */
+export function keywordViewCounts(siteId = 0): Record<KeywordListView, number> {
+  const count = (view: KeywordListView): number => countKeywordsMatching({ view, siteId });
+  return {
+    all: count('all'),
+    queued: count('queued'),
+    stuck: count('stuck'),
+    done: count('done'),
+    off: count('off'),
+  };
 }
 
 export const searchKeywords = (

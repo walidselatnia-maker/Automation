@@ -28,6 +28,7 @@ import type { SettingSpec } from '../../settings.js';
 import type { Supply } from '../../core/supply.js';
 import type { RunUsage, StepCost } from '../../db/repos.js';
 import type { KeywordDiagnosis } from '../../core/diagnosis.js';
+import type { KeywordListView } from '../../db/repos.js';
 import type { Candidate } from '../url-import.js';
 import type { DataCounts } from '../../db/maintenance.js';
 
@@ -884,189 +885,210 @@ function siteForm(site: SiteRow | null): Html {
 
 export interface KeywordFilterView {
   q: string;
-  status: string;
+  view: KeywordListView;
   siteId: number;
-  linkStatus: string;
 }
 
-/** A <select> of go / done / no, with an explicit "no change" first option. */
-function tristate(id: string, name: string, current: string, blank: string): Html {
-  return html`
-    <select id="${id}" name="${name}">
-      <option value="">${blank}</option>
-      ${(['go', 'done', 'no'] as const).map(
-        (v) => html`<option value="${v}" ${current === v ? raw('selected') : raw('')}>${v}</option>`,
-      )}
-    </select>
-  `;
+/** Where one keyword stands on one site, for the dots on its row. */
+export interface SiteMark {
+  domain: string;
+  status: 'go' | 'done' | 'no' | 'unlinked';
 }
+
+/**
+ * The views, in the words someone would use to ask for them.
+ *
+ * This replaced four dropdowns — keyword status, site, and one labelled "Where
+ * it stands there" — whose combinations you had to hold the data model in your
+ * head to predict. These are the five questions actually asked of this page.
+ */
+const VIEWS: { key: KeywordListView; label: string; blurb: string }[] = [
+  { key: 'queued', label: 'Will publish', blurb: 'Set to go, with at least one site waiting to take it.' },
+  {
+    key: 'stuck',
+    label: 'Going nowhere',
+    blurb:
+      'Set to go, but no site is set to go for it — so nothing will ever pick these up. ' +
+      'They count as supply on the dashboard and publish nothing.',
+  },
+  { key: 'done', label: 'Finished', blurb: 'Already published everywhere they were meant to go.' },
+  { key: 'off', label: 'Turned off', blurb: 'Set to no. The scheduler ignores them entirely.' },
+  { key: 'all', label: 'Everything', blurb: 'Every keyword, whatever state it is in.' },
+];
 
 export function keywordsPage(
   keywords: KeywordRow[],
   sites: SiteRow[],
-  links: Map<string, { status: string; shareImages: boolean }>,
+  marks: Map<number, SiteMark[]>,
   page: number,
   total: number,
   matched: number,
+  counts: Record<KeywordListView, number>,
   filter: KeywordFilterView,
 ): Html {
   const pages = Math.max(1, Math.ceil(matched / 100));
-  const filtered = filter.q !== '' || filter.status !== '' || filter.siteId !== 0;
-
-  // Carried through the bulk form so applying an edit returns you to the same
-  // filtered view rather than dumping you back at page one of everything.
+  const current = VIEWS.find((v) => v.key === filter.view) ?? VIEWS[4]!;
   const back = `/keywords${pageLink(filter, page)}`;
+  const siteName = sites.find((x) => x.id === filter.siteId)?.domain ?? '';
 
   return html`
-    <h1>Keywords</h1>
-    <p class="subtitle">
-      ${total} keyword(s). Each cell decides whether that keyword may run on that site.
-      Tick rows to edit many of them at once.
-    </p>
+    <div class="spread">
+      <div>
+        <h1>Keywords</h1>
+        <p class="subtitle">
+          ${total} keyword(s) across ${sites.length} site(s). A keyword publishes on a site when
+          both are set to <span class="mono">go</span>.
+        </p>
+      </div>
+      <a class="button primary" href="/keywords/add">Add keywords</a>
+    </div>
 
-    <form method="get" action="/keywords" class="toolbar">
-      <div class="field">
-        <label for="q">Search</label>
-        <input type="search" id="q" name="q" value="${filter.q}"
-               placeholder="keyword or spy title" />
-      </div>
-      <div class="field">
-        <label for="status">Keyword status</label>
-        ${tristate('status', 'status', filter.status, 'any')}
-      </div>
-      <div class="field">
-        <label for="site">On site</label>
-        <select id="site" name="site">
-          <option value="">any site</option>
-          ${sites.map(
-            (s) =>
-              html`<option value="${s.id}" ${filter.siteId === s.id ? raw('selected') : raw('')}>${s.domain}</option>`,
+    <!-- One question, not four fields. -->
+    <form method="get" action="/keywords" class="viewbar">
+      <div class="viewbar-line">
+        <label for="view">Show me</label>
+        <select id="view" name="view" onchange="this.form.submit()">
+          ${VIEWS.map(
+            (v) => html`<option value="${v.key}" ${filter.view === v.key ? raw('selected') : raw('')}>
+              ${v.label} (${counts[v.key]})
+            </option>`,
           )}
         </select>
-      </div>
-      <div class="field">
-        <label for="link">Where it stands there</label>
-        <select id="link" name="link">
-          <option value="">linked, any status</option>
-          <option value="go" ${filter.linkStatus === 'go' ? raw('selected') : raw('')}>go</option>
-          <option value="done" ${filter.linkStatus === 'done' ? raw('selected') : raw('')}>done</option>
-          <option value="no" ${filter.linkStatus === 'no' ? raw('selected') : raw('')}>no</option>
-          <option value="none" ${filter.linkStatus === 'none' ? raw('selected') : raw('')}>not linked at all</option>
+
+        <label for="site">on</label>
+        <select id="site" name="site" onchange="this.form.submit()">
+          <option value="">any site</option>
+          ${sites.map(
+            (x) =>
+              html`<option value="${x.id}" ${filter.siteId === x.id ? raw('selected') : raw('')}>${x.domain}</option>`,
+          )}
         </select>
+
+        <input type="search" name="q" value="${filter.q}" placeholder="search the words…" />
+        <button type="submit">Search</button>
       </div>
-      <button class="primary" type="submit">Filter</button>
-      ${filtered ? html`<a class="button" href="/keywords">Clear</a>` : raw('')}
+      <p class="viewbar-blurb">
+        ${current.blurb}
+        ${filter.siteId ? html` Limited to <strong>${siteName}</strong>.` : raw('')}
+      </p>
     </form>
 
-    ${filtered
-      ? html`<p class="muted small" style="margin-top:-4px">
-          ${matched} of ${total} keyword(s) match.
-        </p>`
-      : raw('')}
+    ${keywords.length === 0
+      ? html`<div class="card">
+          ${emptyState(
+            filter.q
+              ? `Nothing matches “${filter.q}” in this view.`
+              : `No keywords are in this state${filter.siteId ? ` on ${siteName}` : ''}.`,
+          )}
+        </div>`
+      : html`
+          <!-- Every control below is a verb. The old bar read
+               "Status [leave as is] On [all sites] set to [leave as is]",
+               which is not a sentence anybody can act on. -->
+          <form method="post" action="/keywords/bulk" id="bulk" class="bulkbar">
+            <input type="hidden" name="back" value="${back}" />
 
-    <form method="post" action="/keywords/bulk" id="bulk" class="bulkbar">
-      <input type="hidden" name="back" value="${back}" />
-      <span><span class="count" id="pick-count">0</span> selected</span>
+            <div class="bulk-count">
+              <span id="pick-count">0</span> selected
+              <span class="muted small" id="pick-hint">— tick a row to act on it</span>
+            </div>
 
-      <label for="bulk-status" style="margin:0">Status</label>
-      ${tristate('bulk-status', 'keyword_status', '', 'leave as is')}
+            <div class="bulk-actions">
+              <div class="bulk-group">
+                <select name="site_id" aria-label="Which site these actions apply to">
+                  <option value="">every site</option>
+                  ${sites.map((x) => html`<option value="${x.id}">${x.domain}</option>`)}
+                </select>
+                <button type="submit" name="action" value="publish-on" class="primary">
+                  Publish here
+                </button>
+                <button type="submit" name="action" value="stop-on">Stop here</button>
+              </div>
 
-      <label for="bulk-site" style="margin:0">On</label>
-      <select id="bulk-site" name="site_id">
-        <option value="">all sites</option>
-        ${sites.map((s) => html`<option value="${s.id}">${s.domain}</option>`)}
-      </select>
+              <div class="bulk-group">
+                <button type="submit" name="action" value="finish">Mark finished</button>
+                <button type="submit" name="action" value="off">Turn off</button>
+              </div>
 
-      <label for="bulk-link" style="margin:0">set to</label>
-      ${tristate('bulk-link', 'link_status', '', 'leave as is')}
+              <div class="bulk-group">
+                <span class="muted small">Article images</span>
+                <button type="submit" name="action" value="share-on"
+                        title="Reuse one set of images across the sites this keyword runs on">
+                  Reuse
+                </button>
+                <button type="submit" name="action" value="share-off"
+                        title="Generate fresh images on every site">
+                  Fresh
+                </button>
+              </div>
 
-      <label for="bulk-share" style="margin:0">Share images</label>
-      <select id="bulk-share" name="share">
-        <option value="">leave as is</option>
-        <option value="1">on</option>
-        <option value="0">off</option>
-      </select>
+              <button type="submit" name="action" value="delete" class="danger" formnovalidate
+                      onclick="return confirm('Delete every ticked keyword? This cannot be undone.')">
+                Delete
+              </button>
+            </div>
+          </form>
 
-      <button class="primary" type="submit" name="action" value="apply">Apply</button>
-      <button class="danger" type="submit" name="action" value="delete" formnovalidate
-              onclick="return confirm('Delete every ticked keyword? This cannot be undone.')">
-        Delete
-      </button>
-    </form>
+          <div class="card table-wrap">
+            <table class="kwlist">
+              <thead>
+                <tr>
+                  <th class="pick"><input type="checkbox" id="pick-all" title="Select every row here" /></th>
+                  <th>Keyword</th>
+                  <th>Where it runs</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                ${keywords.map((k) => {
+                  const row = marks.get(k.id) ?? [];
+                  const going = row.filter((m) => m.status === 'go').length;
 
-    <div class="card table-wrap">
-      ${keywords.length === 0
-        ? emptyState(
-            filtered
-              ? 'No keyword matches this filter.'
-              : 'No keywords yet. Import a CSV below to get started.',
-          )
-        : html`<table class="matrix">
-            <thead>
-              <tr>
-                <th class="pick">
-                  <input type="checkbox" id="pick-all" title="Select every row on this page" />
-                </th>
-                <th>Keyword</th><th>Status</th>
-                ${sites.map((s) => html`<th title="${s.domain}">${s.name}</th>`)}
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              ${keywords.map(
-                (k) => html`<tr>
-                  <td class="pick">
-                    <input type="checkbox" form="bulk" name="ids" value="${k.id}" />
-                  </td>
-                  <td>
-                    <a href="/keywords/${k.id}"><strong>${k.seed_keyword}</strong></a>
-                    <div class="muted small">${(k.spy_title || '').slice(0, 70)}</div>
-                  </td>
-                  <td>
-                    <form method="post" action="/keywords/${k.id}/status" class="row">
-                      <select name="status" onchange="this.form.submit()">
-                        ${(['go', 'done', 'no'] as const).map(
-                          (v) =>
-                            html`<option value="${v}" ${k.status === v ? raw('selected') : raw('')}>${v}</option>`,
+                  return html`<tr>
+                    <td class="pick">
+                      <input type="checkbox" form="bulk" name="ids" value="${k.id}" />
+                    </td>
+                    <td>
+                      <a href="/keywords/${k.id}" class="kwtitle"
+                        >${k.spy_title || k.seed_keyword}</a
+                      >
+                      <div class="muted small">
+                        ${k.seed_keyword}${k.spy_title ? '' : ' — no article title imported'}
+                      </div>
+                    </td>
+                    <td>
+                      <div class="dots">
+                        ${row.map(
+                          (m) => html`<span class="dot ${m.status}"
+                            title="${m.domain} — ${m.status === 'unlinked' ? 'not linked' : m.status}"
+                          ></span>`,
                         )}
-                      </select>
-                    </form>
-                  </td>
-                  ${sites.map((s) => {
-                    const cell = links.get(`${k.id}:${s.id}`);
-                    const current = cell?.status ?? 'no';
-                    // A pair with no row yet inherits the column default.
-                    const shared = cell?.shareImages ?? true;
-                    return html`<td>
-                      <form method="post" action="/keywords/${k.id}/link">
-                        <input type="hidden" name="site_id" value="${s.id}" />
-                        <select name="status" onchange="this.form.submit()">
-                          ${(['go', 'done', 'no'] as const).map(
-                            (v) =>
-                              html`<option value="${v}" ${current === v ? raw('selected') : raw('')}>${v}</option>`,
-                          )}
-                        </select>
-                        <label class="muted small"
-                               title="Reuse this keyword's article images here instead of generating new ones. The Pinterest graphic is always generated fresh.">
-                          <input type="checkbox" name="share_images" value="1"
-                                 ${shared ? raw('checked') : raw('')}
-                                 onchange="this.form.submit()" />
-                          share
-                        </label>
-                      </form>
-                    </td>`;
-                  })}
-                  <td>
-                    <form method="post" action="/keywords/${k.id}/delete"
-                          onsubmit="return confirm('Delete this keyword?')">
-                      <button class="small danger" type="submit">&times;</button>
-                    </form>
-                  </td>
-                </tr>`,
-              )}
-            </tbody>
-          </table>`}
-    </div>
+                      </div>
+                      <div class="muted small">
+                        ${k.status !== 'go'
+                          ? html`keyword is <strong>${k.status}</strong>`
+                          : going > 0
+                            ? `${going} site(s) waiting for it`
+                            : 'no site is set to go'}
+                      </div>
+                    </td>
+                    <td class="nowrap">
+                      <a class="button small" href="/keywords/${k.id}">Open</a>
+                    </td>
+                  </tr>`;
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          <p class="muted small legend">
+            <span class="dot go"></span> will publish here
+            <span class="dot done"></span> already published
+            <span class="dot no"></span> set to no
+            <span class="dot unlinked"></span> not linked
+            &mdash; hover a dot for the site.
+          </p>
+        `}
 
     ${pages > 1
       ? html`<div class="row">
@@ -1080,48 +1102,6 @@ export function keywordsPage(
         </div>`
       : raw('')}
 
-    <h2>Add from a page URL</h2>
-    <div class="card">
-      <p class="muted small" style="margin-top:0">
-        Paste the address of an article worth competing with. The page's own title,
-        description and image are read and turned into a keyword you can check before it is
-        saved &mdash; nothing is written until you confirm on the next screen.
-      </p>
-      <form method="post" action="/keywords/from-url">
-        <div class="field">
-          <label for="urls">One URL per line</label>
-          <textarea id="urls" name="urls" rows="4" required
-                    placeholder="https://example.com/best-baked-chicken"></textarea>
-          <div class="help">Up to 20 at a time. Only http and https, and no private addresses.</div>
-        </div>
-        <button class="primary" type="submit">Read these pages</button>
-      </form>
-    </div>
-
-    <h2>Import from CSV</h2>
-    <div class="card">
-      <p class="muted small" style="margin-top:0">
-        Columns: <span class="mono">seed_keyword, spy_title, spy_description, annotation,
-        status</span>, then one column per site domain holding go / done / no. Only
-        <span class="mono">seed_keyword</span> is required, and a keyword may be set to
-        <span class="mono">go</span> on as many sites as you like. Those sites reuse one set
-        of article images by default &mdash; untick <span class="mono">share</span> on a cell
-        to generate fresh ones there. Pinterest graphics are always generated per site.
-      </p>
-      <form method="post" action="/keywords/import" enctype="multipart/form-data">
-        <div class="field"><input type="file" name="file" accept=".csv,text/csv" required /></div>
-        <div class="row wrap">
-          <button class="primary" type="submit">Import CSV</button>
-          <a class="button" href="/keywords/template.csv" download>Download template</a>
-          <a class="button" href="/data/export/keywords" download>Export what is here</a>
-        </div>
-        <div class="help" style="margin-top:8px">
-          The template already has a column for every site you have added. An export uses the
-          same columns, so it can be edited in a spreadsheet and imported straight back.
-        </div>
-      </form>
-    </div>
-
     ${raw(BULK_SELECTION_SCRIPT)}
   `;
 }
@@ -1129,9 +1109,8 @@ export function keywordsPage(
 function pageLink(filter: KeywordFilterView, page: number): string {
   const params = new URLSearchParams();
   if (filter.q) params.set('q', filter.q);
-  if (filter.status) params.set('status', filter.status);
+  if (filter.view && filter.view !== 'all') params.set('view', filter.view);
   if (filter.siteId) params.set('site', String(filter.siteId));
-  if (filter.linkStatus) params.set('link', filter.linkStatus);
   if (page > 1) params.set('page', String(page));
   const query = params.toString();
   return query ? `?${query}` : '';
@@ -1141,9 +1120,10 @@ function pageLink(filter: KeywordFilterView, page: number): string {
  * Row selection, in the smallest amount of script that does the job.
  *
  * The checkboxes sit in the table but belong to the bulk form above it, via
- * the HTML `form` attribute: a form inside a form is invalid, and every cell
- * of the matrix is already its own form. This script only keeps the counter
- * and the select-all box honest — submitting works with scripting off.
+ * the HTML `form` attribute: a form inside a form is invalid. The script keeps
+ * the counter honest and greys the bar out until something is ticked, so it
+ * stops looking like six decisions you owe it on arrival. Submitting still
+ * works with scripting off.
  */
 const BULK_SELECTION_SCRIPT = `<script>
 (function () {
@@ -1153,6 +1133,7 @@ const BULK_SELECTION_SCRIPT = `<script>
   var boxes = Array.prototype.slice.call(document.querySelectorAll('input[name="ids"]'));
   var all = document.getElementById('pick-all');
   var count = document.getElementById('pick-count');
+  var hint = document.getElementById('pick-hint');
 
   function sync() {
     var picked = 0;
@@ -1161,7 +1142,11 @@ const BULK_SELECTION_SCRIPT = `<script>
       var row = box.closest('tr');
       if (row) row.classList.toggle('picked', box.checked);
     });
+
     if (count) count.textContent = String(picked);
+    if (hint) hint.style.display = picked ? 'none' : '';
+    form.classList.toggle('armed', picked > 0);
+
     if (all) {
       all.checked = picked > 0 && picked === boxes.length;
       all.indeterminate = picked > 0 && picked < boxes.length;
@@ -1178,6 +1163,67 @@ const BULK_SELECTION_SCRIPT = `<script>
   sync();
 })();
 </script>`;
+
+/* =========================================================================
+ * Adding keywords
+ * ====================================================================== */
+
+/**
+ * Import moved off the list.
+ *
+ * It was two large blocks of explanatory text under a table people came to
+ * read, which is most of why that page felt like a wall.
+ */
+export function keywordAddPage(): Html {
+  return html`
+    <div class="spread">
+      <div>
+        <h1>Add keywords</h1>
+        <p class="subtitle">Two ways in. Neither writes anything until you confirm.</p>
+      </div>
+      <a class="button" href="/keywords">Back to keywords</a>
+    </div>
+
+    <h2>From a page you want to compete with</h2>
+    <div class="card">
+      <p class="muted small" style="margin-top:0">
+        Paste article addresses. Each page's own title, description and image are read and shown
+        for you to check and edit before anything is saved.
+      </p>
+      <form method="post" action="/keywords/from-url">
+        <div class="field">
+          <label for="urls">One address per line</label>
+          <textarea id="urls" name="urls" rows="5" required
+                    placeholder="https://example.com/best-baked-chicken"></textarea>
+          <div class="help">Up to 20 at a time. http and https only, no private addresses.</div>
+        </div>
+        <button class="primary" type="submit">Read these pages</button>
+      </form>
+    </div>
+
+    <h2>From a spreadsheet</h2>
+    <div class="card">
+      <p class="muted small" style="margin-top:0">
+        Columns: <span class="mono">seed_keyword, spy_title, spy_description, annotation,
+        status</span>, then one column per site domain holding
+        <span class="mono">go</span>, <span class="mono">done</span> or
+        <span class="mono">no</span>. Only <span class="mono">seed_keyword</span> is required.
+      </p>
+      <form method="post" action="/keywords/import" enctype="multipart/form-data">
+        <div class="field"><input type="file" name="file" accept=".csv,text/csv" required /></div>
+        <div class="row wrap">
+          <button class="primary" type="submit">Import CSV</button>
+          <a class="button" href="/keywords/template.csv" download>Download a template</a>
+          <a class="button" href="/data/export/keywords" download>Export what is here</a>
+        </div>
+        <div class="help" style="margin-top:8px">
+          The template already has a column for every site you have added. An export uses the same
+          columns, so it can be edited in a spreadsheet and imported straight back.
+        </div>
+      </form>
+    </div>
+  `;
+}
 
 /* =========================================================================
  * Settings
@@ -1942,53 +1988,113 @@ export function keywordDetailPage(
   keyword: KeywordRow,
   diagnosis: KeywordDiagnosis,
   runs: RunListRow[],
+  shares: Map<number, boolean>,
 ): Html {
   return html`
     <div class="spread">
       <div>
-        <h1>${keyword.seed_keyword}</h1>
-        <p class="subtitle">${keyword.spy_title || 'No spy title recorded.'}</p>
+        <h1>${keyword.spy_title || keyword.seed_keyword}</h1>
+        <p class="subtitle">
+          Keyword: <span class="mono">${keyword.seed_keyword}</span>
+        </p>
       </div>
       <div class="row">
         <a class="button" href="/keywords">All keywords</a>
         <form method="post" action="/keywords/${keyword.id}/dry-run">
           <button type="submit"
-                  title="Write this article now without publishing it, so you can read it">
-            Dry run
+                  title="Write this article now without publishing it, so you can read it first">
+            Write a test article
           </button>
         </form>
       </div>
     </div>
 
-    <div class="flash ${diagnosis.readyCount > 0 ? 'ok' : 'warn'}">
-      ${diagnosis.summary}
+    <div class="flash ${diagnosis.readyCount > 0 ? 'ok' : 'warn'}">${diagnosis.summary}</div>
+
+    <h2>Is this keyword in use?</h2>
+    <div class="card">
+      <form method="post" action="/keywords/${keyword.id}/status" class="row wrap">
+        ${(
+          [
+            ['go', 'Use it', 'The scheduler may pick this up.'],
+            ['done', 'Finished', 'Published everywhere it was meant to go.'],
+            ['no', 'Turned off', 'Never pick this up.'],
+          ] as const
+        ).map(
+          ([value, label, why]) => html`
+            <label class="choice ${keyword.status === value ? 'on' : ''}">
+              <input type="radio" name="status" value="${value}"
+                     ${keyword.status === value ? raw('checked') : raw('')}
+                     onchange="this.form.submit()" />
+              <span><strong>${label}</strong><span class="muted small">${why}</span></span>
+            </label>
+          `,
+        )}
+      </form>
     </div>
 
-    <h2>Where it stands, site by site</h2>
+    <h2>Which sites should publish it?</h2>
+    <p class="subtitle">
+      One row per site, with the reason it can or cannot run right now. This is the same
+      information the scheduler uses when it decides.
+    </p>
+
     <div class="card table-wrap">
       ${diagnosis.sites.length === 0
         ? emptyState('No sites yet, so there is nowhere for this to publish.')
         : html`<table>
             <thead>
-              <tr><th>Site</th><th>Cell</th><th>Ready now?</th><th>Why</th></tr>
+              <tr><th>Site</th><th>Should it run here?</th><th>Images</th><th>Right now</th></tr>
             </thead>
             <tbody>
-              ${diagnosis.sites.map(
-                (verdict) => html`<tr>
-                  <td class="mono"><a href="/sites/${verdict.siteId}">${verdict.domain}</a></td>
+              ${diagnosis.sites.map((verdict) => {
+                const linked = verdict.link !== 'unlinked';
+                const shared = shares.get(verdict.siteId) ?? true;
+
+                return html`<tr>
                   <td>
-                    ${verdict.link === 'unlinked'
-                      ? html`<span class="badge muted">not linked</span>`
-                      : statusBadge(verdict.link)}
+                    <a href="/sites/${verdict.siteId}" class="mono">${verdict.domain}</a>
                   </td>
                   <td>
+                    <form method="post" action="/keywords/${keyword.id}/link" class="row">
+                      <input type="hidden" name="site_id" value="${verdict.siteId}" />
+                      <input type="hidden" name="share_images" value="${shared ? '1' : '0'}" />
+                      <select name="status" onchange="this.form.submit()">
+                        <option value="go" ${verdict.link === 'go' ? raw('selected') : raw('')}>
+                          yes — publish here
+                        </option>
+                        <option value="done" ${verdict.link === 'done' ? raw('selected') : raw('')}>
+                          already published here
+                        </option>
+                        <option value="no"
+                                ${verdict.link === 'no' || !linked ? raw('selected') : raw('')}>
+                          no — skip this site
+                        </option>
+                      </select>
+                    </form>
+                  </td>
+                  <td>
+                    ${verdict.link === 'go' || verdict.link === 'done'
+                      ? html`<form method="post" action="/keywords/${keyword.id}/link" class="row">
+                          <input type="hidden" name="site_id" value="${verdict.siteId}" />
+                          <input type="hidden" name="status" value="${verdict.link}" />
+                          <label class="muted small"
+                                 title="Reuse the article images another site already made for this keyword. The Pinterest graphic is always made fresh.">
+                            <input type="checkbox" name="share_images" value="1"
+                                   ${shared ? raw('checked') : raw('')}
+                                   onchange="this.form.submit()" />
+                            reuse
+                          </label>
+                        </form>`
+                      : html`<span class="muted small">—</span>`}
+                  </td>
+                  <td class="small">
                     ${verdict.ready
-                      ? html`<span class="badge ok">yes</span>`
-                      : html`<span class="badge muted">no</span>`}
+                      ? html`<span class="badge ok">ready</span> ${verdict.reason}`
+                      : verdict.reason}
                   </td>
-                  <td class="small">${verdict.reason}</td>
-                </tr>`,
-              )}
+                </tr>`;
+              })}
             </tbody>
           </table>`}
     </div>
@@ -2013,6 +2119,10 @@ export function keywordDetailPage(
             : '—'}
         </dd>
       </dl>
+      <form method="post" action="/keywords/${keyword.id}/delete" style="margin-top:14px"
+            onsubmit="return confirm('Delete this keyword? Its run history stays but is detached.')">
+        <button class="danger small" type="submit">Delete this keyword</button>
+      </form>
     </div>
   `;
 }

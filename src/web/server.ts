@@ -19,6 +19,7 @@ import {
   eventsPage,
   accountPage,
   keysPage,
+  keywordAddPage,
   keywordDetailPage,
   keywordsPage,
   promptEditPage,
@@ -31,7 +32,7 @@ import {
   urlCandidatesPage,
   usagePage,
 } from './views/pages.js';
-import type { KeywordFilterView } from './views/pages.js';
+import type { KeywordFilterView, SiteMark } from './views/pages.js';
 import { importKeywordsCsv } from './import.js';
 import {
   activateSite,
@@ -41,6 +42,7 @@ import {
   bulkSetShareImages,
   countKeywords,
   countKeywordsMatching,
+  keywordViewCounts,
   countRuns,
   deleteKeyword,
   deleteSite,
@@ -614,17 +616,18 @@ export function buildServer(
 
   /* -- Keywords ---------------------------------------------------------- */
 
-  /** The filter the keywords page was asked for, normalised. */
+  /** The view the keywords page was asked for, normalised. */
   const readKeywordFilter = (query: unknown): KeywordFilterView => {
-    const q = query as { q?: string; status?: string; site?: string; link?: string };
-    const status = asString(q.status);
-    const link = asString(q.link);
+    const q = query as { q?: string; view?: string; site?: string };
+    const view = asString(q.view);
+
     return {
       q: asString(q.q).trim(),
-      status: status === 'go' || status === 'done' || status === 'no' ? status : '',
+      view:
+        view === 'queued' || view === 'stuck' || view === 'done' || view === 'off'
+          ? view
+          : 'all',
       siteId: Math.max(0, asNumber(q.site, 0)),
-      linkStatus:
-        link === 'go' || link === 'done' || link === 'no' || link === 'none' ? link : '',
     };
   };
 
@@ -632,45 +635,63 @@ export function buildServer(
     const q = request.query as { page?: string };
     const pageNum = Math.max(1, asNumber(q.page, 1));
     const filter = readKeywordFilter(request.query);
-    const links = new Map(
-      loadLinkGrid().map(
-        (l) =>
-          [`${l.keywordId}:${l.siteId}`, { status: l.status, shareImages: l.shareImages }] as const,
-      ),
-    );
+
+    const sites = listSites();
+    const rows = searchKeywords(filter, 100, (pageNum - 1) * 100);
+
+    // One dot per site, per keyword. Built from the whole grid in memory
+    // rather than a query each: it is one small table and this is the only
+    // page that needs it laid out this way.
+    const grid = loadLinkGrid();
+    const marks = new Map<number, SiteMark[]>();
+
+    for (const keyword of rows) {
+      marks.set(
+        keyword.id,
+        sites.map((site) => {
+          const cell = grid.find((l) => l.keywordId === keyword.id && l.siteId === site.id);
+          return { domain: site.domain, status: cell?.status ?? ('unlinked' as const) };
+        }),
+      );
+    }
 
     return page(
       reply,
       'Keywords',
       '/keywords',
       keywordsPage(
-        searchKeywords(filter, 100, (pageNum - 1) * 100),
-        listSites(),
-        links,
+        rows,
+        sites,
+        marks,
         pageNum,
         countKeywords(),
         countKeywordsMatching(filter),
+        keywordViewCounts(filter.siteId),
         filter,
       ),
       readFlash(request.query),
     );
   });
 
+  app.get('/keywords/add', async (request, reply) =>
+    page(reply, 'Add keywords', '/keywords', keywordAddPage(), readFlash(request.query)),
+  );
+
   /**
-   * Edit every ticked keyword in one submission.
+   * Act on every ticked keyword.
    *
-   * Each control on the bulk bar has an explicit "leave as is", so a stray
-   * Apply with nothing chosen changes nothing rather than silently rewriting
-   * the grid. The form carries the filtered URL it came from, so you land back
-   * on the same rows.
+   * Each action is a verb that does one thing, because the bar this replaced
+   * read "Status [leave as is] On [all sites] set to [leave as is]" — two
+   * identical-looking dropdowns meaning different things, in a sentence with
+   * no verb in it. Nobody could predict what Apply would do, so nobody used it.
    */
   app.post('/keywords/bulk', async (request, reply) => {
     const body = formBody(request);
 
     // Fastify's form parser gives a single string for one checkbox and an
     // array for several; a submission with none ticked gives nothing.
-    const raw = body.ids;
-    const ids = (Array.isArray(raw) ? raw : raw === undefined ? [] : [raw])
+    const picked = body.ids;
+    const ids = (Array.isArray(picked) ? picked : picked === undefined ? [] : [picked])
       .map((value) => asNumber(value, 0))
       .filter((id) => id > 0);
 
@@ -685,126 +706,63 @@ export function buildServer(
       });
     }
 
-    if (asString(body.action) === 'delete') {
-      const removed = bulkDeleteKeywords(ids);
-      return redirect(reply, back, {
-        kind: 'ok',
-        message: `Deleted ${removed} keyword(s).`,
-      });
-    }
-
+    const action = asString(body.action);
     const siteId = Math.max(0, asNumber(body.site_id, 0));
     const siteIds = siteId ? [siteId] : [];
-    const keywordStatus = asString(body.keyword_status);
-    const linkStatus = asString(body.link_status);
-    const share = asString(body.share);
+    const where = siteId
+      ? (getSite(siteId)?.domain ?? 'that site')
+      : 'every site';
 
-    const done: string[] = [];
+    const done = (message: string): FastifyReply =>
+      redirect(reply, back, { kind: 'ok', message });
 
-    if (keywordStatus === 'go' || keywordStatus === 'done' || keywordStatus === 'no') {
-      const n = bulkSetKeywordStatus(ids, keywordStatus);
-      done.push(`set ${n} keyword(s) to ${keywordStatus}`);
-    }
-
-    if (linkStatus === 'go' || linkStatus === 'done' || linkStatus === 'no') {
-      const n = bulkSetLinks(ids, siteIds, linkStatus);
-      const where = siteId ? 'on that site' : 'across every site';
-      done.push(`set ${n} cell(s) ${where} to ${linkStatus}`);
-    }
-
-    if (share === '1' || share === '0') {
-      const n = bulkSetShareImages(ids, siteIds, share === '1');
-      done.push(`turned image sharing ${share === '1' ? 'on' : 'off'} for ${n} cell(s)`);
-    }
-
-    if (done.length === 0) {
-      return redirect(reply, back, {
-        kind: 'warn',
-        message: `${ids.length} keyword(s) ticked, but every control said "leave as is".`,
-      });
-    }
-
-    return redirect(reply, back, { kind: 'ok', message: `${done.join(', ')}.` });
-  });
-
-  app.post('/keywords/import', async (request, reply) => {
-    try {
-      const file = await request.file();
-      if (!file) {
-        return redirect(reply, '/keywords', { kind: 'error', message: 'No file received.' });
+    switch (action) {
+      case 'publish-on': {
+        // Setting the cells alone is not enough: a keyword whose own status is
+        // done or no would still never be offered, and the row would sit there
+        // looking correct. Turning it on is what the operator meant.
+        const cells = bulkSetLinks(ids, siteIds, 'go');
+        bulkSetKeywordStatus(ids, 'go');
+        return done(
+          `${ids.length} keyword(s) will now publish on ${where} (${cells} cell(s) set), ` +
+            'and they are switched on.',
+        );
       }
 
-      const report = importKeywordsCsv((await file.toBuffer()).toString('utf8'));
+      case 'stop-on': {
+        const cells = bulkSetLinks(ids, siteIds, 'no');
+        return done(`${ids.length} keyword(s) will no longer publish on ${where} (${cells} cell(s)).`);
+      }
 
-      if (report.errors.length > 0 && report.imported === 0) {
-        return redirect(reply, '/keywords', {
+      case 'finish':
+        bulkSetKeywordStatus(ids, 'done');
+        return done(`${ids.length} keyword(s) marked finished.`);
+
+      case 'off':
+        bulkSetKeywordStatus(ids, 'no');
+        return done(`${ids.length} keyword(s) turned off.`);
+
+      case 'share-on': {
+        const cells = bulkSetShareImages(ids, siteIds, true);
+        return done(`${cells} cell(s) will reuse existing article images on ${where}.`);
+      }
+
+      case 'share-off': {
+        const cells = bulkSetShareImages(ids, siteIds, false);
+        return done(`${cells} cell(s) will generate fresh article images on ${where}.`);
+      }
+
+      case 'delete': {
+        const removed = bulkDeleteKeywords(ids);
+        return done(`Deleted ${removed} keyword(s).`);
+      }
+
+      default:
+        return redirect(reply, back, {
           kind: 'error',
-          message: report.errors.slice(0, 3).join(' '),
+          message: 'That is not something this page can do.',
         });
-      }
-
-      const parts: string[] = [];
-      if (report.imported) parts.push(`${report.imported} keyword(s) added`);
-      if (report.updated) parts.push(`${report.updated} updated`);
-      parts.push(`${report.linksSet} site link(s) set`);
-      if (report.skipped) parts.push(`${report.skipped} row(s) skipped`);
-
-      let message = `${parts.join(', ')}.`;
-
-      // A keyword linked to no site is not work — it will sit there looking
-      // like supply and publish nothing. Say so plainly rather than reporting
-      // a successful import and leaving the queue empty.
-      if (report.matchedDomains === 0) {
-        message +=
-          ' No column matched a site, so nothing will publish yet.' +
-          (report.unknownDomains.length
-            ? ` These headings match no site you have configured: ${report.unknownDomains.join(', ')}.` +
-              ' Check the domains under Sites, or download the template — its columns always match.'
-            : ' Add one column per site domain.');
-      } else if (report.linksSet === 0) {
-        message +=
-          ` ${report.matchedDomains} site column(s) matched, but every cell was empty.` +
-          ' Put go, done or no in the cells to say where each keyword should run.';
-      } else if (report.unknownDomains.length) {
-        message += ` Columns matching no site were ignored: ${report.unknownDomains.join(', ')}.`;
-      }
-
-      const wrong = report.matchedDomains === 0 || report.linksSet === 0;
-
-      return redirect(reply, '/keywords', {
-        kind: wrong ? 'warn' : report.unknownDomains.length ? 'warn' : 'ok',
-        message,
-      });
-    } catch (err) {
-      return redirect(reply, '/keywords', { kind: 'error', message: errorMessage(err) });
     }
-  });
-
-  app.post('/keywords/:id/status', async (request, reply) => {
-    const id = asNumber((request.params as { id: string }).id, 0);
-    const status = asString(formBody(request).status, 'no');
-    if (status === 'go' || status === 'done' || status === 'no') setKeywordStatus(id, status);
-    return redirect(reply, '/keywords');
-  });
-
-  app.post('/keywords/:id/link', async (request, reply) => {
-    const id = asNumber((request.params as { id: string }).id, 0);
-    const body = formBody(request);
-    const siteId = asNumber(body.site_id, 0);
-    const status = asString(body.status, 'no');
-    if (siteId && (status === 'go' || status === 'done' || status === 'no')) {
-      setLink(id, siteId, status);
-      // An unchecked checkbox submits nothing at all, so absence means off.
-      setLinkShareImages(id, siteId, body.share_images === '1');
-    }
-    return redirect(reply, '/keywords');
-  });
-
-  app.post('/keywords/:id/share', async (request, reply) => {
-    const id = asNumber((request.params as { id: string }).id, 0);
-    const share = asString(formBody(request).share, '1') === '1';
-    setKeywordShareImages(id, share);
-    return redirect(reply, '/keywords');
   });
 
   /**
@@ -840,7 +798,12 @@ export function buildServer(
       reply,
       keyword.seed_keyword,
       '/keywords',
-      keywordDetailPage(keyword, diagnosis, listRunsForKeyword(id)),
+      keywordDetailPage(
+        keyword,
+        diagnosis,
+        listRunsForKeyword(id),
+        new Map(loadLinkGrid().filter((l) => l.keywordId === id).map((l) => [l.siteId, l.shareImages])),
+      ),
       readFlash(request.query),
     );
   });
@@ -995,6 +958,27 @@ export function buildServer(
   app.post('/keywords/:id/delete', async (request, reply) => {
     deleteKeyword(asNumber((request.params as { id: string }).id, 0));
     return redirect(reply, '/keywords', { kind: 'ok', message: 'Keyword deleted.' });
+  });
+
+  app.post('/keywords/:id/status', async (request, reply) => {
+    const id = asNumber((request.params as { id: string }).id, 0);
+    const status = asString(formBody(request).status, 'no');
+    if (status === 'go' || status === 'done' || status === 'no') setKeywordStatus(id, status);
+    return redirect(reply, `/keywords/${id}`);
+  });
+
+  app.post('/keywords/:id/link', async (request, reply) => {
+    const id = asNumber((request.params as { id: string }).id, 0);
+    const body = formBody(request);
+    const siteId = asNumber(body.site_id, 0);
+    const status = asString(body.status, 'no');
+
+    if (siteId && (status === 'go' || status === 'done' || status === 'no')) {
+      setLink(id, siteId, status);
+      // An unchecked checkbox submits nothing at all, so absence means off.
+      setLinkShareImages(id, siteId, body.share_images === '1');
+    }
+    return redirect(reply, `/keywords/${id}`);
   });
 
   /* -- CSV templates ------------------------------------------------------ */
