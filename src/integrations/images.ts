@@ -27,6 +27,15 @@ export interface ImageClientOptions {
   apiKey: string;
   pollIntervalMs: number;
   maxAttempts: number;
+  /**
+   * The Flow project to generate into, resolved per site.
+   *
+   * Sent with the request rather than configured on the image service, because
+   * the service is shared by every site and each site has its own project. It
+   * was previously an environment variable on that container, which meant the
+   * value in Settings never reached it at all.
+   */
+  projectId?: string;
 }
 
 export class ImageGenerationError extends Error {
@@ -57,7 +66,13 @@ export class ImageClient {
     const response = await fetch(this.url('/v1/generate'), {
       method: 'POST',
       headers: this.headers(),
-      body: JSON.stringify({ prompt, orientation }),
+      body: JSON.stringify({
+        prompt,
+        orientation,
+        // Omitted rather than sent empty, so the service falls back to its own
+        // configured project instead of being told to use nothing.
+        ...(this.options.projectId ? { project_id: this.options.projectId } : {}),
+      }),
       signal: AbortSignal.timeout(60_000),
     });
 

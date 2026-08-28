@@ -95,9 +95,9 @@ export const SETTING_SPECS: SettingSpec[] = [
     secret: false,
     default: process.env.FLOW_PROJECT_ID ?? '',
     help:
-      'A real project id from the Google Flow UI. It travels to Google with ' +
-      'every generation as clientContext.projectId, so a made-up value makes ' +
-      'each request look unlike one the Flow UI would send.',
+      'A real project id from the Google Flow UI, used by any site that has no ' +
+      'project of its own. The ID on a site wins; this is the fallback. It ' +
+      'travels to Google as clientContext.projectId on every generation.',
   },
   {
     key: 'image_poll_interval_seconds',
@@ -220,8 +220,9 @@ export class Settings {
     }
     if (!this.has('flow_project_id')) {
       problems.push(
-        'Flow project ID is not set (Settings → Images). Images cannot be ' +
-          'generated until it is: Google is sent this id with every request.',
+        'No shared Flow project ID (Settings → Images). Sites without one of ' +
+          'their own will generate into a placeholder project, which is not a ' +
+          'real project on the Google side.',
       );
     }
     if (this.getBool('telegram_enabled') && !this.has('telegram_bot_token')) {

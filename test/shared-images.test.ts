@@ -206,6 +206,7 @@ function fakeContext(
   const ctx = {
     keyword: { id: 1, seed_keyword: 'chicken' },
     site: { id: 7, domain: 'bitespoon.com' },
+    projectId: { projectId: 'proj-1', source: 'site' as const },
     shareImages: options.shareImages ?? false,
     sharedImages: {
       get: () => options.cached,

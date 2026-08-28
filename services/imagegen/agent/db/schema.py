@@ -27,6 +27,12 @@ CREATE TABLE IF NOT EXISTS job (
     prompt        TEXT NOT NULL,
     orientation   TEXT NOT NULL DEFAULT 'VERTICAL'
                   CHECK(orientation IN ('VERTICAL','HORIZONTAL')),
+
+    -- Sent to Google as clientContext.projectId. Per job, not per container:
+    -- one image service serves every site and each site has its own Flow
+    -- project, so a value baked into the environment could only ever be
+    -- right for one of them.
+    project_id    TEXT NOT NULL DEFAULT '',
     status        TEXT NOT NULL DEFAULT 'PENDING'
                   CHECK(status IN ('PENDING','PROCESSING','COMPLETED','FAILED')),
     media_id      TEXT,

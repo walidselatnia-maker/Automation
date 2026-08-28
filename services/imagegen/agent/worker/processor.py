@@ -81,7 +81,9 @@ class WorkerController:
         try:
             result = await get_flow_client().generate_images(
                 prompt=job["prompt"],
-                project_id=FLOW_PROJECT_ID,
+                # The job's own project. FLOW_PROJECT_ID is only the fallback
+                # for a caller that sent none, applied when the job was queued.
+                project_id=job["project_id"] or FLOW_PROJECT_ID,
                 aspect_ratio=ASPECT_RATIOS.get(job["orientation"], ASPECT_RATIOS["VERTICAL"]),
             )
 

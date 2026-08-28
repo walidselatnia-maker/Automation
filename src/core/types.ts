@@ -16,6 +16,16 @@ export interface SiteView {
   publishedToday: number;
   /** Derived: MAX(runs.published_at). Never stored. ISO string or null. */
   lastPublishAt: string | null;
+  /**
+   * Derived: MAX(runs.started_at) over every run, failed ones included.
+   *
+   * Separate from lastPublishAt because the two answer different questions.
+   * The interval asks "when did this site last publish"; taking turns asks
+   * "when did this site last have a go". A site that fails never publishes, so
+   * ordering the queue by lastPublishAt leaves it permanently first — it takes
+   * every tick, fails, and no other site ever runs.
+   */
+  lastAttemptAt: string | null;
 }
 
 export interface KeywordView {

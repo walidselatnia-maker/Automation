@@ -117,14 +117,38 @@ export function evaluateSite(site: SiteView, options: SelectorOptions): SiteElig
   };
 }
 
-/** Prefer the site that has waited longest. Never published sorts first. */
-function leastRecentlyPublished(a: SiteView, b: SiteView): number {
-  const ta = a.lastPublishAt ? new Date(a.lastPublishAt).getTime() : 0;
-  const tb = b.lastPublishAt ? new Date(b.lastPublishAt).getTime() : 0;
-  const va = Number.isNaN(ta) ? 0 : ta;
-  const vb = Number.isNaN(tb) ? 0 : tb;
+const timestamp = (value: string | null): number => {
+  if (!value) return 0;
+  const parsed = new Date(value).getTime();
+  return Number.isNaN(parsed) ? 0 : parsed;
+};
+
+/**
+ * Whose turn it is: the site that has waited longest since its last *attempt*.
+ *
+ * Attempt, not publish. This ordering used to key on lastPublishAt, and a site
+ * that fails never publishes — so its timestamp never moved, it sorted first
+ * on every tick forever, and it took every slot while the other sites never
+ * ran at all. One broken site stopped the whole network.
+ *
+ * Ordering by attempt makes the sites independent: a site that just ran goes
+ * to the back of the queue whether it succeeded or failed, so a permanently
+ * broken site costs one tick per rotation instead of all of them.
+ *
+ * A site that has never run sorts first, which is what you want for a site
+ * just added.
+ */
+function longestWaiting(a: SiteView, b: SiteView): number {
+  const va = timestamp(a.lastAttemptAt);
+  const vb = timestamp(b.lastAttemptAt);
   if (va !== vb) return va - vb;
-  return a.id - b.id; // stable tiebreak, so behaviour is reproducible
+
+  // Same attempt time (usually both never): fall back to publish time, then id
+  // so the order is reproducible rather than dependent on row order.
+  const pa = timestamp(a.lastPublishAt);
+  const pb = timestamp(b.lastPublishAt);
+  if (pa !== pb) return pa - pb;
+  return a.id - b.id;
 }
 
 export function selectTask(
@@ -174,6 +198,8 @@ export function selectTask(
   }
 
   // -- Filter 2: which keyword can run, and on which of those sites? ---------
+  const viable: { keyword: KeywordView; site: SiteView }[] = [];
+
   for (const keyword of keywords) {
     if (keyword.status !== 'go') {
       decisions.push({
@@ -190,7 +216,7 @@ export function selectTask(
       .filter((link) => link.status === 'go')
       .map((link) => eligibleById.get(link.siteId))
       .filter((site): site is SiteView => site !== undefined)
-      .sort(leastRecentlyPublished);
+      .sort(longestWaiting);
 
     if (candidates.length === 0) {
       // Section 11 and 12: do not retry this keyword, move to the next one.
@@ -205,35 +231,46 @@ export function selectTask(
       continue;
     }
 
-    const chosen = candidates[0]!;
-
-    decisions.push({
-      subjectType: 'pair',
-      subjectId: keyword.id,
-      subjectLabel: `${keyword.seedKeyword} → ${chosen.domain}`,
-      decision: 'selected',
-      reason: 'Keyword is go, site is go for this keyword, site is eligible',
-    });
-
-    return {
-      task: {
-        siteId: chosen.id,
-        siteDomain: chosen.domain,
-        siteName: chosen.name,
-        keywordId: keyword.id,
-        seedKeyword: keyword.seedKeyword,
-      },
-      decisions,
-    };
+    // Every viable pair is collected rather than returning on the first one.
+    // Returning early made keyword order decide which site ran, so a keyword
+    // linked only to one site could hand that site every tick regardless of
+    // whose turn it was. Whose turn it is has to be the site's property, not a
+    // side effect of which keyword happens to be first in the list.
+    viable.push({ keyword, site: candidates[0]! });
   }
 
+  if (viable.length === 0) {
+    decisions.push({
+      subjectType: 'cycle',
+      subjectId: null,
+      subjectLabel: '',
+      decision: 'none',
+      reason: `No valid keyword + site pair (checked ${keywords.length} keywords)`,
+    });
+    return { task: null, decisions };
+  }
+
+  // Site turn order decides; keyword order only breaks a tie between two pairs
+  // on the same site.
+  viable.sort((a, b) => longestWaiting(a.site, b.site) || a.keyword.id - b.keyword.id);
+  const { keyword, site: chosen } = viable[0]!;
+
   decisions.push({
-    subjectType: 'cycle',
-    subjectId: null,
-    subjectLabel: '',
-    decision: 'none',
-    reason: `No valid keyword + site pair (checked ${keywords.length} keywords)`,
+    subjectType: 'pair',
+    subjectId: keyword.id,
+    subjectLabel: `${keyword.seedKeyword} → ${chosen.domain}`,
+    decision: 'selected',
+    reason: 'Keyword is go, site is go for this keyword, site is eligible, and it is its turn',
   });
 
-  return { task: null, decisions };
+  return {
+    task: {
+      siteId: chosen.id,
+      siteDomain: chosen.domain,
+      siteName: chosen.name,
+      keywordId: keyword.id,
+      seedKeyword: keyword.seedKeyword,
+    },
+    decisions,
+  };
 }

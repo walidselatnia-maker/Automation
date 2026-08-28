@@ -3,6 +3,7 @@ import type { Step } from '../engine.js';
 import { createLogger } from '../../lib/logger.js';
 import type { ImagePromptSet } from './content.js';
 import { loadTemplate } from '../prompts.js';
+import { describeProjectId } from '../../core/project-id.js';
 import type { SeoData } from './content.js';
 
 const log = createLogger('images-step');
@@ -51,6 +52,14 @@ async function generateAndUpload(
   prompt: string,
   label: string,
 ): Promise<Uploaded> {
+  // Reported here rather than once per step, because this is the only path
+  // that reaches Google. Copying a shared image is a plain download and needs
+  // no project at all, so warning about one there would be noise about a call
+  // that never happens.
+  const explanation = describeProjectId(ctx.projectId, ctx.site.domain);
+  if (ctx.projectId.source === 'placeholder') log.warn(explanation);
+  else log.debug(explanation);
+
   log.debug(`generating "${label}"`);
 
   const { data, contentType, jobId } = await ctx.images.generate(prompt, 'VERTICAL');

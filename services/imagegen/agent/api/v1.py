@@ -43,6 +43,12 @@ class GenerateRequest(BaseModel):
     prompt: str = Field(..., min_length=1, max_length=5000)
     orientation: Literal["VERTICAL", "HORIZONTAL"] = "VERTICAL"
 
+    # The Flow project to generate into, sent per request: one image service
+    # serves every site and each site has its own project, so a value fixed on
+    # this container could only ever be right for one of them. FLOW_PROJECT_ID
+    # here is the fallback for a caller that sends none.
+    project_id: Optional[str] = Field(default=None, max_length=200)
+
 
 class GenerateResponse(BaseModel):
     job_id: str
@@ -66,12 +72,12 @@ async def generate(body: GenerateRequest) -> GenerateResponse:
     # Fail loudly rather than queueing work that cannot move. Without these the
     # job would sit PENDING until someone noticed, and the caller would poll it
     # forever.
-    if not FLOW_PROJECT_ID:
+    project_id = (body.project_id or FLOW_PROJECT_ID or "").strip()
+    if not project_id:
         raise HTTPException(
             503,
-            "No Flow project id configured. Set it in the platform's Settings "
-            "— it is sent to Google with every generation and has to be a real "
-            "project from the Flow UI.",
+            "No Flow project id. The platform normally sends one per site; set "
+            "one on the site, under Settings, or as FLOW_PROJECT_ID here.",
         )
 
     if not get_flow_client().connected:
@@ -81,8 +87,8 @@ async def generate(body: GenerateRequest) -> GenerateResponse:
             "now. Open the Browser page to check the Google session.",
         )
 
-    job = await jobs.create(body.prompt, body.orientation)
-    logger.info("queued job %s", job["id"][:8])
+    job = await jobs.create(body.prompt, body.orientation, project_id)
+    logger.info("queued job %s for project %s", job["id"][:8], project_id)
     return GenerateResponse(job_id=job["id"], status=job["status"])
 
 

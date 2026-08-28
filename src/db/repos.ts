@@ -133,6 +133,7 @@ export function loadSiteViews(dayKey: string, timezone: string): SiteView[] {
   interface Row extends SiteRow {
     published_today: number;
     last_publish_at: string | null;
+    last_attempt_at: string | null;
   }
 
   const rows = all<Row>(
@@ -143,7 +144,11 @@ export function loadSiteViews(dayKey: string, timezone: string): SiteView[] {
                 AND date(r.published_at, ?) = ?)          AS published_today,
             (SELECT MAX(r2.published_at) FROM runs r2
               WHERE r2.site_id = s.id
-                AND r2.status = 'published')              AS last_publish_at
+                AND r2.status = 'published')              AS last_publish_at,
+            -- Every run, not just the successful ones: this is what makes the
+            -- sites take turns even when one of them keeps failing.
+            (SELECT MAX(r3.started_at) FROM runs r3
+              WHERE r3.site_id = s.id)                    AS last_attempt_at
        FROM sites s
       ORDER BY s.name`,
     tzModifier(timezone),
@@ -159,6 +164,7 @@ export function loadSiteViews(dayKey: string, timezone: string): SiteView[] {
     intervalMinutes: r.interval_minutes,
     publishedToday: Number(r.published_today ?? 0),
     lastPublishAt: r.last_publish_at,
+    lastAttemptAt: r.last_attempt_at,
   }));
 }
 

@@ -1,6 +1,7 @@
 import type { Settings } from '../settings.js';
 import { BufferClient } from '../integrations/buffer.js';
 import { ImageClient } from '../integrations/images.js';
+import { resolveProjectId, type ResolvedProjectId } from '../core/project-id.js';
 import { SiteApiClient } from '../integrations/site-api.js';
 import { TelegramClient } from '../integrations/telegram.js';
 import { chat, type ChatResult } from '../llm/client.js';
@@ -51,6 +52,9 @@ export class PipelineContext {
   readonly shareImages: boolean;
   readonly sharedImages: SharedImageStore;
 
+  /** Which Flow project this run generates into, and how that was decided. */
+  readonly projectId: ResolvedProjectId;
+
   readonly siteApi: SiteApiClient;
   readonly images: ImageClient;
   readonly buffer: BufferClient;
@@ -80,11 +84,20 @@ export class PipelineContext {
     const secrets = siteSecrets(init.site, init.encryptionKey);
     this.siteApi = new SiteApiClient(init.site.domain, secrets.apiToken);
 
+    // Resolved here, once per run, so every image in an article goes into the
+    // same project and the run log can say which one and why.
+    this.projectId = resolveProjectId(
+      init.site.project_id,
+      init.settings.get('flow_project_id'),
+      init.site.domain,
+    );
+
     this.images = new ImageClient({
       baseUrl: init.settings.get('image_base_url'),
       apiKey: init.settings.get('image_api_key'),
       pollIntervalMs: init.settings.getNumber('image_poll_interval_seconds') * 1000,
       maxAttempts: init.settings.getNumber('image_poll_max_attempts'),
+      projectId: this.projectId.projectId,
     });
 
     this.buffer = new BufferClient(secrets.bufferToken);
