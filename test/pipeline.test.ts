@@ -55,10 +55,13 @@ interface WorldOptions {
   imagePendingPolls?: number;
   failPostOnce?: boolean;
   failEndpoint?: string;
+  /** Replace one prompt's reply, to stand in for a model behaving badly. */
+  llmOverrides?: Record<string, string>;
 }
 
 function buildWorld(options: WorldOptions = {}) {
   const calls: string[] = [];
+  const generateBodies: Record<string, unknown>[] = [];
   let pollCount = 0;
   let postAttempts = 0;
 
@@ -96,11 +99,15 @@ function buildWorld(options: WorldOptions = {}) {
         : text.includes('MARKER-pick-board') ? 'pick-board'
         : 'unknown';
 
-      return json({ message: { content: LLM_REPLIES[which] ?? '{}' } });
+      const reply = options.llmOverrides?.[which] ?? LLM_REPLIES[which] ?? '{}';
+      return json({ message: { content: reply } });
     }
 
     // -- Image service -----------------------------------------------------
-    if (url.includes('/v1/generate')) return json({ job_id: 'job-123' });
+    if (url.includes('/v1/generate')) {
+      generateBodies.push(JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>);
+      return json({ job_id: 'job-123' });
+    }
 
     if (url.includes('/v1/jobs/')) {
       if (options.failImageJobs) {
@@ -120,6 +127,15 @@ function buildWorld(options: WorldOptions = {}) {
 
     if (url.startsWith('https://images.test/')) {
       return new Response(new Uint8Array([1, 2, 3]), {
+        status: 200,
+        headers: { 'content-type': 'image/webp' },
+      });
+    }
+
+    // A published image on one of the sites. This is what a second site
+    // downloads when it reuses a keyword's images instead of generating them.
+    if (url.includes('/uploads/')) {
+      return new Response(new Uint8Array([4, 5, 6]), {
         status: 200,
         headers: { 'content-type': 'image/webp' },
       });
@@ -172,7 +188,7 @@ function buildWorld(options: WorldOptions = {}) {
     return new Response('not found', { status: 404 });
   });
 
-  return { fetchStub, calls, postAttempts: () => postAttempts };
+  return { fetchStub, calls, generateBodies, postAttempts: () => postAttempts };
 }
 
 /** Write prompt files whose text identifies which prompt was invoked. */
@@ -376,5 +392,154 @@ describe('pipeline end to end', () => {
     const outcome = await executePipeline(makeContext(createRun(keywordId, siteId)));
     expect(outcome.status).toBe('published');
     expect(world.calls.some((u) => u.includes('api.buffer.com'))).toBe(false);
+  });
+});
+
+/* -------------------------------------------------------------------------
+ * The features working together, not just individually.
+ * ---------------------------------------------------------------------- */
+
+describe('a run end to end, with the pieces combined', () => {
+  let settings: Settings;
+  let siteId: number;
+  let otherSiteId: number;
+  let keywordId: number;
+
+  beforeEach(() => {
+    setLogLevel('error');
+    openDatabase(':memory:');
+    writeFakePrompts(PROMPT_DIR);
+    configurePrompts(PROMPT_DIR);
+
+    settings = new Settings(KEY);
+    settings.set('image_api_key', 'image-key');
+    settings.set('image_base_url', 'https://imggen.test');
+    settings.set('image_poll_interval_seconds', '0');
+    settings.set('image_poll_max_attempts', '5');
+    settings.set('buffer_enabled', 'false');
+    settings.set('telegram_enabled', 'false');
+    settings.set('flow_project_id', 'shared-project');
+
+    upsertEndpoint(
+      { name: 'ollama-a', baseUrl: 'http://a:11434', apiKey: '', models: [], enabled: true },
+      KEY,
+    );
+
+    const base = {
+      status: 'active' as const,
+      pin_username: 'x',
+      daily_target: 5,
+      interval_minutes: 0,
+      apiToken: 'test-token',
+      bufferToken: 'buffer-token',
+    };
+
+    siteId = upsertSite(
+      { ...base, name: 'first', domain: 'first.com', project_id: 'site-own-project' },
+      KEY,
+    );
+    otherSiteId = upsertSite(
+      { ...base, name: 'second', domain: 'second.com', project_id: '' },
+      KEY,
+    );
+
+    keywordId = insertKeyword({ seed_keyword: 'chicken breast', spy_title: 'Test Chicken' });
+    setLink(keywordId, siteId, 'go');
+    setLink(keywordId, otherSiteId, 'go');
+  });
+
+  afterEach(() => {
+    closeDatabase();
+    vi.restoreAllMocks();
+  });
+
+  const contextFor = (site: number, share: boolean): PipelineContext =>
+    new PipelineContext({
+      runId: createRun(keywordId, site),
+      site: getSite(site)!,
+      keyword: getKeyword(keywordId)!,
+      settings,
+      encryptionKey: KEY,
+      shareImages: share,
+    });
+
+  it("sends the site's own project id to the image service", async () => {
+    const world = buildWorld();
+    vi.stubGlobal('fetch', world.fetchStub);
+
+    await executePipeline(contextFor(siteId, false));
+
+    expect(world.generateBodies).not.toHaveLength(0);
+    for (const body of world.generateBodies) {
+      expect(body.project_id).toBe('site-own-project');
+    }
+  });
+
+  it('falls back to the shared project for a site without one', async () => {
+    const world = buildWorld();
+    vi.stubGlobal('fetch', world.fetchStub);
+
+    await executePipeline(contextFor(otherSiteId, false));
+
+    expect(world.generateBodies.every((b) => b.project_id === 'shared-project')).toBe(true);
+  });
+
+  it('uses a placeholder rather than refusing when no project is set anywhere', async () => {
+    settings.set('flow_project_id', '');
+    const world = buildWorld();
+    vi.stubGlobal('fetch', world.fetchStub);
+
+    const outcome = await executePipeline(contextFor(otherSiteId, false));
+
+    // Generating into a placeholder beats not generating at all.
+    expect(outcome.status).toBe('published');
+    expect(world.generateBodies[0]?.project_id).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it('publishes despite the model returning malformed JSON', async () => {
+    // The exact shape that killed run #1: bare keys and trailing commas.
+    const world = buildWorld({
+      llmOverrides: {
+        'recipe-generator': `{
+          title: 'Crispy Chicken',
+          "ingredients": ["chicken", "oil",],
+          "instructions": ["Season.", "Roast.",],
+        }`,
+      },
+    });
+    vi.stubGlobal('fetch', world.fetchStub);
+
+    const outcome = await executePipeline(contextFor(siteId, false));
+
+    expect(outcome.status).toBe('published');
+  });
+
+  it('does not call Google again for a second site sharing the images', async () => {
+    const first = buildWorld();
+    vi.stubGlobal('fetch', first.fetchStub);
+    await executePipeline(contextFor(siteId, true));
+    const firstGenerations = first.generateBodies.length;
+
+    const second = buildWorld();
+    vi.stubGlobal('fetch', second.fetchStub);
+    await executePipeline(contextFor(otherSiteId, true));
+
+    // Five generations the first time: four article images plus the pin.
+    expect(firstGenerations).toBe(5);
+    // One the second time: only the Pinterest graphic, which stays unique per
+    // site. The four article images are copied from first.com's URLs.
+    expect(second.generateBodies).toHaveLength(1);
+  });
+
+  it('still generates all five for a site with sharing off', async () => {
+    const first = buildWorld();
+    vi.stubGlobal('fetch', first.fetchStub);
+    await executePipeline(contextFor(siteId, true));
+
+    const second = buildWorld();
+    vi.stubGlobal('fetch', second.fetchStub);
+    await executePipeline(contextFor(otherSiteId, false));
+
+    expect(second.generateBodies).toHaveLength(5);
   });
 });
