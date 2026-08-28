@@ -4,7 +4,7 @@ import { mkdirSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createLogger } from '../lib/logger.js';
-import { markAllApplied, pendingMigrations, runMigrations } from './migrations.js';
+import { pendingMigrations, runMigrations } from './migrations.js';
 
 const log = createLogger('db');
 
@@ -102,22 +102,29 @@ export function openDatabase(dbPath: string): Db {
   // deployed database.
   db.exec(readFileSync(schemaPath(), 'utf8'));
 
-  if (isNew) {
-    // Created from the current schema.sql a moment ago, so it already has
-    // everything the migrations would add. Recording them as applied is the
-    // honest description of that; running them would be no-ops with a small
-    // chance of a surprise.
-    markAllApplied(db);
-    log.info(`Database created at ${dbPath}`);
-  } else {
-    const pending = pendingMigrations(db);
+  // Migrations run on every database, new or existing, by the same path.
+  //
+  // An earlier version marked them applied on a fresh database instead, on the
+  // grounds that schema.sql had just created everything they would add. That
+  // was true of the columns and false of the indexes: 004 creates two partial
+  // indexes that cannot live in schema.sql (they reference columns 003 adds),
+  // so marking it skipped left new installations without them. Nothing broke —
+  // SQLite just scanned instead — which is exactly why it would have gone
+  // unnoticed while the two kinds of deployment drifted apart.
+  //
+  // Every migration is idempotent, so running them all every time costs a
+  // handful of no-ops and buys one code path.
+  const pending = pendingMigrations(db);
 
-    if (pending.length > 0) {
-      log.info(`${pending.length} migration(s) to apply: ${pending.map((m) => m.id).join(', ')}`);
-      backupBeforeMigrating(db, dbPath);
-      const report = runMigrations(db);
-      log.info(`migrated: ${report.applied.join(', ')}`);
-    }
+  if (pending.length > 0) {
+    log.info(`${pending.length} migration(s) to apply: ${pending.map((m) => m.id).join(', ')}`);
+
+    // Only an existing database has anything to lose; backupBeforeMigrating
+    // returns null for a file that is not there yet.
+    if (!isNew) backupBeforeMigrating(db, dbPath);
+
+    const report = runMigrations(db);
+    log.info(`${isNew ? 'initialised' : 'migrated'}: ${report.applied.join(', ')}`);
   }
 
   log.info(`Database ready at ${dbPath}`);

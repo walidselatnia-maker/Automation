@@ -229,17 +229,3 @@ export function runMigrations(db: Db): MigrationReport {
 
   return { applied: done, alreadyApplied: applied.size };
 }
-
-/**
- * Record every migration as done without running any of it.
- *
- * For a database schema.sql has just created from scratch: it already has
- * everything the migrations would add, and running them would be a series of
- * no-ops with a small chance of a surprise. Marking is the honest description
- * of the state.
- */
-export function markAllApplied(db: Db): void {
-  ensureLedger(db);
-  const insert = db.prepare('INSERT OR IGNORE INTO schema_migrations (id) VALUES (?)');
-  for (const migration of MIGRATIONS) insert.run(migration.id);
-}
