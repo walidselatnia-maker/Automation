@@ -628,6 +628,38 @@ export function buildServer(
    */
   let imageServiceProblem: string | null = null;
 
+  /**
+   * Ask the image service whether it accepts the settings as they now stand.
+   *
+   * Deliberately reports the key being wrong differently from the service being
+   * down: one is something you just did, the other is something that happened
+   * to you.
+   */
+  const checkImageService = async (): Promise<{ ok: boolean; detail: string }> => {
+    const base = settings.get('image_base_url').replace(/\/+$/, '');
+    if (!base) return { ok: false, detail: 'no image service URL is set' };
+
+    try {
+      const response = await fetch(`${base}/flow/status`, {
+        headers: { 'X-API-Key': settings.get('image_api_key') },
+        signal: AbortSignal.timeout(8_000),
+      });
+
+      if (response.status === 401) {
+        return {
+          ok: false,
+          detail:
+            'the API key was rejected. It has to match IMAGE_API_KEY in the deployment ' +
+            'environment — changing it here alone is not enough.',
+        };
+      }
+      if (!response.ok) return { ok: false, detail: `it answered HTTP ${response.status}` };
+      return { ok: true, detail: 'accepted' };
+    } catch (err) {
+      return { ok: false, detail: `it could not be reached (${errorMessage(err)})` };
+    }
+  };
+
   const refreshImageServiceHealth = async (): Promise<void> => {
     const base = settings.get('image_base_url').replace(/\/+$/, '');
     if (!base) return;
@@ -825,6 +857,7 @@ export function buildServer(
 
   app.post('/settings', async (request, reply) => {
     const body = formBody(request);
+    let imagesChanged = false;
 
     for (const spec of SETTING_SPECS) {
       const submitted = body[spec.key];
@@ -835,9 +868,25 @@ export function buildServer(
       if (spec.secret && value === '') continue;
 
       settings.set(spec.key, value);
+      if (spec.group === 'images') imagesChanged = true;
     }
 
-    return redirect(reply, '/settings', { kind: 'ok', message: 'Settings saved.' });
+    if (!imagesChanged) {
+      return redirect(reply, '/settings', { kind: 'ok', message: 'Settings saved.' });
+    }
+
+    // The image service checks the key against its own environment, so a key
+    // changed here alone is accepted by the form and then rejected on every
+    // generation. Silently. Test it now rather than at 3am mid-run.
+    const reachable = await checkImageService();
+    void refreshImageServiceHealth();
+
+    return redirect(reply, '/settings', {
+      kind: reachable.ok ? 'ok' : 'warn',
+      message: reachable.ok
+        ? 'Settings saved. The image service accepted the key.'
+        : `Settings saved, but the image service refused them: ${reachable.detail}`,
+    });
   });
 
   app.post('/settings/endpoints', async (request, reply) => {

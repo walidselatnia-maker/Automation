@@ -17,6 +17,41 @@ function schemaPath(): string {
   return resolve(here, 'schema.sql');
 }
 
+/**
+ * Columns added to a table that already exists.
+ *
+ * schema.sql is all CREATE TABLE IF NOT EXISTS, which is a no-op on a table
+ * that is already there — so a column added to one of those definitions never
+ * reaches a database that has been deployed before. The symptom is not a
+ * migration error, it is a query failing at runtime on a column that the code
+ * is certain exists.
+ *
+ * Adding a column is the one schema change that is safe to apply
+ * automatically: it cannot lose data and it cannot fail on a second run.
+ * Anything larger belongs in a considered migration, not here.
+ */
+const ADDED_COLUMNS: { table: string; column: string; definition: string }[] = [
+  {
+    table: 'keyword_sites',
+    column: 'share_images',
+    definition: "INTEGER NOT NULL DEFAULT 1 CHECK (share_images IN (0, 1))",
+  },
+];
+
+function addMissingColumns(db: Db): void {
+  for (const { table, column, definition } of ADDED_COLUMNS) {
+    const columns = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+
+    // No rows means the table does not exist yet, in which case schema.sql has
+    // just created it with the column already present.
+    if (columns.length === 0) continue;
+    if (columns.some((c) => c.name === column)) continue;
+
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    log.info(`added ${table}.${column} to an existing database`);
+  }
+}
+
 export function openDatabase(dbPath: string): Db {
   mkdirSync(dirname(resolve(dbPath)), { recursive: true });
 
@@ -25,6 +60,7 @@ export function openDatabase(dbPath: string): Db {
   db.exec('PRAGMA foreign_keys = ON;');
   db.exec('PRAGMA busy_timeout = 5000;');
   db.exec(readFileSync(schemaPath(), 'utf8'));
+  addMissingColumns(db);
 
   log.info(`Database ready at ${dbPath}`);
   instance = db;

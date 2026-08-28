@@ -65,10 +65,41 @@ async def get_db() -> aiosqlite.Connection:
     return _db_connection
 
 
+# Columns added to a table that already exists.
+#
+# SCHEMA is CREATE TABLE IF NOT EXISTS, which does nothing to a table that is
+# already there — so a column added to the definition never reaches a database
+# from an earlier deploy. The symptom is not a migration error but a KeyError
+# at run time on a column the code is sure exists.
+#
+# Adding a column is the one change safe to apply automatically: it cannot lose
+# data and it cannot fail on a second run.
+ADDED_COLUMNS = [
+    ("job", "project_id", "TEXT NOT NULL DEFAULT ''"),
+]
+
+
+async def _add_missing_columns(db) -> None:
+    for table, column, definition in ADDED_COLUMNS:
+        async with db.execute(f"PRAGMA table_info({table})") as cursor:
+            columns = [row["name"] for row in await cursor.fetchall()]
+
+        # Empty means the table does not exist yet, in which case SCHEMA has
+        # just created it with the column already present.
+        if not columns or column in columns:
+            continue
+
+        await db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+        logger.info("Added %s.%s to an existing database", table, column)
+
+    await db.commit()
+
+
 async def init_db() -> None:
     db = await get_db()
     await db.executescript(SCHEMA)
     await db.commit()
+    await _add_missing_columns(db)
     logger.info("Database ready at %s", DB_PATH)
 
 

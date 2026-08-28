@@ -661,6 +661,56 @@ export function settingsPage(
         <span class="muted small">Applies immediately. No restart.</span>
       </div>
     </form>
+
+    <h2>Set where the app is deployed</h2>
+    <div class="card">
+      <p class="muted small" style="margin-top:0">
+        These are read once when the image service container starts, so they are
+        not on this page &mdash; editing them here would look like it worked and
+        change nothing. Set them in your deployment's environment variables and
+        redeploy.
+      </p>
+      <table>
+        <thead><tr><th>Variable</th><th>Default</th><th>What it does</th></tr></thead>
+        <tbody>
+          <tr>
+            <td class="mono small nowrap">IMAGE_API_KEY</td>
+            <td class="mono small">generated</td>
+            <td class="small">
+              The shared secret between the two containers. The field above must
+              match it &mdash; saving checks that it does.
+            </td>
+          </tr>
+          <tr>
+            <td class="mono small nowrap">MAX_CONCURRENT_REQUESTS</td>
+            <td class="mono small">2</td>
+            <td class="small">Images generated at once. Google's own ceiling is 5.</td>
+          </tr>
+          <tr>
+            <td class="mono small nowrap">API_COOLDOWN</td>
+            <td class="mono small">10</td>
+            <td class="small">Seconds between calls to Google. Raise it if you see rate limits.</td>
+          </tr>
+          <tr>
+            <td class="mono small nowrap">MAX_RETRIES</td>
+            <td class="mono small">5</td>
+            <td class="small">Attempts before an image job is given up on.</td>
+          </tr>
+          <tr>
+            <td class="mono small nowrap">WATCHDOG_DISCONNECT_GRACE</td>
+            <td class="mono small">120</td>
+            <td class="small">
+              Seconds the browser may stay disconnected before Chrome is restarted.
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="muted small" style="margin-bottom:0">
+        Everything else in the image service is either wiring inside the container
+        (ports, paths) or part of the request shape Google sees, which is
+        deliberately not configurable.
+      </p>
+    </div>
   `;
 }
 
