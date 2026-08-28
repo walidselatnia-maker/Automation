@@ -314,6 +314,60 @@ row in the old sheet and belong in Settings once.
 Push to the repository and redeploy. The volume persists, so credentials and
 history survive.
 
+### Schema changes
+
+The database is migrated automatically at boot. Before anything is altered, a
+copy is written next to it:
+
+```
+/app/data/platform.db.pre-migration-2026-08-28T13-40-11-482Z.bak
+```
+
+The five most recent are kept. It is written with `VACUUM INTO`, not copied —
+the database runs in WAL mode, so a plain file copy silently omits every recent
+write.
+
+If the backup cannot be written, the migration does not run and the container
+stops with that reason. Doing the risky half of an operation having skipped the
+safe half is not a trade worth making.
+
+Each migration runs in its own transaction and is recorded only once it
+commits. One that fails rolls back and is not recorded, so the next boot retries
+exactly that one rather than skipping it or repeating the ones that succeeded.
+
+Look for these lines in the container log on the first boot after an update:
+
+```
+[db] 5 migration(s) to apply: 002-site-pause-and-approval, ...
+[db] backed up to platform.db.pre-migration-....bak before migrating
+[migrate] applied 002-site-pause-and-approval — A pause with a reason and an expiry
+[db] Database ready at /app/data/platform.db
+```
+
+Nothing in a migration drops a column, drops a table, or rewrites a row. They
+only add. Anything that could lose data belongs in a script somebody runs on
+purpose, not in a runner that executes unattended at boot.
+
+### Going back
+
+If an update goes wrong, the pre-migration copy is a complete database. Roll
+back by deploying the previous image and putting that file back:
+
+```bash
+docker compose stop platform
+docker compose run --rm platform sh -c \
+  'cp /app/data/platform.db.pre-migration-<stamp>.bak /app/data/platform.db && \
+   rm -f /app/data/platform.db-wal /app/data/platform.db-shm'
+docker compose start platform
+```
+
+Removing the `-wal` and `-shm` sidecars matters: they belong to the database you
+just replaced, and leaving them beside a different file is how you get a
+corrupt one.
+
+**Settings → History & storage → Download the database** takes the same kind of
+copy on demand, if you would rather have one before you start.
+
 ## Running locally
 
 ```bash

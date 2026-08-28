@@ -160,8 +160,17 @@ CREATE TABLE IF NOT EXISTS runs (
 CREATE INDEX IF NOT EXISTS idx_runs_site_pub ON runs (site_id, published_at);
 CREATE INDEX IF NOT EXISTS idx_runs_status   ON runs (status);
 CREATE INDEX IF NOT EXISTS idx_runs_started  ON runs (started_at DESC);
-CREATE INDEX IF NOT EXISTS idx_runs_hold     ON runs (hold) WHERE hold != '';
-CREATE INDEX IF NOT EXISTS idx_runs_retry    ON runs (retry_after) WHERE retry_after IS NOT NULL;
+
+-- The indexes over `hold` and `retry_after` are NOT here. They are partial
+-- indexes on columns that migration 003 adds, and this file runs against an
+-- existing database before any migration does -- so putting them here made the
+-- new code fail to boot against the deployed database with "no such column:
+-- hold". They live in migration 004 instead. See src/db/migrations.ts.
+--
+-- The rule this cost us: nothing in this file may reference a column that a
+-- migration adds. CREATE TABLE IF NOT EXISTS silently does nothing to a table
+-- that already exists, but an index or a constraint outside it does not get
+-- that courtesy.
 
 -- ---------------------------------------------------------------------------
 -- Run steps: checkpoints AND the debugging surface.

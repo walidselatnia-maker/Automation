@@ -1,9 +1,10 @@
 import { DatabaseSync } from 'node:sqlite';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync, statSync, unlinkSync } from 'node:fs';
 import { mkdirSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createLogger } from '../lib/logger.js';
+import { markAllApplied, pendingMigrations, runMigrations } from './migrations.js';
 
 const log = createLogger('db');
 
@@ -17,77 +18,107 @@ function schemaPath(): string {
   return resolve(here, 'schema.sql');
 }
 
+/* -------------------------------------------------------------------------
+ * Safety net before a schema change
+ * ---------------------------------------------------------------------- */
+
+/** How many pre-migration copies to keep before the oldest is removed. */
+const BACKUPS_KEPT = 5;
+
 /**
- * Columns added to a table that already exists.
+ * Copy the database before touching its schema.
  *
- * schema.sql is all CREATE TABLE IF NOT EXISTS, which is a no-op on a table
- * that is already there — so a column added to one of those definitions never
- * reaches a database that has been deployed before. The symptom is not a
- * migration error, it is a query failing at runtime on a column that the code
- * is certain exists.
+ * Migrations here only add things, so in principle there is nothing to undo.
+ * In practice "in principle" is not what you want standing between a live
+ * deployment and every site credential it holds, and the copy costs a second.
  *
- * Adding a column is the one schema change that is safe to apply
- * automatically: it cannot lose data and it cannot fail on a second run.
- * Anything larger belongs in a considered migration, not here.
+ * VACUUM INTO rather than a file copy: the database runs in WAL mode, so the
+ * .db file on disk is missing every write still sitting in the -wal sidecar.
+ * Copying it produces a backup that is quietly out of date, and you find that
+ * out at the worst possible moment.
  */
-const ADDED_COLUMNS: { table: string; column: string; definition: string }[] = [
-  {
-    table: 'keyword_sites',
-    column: 'share_images',
-    definition: 'INTEGER NOT NULL DEFAULT 1 CHECK (share_images IN (0, 1))',
-  },
+function backupBeforeMigrating(db: Db, dbPath: string): string | null {
+  // Nothing to protect: an in-memory database is a test, and a file that does
+  // not exist yet is a first boot.
+  if (dbPath === ':memory:' || !existsSync(dbPath)) return null;
 
-  // A pause you can read the reason for, that ends on its own.
-  { table: 'sites', column: 'paused_reason', definition: "TEXT NOT NULL DEFAULT ''" },
-  { table: 'sites', column: 'paused_until', definition: 'TEXT' },
-  {
-    table: 'sites',
-    column: 'auto_publish',
-    definition: 'INTEGER NOT NULL DEFAULT 1 CHECK (auto_publish IN (0, 1))',
-  },
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const target = `${dbPath}.pre-migration-${stamp}.bak`;
 
-  // Dry runs, approval holds, automatic retries, and the published title.
-  //
-  // The CHECK constraints from schema.sql are deliberately not repeated here.
-  // SQLite cannot add a CHECK to an existing table without rewriting it, and a
-  // table rewrite on a live database to gain a constraint the application code
-  // already enforces is a bad trade. New databases get the constraints; older
-  // ones get the columns and the same behaviour.
-  { table: 'runs', column: 'mode', definition: "TEXT NOT NULL DEFAULT 'live'" },
-  { table: 'runs', column: 'hold', definition: "TEXT NOT NULL DEFAULT ''" },
-  { table: 'runs', column: 'attempts', definition: 'INTEGER NOT NULL DEFAULT 0' },
-  { table: 'runs', column: 'retry_after', definition: 'TEXT' },
-  { table: 'runs', column: 'title', definition: "TEXT NOT NULL DEFAULT ''" },
-
-  // What each step cost.
-  { table: 'run_steps', column: 'tokens_in', definition: 'INTEGER NOT NULL DEFAULT 0' },
-  { table: 'run_steps', column: 'tokens_out', definition: 'INTEGER NOT NULL DEFAULT 0' },
-  { table: 'run_steps', column: 'images', definition: 'INTEGER NOT NULL DEFAULT 0' },
-];
-
-function addMissingColumns(db: Db): void {
-  for (const { table, column, definition } of ADDED_COLUMNS) {
-    const columns = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
-
-    // No rows means the table does not exist yet, in which case schema.sql has
-    // just created it with the column already present.
-    if (columns.length === 0) continue;
-    if (columns.some((c) => c.name === column)) continue;
-
-    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
-    log.info(`added ${table}.${column} to an existing database`);
+  try {
+    db.exec(`VACUUM INTO '${target.replace(/'/g, "''")}'`);
+    log.info(`backed up to ${basename(target)} before migrating`);
+    pruneBackups(dbPath);
+    return target;
+  } catch (err) {
+    // A failed backup is a reason to stop. Migrating anyway would be doing the
+    // risky half of the operation having skipped the safe half.
+    throw new Error(
+      `Could not back up the database before migrating, so nothing was changed: ${String(err)}`,
+    );
   }
 }
 
+function pruneBackups(dbPath: string): void {
+  try {
+    const directory = dirname(resolve(dbPath));
+    const prefix = `${basename(dbPath)}.pre-migration-`;
+
+    const backups = readdirSync(directory)
+      .filter((name) => name.startsWith(prefix) && name.endsWith('.bak'))
+      .map((name) => {
+        const full = join(directory, name);
+        return { full, at: statSync(full).mtimeMs };
+      })
+      .sort((a, b) => b.at - a.at);
+
+    for (const stale of backups.slice(BACKUPS_KEPT)) {
+      unlinkSync(stale.full);
+      log.debug(`removed old backup ${basename(stale.full)}`);
+    }
+  } catch {
+    // Tidying is not worth failing a boot over.
+  }
+}
+
+/* -------------------------------------------------------------------------
+ * Opening
+ * ---------------------------------------------------------------------- */
+
 export function openDatabase(dbPath: string): Db {
   mkdirSync(dirname(resolve(dbPath)), { recursive: true });
+
+  const isNew = dbPath === ':memory:' || !existsSync(dbPath);
 
   const db = new DatabaseSync(dbPath);
   db.exec('PRAGMA journal_mode = WAL;');
   db.exec('PRAGMA foreign_keys = ON;');
   db.exec('PRAGMA busy_timeout = 5000;');
+
+  // schema.sql creates anything missing and does nothing to what is there.
+  // It deliberately contains no index or constraint that depends on a column
+  // a migration adds — getting that ordering right is what migrations are for,
+  // and getting it wrong is what stopped the new code booting against the
+  // deployed database.
   db.exec(readFileSync(schemaPath(), 'utf8'));
-  addMissingColumns(db);
+
+  if (isNew) {
+    // Created from the current schema.sql a moment ago, so it already has
+    // everything the migrations would add. Recording them as applied is the
+    // honest description of that; running them would be no-ops with a small
+    // chance of a surprise.
+    markAllApplied(db);
+    log.info(`Database created at ${dbPath}`);
+  } else {
+    const pending = pendingMigrations(db);
+
+    if (pending.length > 0) {
+      log.info(`${pending.length} migration(s) to apply: ${pending.map((m) => m.id).join(', ')}`);
+      backupBeforeMigrating(db, dbPath);
+      const report = runMigrations(db);
+      log.info(`migrated: ${report.applied.join(', ')}`);
+    }
+  }
 
   log.info(`Database ready at ${dbPath}`);
   instance = db;
