@@ -68,8 +68,11 @@ import {
   replaceStepOutput,
   setRunTitle,
   type StepRow,
+  clearSharedImages,
   getLinksForKeyword,
   insertKeyword,
+  keywordImageCounts,
+  sharedImageInfo,
   pauseSite,
   runUsage,
   savePromptVersion,
@@ -803,6 +806,8 @@ export function buildServer(
         diagnosis,
         listRunsForKeyword(id),
         new Map(loadLinkGrid().filter((l) => l.keywordId === id).map((l) => [l.siteId, l.shareImages])),
+        sharedImageInfo(id),
+        keywordImageCounts(id),
       ),
       readFlash(request.query),
     );
@@ -952,6 +957,28 @@ export function buildServer(
         `Added ${added} keyword(s).` +
         (skipped ? ` ${skipped} were already here and were left alone.` : '') +
         ' They are not linked to any site yet — set the cells below.',
+    });
+  });
+
+  /**
+   * Forget this keyword's stored image set.
+   *
+   * Deletes no image anywhere: those URLs point at files on your own sites and
+   * the articles already using them keep working. It only means the next site
+   * to publish this keyword generates a fresh set rather than copying.
+   */
+  app.post('/keywords/:id/images/clear', async (request, reply) => {
+    const id = asNumber((request.params as { id: string }).id, 0);
+    if (!getKeyword(id)) {
+      return redirect(reply, '/keywords', { kind: 'error', message: 'Keyword not found' });
+    }
+
+    clearSharedImages(id);
+    return redirect(reply, `/keywords/${id}`, {
+      kind: 'ok',
+      message:
+        'Forgotten. The next site to publish this keyword will generate four new article ' +
+        'images. Nothing was deleted from any site.',
     });
   });
 

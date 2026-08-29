@@ -923,3 +923,40 @@ body.signin main {
 .choice.on { border-color: var(--brand); background: var(--brand-bg); }
 .choice input { width: auto; margin-top: 3px; }
 .choice span { display: flex; flex-direction: column; gap: 2px; }
+
+/* ------------------------------------------------- a keyword's image set */
+
+/* The four article images, shown because being told "they are keyed by
+   keyword" is not the same as seeing two keywords hold two different sets. */
+.shots {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.shot {
+  display: block;
+  text-decoration: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--paper);
+}
+.shot:hover { border-color: var(--brand); }
+
+.shot img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  object-fit: cover;
+  background: var(--line-soft);
+}
+
+.shot span {
+  display: block;
+  padding: 7px 9px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}

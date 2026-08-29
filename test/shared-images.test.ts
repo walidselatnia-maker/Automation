@@ -83,6 +83,35 @@ describe('shared article image storage', () => {
     expect(getSharedImages(keywordId)).toBeUndefined();
   });
 
+  it('never hands one keyword the images of another', async () => {
+    // The fear this test exists for: seeing four article images and many more
+    // Pinterest ones and concluding the four are being reused across every
+    // keyword. They cannot be — the store is keyed by keyword_id — and this
+    // asserts it through the step, not just the table.
+    const siteId = seedSite('bitespoon.com');
+    const chicken = insertKeyword({ seed_keyword: 'chicken thighs', status: 'go' });
+    const beef = insertKeyword({ seed_keyword: 'beef stew', status: 'go' });
+
+    saveSharedImages(chicken, siteId, URLS);
+
+    expect(getSharedImages(chicken)).toEqual(URLS);
+    expect(getSharedImages(beef)).toBeUndefined();
+
+    // A second keyword with sharing on and a warm cache belonging to the first
+    // still generates its own four.
+    const { ctx, rec } = fakeContext({ shareImages: true, cached: undefined });
+    (ctx as unknown as { keyword: { id: number; seed_keyword: string } }).keyword = {
+      id: beef,
+      seed_keyword: 'beef stew',
+    };
+
+    await generateArticleImages.run(ctx, PROMPTS);
+
+    expect(rec.generated).toHaveLength(4);
+    expect(rec.downloaded).toHaveLength(0);
+    expect(rec.imagesCounted).toBe(4);
+  });
+
   it('drops the row when the keyword is deleted', () => {
     const siteId = seedSite('bitespoon.com');
     const keywordId = insertKeyword({ seed_keyword: 'chicken' });

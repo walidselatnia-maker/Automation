@@ -28,7 +28,11 @@ import type { SettingSpec } from '../../settings.js';
 import type { Supply } from '../../core/supply.js';
 import type { RunUsage, StepCost } from '../../db/repos.js';
 import type { KeywordDiagnosis } from '../../core/diagnosis.js';
-import type { KeywordListView } from '../../db/repos.js';
+import type {
+  KeywordImageCounts,
+  KeywordListView,
+  SharedImageInfo,
+} from '../../db/repos.js';
 import type { Candidate } from '../url-import.js';
 import type { DataCounts } from '../../db/maintenance.js';
 
@@ -1989,6 +1993,8 @@ export function keywordDetailPage(
   diagnosis: KeywordDiagnosis,
   runs: RunListRow[],
   shares: Map<number, boolean>,
+  images: SharedImageInfo | undefined,
+  counts: KeywordImageCounts,
 ): Html {
   return html`
     <div class="spread">
@@ -2099,6 +2105,8 @@ export function keywordDetailPage(
           </table>`}
     </div>
 
+    ${imagesSection(keyword, images, counts)}
+
     <h2>Its runs</h2>
     <div class="card table-wrap">
       ${runs.length === 0 ? emptyState('This keyword has never run.') : runTable(runs)}
@@ -2123,6 +2131,95 @@ export function keywordDetailPage(
             onsubmit="return confirm('Delete this keyword? Its run history stays but is detached.')">
         <button class="danger small" type="submit">Delete this keyword</button>
       </form>
+    </div>
+  `;
+}
+
+/**
+ * Which images this keyword owns, and what it has cost.
+ *
+ * "Only four article images but ten Pinterest ones" is the correct behaviour
+ * of the sharing design, and it looks exactly like a bug until you can see the
+ * arithmetic: four article images are generated once per *keyword* and copied
+ * to every site it runs on, while the Pinterest graphic is generated once per
+ * *site* because it is the asset that has to be unique.
+ *
+ * Showing the actual URLs matters more than the explanation. Two keywords
+ * displaying two different sets is the only thing that really answers "are
+ * these being shared across keywords?".
+ */
+function imagesSection(
+  keyword: KeywordRow,
+  images: SharedImageInfo | undefined,
+  counts: KeywordImageCounts,
+): Html {
+  const expectedArticle = images || counts.articleGenerated > 0 ? 4 : 0;
+
+  return html`
+    <h2>Its images</h2>
+
+    <div class="grid">
+      <div class="stat">
+        <div class="value">${counts.articleGenerated}</div>
+        <div class="label">Article images made</div>
+        <div class="muted small">
+          ${expectedArticle === 0
+            ? 'none yet'
+            : `four per keyword${counts.articleGenerated > 4 ? ', regenerated since' : ''}`}
+        </div>
+      </div>
+      <div class="stat">
+        <div class="value">${counts.copiedRuns}</div>
+        <div class="label">Sites that copied them</div>
+        <div class="muted small">no call to Google</div>
+      </div>
+      <div class="stat">
+        <div class="value">${counts.pinGenerated}</div>
+        <div class="label">Pinterest graphics made</div>
+        <div class="muted small">one per site, never shared</div>
+      </div>
+    </div>
+
+    <div class="card">
+      ${images
+        ? html`
+            <p class="muted small" style="margin-top:0">
+              These four belong to this keyword alone. They were made on
+              <strong>${images.sourceDomain ?? 'a site that has since been removed'}</strong>
+              ${timeAgo(images.createdAt)}, and
+              ${images.reusedBy === 0
+                ? 'no other site has copied them yet'
+                : `${images.reusedBy} other site(s) copied them instead of asking Google again`}.
+              Open another keyword and you will see a different set &mdash; the store is keyed by
+              keyword, so one keyword&rsquo;s images can never be handed to another.
+            </p>
+            <div class="shots">
+              ${(
+                [
+                  ['Feature', images.feature],
+                  ['Top shot', images.topShot],
+                  ['Texture macro', images.textureMacro],
+                  ['Before / after', images.beforeAfter],
+                ] as const
+              ).map(
+                ([label, url]) => html`
+                  <a class="shot" href="${url}" target="_blank" rel="noopener">
+                    <img src="${url}" alt="${label} for ${keyword.seed_keyword}" loading="lazy" />
+                    <span>${label}</span>
+                  </a>
+                `,
+              )}
+            </div>
+            <form method="post" action="/keywords/${keyword.id}/images/clear" style="margin-top:14px"
+                  onsubmit="return confirm('Forget these? The next site to publish this keyword will generate a new set.')">
+              <button class="danger small" type="submit">Forget these and make new ones</button>
+            </form>
+          `
+        : html`<p class="muted small" style="margin:0">
+            No image set stored for this keyword yet. The first site to publish it generates four
+            and records them here; every site after that copies them, unless you have turned
+            <span class="mono">reuse</span> off for that site above.
+          </p>`}
     </div>
   `;
 }

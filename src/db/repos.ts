@@ -1417,3 +1417,102 @@ export const listRunsForKeyword = (keywordId: number, limit = 25): RunListRow[] 
     keywordId,
     limit,
   );
+
+/* =========================================================================
+ * Where a keyword's images came from
+ * ====================================================================== */
+
+export interface SharedImageInfo extends SharedImageUrls {
+  sourceDomain: string | null;
+  createdAt: string;
+  /** Sites that have copied this set rather than generating their own. */
+  reusedBy: number;
+}
+
+/**
+ * The stored image set for one keyword, with its provenance.
+ *
+ * Exists because "are these four images really this keyword's own?" was not a
+ * question the UI could answer. The store is keyed by keyword_id, so crossing
+ * keywords is not representable — but being told that is not the same as being
+ * able to open two keywords and see two different sets of URLs.
+ */
+export const sharedImageInfo = (keywordId: number): SharedImageInfo | undefined => {
+  const row = get<{
+    feature_url: string;
+    top_shot_url: string;
+    texture_macro_url: string;
+    before_after_url: string;
+    created_at: string;
+    domain: string | null;
+    source_site_id: number | null;
+  }>(
+    `SELECT i.feature_url, i.top_shot_url, i.texture_macro_url, i.before_after_url,
+            i.created_at, i.source_site_id, s.domain
+       FROM keyword_images i
+       LEFT JOIN sites s ON s.id = i.source_site_id
+      WHERE i.keyword_id = ?`,
+    keywordId,
+  );
+
+  if (!row) return undefined;
+
+  // Every site that published this keyword other than the one that made the
+  // images. Those are the runs that copied instead of generating.
+  const reused =
+    get<{ n: number }>(
+      `SELECT COUNT(DISTINCT site_id) AS n FROM runs
+        WHERE keyword_id = ? AND status = 'published'
+          AND (? IS NULL OR site_id != ?)`,
+      keywordId,
+      row.source_site_id,
+      row.source_site_id,
+    )?.n ?? 0;
+
+  return {
+    feature: row.feature_url,
+    topShot: row.top_shot_url,
+    textureMacro: row.texture_macro_url,
+    beforeAfter: row.before_after_url,
+    sourceDomain: row.domain,
+    createdAt: row.created_at,
+    reusedBy: reused,
+  };
+};
+
+export interface KeywordImageCounts {
+  /** Calls to Google for the four article images. 4 per keyword when shared. */
+  articleGenerated: number;
+  /** Calls to Google for Pinterest graphics. One per site, never shared. */
+  pinGenerated: number;
+  /** Runs that copied an existing set instead of generating. */
+  copiedRuns: number;
+}
+
+/**
+ * What this keyword has actually cost at the image service.
+ *
+ * Read from run_steps.images, which counts generations only — a copied image
+ * moved bytes between two of your own servers and never entered Google's
+ * queue, so counting it here would answer a different question than the one
+ * being asked.
+ */
+export const keywordImageCounts = (keywordId: number): KeywordImageCounts => {
+  const row = get<{ article: number; pin: number; copied: number }>(
+    `SELECT
+       COALESCE(SUM(CASE WHEN s.step = 'generate-images'    THEN s.images ELSE 0 END), 0) AS article,
+       COALESCE(SUM(CASE WHEN s.step = 'generate-pin-image' THEN s.images ELSE 0 END), 0) AS pin,
+       COALESCE(SUM(CASE WHEN s.step = 'generate-images' AND s.status = 'ok' AND s.images = 0
+                         THEN 1 ELSE 0 END), 0)                                           AS copied
+     FROM run_steps s
+     JOIN runs r ON r.id = s.run_id
+     WHERE r.keyword_id = ?`,
+    keywordId,
+  );
+
+  return {
+    articleGenerated: Number(row?.article ?? 0),
+    pinGenerated: Number(row?.pin ?? 0),
+    copiedRuns: Number(row?.copied ?? 0),
+  };
+};
