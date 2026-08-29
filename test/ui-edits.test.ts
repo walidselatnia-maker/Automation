@@ -152,6 +152,18 @@ describe('web UI after the layout changes', () => {
       expect(response.body).toContain('name="tick_minutes"');
     });
 
+    it('does not lecture about environment variables', async () => {
+      // They are read once when the container starts, so a field for them
+      // would look like it worked and change nothing — and a table explaining
+      // that is a paragraph of deployment trivia on a page meant for the two
+      // or three decisions somebody actually makes. It lives in DEPLOY.md.
+      const response = await get('/settings');
+
+      expect(response.body).not.toContain('Set where the app is deployed');
+      expect(response.body).not.toContain('WATCHDOG_DISCONNECT_GRACE');
+      expect(response.body).not.toContain('MAX_CONCURRENT_REQUESTS');
+    });
+
     it('links prompts and history from the settings page', async () => {
       const response = await get('/settings');
       expect(response.body).toContain('href="/settings/prompts"');

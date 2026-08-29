@@ -60,11 +60,22 @@ variables and redeploy.
 | `ENCRYPTION_KEY` | generated | 64 hex chars; encrypts stored credentials |
 | `FLOW_PROJECT_ID` | — | Optional here; easier to set in Settings → Images |
 | `MAX_CONCURRENT_REQUESTS` | `2` | Parallel image generations. Google's own ceiling is 5 |
-| `API_COOLDOWN` | `10` | Seconds between calls to Google |
+| `API_COOLDOWN` | `10` | Seconds between calls to Google. Raise it if you see rate limits |
+| `MAX_RETRIES` | `5` | Attempts before an image job is given up on |
+| `WATCHDOG_DISCONNECT_GRACE` | `120` | Seconds the browser may stay disconnected before Chrome is restarted |
+| `TZ` | `Africa/Algiers` | Decides when the publishing day rolls over |
+| `LLM_BASE_URL` | `https://ollama.com` | Shared by every API key |
+| `IMAGE_BASE_URL` | `http://imagegen:8100` | Where the platform reaches the image service |
 | `PORT` | `8080` | Platform listening port |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 
-Everything else is a setting in the UI, not an environment variable.
+Everything else is either a setting in the UI, wiring inside the container
+(ports, paths), or part of the request shape Google sees — which is
+deliberately not configurable.
+
+This table is the only place these are written down. They are read once when
+the container starts, so there is no point in a settings field for them:
+editing one in a browser would look like it worked and change nothing.
 
 ### The volumes are the things that matter
 
