@@ -117,6 +117,41 @@ describe('web UI after the layout changes', () => {
       expect(response.body).toContain('Prompts');
     });
 
+    it('keeps deployment wiring off the settings page', async () => {
+      // These resolve from their defaults and their environment overrides
+      // exactly as before. They are simply not questions worth asking: the
+      // image service URL is always the container next door, and the poll
+      // numbers are a timeout nobody has needed to move.
+      const response = await get('/settings');
+
+      for (const key of [
+        'timezone',
+        'llm_base_url',
+        'image_base_url',
+        'image_poll_interval_seconds',
+        'image_poll_max_attempts',
+      ]) {
+        expect(response.body).not.toContain(`name="${key}"`);
+      }
+    });
+
+    it('still resolves the hidden values', async () => {
+      const { Settings } = await import('../src/settings.js');
+      const settings = new Settings(KEY);
+
+      expect(settings.get('image_base_url')).toContain('imagegen');
+      expect(settings.getNumber('image_poll_max_attempts')).toBe(40);
+      expect(settings.get('timezone')).not.toBe('');
+    });
+
+    it('still asks for the things that are real decisions', async () => {
+      const response = await get('/settings');
+
+      expect(response.body).toContain('name="automation_enabled"');
+      expect(response.body).toContain('name="flow_project_id"');
+      expect(response.body).toContain('name="tick_minutes"');
+    });
+
     it('links prompts and history from the settings page', async () => {
       const response = await get('/settings');
       expect(response.body).toContain('href="/settings/prompts"');

@@ -1286,7 +1286,10 @@ export function settingsPage(
 
     <form method="post" action="/settings">
       ${groups.map((group) => {
-        const fields = specs.filter((s) => s.group === group.key);
+        // Hidden settings still resolve, still take their environment
+        // override, and are still saved if something submits them. They are
+        // simply not questions worth putting to anybody.
+        const fields = specs.filter((s) => s.group === group.key && !s.hidden);
         if (fields.length === 0) return raw('');
         return html`
           <h2>${group.title}</h2>

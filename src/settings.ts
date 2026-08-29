@@ -14,6 +14,20 @@ export interface SettingSpec {
   default: string;
   help?: string;
   type?: 'text' | 'number' | 'password' | 'textarea';
+  /**
+   * Kept out of the settings page.
+   *
+   * The value, its default and any environment override all still work exactly
+   * as before — this only stops it being rendered. These are deployment wiring
+   * rather than decisions: the image service URL is always the container next
+   * door, the poll numbers are a timeout nobody has ever needed to move, and a
+   * field that only ever holds its default is a question the page is asking
+   * for no reason.
+   *
+   * The save handler skips anything the form did not submit, so a hidden
+   * setting cannot be blanked by saving the page.
+   */
+  hidden?: boolean;
 }
 
 export const SETTING_SPECS: SettingSpec[] = [
@@ -23,8 +37,9 @@ export const SETTING_SPECS: SettingSpec[] = [
     label: 'Timezone',
     group: 'general',
     secret: false,
-    default: 'Africa/Algiers',
-    help: 'Determines when the publishing day rolls over.',
+    hidden: true,
+    default: process.env.TZ?.trim() || 'Africa/Algiers',
+    help: 'Determines when the publishing day rolls over. Set TZ to change it.',
   },
   {
     key: 'automation_enabled',
@@ -91,7 +106,8 @@ export const SETTING_SPECS: SettingSpec[] = [
     label: 'LLM base URL',
     group: 'llm',
     secret: false,
-    default: 'https://ollama.com',
+    hidden: true,
+    default: process.env.LLM_BASE_URL?.trim() || 'https://ollama.com',
     help: 'Shared by every API key. Requests go to {base URL}/api/chat.',
   },
 
@@ -101,6 +117,7 @@ export const SETTING_SPECS: SettingSpec[] = [
     label: 'Image service URL',
     group: 'images',
     secret: false,
+    hidden: true,
     default: process.env.IMAGE_BASE_URL ?? 'http://imagegen:8100',
     help:
       'Base URL of the image service. The default reaches the imagegen ' +
@@ -123,6 +140,7 @@ export const SETTING_SPECS: SettingSpec[] = [
     label: 'Image poll interval (seconds)',
     group: 'images',
     secret: false,
+    hidden: true,
     default: '15',
     type: 'number',
   },
@@ -131,6 +149,7 @@ export const SETTING_SPECS: SettingSpec[] = [
     label: 'Image poll max attempts',
     group: 'images',
     secret: false,
+    hidden: true,
     default: '40',
     type: 'number',
     help: 'Bounds the polling loop. 40 attempts at 15s is a 10 minute ceiling.',
@@ -277,13 +296,13 @@ export class Settings {
     if (this.getBool('telegram_enabled') && !this.has('telegram_bot_token')) {
       problems.push('Telegram notifications are on but no bot token is set.');
     }
-    if (!this.has('llm_base_url')) {
-      problems.push('LLM base URL is not set (Settings → LLM).');
-    }
     try {
       new Intl.DateTimeFormat('en-CA', { timeZone: this.get('timezone') });
     } catch {
-      problems.push(`Timezone "${this.get('timezone')}" is not a valid IANA timezone.`);
+      problems.push(
+        `Timezone "${this.get('timezone')}" is not a valid IANA timezone. ` +
+          'It comes from the TZ environment variable.',
+      );
     }
 
     return problems;
