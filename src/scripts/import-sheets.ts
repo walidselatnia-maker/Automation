@@ -80,14 +80,18 @@ function main(): void {
 
       console.log(`\nImporting sites from ${args.keys}`);
       const result = importSitesCsv(readFileSync(args.keys, 'utf8'), config.encryptionKey);
-      console.log(`  ✓ ${result.imported} site(s) imported`);
+      console.log(`  ✓ ${result.added} site(s) added, ${result.updated} updated`);
+      if (result.skipped) console.log(`  · ${result.skipped} row(s) skipped (no domain)`);
       result.errors.forEach((e) => console.error(`  ✗ ${e}`));
 
-      console.log('\n  Credentials were NOT imported. They are shared across all sites,');
-      console.log('  so enter them once in Settings rather than eleven times:');
-      console.log('    · Site API token    (Settings → Sites)');
-      console.log('    · Image service key (Settings → Images)');
-      console.log('    · Buffer token      (Settings → Buffer)');
+      if (result.withCredentials > 0) {
+        console.log(`\n  ${result.withCredentials} row(s) carried credentials.`);
+      } else {
+        console.log('\n  No credentials in that file. Each site needs its own pair:');
+        console.log('    · Site API token    (Sites → open the site)');
+        console.log('    · Buffer API token  (Sites → open the site)');
+        console.log('  Add api_token and buffer_token columns, or fill them in the UI.');
+      }
     }
 
     if (args.spy) {

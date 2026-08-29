@@ -461,9 +461,22 @@ describe('web UI after the layout changes', () => {
       ]);
     });
 
-    it('keeps site credentials out of every export', () => {
+    it('keeps site credentials out of the ordinary export', () => {
+      // The columns are present and empty on purpose, so the file round-trips
+      // through the importer without wiping the tokens it does not carry.
+      // What matters is that no *value* is a credential.
       const sites = exportDataset('sites');
-      expect(sites.rows[0]?.join(',')).not.toContain('token');
+      const header = sites.rows[0]!;
+      const api = header.indexOf('api_token');
+      const buffer = header.indexOf('buffer_token');
+
+      expect(api).toBeGreaterThan(-1);
+      expect(buffer).toBeGreaterThan(-1);
+
+      for (const row of sites.rows.slice(1)) {
+        expect(row[api]).toBe('');
+        expect(row[buffer]).toBe('');
+      }
     });
 
     it('rejects an unknown dataset', async () => {

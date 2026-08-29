@@ -33,7 +33,7 @@ import {
   usagePage,
 } from './views/pages.js';
 import type { KeywordFilterView, SiteMark } from './views/pages.js';
-import { importKeywordsCsv } from './import.js';
+import { importKeywordsCsv, importSitesCsv } from './import.js';
 import {
   activateSite,
   bulkDeleteKeywords,
@@ -96,6 +96,7 @@ import { get } from '../db/index.js';
 import {
   backupTo,
   clearHistory,
+  exportSitesWithCredentials,
   forgetAllSharedImages,
   compactDatabase,
   dataCounts,
@@ -613,6 +614,71 @@ export function buildServer(
     });
   });
 
+  /**
+   * Bulk site entry from a spreadsheet.
+   *
+   * Matched on the domain, so importing the same file twice corrects rather
+   * than duplicates. A blank token keeps whatever is stored, which is what
+   * makes the credential-free export safe to edit and import back.
+   */
+  app.post('/sites/import', async (request, reply) => {
+    try {
+      const file = await request.file();
+      if (!file) {
+        return redirect(reply, '/sites', { kind: 'error', message: 'No file received.' });
+      }
+
+      const report = importSitesCsv((await file.toBuffer()).toString('utf8'), encryptionKey);
+
+      if (report.errors.length > 0 && report.added + report.updated === 0) {
+        return redirect(reply, '/sites', {
+          kind: 'error',
+          message: report.errors.slice(0, 3).join(' '),
+        });
+      }
+
+      const parts: string[] = [];
+      if (report.added) parts.push(`${report.added} site(s) added`);
+      if (report.updated) parts.push(`${report.updated} updated`);
+      if (report.skipped) parts.push(`${report.skipped} row(s) skipped with no domain`);
+
+      let message = parts.length ? `${parts.join(', ')}.` : 'Nothing in that file to import.';
+
+      // Saying which happened matters: a file with no token columns leaves the
+      // stored credentials alone, and somebody expecting it to have set them
+      // would otherwise find out at the next run.
+      message +=
+        report.withCredentials > 0
+          ? ` ${report.withCredentials} row(s) carried credentials.`
+          : ' No credentials in that file, so the stored ones were left untouched.';
+
+      if (report.errors.length) {
+        message += ` Failed: ${report.errors.slice(0, 3).join('; ')}`;
+      }
+
+      return redirect(reply, '/sites', {
+        kind: report.errors.length ? 'warn' : 'ok',
+        message,
+      });
+    } catch (err) {
+      return redirect(reply, '/sites', { kind: 'error', message: errorMessage(err) });
+    }
+  });
+
+  /**
+   * Every site with its tokens in plain text.
+   *
+   * Its own route rather than a flag on /data/export/sites, because the two
+   * files are not the same kind of thing: one is safe to attach to a message
+   * and the other can publish to every site you own. That difference should
+   * cost a separate deliberate click.
+   */
+  app.get('/sites/export/credentials', async (_request, reply) => {
+    const data = exportSitesWithCredentials(encryptionKey);
+    log.warn('site credentials exported in plain text');
+    return csvFile(reply, data.filename, data.rows);
+  });
+
   app.post('/sites/:id/delete', async (request, reply) => {
     deleteSite(asNumber((request.params as { id: string }).id, 0));
     return redirect(reply, '/sites', { kind: 'ok', message: 'Site deleted.' });
@@ -1053,9 +1119,12 @@ export function buildServer(
 
   app.get('/sites/template.csv', async (_request, reply) =>
     csvFile(reply, 'sites-template.csv', [
-      ['Website Name', 'Domain', 'status', 'daily_target', 'hours_between', 'Pin username', 'Project ID'],
-      ['bitespoon', 'bitespoon.com', 'active', '3', '8', 'cookwithbitespoon', ''],
-      ['longlivo', 'longlivo.com', 'paused', '0', '8', 'prepplat', ''],
+      ['name', 'domain', 'status', 'daily_target', 'interval_minutes', 'pin_username',
+        'project_id', 'auto_publish', 'paused_reason', 'api_token', 'buffer_token'],
+      ['bitespoon', 'bitespoon.com', 'active', '3', '480', 'cookwithbitespoon', '',
+        'yes', '', 'paste-the-site-token', 'paste-the-buffer-token'],
+      ['longlivo', 'longlivo.com', 'paused', '0', '480', 'prepplat', '',
+        'no', 'waiting on their API', '', ''],
     ]),
   );
 

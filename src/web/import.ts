@@ -185,13 +185,37 @@ export function importKeywordsCsv(csv: string): ImportReport {
 }
 
 /** Import sites from the old KEYS sheet layout. */
-export function importSitesCsv(
-  csv: string,
-  encryptionKey: Buffer,
-): { imported: number; errors: string[] } {
+export interface SiteImportReport {
+  added: number;
+  updated: number;
+  skipped: number;
+  /** Rows that carried a token, so the reader knows secrets were in that file. */
+  withCredentials: number;
+  errors: string[];
+}
+
+/**
+ * Bulk site entry from a spreadsheet, credentials included.
+ *
+ * Credentials used to be refused here on the grounds that the sheet this
+ * replaced repeated one shared token across every row. That is no longer true
+ * — each domain has its own publishing token and its own Buffer account — and
+ * typing twelve pairs of them into a form one at a time is the kind of setup
+ * step that gets abandoned halfway.
+ *
+ * A blank token means "keep whatever is stored", the same rule the edit form
+ * follows. That is what makes it safe to round-trip the credential-free export:
+ * importing it back changes the settings and leaves the secrets alone.
+ */
+export function importSitesCsv(csv: string, encryptionKey: Buffer): SiteImportReport {
   const { rows } = parseCsvTable(csv);
-  const errors: string[] = [];
-  let imported = 0;
+  const report: SiteImportReport = {
+    added: 0,
+    updated: 0,
+    skipped: 0,
+    withCredentials: 0,
+    errors: [],
+  };
 
   transaction(() => {
     for (const row of rows) {
@@ -210,7 +234,10 @@ export function importSitesCsv(
       // www, or a trailing slash about half the time, and a stored domain that
       // keeps them cannot be matched by anything typed the other way.
       const domain = normaliseDomain(pick('Domain', 'domain'));
-      if (!domain) continue;
+      if (!domain) {
+        report.skipped++;
+        continue;
+      }
 
       try {
         const existing = getSiteByDomain(domain);
@@ -219,32 +246,55 @@ export function importSitesCsv(
           return Number.isFinite(n) ? n : fallback;
         };
 
-        // The old sheet expressed the gap in hours; store it as minutes.
+        // Minutes is what is stored. The old sheet expressed the gap in hours,
+        // and the export writes minutes, so both are accepted.
+        const minutes = pick('interval_minutes');
         const hours = pick('hours_between');
-        const intervalMinutes = hours
-          ? Math.round(toNumber(hours, 8) * 60)
-          : (existing?.interval_minutes ?? 480);
+        const intervalMinutes = minutes
+          ? Math.round(toNumber(minutes, 480))
+          : hours
+            ? Math.round(toNumber(hours, 8) * 60)
+            : (existing?.interval_minutes ?? 480);
+
+        const apiToken = pick('api_token', 'Site API token').trim();
+        const bufferToken = pick('buffer_token', 'Buffer API token').trim();
+        if (apiToken || bufferToken) report.withCredentials++;
+
+        // Absent column and empty cell are the same thing on purpose: a sheet
+        // exported without credentials must not wipe the ones already stored.
+        const autoPublish = pick('auto_publish').trim().toLowerCase();
 
         upsertSite(
           {
-            name: pick('Website Name', 'name') || domain,
+            name: pick('Website Name', 'name') || existing?.name || domain,
             domain,
             status: pick('status').toLowerCase() === 'active' ? 'active' : 'paused',
-            pin_username: pick('Pin username'),
-            project_id: pick('Project ID'),
+            pin_username: pick('Pin username', 'pin_username'),
+            project_id: pick('Project ID', 'project_id'),
             daily_target: toNumber(pick('daily_target'), existing?.daily_target ?? 0),
             interval_minutes: intervalMinutes,
-            // Credentials are entered per site in the UI, never imported: the
-            // old sheet repeated one token across every row.
+            paused_reason: pick('paused_reason'),
+            auto_publish:
+              autoPublish === ''
+                ? (existing?.auto_publish ?? 1) === 1
+                : !['0', 'no', 'false', 'off', 'manual', 'approval'].includes(autoPublish),
+            // Blank leaves the stored credential untouched — upsertSite's rule.
+            apiToken,
+            bufferToken,
           },
           encryptionKey,
         );
-        imported++;
+
+        if (existing) report.updated++;
+        else report.added++;
       } catch (err) {
-        errors.push(`${domain}: ${err instanceof Error ? err.message : String(err)}`);
+        report.errors.push(`${domain}: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
   });
 
-  return { imported, errors };
+  log.info(
+    `imported ${report.added} site(s), updated ${report.updated}, skipped ${report.skipped}`,
+  );
+  return report;
 }

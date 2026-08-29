@@ -161,6 +161,31 @@ The Sites list shows an **API** and **Buffer** badge per row, so a missing
 credential is visible at a glance rather than at 3am mid-run. Editing a site
 and leaving a credential field blank keeps the stored value.
 
+#### Many sites at once
+
+**Sites → Many at once** imports a CSV. Columns:
+
+```
+name, domain, status, daily_target, interval_minutes, pin_username,
+project_id, auto_publish, paused_reason, api_token, buffer_token
+```
+
+Only `domain` is required, and sites are matched on it — importing the same
+file twice corrects rather than duplicates. **A blank `api_token` or
+`buffer_token` keeps whatever is stored**, so a file without them changes the
+settings and leaves the credentials alone.
+
+Two exports:
+
+| | Contains | Use |
+|---|---|---|
+| **Export sites** | everything except the tokens (those columns are present and empty) | the default — safe to edit, share, keep in git |
+| **Export with credentials** | the same, plus every token in plain text | moving to another deployment, or an offline backup |
+
+The second one is a file that can publish to all of your sites. It does not
+belong in a shared folder, a chat message, or a repository. It is logged as a
+warning when downloaded.
+
 ### 3. Keywords
 
 **Keywords → Download template** gives you a CSV already containing a column

@@ -11,6 +11,7 @@
  * would leave a lock referencing nothing.
  */
 import { all, get, run } from './index.js';
+import { siteSecrets, type SiteRow } from './repos.js';
 
 export type Dataset = 'runs' | 'steps' | 'decisions' | 'events' | 'keywords' | 'sites';
 
@@ -205,20 +206,31 @@ export function exportDataset(dataset: Dataset): Export {
     }
 
     case 'sites': {
-      // No tokens. An export is a file that ends up in a downloads folder.
+      // No tokens. An export is a file that ends up in a downloads folder, and
+      // this one should be safe to attach to a message without thinking.
+      // exportSitesWithCredentials is the deliberate other choice.
+      //
+      // Every other column round-trips through importSitesCsv, which reads a
+      // blank token as "keep the stored one" — so this file can be edited in a
+      // spreadsheet and imported back without erasing the secrets it omits.
       const rows = all<Record<string, unknown>>(
         `SELECT name, domain, status, daily_target, interval_minutes,
-                pin_username, project_id
+                pin_username, project_id, auto_publish, paused_reason
            FROM sites ORDER BY id`,
       );
       return {
         filename: 'sites.csv',
         rows: [
-          ['Website Name', 'Domain', 'status', 'daily_target', 'interval_minutes',
-            'Pin username', 'Project ID'],
+          ['name', 'domain', 'status', 'daily_target', 'interval_minutes',
+            'pin_username', 'project_id', 'auto_publish', 'paused_reason',
+            'api_token', 'buffer_token'],
           ...rows.map((r) => [
             text(r.name), text(r.domain), text(r.status), text(r.daily_target),
             text(r.interval_minutes), text(r.pin_username), text(r.project_id),
+            r.auto_publish === 1 ? 'yes' : 'no', text(r.paused_reason),
+            // Present but empty, so the shape matches the credential export and
+            // the columns are there to fill in by hand.
+            '', '',
           ]),
         ],
       };
@@ -242,4 +254,45 @@ export function backupTo(path: string): void {
   // Parameters are not allowed in VACUUM INTO, so the path is quoted by
   // doubling single quotes — the caller supplies it, never a request.
   run(`VACUUM INTO '${path.replace(/'/g, "''")}'`);
+}
+
+/**
+ * Every site with its credentials in plain text.
+ *
+ * Kept apart from exportDataset('sites') deliberately. That one omits the
+ * tokens so it can be shared, diffed, or attached to a message without
+ * thinking about it; this one is a file that can publish to all your sites,
+ * and the difference has to be a separate deliberate action rather than a flag
+ * somebody passes by accident.
+ *
+ * Round-trips through importSitesCsv, which treats a blank token as "keep the
+ * stored one" — so the safe export can be edited and imported back without
+ * erasing the secrets it does not contain.
+ */
+export function exportSitesWithCredentials(encryptionKey: Buffer): Export {
+  const rows = all<SiteRow>('SELECT * FROM sites ORDER BY id');
+
+  return {
+    filename: 'sites-with-credentials.csv',
+    rows: [
+      ['name', 'domain', 'status', 'daily_target', 'interval_minutes', 'pin_username',
+        'project_id', 'auto_publish', 'paused_reason', 'api_token', 'buffer_token'],
+      ...rows.map((site) => {
+        const secrets = siteSecrets(site, encryptionKey);
+        return [
+          site.name,
+          site.domain,
+          site.status,
+          String(site.daily_target),
+          String(site.interval_minutes),
+          site.pin_username,
+          site.project_id,
+          site.auto_publish === 1 ? 'yes' : 'no',
+          site.paused_reason,
+          secrets.apiToken,
+          secrets.bufferToken,
+        ];
+      }),
+    ],
+  };
 }
