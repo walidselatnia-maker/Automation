@@ -16,7 +16,20 @@
 
 /** A sample value per variable. Shape matters; the values are placeholders. */
 const SEO = { keyword: 'k', title: 't', description: 'd', category: 'c' };
-const SPY = { title: 't', description: 'd', annotation: 'a', articleUrl: 'u' };
+/**
+ * What the operator's own research says about this one recipe.
+ *
+ * `group` is the seed keyword — a label many recipes share, passed only so a
+ * prompt can be told to ignore it. It shipped as the sole subject of the whole
+ * pipeline once, which made every recipe in a group come out the same.
+ */
+const SPY = {
+  title: 't',
+  description: 'd',
+  annotation: 'a',
+  articleUrl: 'u',
+  group: 'g',
+};
 
 const ARTICLE_CONTEXT = {
   seo: SEO,
@@ -31,7 +44,7 @@ export const STEP_CONTEXTS: Record<string, Record<string, unknown>> = {
     site: { domain: 'example.com' },
   },
   'recipe-generator': { seo: SEO, spy: SPY },
-  'image-prompts': { seo: SEO, recipe: { raw: '{}' }, recipeJson: '{}' },
+  'image-prompts': { seo: SEO, spy: SPY, recipe: { raw: '{}' }, recipeJson: '{}' },
   'pin-description': {
     seo: SEO,
     cta: 'Try it!',

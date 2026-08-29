@@ -1,8 +1,22 @@
-Create a complete, real, and detailed recipe based on the following SEO metadata:
+Create a complete, real, and detailed recipe based on the source below.
 
+THE SOURCE RECIPE — this is the dish, follow it:
+Source title: {{spy.title}}
+Source description: {{spy.description}}
+Research notes: {{spy.annotation}}
+
+TOPIC GROUP (context only, NOT the dish): {{spy.group}}
+
+SEO metadata derived from that source:
 SEO Keyword: {{seo.keyword}}
 SEO Title: {{seo.title}}
 SEO Description: {{seo.description}}
+
+The source title names the exact dish. Whatever makes it specific — the sauce,
+the cooking method, the vessel, the cuisine, the timing — must appear in your
+recipe title, ingredients and method. Do not drift to a generic version of the
+topic group. Another recipe from the same group must not be substitutable for
+this one.
 
 Generate a full recipe that naturally incorporates the keyword into the recipe title and content. The recipe must include:
 

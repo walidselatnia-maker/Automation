@@ -1057,7 +1057,12 @@ export function keywordsPage(
                         >${k.spy_title || k.seed_keyword}</a
                       >
                       <div class="muted small">
-                        ${k.seed_keyword}${k.spy_title ? '' : ' — no article title imported'}
+                        <span class="group-chip" title="Topic group — several recipes share this">
+                          ${k.seed_keyword}
+                        </span>
+                        ${k.spy_title
+                          ? raw('')
+                          : html`<span class="badge error">no article title</span>`}
                       </div>
                     </td>
                     <td>
@@ -1995,6 +2000,7 @@ export function keywordDetailPage(
   shares: Map<number, boolean>,
   images: SharedImageInfo | undefined,
   counts: KeywordImageCounts,
+  siblings: KeywordRow[],
 ): Html {
   return html`
     <div class="spread">
@@ -2014,6 +2020,21 @@ export function keywordDetailPage(
         </form>
       </div>
     </div>
+
+    ${keyword.spy_title.trim()
+      ? raw('')
+      : html`<div class="flash error">
+          <strong>This keyword has no article title</strong>
+          <div class="small" style="margin-top:6px">
+            Only the topic group describes it, and a topic group covers many different
+            recipes &mdash; so there is nothing here to say which dish to write. Runs for this
+            keyword are refused rather than producing another copy of whatever else is in
+            &ldquo;${keyword.seed_keyword}&rdquo;. Fill in
+            <span class="mono">spy_title</span> and re-import.
+          </div>
+        </div>`}
+
+    ${groupCard(keyword, siblings)}
 
     <div class="flash ${diagnosis.readyCount > 0 ? 'ok' : 'warn'}">${diagnosis.summary}</div>
 
@@ -2131,6 +2152,49 @@ export function keywordDetailPage(
             onsubmit="return confirm('Delete this keyword? Its run history stays but is detached.')">
         <button class="danger small" type="submit">Delete this keyword</button>
       </form>
+    </div>
+  `;
+}
+
+/**
+ * The topic group, stated as a label rather than an identity.
+ *
+ * Spying on one topic yields five or ten different recipes under it, so the
+ * seed keyword is shared and means "where I found this", not "what this is".
+ * Naming the siblings makes that concrete, and makes it obvious at a glance if
+ * two of them are drifting towards the same article.
+ */
+function groupCard(keyword: KeywordRow, siblings: KeywordRow[]): Html {
+  return html`
+    <div class="card groupcard">
+      <div>
+        <span class="muted small">Topic group</span>
+        <div>
+          <span class="group-chip big">${keyword.seed_keyword}</span>
+          <span class="muted small">
+            &mdash; a research label, not the subject. The article is written from the title,
+            description and notes below it.
+          </span>
+        </div>
+      </div>
+
+      ${siblings.length > 0
+        ? html`<div style="margin-top:12px">
+            <span class="muted small">
+              ${siblings.length} other recipe(s) found under the same label. Each is its own
+              keyword with its own article and its own images:
+            </span>
+            <div class="row wrap" style="margin-top:8px">
+              ${siblings.map(
+                (other) => html`<a class="button small" href="/keywords/${other.id}"
+                  >${other.spy_title || `#${other.id}`}</a
+                >`,
+              )}
+            </div>
+          </div>`
+        : html`<div class="muted small" style="margin-top:10px">
+            The only recipe under this label so far.
+          </div>`}
     </div>
   `;
 }

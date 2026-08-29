@@ -2,11 +2,38 @@ import type { Step } from '../engine.js';
 import { parseJson, requireFields } from '../json.js';
 import { parseJsonOrRepair } from '../parse-with-repair.js';
 import type { Category } from '../../integrations/site-api.js';
+import { createLogger } from '../../lib/logger.js';
+
+const log = createLogger('content');
 
 /**
  * Stages 1-4: gather site context, validate the spy source, derive SEO
  * metadata, generate the recipe, and turn it into image prompts.
  */
+
+/**
+ * The operator's research about this one recipe, as prompts receive it.
+ *
+ * `group` is the seed keyword — a label many recipes share, because spying on
+ * one topic yields five or ten different dishes under it. It is passed so a
+ * prompt can be told explicitly to ignore it as a subject.
+ *
+ * The rest was being collected and thrown away. Only `spy.title` ever reached
+ * a model, and only in validate-spy; description and annotation were put into
+ * the context by the step and then never referenced by the template. So the
+ * whole article was written from one line of text, distilled into four SEO
+ * fields — and five recipes sharing a topic came out as five copies of the
+ * same article with the same pictures.
+ */
+function spyContext(ctx: import('../context.js').PipelineContext) {
+  return {
+    group: ctx.keyword.seed_keyword,
+    title: ctx.keyword.spy_title,
+    description: ctx.keyword.spy_description,
+    annotation: ctx.keyword.annotation,
+    articleUrl: ctx.keyword.spy_article_url,
+  };
+}
 
 export interface SeoData {
   keyword: string;
@@ -57,12 +84,17 @@ export const validateSpy: Step<Category[], SeoData> = {
   name: 'validate-spy',
   title: 'Validate spy source and derive SEO',
   async run(ctx, categories) {
+    if (!ctx.keyword.spy_title.trim()) {
+      // Without it the only thing describing this row is the topic group, and
+      // every recipe under that group would be written from the same words.
+      throw new SpyRejectedError(
+        'This keyword has no spy title, so there is nothing to say which dish it is. ' +
+          'The seed keyword is a topic group, not a recipe.',
+      );
+    }
+
     const result = await ctx.prompt('spy-validation', {
-      spy: {
-        title: ctx.keyword.spy_title,
-        articleUrl: ctx.keyword.spy_article_url,
-        annotation: ctx.keyword.annotation,
-      },
+      spy: spyContext(ctx),
       categoryTitles: JSON.stringify(categories.map((c) => c.title)),
       site: { domain: ctx.site.domain },
     });
@@ -79,16 +111,27 @@ export const validateSpy: Step<Category[], SeoData> = {
     );
     requireFields(parsed, ['keyword', 'title', 'description', 'category'], 'Spy validation');
 
-    return {
-      value: {
-        keyword: parsed.keyword!,
-        title: parsed.title!,
-        description: parsed.description!,
-        category: parsed.category!,
-      },
-      endpoint: result.endpoint,
-      model: result.model,
+    const seo = {
+      keyword: parsed.keyword!,
+      title: parsed.title!,
+      description: parsed.description!,
+      category: parsed.category!,
     };
+
+    // The failure this whole change exists to stop, caught where it happens
+    // rather than three steps later in a photograph. Not fatal: a genuinely
+    // one-recipe topic will trip it, and refusing to write that article would
+    // be worse than writing it.
+    if (collapsedToGroup(seo.keyword, ctx.keyword.seed_keyword)) {
+      log.warn(
+        `run ${ctx.runId}: "${ctx.keyword.spy_title}" produced the keyword ` +
+          `"${seo.keyword}", which is just the topic group "${ctx.keyword.seed_keyword}". ` +
+          'Every recipe in that group will come out the same. Check the spy title, ' +
+          'description and annotation are filled in for this keyword.',
+      );
+    }
+
+    return { value: seo, endpoint: result.endpoint, model: result.model };
   },
 };
 
@@ -101,14 +144,7 @@ export const generateRecipe: Step<SeoData, RecipeData> = {
   name: 'generate-recipe',
   title: 'Generate recipe',
   async run(ctx, seo) {
-    const result = await ctx.prompt('recipe-generator', {
-      seo,
-      spy: {
-        title: ctx.keyword.spy_title,
-        description: ctx.keyword.spy_description,
-        annotation: ctx.keyword.annotation,
-      },
-    });
+    const result = await ctx.prompt('recipe-generator', { seo, spy: spyContext(ctx) });
 
     // Parsed for validation; the raw string is what later prompts interpolate,
     // matching the original which passed Recipe generator's content through.
@@ -138,6 +174,9 @@ export const generateImagePrompts: Step<
   async run(ctx, input) {
     const result = await ctx.prompt('image-prompts', {
       seo: input.seo,
+      // The images have to show this dish, not a generic member of its topic
+      // group, so the step that draws them sees the source too.
+      spy: spyContext(ctx),
       recipe: { raw: input.recipe.raw },
       recipeJson: JSON.stringify(input.recipe.parsed),
     });
@@ -174,3 +213,36 @@ export const generateImagePrompts: Step<
     };
   },
 };
+
+/**
+ * Did the model answer with the topic group instead of the dish?
+ *
+ * A research label like "chicken thighs" covers five different recipes. When
+ * the derived keyword is that label and nothing more, every one of them writes
+ * the same article and generates the same pictures — which is exactly the
+ * symptom that led here.
+ *
+ * Compared on significant words so "Chicken Thighs" and "chicken thigh" are
+ * the same answer, and "honey soy chicken thighs" is not.
+ */
+export function collapsedToGroup(keyword: string, group: string): boolean {
+  const words = (text: string): Set<string> =>
+    new Set(
+      text
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .split(/\s+/)
+        .map((w) => w.replace(/s$/, ''))
+        .filter((w) => w.length > 2),
+    );
+
+  const derived = words(keyword);
+  const label = words(group);
+
+  if (derived.size === 0 || label.size === 0) return false;
+
+  // Adding nothing to the group's own words is the collapse. Any extra
+  // significant word — a sauce, a method, a vessel — means it stayed specific.
+  for (const word of derived) if (!label.has(word)) return false;
+  return true;
+}

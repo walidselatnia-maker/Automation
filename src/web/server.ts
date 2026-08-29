@@ -72,6 +72,7 @@ import {
   getLinksForKeyword,
   insertKeyword,
   keywordImageCounts,
+  keywordsInGroup,
   sharedImageInfo,
   pauseSite,
   runUsage,
@@ -808,6 +809,7 @@ export function buildServer(
         new Map(loadLinkGrid().filter((l) => l.keywordId === id).map((l) => [l.siteId, l.shareImages])),
         sharedImageInfo(id),
         keywordImageCounts(id),
+        keywordsInGroup(keyword.seed_keyword, id),
       ),
       readFlash(request.query),
     );

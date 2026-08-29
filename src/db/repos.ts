@@ -822,9 +822,49 @@ export const deletePromptOverride = (name: string): void => {
   run('DELETE FROM prompt_overrides WHERE name = ?', name);
 };
 
-/** Look a keyword up by its seed text, so a re-import corrects rather than duplicates. */
+/**
+ * Find the row a CSV line refers to, so a re-import corrects rather than
+ * duplicates.
+ *
+ * The article, not the group, is the identity. `seed_keyword` is a research
+ * label shared by every recipe found under one topic — five different dishes
+ * arrive as five rows all saying "Chicken Thighs" — so matching on it made a
+ * re-import collapse those five into one, each row overwriting the previous
+ * one's title, description and annotation. What survived was the last line of
+ * the file, and the other four recipes were gone.
+ *
+ * `spy_title` names the actual dish, so that is what identifies a row. A line
+ * with no title falls back to the seed, which is the only thing left to go on.
+ */
+export const findKeywordRow = (seed: string, spyTitle: string): KeywordRow | undefined => {
+  const title = spyTitle.trim();
+
+  if (title) {
+    return get<KeywordRow>(
+      'SELECT * FROM keywords WHERE spy_title = ? COLLATE NOCASE',
+      title,
+    );
+  }
+
+  // No article title: the seed is the whole of what this row says it is, so
+  // two such rows are indistinguishable and treating them as one is right.
+  return get<KeywordRow>(
+    "SELECT * FROM keywords WHERE seed_keyword = ? COLLATE NOCASE AND spy_title = ''",
+    seed.trim(),
+  );
+};
+
+/** Kept for the URL importer, which has a title but no group to match within. */
 export const getKeywordBySeed = (seed: string): KeywordRow | undefined =>
   get<KeywordRow>('SELECT * FROM keywords WHERE seed_keyword = ? COLLATE NOCASE', seed.trim());
+
+/** Every recipe found under one research label. */
+export const keywordsInGroup = (seed: string, excludeId = 0): KeywordRow[] =>
+  all<KeywordRow>(
+    'SELECT * FROM keywords WHERE seed_keyword = ? COLLATE NOCASE AND id != ? ORDER BY id',
+    seed.trim(),
+    excludeId,
+  );
 
 /** Overwrite a keyword's imported fields, leaving its id and links intact. */
 export function updateKeywordFields(

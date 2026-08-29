@@ -162,13 +162,84 @@ describe('importing the same file twice', () => {
     expect(getLinksForKeyword(listKeywords()[0]!.id)).toHaveLength(1);
   });
 
-  it('refreshes the keyword fields on the second pass', () => {
+  it('refreshes a row when the same article comes round again', () => {
     site('a.com');
-    importKeywordsCsv('seed_keyword,spy_title\nchicken,Old title\n');
+    importKeywordsCsv('seed_keyword,spy_title,spy_description\nchicken,Honey Soy Thighs,old\n');
 
-    importKeywordsCsv('seed_keyword,spy_title\nchicken,New title\n');
+    importKeywordsCsv('seed_keyword,spy_title,spy_description\nchicken,Honey Soy Thighs,new\n');
 
-    expect(listKeywords()[0]?.spy_title).toBe('New title');
+    expect(listKeywords()).toHaveLength(1);
+    expect(listKeywords()[0]?.spy_description).toBe('new');
+  });
+
+  /**
+   * Spying on one topic yields five or ten different recipes under it, so the
+   * seed keyword is a research label rather than an identity. Keying on it
+   * meant a file of five Chicken Thighs recipes imported as one row, four of
+   * them silently overwritten — one article, one set of images, repeated.
+   */
+  describe('several recipes under one topic', () => {
+    const FILE =
+      'seed_keyword,spy_title\n' +
+      'Chicken Thighs,Baked Chicken Thighs in Honey Soy Sauce\n' +
+      'Chicken Thighs,One-pot chicken and rice\n' +
+      'Chicken Thighs,Caramelized BBQ Chicken Thighs in the Oven\n' +
+      'Chicken Thighs,Creamy Garlic Chicken Thighs\n';
+
+    it('keeps every recipe as its own keyword', () => {
+      site('a.com');
+      const report = importKeywordsCsv(FILE);
+
+      expect(report.imported).toBe(4);
+      expect(listKeywords()).toHaveLength(4);
+    });
+
+    it('keeps each recipe title, rather than the last line winning', () => {
+      site('a.com');
+      importKeywordsCsv(FILE);
+
+      expect(listKeywords().map((k) => k.spy_title)).toEqual([
+        'Baked Chicken Thighs in Honey Soy Sauce',
+        'One-pot chicken and rice',
+        'Caramelized BBQ Chicken Thighs in the Oven',
+        'Creamy Garlic Chicken Thighs',
+      ]);
+    });
+
+    it('leaves them all sharing the topic label', () => {
+      site('a.com');
+      importKeywordsCsv(FILE);
+
+      expect(new Set(listKeywords().map((k) => k.seed_keyword))).toEqual(
+        new Set(['Chicken Thighs']),
+      );
+    });
+
+    it('gives each its own images, since the store is keyed by keyword', () => {
+      site('a.com');
+      importKeywordsCsv(FILE);
+
+      const ids = listKeywords().map((k) => k.id);
+      expect(new Set(ids).size).toBe(4);
+    });
+
+    it('does not duplicate them when the same file is imported twice', () => {
+      site('a.com');
+      importKeywordsCsv(FILE);
+      const second = importKeywordsCsv(FILE);
+
+      expect(listKeywords()).toHaveLength(4);
+      expect(second.imported).toBe(0);
+      expect(second.updated).toBe(4);
+    });
+
+    it('still collapses rows that carry no article title at all', () => {
+      site('a.com');
+      // Nothing distinguishes these two, so treating them as one row is right.
+      importKeywordsCsv('seed_keyword\nchicken\nchicken\n');
+
+      expect(listKeywords()).toHaveLength(1);
+    });
   });
 
   it('matches the seed keyword regardless of case', () => {

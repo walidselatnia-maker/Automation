@@ -960,3 +960,22 @@ body.signin main {
   font-weight: 600;
   color: var(--muted);
 }
+
+/* --------------------------------------------------------- the topic group */
+
+/* The seed keyword is where a recipe was found, not what it is. Five recipes
+   share one label, so it reads as a tag rather than as the row's name. */
+.group-chip {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--violet-bg);
+  color: var(--violet);
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.group-chip.big { font-size: 14px; padding: 3px 12px; }
+
+.groupcard { border-left: 3px solid var(--violet); }

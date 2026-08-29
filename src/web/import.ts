@@ -1,6 +1,6 @@
 import { parseCsvTable } from '../lib/csv.js';
 import {
-  getKeywordBySeed,
+  findKeywordRow,
   getSiteByDomain,
   insertKeyword,
   listSites,
@@ -147,7 +147,12 @@ export function importKeywordsCsv(csv: string): ImportReport {
         // Importing the same file twice is normal — the first attempt is often
         // the one where the site columns did not match. Updating the existing
         // keyword makes that a correction rather than 24 more rows.
-        const existing = getKeywordBySeed(seed);
+        //
+        // Matched on the article title, not the seed. The seed is a research
+        // label that five different recipes legitimately share; keying on it
+        // meant a file of five Chicken Thighs recipes imported as one row,
+        // four of them silently overwritten.
+        const existing = findKeywordRow(seed, fields.spy_title);
         let keywordId: number;
         if (existing) {
           updateKeywordFields(existing.id, fields);
