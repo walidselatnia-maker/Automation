@@ -168,6 +168,9 @@ describe('web UI after the layout changes', () => {
       const response = await get('/settings');
       expect(response.body).toContain('href="/settings/prompts"');
       expect(response.body).toContain('href="/settings/data"');
+      // Per-step token counts live on the run that spent them, not on a page
+      // of their own.
+      expect(response.body).not.toContain('href="/settings/usage"');
     });
   });
 

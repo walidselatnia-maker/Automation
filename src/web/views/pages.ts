@@ -26,7 +26,7 @@ import { formatMinutes } from '../../core/selector.js';
 import type { Endpoint } from '../../llm/pool.js';
 import type { SettingSpec } from '../../settings.js';
 import type { Supply } from '../../core/supply.js';
-import type { RunUsage, StepCost } from '../../db/repos.js';
+import type { RunUsage } from '../../db/repos.js';
 import type { KeywordDiagnosis } from '../../core/diagnosis.js';
 import type {
   KeywordImageCounts,
@@ -1257,7 +1257,6 @@ export function settingsPage(
     <div class="row wrap" style="margin-bottom:16px">
       <a class="button" href="/settings/keys">LLM API keys</a>
       <a class="button" href="/settings/prompts">Prompts &amp; models</a>
-      <a class="button" href="/settings/usage">Usage</a>
       <a class="button" href="/settings/account">Change password</a>
       <a class="button" href="/settings/data">History &amp; storage</a>
     </div>
@@ -2239,67 +2238,5 @@ function imagesSection(
             <span class="mono">reuse</span> off for that site above.
           </p>`}
     </div>
-  `;
-}
-
-/* =========================================================================
- * Usage
- * ====================================================================== */
-
-export function usagePage(costs: StepCost[], days: number): Html {
-  const totalTokens = costs.reduce((sum, c) => sum + c.tokensIn + c.tokensOut, 0);
-
-  return html`
-    <div class="spread">
-      <div>
-        <h1>Usage</h1>
-        <p class="subtitle">
-          What the last ${days} days actually cost, per step, from the token counts the provider
-          reported. This is how you find the expensive prompt &mdash; it is rarely the one you
-          would guess, and a step that fails after burning its tokens still shows up here.
-        </p>
-      </div>
-      <a class="button" href="/settings">Back to settings</a>
-    </div>
-
-    ${costs.length === 0
-      ? html`<div class="card">
-          ${emptyState(
-            'Nothing recorded yet. Token counts are captured from each completion, so this ' +
-              'fills in as runs happen.',
-          )}
-        </div>`
-      : html`<div class="card table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Step</th><th>Runs</th><th>Tokens in</th><th>Tokens out</th>
-                <th>Total</th><th>Share</th><th>Average time</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${costs.map((cost) => {
-                const total = cost.tokensIn + cost.tokensOut;
-                const share = totalTokens === 0 ? 0 : (total / totalTokens) * 100;
-                return html`<tr>
-                  <td><strong>${cost.step}</strong></td>
-                  <td>${cost.runs}</td>
-                  <td class="nowrap">${formatTokens(cost.tokensIn)}</td>
-                  <td class="nowrap">${formatTokens(cost.tokensOut)}</td>
-                  <td class="nowrap"><strong>${formatTokens(total)}</strong></td>
-                  <td style="min-width:120px">
-                    <div class="bar"><span style="width:${share.toFixed(1)}%"></span></div>
-                    <div class="muted small">${share.toFixed(0)}%</div>
-                  </td>
-                  <td class="nowrap muted">${formatDuration(Math.round(cost.avgDurationMs))}</td>
-                </tr>`;
-              })}
-            </tbody>
-          </table>
-        </div>
-        <p class="muted small">
-          ${formatCount(totalTokens)} tokens across every step. A zero means the provider did
-          not report a count for that call, not that it was free.
-        </p>`}
   `;
 }

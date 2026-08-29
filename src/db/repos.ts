@@ -1328,41 +1328,6 @@ export const runUsage = (runId: number): RunUsage => {
   };
 };
 
-export interface StepCost {
-  step: string;
-  runs: number;
-  tokensIn: number;
-  tokensOut: number;
-  avgDurationMs: number;
-}
-
-/** Which steps cost the most, across recent history. Answers "which prompt". */
-export const stepCosts = (days = 30): StepCost[] =>
-  all<{
-    step: string;
-    runs: number;
-    tokens_in: number;
-    tokens_out: number;
-    avg_duration: number;
-  }>(
-    `SELECT s.step,
-            COUNT(*)                       AS runs,
-            COALESCE(SUM(s.tokens_in), 0)  AS tokens_in,
-            COALESCE(SUM(s.tokens_out), 0) AS tokens_out,
-            COALESCE(AVG(s.duration_ms), 0) AS avg_duration
-       FROM run_steps s
-      WHERE s.started_at >= datetime('now', ?)
-      GROUP BY s.step
-      ORDER BY (COALESCE(SUM(s.tokens_in), 0) + COALESCE(SUM(s.tokens_out), 0)) DESC`,
-    `-${Math.max(1, Math.floor(days))} days`,
-  ).map((r) => ({
-    step: r.step,
-    runs: Number(r.runs),
-    tokensIn: Number(r.tokens_in),
-    tokensOut: Number(r.tokens_out),
-    avgDurationMs: Number(r.avg_duration),
-  }));
-
 /**
  * Published and failed counts per local day, oldest first.
  *

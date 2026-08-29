@@ -24,7 +24,6 @@ import {
   scheduleRetry,
   setLink,
   setModelOverride,
-  stepCosts,
   upsertSite,
   PROMPT_VERSION_LIMIT,
 } from '../src/db/repos.js';
@@ -410,30 +409,6 @@ describe('the new workflow features', () => {
       expect(usage.durationMs).toBe(65_000);
     });
 
-    it('ranks steps by what they cost', () => {
-      const siteId = seedSite('bitespoon.com');
-      const keywordId = insertKeyword({ seed_keyword: 'chicken soup', status: 'go' });
-      const runId = createRun(keywordId, siteId);
-
-      dbRun(
-        `INSERT INTO run_steps (run_id, step, status, tokens_in, tokens_out)
-         VALUES (?, 'cheap-step', 'ok', 10, 10)`,
-        runId,
-      );
-      dbRun(
-        `INSERT INTO run_steps (run_id, step, status, tokens_in, tokens_out)
-         VALUES (?, 'expensive-step', 'ok', 5000, 5000)`,
-        runId,
-      );
-
-      expect(stepCosts(30)[0]?.step).toBe('expensive-step');
-    });
-
-    it('renders the usage page', async () => {
-      const response = await get('/settings/usage');
-      expect(response.statusCode).toBe(200);
-      expect(response.body).toContain('Usage');
-    });
   });
 
   /* -- models per prompt --------------------------------------------------- */

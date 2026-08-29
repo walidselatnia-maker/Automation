@@ -29,7 +29,6 @@ import {
   settingsPage,
   siteEditPage,
   sitesPage,
-  usagePage,
 } from './views/pages.js';
 import type { KeywordFilterView, SiteMark } from './views/pages.js';
 import { importKeywordsCsv, importSitesCsv } from './import.js';
@@ -76,7 +75,6 @@ import {
   runUsage,
   savePromptVersion,
   setModelOverride,
-  stepCosts,
   searchKeywords,
   deletePromptOverride,
   getPromptOverride,
@@ -1050,10 +1048,6 @@ export function buildServer(
       dataPage(dataCounts(), settings.getNumber('retention_days')),
       readFlash(request.query),
     ),
-  );
-
-  app.get('/settings/usage', async (request, reply) =>
-    page(reply, 'Usage', '/settings', usagePage(stepCosts(30), 30), readFlash(request.query)),
   );
 
   /**

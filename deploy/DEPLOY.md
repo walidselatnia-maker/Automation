@@ -265,11 +265,11 @@ Settings → Prompts & models. Each prompt has:
 The model has nothing to do with API keys: any key can serve any model. Keys
 spread a rate limit; this decides quality.
 
-### What it is costing
+### What a run cost
 
-Settings → Usage. Tokens per step over the last 30 days, taken from what the
-provider reported on each completion. This is how you find the expensive
-prompt — it is rarely the one you would guess.
+Open any run. Each step shows the tokens it spent and the images it generated,
+taken from what the provider reported on each completion, with a summary across
+the whole run at the top.
 
 ### Notifications
 

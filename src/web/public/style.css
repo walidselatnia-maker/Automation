@@ -717,19 +717,6 @@ body.signin main {
 .key.brand { background: var(--brand); }
 .key.red { background: var(--red); }
 
-/* A share-of-total bar inside a table cell. */
-.bar {
-  height: 6px;
-  border-radius: 3px;
-  background: var(--line-soft);
-  overflow: hidden;
-}
-.bar span {
-  display: block;
-  height: 100%;
-  background: linear-gradient(90deg, var(--brand), #a855f7);
-}
-
 /* ------------------------------------------------------- article preview */
 
 /* The generated article, read as prose. It was previously a <pre> of JSON,
