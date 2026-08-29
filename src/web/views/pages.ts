@@ -33,7 +33,6 @@ import type {
   KeywordListView,
   SharedImageInfo,
 } from '../../db/repos.js';
-import type { Candidate } from '../url-import.js';
 import type { DataCounts } from '../../db/maintenance.js';
 
 /* =========================================================================
@@ -1197,26 +1196,12 @@ export function keywordAddPage(): Html {
     <div class="spread">
       <div>
         <h1>Add keywords</h1>
-        <p class="subtitle">Two ways in. Neither writes anything until you confirm.</p>
+        <p class="subtitle">
+          Bulk entry stays where it works well &mdash; a spreadsheet. Nothing is written until
+          you import.
+        </p>
       </div>
       <a class="button" href="/keywords">Back to keywords</a>
-    </div>
-
-    <h2>From a page you want to compete with</h2>
-    <div class="card">
-      <p class="muted small" style="margin-top:0">
-        Paste article addresses. Each page's own title, description and image are read and shown
-        for you to check and edit before anything is saved.
-      </p>
-      <form method="post" action="/keywords/from-url">
-        <div class="field">
-          <label for="urls">One address per line</label>
-          <textarea id="urls" name="urls" rows="5" required
-                    placeholder="https://example.com/best-baked-chicken"></textarea>
-          <div class="help">Up to 20 at a time. http and https only, no private addresses.</div>
-        </div>
-        <button class="primary" type="submit">Read these pages</button>
-      </form>
     </div>
 
     <h2>From a spreadsheet</h2>
@@ -2306,87 +2291,6 @@ function imagesSection(
             <span class="mono">reuse</span> off for that site above.
           </p>`}
     </div>
-  `;
-}
-
-/* =========================================================================
- * Keyword candidates read from a URL
- * ====================================================================== */
-
-/**
- * The confirm screen between reading a page and saving a keyword.
- *
- * Every field here is editable, because metadata written for search engines is
- * not written to be a keyword — the title carries the site's name, the
- * description is a sales line. Reading the page saves the typing; it does not
- * replace the judgement.
- */
-export function urlCandidatesPage(candidates: Candidate[]): Html {
-  const usable = candidates.filter((c) => !c.error);
-  const failed = candidates.filter((c) => c.error);
-
-  return html`
-    <div class="spread">
-      <div>
-        <h1>Read ${candidates.length} page(s)</h1>
-        <p class="subtitle">
-          Check what came back, edit anything that reads badly, then untick whatever you do not
-          want. Nothing has been saved yet.
-        </p>
-      </div>
-      <a class="button" href="/keywords">Cancel</a>
-    </div>
-
-    ${failed.length
-      ? html`<div class="flash warn">
-          <strong>${failed.length} could not be read</strong>
-          <ul>
-            ${failed.map((c) => html`<li><span class="mono">${c.url}</span> — ${c.error}</li>`)}
-          </ul>
-        </div>`
-      : raw('')}
-
-    ${usable.length === 0
-      ? html`<div class="card">${emptyState('Nothing usable came back from those addresses.')}</div>`
-      : html`<form method="post" action="/keywords/from-url/save">
-          ${usable.map(
-            (candidate, index) => html`
-              <div class="card">
-                <label class="row" style="gap:8px">
-                  <input type="checkbox" name="keep" value="${index}" checked
-                         style="width:auto" />
-                  <span class="mono small">${candidate.url}</span>
-                </label>
-                <input type="hidden" name="url_${index}" value="${candidate.url}" />
-                <input type="hidden" name="image_${index}" value="${candidate.imageUrl}" />
-
-                <div class="field-row" style="margin-top:12px">
-                  <div class="field">
-                    <label>Seed keyword</label>
-                    <input type="text" name="seed_${index}" value="${candidate.seedKeyword}" />
-                    <div class="help">Stripped of the site name and the usual filler words.</div>
-                  </div>
-                  <div class="field">
-                    <label>Spy title</label>
-                    <input type="text" name="title_${index}" value="${candidate.title}" />
-                  </div>
-                </div>
-                <div class="field">
-                  <label>Spy description</label>
-                  <textarea name="description_${index}" rows="2">${candidate.description}</textarea>
-                </div>
-              </div>
-            `,
-          )}
-
-          <div class="save-bar">
-            <button class="primary" type="submit">Save the ticked keywords</button>
-            <span class="muted small">
-              Added with status <span class="mono">go</span> and linked to no site — set the
-              cells on the Keywords page.
-            </span>
-          </div>
-        </form>`}
   `;
 }
 

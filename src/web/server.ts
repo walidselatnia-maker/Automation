@@ -29,7 +29,6 @@ import {
   settingsPage,
   siteEditPage,
   sitesPage,
-  urlCandidatesPage,
   usagePage,
 } from './views/pages.js';
 import type { KeywordFilterView, SiteMark } from './views/pages.js';
@@ -62,7 +61,6 @@ import {
   dailyActivity,
   createRun,
   discardRun,
-  getKeywordBySeed,
   getLinkShare,
   listRunsForKeyword,
   publishedTitles,
@@ -71,7 +69,6 @@ import {
   type StepRow,
   clearSharedImages,
   getLinksForKeyword,
-  insertKeyword,
   keywordImageCounts,
   keywordsInGroup,
   sharedImageInfo,
@@ -118,12 +115,6 @@ import { executePipeline, PipelineContext } from '../pipeline/index.js';
 import { evaluateSite, localDateKey } from '../core/selector.js';
 import { diagnoseKeyword } from '../core/diagnosis.js';
 import { findDuplicate } from '../core/similar-title.js';
-import {
-  fetchCandidates,
-  MAX_URLS,
-  parseUrlList,
-  type Candidate,
-} from './url-import.js';
 import { readSupply, supplyWarning } from '../core/supply.js';
 import { listPromptFiles } from '../pipeline/prompt-files.js';
 import {
@@ -961,107 +952,6 @@ export function buildServer(
     } catch (err) {
       return redirect(reply, `/keywords/${id}`, { kind: 'error', message: errorMessage(err) });
     }
-  });
-
-  /* -- Keywords from a page URL ------------------------------------------ */
-
-  app.post('/keywords/from-url', async (request, reply) => {
-    const urls = parseUrlList(asString(formBody(request).urls));
-
-    if (urls.length === 0) {
-      return redirect(reply, '/keywords', { kind: 'warn', message: 'No addresses in that box.' });
-    }
-
-    try {
-      const candidates = await fetchCandidates(urls);
-      return page(
-        reply,
-        'Keyword candidates',
-        '/keywords',
-        urlCandidatesPage(candidates),
-        urls.length > MAX_URLS
-          ? {
-              kind: 'warn',
-              message: `Only the first ${MAX_URLS} addresses were read.`,
-            }
-          : null,
-      );
-    } catch (err) {
-      return redirect(reply, '/keywords', { kind: 'error', message: errorMessage(err) });
-    }
-  });
-
-  app.post('/keywords/from-url/save', async (request, reply) => {
-    const body = formBody(request);
-    const raw = body.keep;
-    const kept = (Array.isArray(raw) ? raw : raw === undefined ? [] : [raw]).map((v) =>
-      asNumber(v, -1),
-    );
-
-    let added = 0;
-    let skipped = 0;
-
-    for (const index of kept) {
-      if (index < 0) continue;
-
-      const seed = asString(body[`seed_${index}`]).trim();
-      if (!seed) continue;
-
-      // A re-read of a page already imported should correct it, not duplicate
-      // it — the same rule the CSV importer follows.
-      const existing = getKeywordBySeed(seed);
-      if (existing) {
-        skipped += 1;
-        continue;
-      }
-
-      insertKeyword({
-        seed_keyword: seed,
-        spy_title: asString(body[`title_${index}`]).trim(),
-        spy_description: asString(body[`description_${index}`]).trim(),
-        spy_article_url: asString(body[`url_${index}`]).trim(),
-        spy_image_url: asString(body[`image_${index}`]).trim(),
-        status: 'go',
-      });
-      added += 1;
-    }
-
-    if (added === 0 && skipped === 0) {
-      return redirect(reply, '/keywords', {
-        kind: 'warn',
-        message: 'Nothing was ticked, so nothing was saved.',
-      });
-    }
-
-    return redirect(reply, '/keywords', {
-      kind: 'ok',
-      message:
-        `Added ${added} keyword(s).` +
-        (skipped ? ` ${skipped} were already here and were left alone.` : '') +
-        ' They are not linked to any site yet — set the cells below.',
-    });
-  });
-
-  /**
-   * Forget this keyword's stored image set.
-   *
-   * Deletes no image anywhere: those URLs point at files on your own sites and
-   * the articles already using them keep working. It only means the next site
-   * to publish this keyword generates a fresh set rather than copying.
-   */
-  app.post('/keywords/:id/images/clear', async (request, reply) => {
-    const id = asNumber((request.params as { id: string }).id, 0);
-    if (!getKeyword(id)) {
-      return redirect(reply, '/keywords', { kind: 'error', message: 'Keyword not found' });
-    }
-
-    clearSharedImages(id);
-    return redirect(reply, `/keywords/${id}`, {
-      kind: 'ok',
-      message:
-        'Forgotten. The next site to publish this keyword will generate four new article ' +
-        'images. Nothing was deleted from any site.',
-    });
   });
 
   app.post('/keywords/:id/delete', async (request, reply) => {

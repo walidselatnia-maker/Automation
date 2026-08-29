@@ -318,10 +318,6 @@ Export both sheets as CSV. Import keywords through **Keywords → Import CSV** i
 the UI. Keywords → **Export what is here** produces the same columns back, so a
 round trip through a spreadsheet works.
 
-To add keywords without a spreadsheet at all, paste article addresses into
-**Keywords → Add from a page URL**: each page's own title, description and
-image are read and shown for you to check before anything is saved.
-
 For sites, if your platform offers a one-off command:
 
 ```bash

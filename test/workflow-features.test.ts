@@ -31,7 +31,6 @@ import {
 import { Settings } from '../src/settings.js';
 import { buildServer } from '../src/web/server.js';
 import { setLogLevel } from '../src/lib/logger.js';
-import { extractCandidate, parseUrlList, rejectUrl, seedFromTitle } from '../src/web/url-import.js';
 
 const KEY = randomBytes(32);
 const PASSWORD = 'correct-horse-battery-staple';
@@ -556,99 +555,6 @@ describe('the new workflow features', () => {
       expect(response.headers['content-disposition']).toContain('.db');
       // SQLite's file magic, so this is a real database rather than an error page.
       expect(response.rawPayload.subarray(0, 15).toString()).toBe('SQLite format 3');
-    });
-  });
-});
-
-/* -- reading a keyword out of a page ------------------------------------- */
-
-describe('keyword candidates from a URL', () => {
-  it('refuses anything that is not a public http address', () => {
-    expect(rejectUrl('ftp://example.com')).toContain('http');
-    expect(rejectUrl('http://localhost:8080')).toContain('private');
-    expect(rejectUrl('http://127.0.0.1/')).toContain('private');
-    expect(rejectUrl('http://10.0.0.5/')).toContain('private');
-    expect(rejectUrl('http://192.168.1.1/')).toContain('private');
-    expect(rejectUrl('http://169.254.169.254/latest/meta-data/')).toContain('private');
-    expect(rejectUrl('http://imagegen:6080/')).toBeNull;
-    expect(rejectUrl('not a url')).toContain('not a URL');
-  });
-
-  it('allows an ordinary public page', () => {
-    expect(rejectUrl('https://example.com/recipes/chicken')).toBeNull();
-  });
-
-  it('prefers Open Graph metadata over the title tag', () => {
-    const candidate = extractCandidate(
-      'https://example.com/a',
-      `<html><head>
-        <title>Fallback Title | Example</title>
-        <meta property="og:title" content="Baked Chicken Breast">
-        <meta property="og:description" content="A weeknight dinner.">
-        <meta property="og:image" content="/img/chicken.jpg">
-      </head></html>`,
-    );
-
-    expect(candidate.title).toBe('Baked Chicken Breast');
-    expect(candidate.description).toBe('A weeknight dinner.');
-    expect(candidate.imageUrl).toBe('https://example.com/img/chicken.jpg');
-  });
-
-  it('falls back to the title tag and meta description', () => {
-    const candidate = extractCandidate(
-      'https://example.com/a',
-      `<html><head>
-        <title>Beef Stew Recipe | Example Kitchen</title>
-        <meta name="description" content="Slow cooked.">
-      </head></html>`,
-    );
-
-    expect(candidate.title).toBe('Beef Stew Recipe | Example Kitchen');
-    expect(candidate.seedKeyword).toBe('Beef Stew');
-    expect(candidate.description).toBe('Slow cooked.');
-  });
-
-  it('reads a meta tag whose attributes are the other way round', () => {
-    const candidate = extractCandidate(
-      'https://example.com/a',
-      `<meta content="Lemon Tart" property="og:title">`,
-    );
-    expect(candidate.title).toBe('Lemon Tart');
-  });
-
-  it('decodes entities rather than leaving them raw', () => {
-    const candidate = extractCandidate(
-      'https://example.com/a',
-      `<meta property="og:title" content="Mum&amp;#39;s Beef &amp; Ale Pie">`,
-    );
-    expect(candidate.title).toContain('&');
-    expect(candidate.title).not.toContain('&amp;');
-  });
-
-  describe('turning a title into a seed keyword', () => {
-    it('drops the site name after a separator', () => {
-      expect(seedFromTitle('Baked Chicken Breast | Example Kitchen')).toBe('Baked Chicken Breast');
-    });
-
-    it('drops the filler words', () => {
-      expect(seedFromTitle('The Best Easy Homemade Beef Stew Recipe')).toBe('Beef Stew');
-    });
-
-    it('keeps the original when stripping would empty it', () => {
-      expect(seedFromTitle('Best Recipes')).toBe('Best Recipes');
-    });
-  });
-
-  describe('parsing the list', () => {
-    it('splits on whitespace and drops duplicates', () => {
-      expect(parseUrlList('https://a.com\nhttps://b.com\nhttps://a.com')).toEqual([
-        'https://a.com',
-        'https://b.com',
-      ]);
-    });
-
-    it('ignores comments and blank lines', () => {
-      expect(parseUrlList('# a note\n\nhttps://a.com\n')).toEqual(['https://a.com']);
     });
   });
 });

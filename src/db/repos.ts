@@ -854,10 +854,6 @@ export const findKeywordRow = (seed: string, spyTitle: string): KeywordRow | und
   );
 };
 
-/** Kept for the URL importer, which has a title but no group to match within. */
-export const getKeywordBySeed = (seed: string): KeywordRow | undefined =>
-  get<KeywordRow>('SELECT * FROM keywords WHERE seed_keyword = ? COLLATE NOCASE', seed.trim());
-
 /** Every recipe found under one research label. */
 export const keywordsInGroup = (seed: string, excludeId = 0): KeywordRow[] =>
   all<KeywordRow>(
