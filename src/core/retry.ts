@@ -87,10 +87,23 @@ const PERMANENT = [
   /came back empty/i,
 ];
 
+/**
+ * A rejected reCAPTCHA score, which is transient however it is worded.
+ *
+ * Checked before everything else because it arrives as a 403, and 403 is in
+ * the permanent list for good reasons that do not apply here. The score is a
+ * property of the browser session at that moment — the image service reloads
+ * its Flow tab and tries again on its own — so the run is worth resuming once
+ * that has had a chance to take effect. Treating it as permanent meant one low
+ * score killed a run outright, which is the failure this exists to stop.
+ */
+const RECAPTCHA = /recaptcha/i;
+
 export function isTransient(error: string): boolean {
   const text = (error ?? '').trim();
   if (text === '') return false;
 
+  if (RECAPTCHA.test(text)) return true;
   if (PERMANENT.some((pattern) => pattern.test(text))) return false;
   return TRANSIENT.some((pattern) => pattern.test(text));
 }

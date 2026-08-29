@@ -33,8 +33,18 @@ ASPECT_RATIOS = {
 # Failures worth retrying: the browser is momentarily absent, or Google is
 # rate-limiting. Anything else is a bad request that will fail identically on
 # every attempt, and retrying it just burns the quota faster.
+# "recaptcha" is here because a rejected score is a property of the browser
+# session at that moment, not of the request. The extension already reloads the
+# Flow tab and re-sends once with a fresh token; reaching us means that did not
+# help yet, and the next attempt is spaced by API_COOLDOWN, which gives the new
+# session time to settle. It used to be absent, so a 403 failed the job on
+# attempt one of five while MAX_RETRIES sat there unused.
+#
+# Deliberately not "session_expired": that one needs a person to sign in, and
+# retrying it just fails five times more slowly.
 RETRYABLE = ("quota", "rate_limit", "exhausted", "resource_exhausted", "429",
-             "no_flow_key", "not connected", "timeout", "503")
+             "no_flow_key", "not connected", "timeout", "503",
+             "recaptcha", "captcha_timeout")
 
 
 class WorkerController:

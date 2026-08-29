@@ -820,6 +820,63 @@ async function solveCaptcha(requestId, captchaAction) {
   return { error: classifyTerminalCaptchaError(lastError) };
 }
 
+// ─── reCAPTCHA rejection recovery ───────────────────────────
+//
+// A solved captcha is not an accepted captcha. grecaptcha.enterprise.execute()
+// returns a token for any session; Google then *scores* it server-side and
+// answers 403 "reCAPTCHA evaluation failed" when the score is under its
+// threshold. That is a different failure from the solver breaking, and it used
+// to be passed straight back to the agent, which classified it as permanent
+// and failed the job on the first attempt of five.
+//
+// Reloading the Flow tab is what resets the scored session — it is exactly
+// what the side panel's "Refresh Token" button does, and pressing that by hand
+// was the known workaround. This does it automatically, once, then solves a
+// fresh captcha and re-sends.
+//
+// Re-sending is safe: a 403 is returned before any generation happens, so the
+// rejected attempt cost no credits and no image exists to duplicate.
+
+const RECAPTCHA_REJECT_MAX_RETRIES = 1;
+const RECAPTCHA_SETTLE_MS = 2500;
+
+function isRecaptchaRejection(status, data) {
+  if (status !== 403) return false;
+
+  // The message lives at different depths depending on which API answered.
+  let text;
+  try {
+    text = typeof data === 'string' ? data : JSON.stringify(data);
+  } catch {
+    return false;
+  }
+  return /recaptcha/i.test(text || '');
+}
+
+// Reload the Flow tab and wait for grecaptcha to come back up. Returns false
+// when no usable tab settles, which means the session needs a person and
+// retrying would only burn time.
+async function resetCaptchaSession(reason) {
+  console.warn(`[FlowAgent] reCAPTCHA rejected (${reason}) — reloading Flow tab for a fresh session`);
+  recordTabEvent('captcha-session-reset', reason);
+
+  // 'on-demand' bypasses both the age check and the busy-deferral: we are
+  // already inside a failed request, so there is nothing left to protect.
+  await refreshFlowToken('on-demand');
+
+  const tab = await waitForFlowTabReady();
+  if (!tab) {
+    console.error('[FlowAgent] No Flow tab settled after reload — session needs attention');
+    return false;
+  }
+
+  // The tab reports complete before grecaptcha has finished initialising, and
+  // a token solicited in that window is the low-scoring kind we are recovering
+  // from. injected.js polls for grecaptcha too; this is belt and braces.
+  await sleep(RECAPTCHA_SETTLE_MS);
+  return true;
+}
+
 async function handleSolveCaptcha(msg) {
   const { id, params } = msg;
   const result = await solveCaptcha(id, params?.captchaAction || 'VIDEO_GENERATION');
@@ -973,23 +1030,73 @@ async function handleApiRequest(msg) {
       return;
     }
 
-    const fetchHeaders = { ...(headers || {}) };
-    fetchHeaders['authorization'] = `Bearer ${activeFlowKey}`;
+    const send = async (bodyToSend) => {
+      const fetchHeaders = { ...(headers || {}) };
+      fetchHeaders['authorization'] = `Bearer ${flowKey || activeFlowKey}`;
+
+      const res = await fetch(url, {
+        method: method || 'POST',
+        headers: fetchHeaders,
+        credentials: 'include',
+        body: method === 'GET' ? undefined : JSON.stringify(bodyToSend),
+      });
+
+      const text = await res.text();
+      let parsed;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        parsed = text;
+      }
+      return { res, text, parsed };
+    };
 
     // Step 4: Make the API call from browser context
-    const response = await fetch(url, {
-      method: method || 'POST',
-      headers: fetchHeaders,
-      credentials: 'include',
-      body: method === 'GET' ? undefined : JSON.stringify(finalBody),
-    });
+    let { res: response, text: responseText, parsed: responseData } = await send(finalBody);
 
-    let responseData;
-    const responseText = await response.text();
-    try {
-      responseData = JSON.parse(responseText);
-    } catch {
-      responseData = responseText;
+    // Step 5: A rejected score is recoverable — reset the session and re-send.
+    // Only worth doing for a request that carried a captcha in the first place.
+    for (
+      let attempt = 0;
+      captchaAction &&
+      attempt < RECAPTCHA_REJECT_MAX_RETRIES &&
+      isRecaptchaRejection(response.status, responseData);
+      attempt++
+    ) {
+      updateRequestLog(logId, {
+        status: 'processing',
+        error: 'reCAPTCHA rejected — resetting session',
+      });
+
+      if (!(await resetCaptchaSession(captchaAction))) break;
+
+      const retryCaptcha = await solveCaptcha(id, captchaAction);
+      if (!retryCaptcha?.token) {
+        console.error('[FlowAgent] No captcha after session reset:', retryCaptcha?.error);
+        break;
+      }
+
+      // Rebuild the body around the new token rather than mutating the old
+      // one, so a partially rewritten payload can never be sent.
+      let retryBody = JSON.parse(JSON.stringify(body));
+      if (retryBody.clientContext?.recaptchaContext) {
+        retryBody.clientContext.recaptchaContext.token = retryCaptcha.token;
+      }
+      if (Array.isArray(retryBody.requests)) {
+        for (const req of retryBody.requests) {
+          if (req.clientContext?.recaptchaContext) {
+            req.clientContext.recaptchaContext.token = retryCaptcha.token;
+          }
+        }
+      }
+
+      console.log('[FlowAgent] Re-sending with a fresh captcha after session reset');
+      ({ res: response, text: responseText, parsed: responseData } = await send(retryBody));
+
+      if (response.ok) {
+        metrics.recaptchaRecovered = (metrics.recaptchaRecovered || 0) + 1;
+        console.log('[FlowAgent] Recovered from reCAPTCHA rejection');
+      }
     }
 
     sendToAgent({
@@ -1003,8 +1110,13 @@ async function handleApiRequest(msg) {
       if (hasCaptcha) { metrics.successCount++; metrics.lastError = null; }
       updateRequestLog(logId, { status: 'success', httpStatus: response.status, responseSummary });
     } else {
-      if (hasCaptcha) { metrics.failedCount++; metrics.lastError = `API_${response.status}`; }
-      updateRequestLog(logId, { status: 'failed', error: `API_${response.status}`, httpStatus: response.status, responseSummary });
+      // Name it, so the run log says why rather than "API_403". The agent
+      // keys its retry decision on this text.
+      const label = isRecaptchaRejection(response.status, responseData)
+        ? 'RECAPTCHA_REJECTED: score too low after a session reset'
+        : `API_${response.status}`;
+      if (hasCaptcha) { metrics.failedCount++; metrics.lastError = label; }
+      updateRequestLog(logId, { status: 'failed', error: label, httpStatus: response.status, responseSummary });
     }
   } catch (e) {
     sendToAgent({

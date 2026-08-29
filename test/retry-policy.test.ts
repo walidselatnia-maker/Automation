@@ -44,6 +44,27 @@ describe('classifying a failure', () => {
     expect(isTransient('')).toBe(false);
   });
 
+  it('retries a rejected reCAPTCHA score even though it arrives as a 403', () => {
+    // The score belongs to the browser session at that moment, not the
+    // request. The image service reloads its Flow tab and tries again on its
+    // own, so the run is worth resuming once that has had a chance to work.
+    // Treated as permanent, one low score killed a run outright.
+    expect(
+      isTransient(
+        "Image job abc failed with status FAILED: {'code': 403, " +
+          "'message': 'reCAPTCHA evaluation failed'}",
+      ),
+    ).toBe(true);
+  });
+
+  it('retries it even when the message is worded as an HTTP 403', () => {
+    expect(isTransient('HTTP 403: RECAPTCHA_REJECTED: score too low')).toBe(true);
+  });
+
+  it('still refuses a 403 that has nothing to do with reCAPTCHA', () => {
+    expect(isTransient('HTTP 403: forbidden — wrong site token')).toBe(false);
+  });
+
   it('lets a permanent phrase win over a transient one in the same message', () => {
     // The words that make this transient are all present; the 401 is what it
     // actually is.

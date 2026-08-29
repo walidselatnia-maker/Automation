@@ -31,7 +31,8 @@ export type NoticeKind =
   | 'site-failing'
   | 'image-service'
   | 'site-credentials'
-  | 'awaiting-approval';
+  | 'awaiting-approval'
+  | 'image-captcha';
 
 export interface Notice {
   kind: NoticeKind;
@@ -44,6 +45,28 @@ export interface Notice {
 
 /** How many failures in a row before a site is worth mentioning. */
 export const CONSECUTIVE_FAILURES_BEFORE_ALARM = 2;
+
+/** Rejected image generations in the last day before it is worth saying. */
+export const CAPTCHA_REJECTIONS_BEFORE_ALARM = 3;
+
+/**
+ * Image generations Google refused on a reCAPTCHA score, in the last day.
+ *
+ * Its own notice rather than folded into "a site is failing", because it is
+ * not about a site: every site shares one browser session, and the fix is to
+ * that session — open the Browser view and check the Google login. Left
+ * unnamed it reads as several unrelated sites breaking at once.
+ */
+export function recentCaptchaRejections(): number {
+  return (
+    get<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM runs
+        WHERE status = 'failed'
+          AND started_at >= datetime('now', '-1 day')
+          AND error LIKE '%recaptcha%'`,
+    )?.n ?? 0
+  );
+}
 
 /**
  * Sites whose recent runs have failed `threshold` times in a row.
@@ -167,6 +190,20 @@ export function currentNotices(imageServiceProblem: string | null): Notice[] {
       message: `${domain} is publishing again.`,
     });
   }
+
+  // -- Image generation being refused on its score -------------------------
+  const rejections = recentCaptchaRejections();
+  notices.push({
+    kind: 'image-captcha',
+    subject: '',
+    state: rejections >= CAPTCHA_REJECTIONS_BEFORE_ALARM ? 'rejected' : 'ok',
+    message:
+      rejections >= CAPTCHA_REJECTIONS_BEFORE_ALARM
+        ? `Google has refused ${rejections} image generation(s) in the last day on a ` +
+          'reCAPTCHA score. The browser session is being treated as automated. ' +
+          'Open Browser and check the Google login still looks normal.'
+        : 'Image generations are being accepted again.',
+  });
 
   // -- Articles waiting for a person --------------------------------------
   const waiting =
