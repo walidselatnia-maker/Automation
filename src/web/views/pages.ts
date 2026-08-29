@@ -677,13 +677,9 @@ export function sitesPage(sites: SiteRow[], views: SiteView[]): Html {
         Columns: <span class="mono">name, domain, status, daily_target, interval_minutes,
         pin_username, project_id, auto_publish, paused_reason, api_token, buffer_token</span>.
         Only <span class="mono">domain</span> is required, and sites are matched on it &mdash;
-        so importing the same file twice corrects rather than duplicates.
-      </p>
-      <p class="muted small">
-        A blank <span class="mono">api_token</span> or <span class="mono">buffer_token</span>
-        keeps whatever is already stored. That is what makes the plain export below safe to
-        edit in a spreadsheet and import straight back: it has those columns, empty, and
-        importing it will not wipe your credentials.
+        so importing the same file twice corrects rather than duplicates. A blank
+        <span class="mono">api_token</span> or <span class="mono">buffer_token</span> keeps
+        whatever is stored, which is what makes an export safe to edit and import straight back.
       </p>
 
       <form method="post" action="/sites/import" enctype="multipart/form-data">
@@ -692,26 +688,22 @@ export function sitesPage(sites: SiteRow[], views: SiteView[]): Html {
           <button class="primary" type="submit">Import CSV</button>
           <a class="button" href="/sites/template.csv" download>Download a template</a>
           <a class="button" href="/data/export/sites" download>Export sites</a>
+          <!-- Beside the safe export rather than in a panel of its own, but
+               still marked and still confirmed: the two files look identical
+               and one of them can publish to every site you own. -->
+          <a class="button danger" href="/sites/export/credentials" download
+             title="Every site API token and Buffer token in plain text"
+             onclick="return confirm('This file contains every site token in plain text. Download it?')">
+            Export with credentials
+          </a>
+        </div>
+        <div class="help" style="margin-top:8px">
+          <strong>Export sites</strong> carries everything except the tokens and is the one to
+          reach for. <strong>Export with credentials</strong> is the same file with them in it,
+          for moving to another deployment &mdash; it does not belong in a shared folder, a chat
+          message, or a git repository.
         </div>
       </form>
-    </div>
-
-    <div class="card danger-card">
-      <h3 style="margin-bottom:6px">Export with the credentials in it</h3>
-      <p class="muted small">
-        The same file, plus every site API token and Buffer token in plain text. Useful for
-        moving to another deployment or keeping a copy somewhere safe &mdash; and it is a file
-        that can publish to all of your sites, so it does not belong in a shared folder, a chat
-        message, or a git repository.
-      </p>
-      <p class="muted small">
-        The plain <span class="mono">Export sites</span> above is the one to reach for by
-        default; it carries everything except the secrets.
-      </p>
-      <a class="button danger" href="/sites/export/credentials" download
-         onclick="return confirm('This file contains every site token in plain text. Download it?')">
-        Export with credentials
-      </a>
     </div>
   `;
 }

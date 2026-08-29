@@ -174,6 +174,39 @@ describe('exporting sites', () => {
     expect(csv).not.toContain('buffer-token');
   });
 
+  it('still guards the credential export behind a confirmation', async () => {
+    // The two files look identical in a downloads folder and one of them can
+    // publish to every site you own, so merging the cards must not have
+    // merged them into one undifferentiated button.
+    const { randomBytes: rb } = await import('node:crypto');
+    const { buildServer } = await import('../src/web/server.js');
+    const { Settings } = await import('../src/settings.js');
+
+    const key = rb(32);
+    const app = buildServer(new Settings(key), key, {
+      password: 'correct-horse-battery-staple',
+      secret: key,
+      generated: false,
+    });
+    await app.ready();
+
+    const login = await app.inject({
+      method: 'POST',
+      url: '/login',
+      payload: new URLSearchParams({ password: 'correct-horse-battery-staple' }).toString(),
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    });
+    const header = login.headers['set-cookie'];
+    const cookie = Array.isArray(header) ? header[0]! : String(header);
+
+    const page = await app.inject({ method: 'GET', url: '/sites', headers: { cookie } });
+    await app.close();
+
+    expect(page.body).toContain('/sites/export/credentials');
+    expect(page.body).toContain('confirm(');
+    expect(page.body).toContain('button danger');
+  });
+
   it('puts them in the one that says it does', () => {
     const csv = asCsv(exportSitesWithCredentials(KEY).rows);
 

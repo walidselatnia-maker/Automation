@@ -1005,9 +1005,3 @@ h1.long {
   .spread { flex-direction: column; }
   .spread > .row { justify-content: flex-start; }
 }
-
-/* A card for the one action that hands over secrets. */
-.danger-card {
-  border-left: 3px solid var(--red);
-  background: linear-gradient(90deg, var(--red-bg), var(--card) 55%);
-}
