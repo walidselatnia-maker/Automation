@@ -717,26 +717,6 @@ export function sitesPage(sites: SiteRow[], views: SiteView[]): Html {
   `;
 }
 
-/**
- * An ISO timestamp as <input type="datetime-local"> wants it.
- *
- * That control speaks local wall-clock time with no zone, so the stored UTC
- * instant is shifted into the browser's day before it is shown. Round-tripping
- * it back is the server's job — see readPausedUntil.
- */
-function forDatetimeInput(iso: string | null): string {
-  if (!iso) return '';
-
-  const at = new Date(iso.includes('T') ? iso : iso.replace(' ', 'T') + 'Z');
-  if (Number.isNaN(at.getTime())) return '';
-
-  const pad = (n: number): string => String(n).padStart(2, '0');
-  return (
-    `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}` +
-    `T${pad(at.getHours())}:${pad(at.getMinutes())}`
-  );
-}
-
 export function siteEditPage(site: SiteRow): Html {
   return html`
     <div class="spread">
@@ -744,6 +724,24 @@ export function siteEditPage(site: SiteRow): Html {
         <h1>${site.domain}</h1>
         <p class="subtitle">Edit site configuration.</p>
       </div>
+      <div class="row wrap">
+        <!-- Publishing mode sits with Pause rather than in the form below.
+             Both answer "what is this site doing right now", which is a
+             different question from the settings underneath, and neither means
+             anything on a site that does not exist yet — which is why they are
+             gone from Add a site entirely. -->
+        <form method="post" action="/sites/${site.id}/publishing">
+          <select name="auto_publish" onchange="this.form.submit()"
+                  title="Holding stops each run after the article is written">
+            <option value="1" ${site.auto_publish !== 0 ? raw('selected') : raw('')}>
+              publishes automatically
+            </option>
+            <option value="0" ${site.auto_publish === 0 ? raw('selected') : raw('')}>
+              holds for approval
+            </option>
+          </select>
+        </form>
+
       ${site.status === 'active'
         ? html`<form method="post" action="/sites/${site.id}/pause" class="row wrap">
             <input type="text" name="reason" placeholder="why?" style="width:auto" required />
@@ -759,6 +757,7 @@ export function siteEditPage(site: SiteRow): Html {
         : html`<form method="post" action="/sites/${site.id}/activate">
             <button class="primary" type="submit">Resume publishing</button>
           </form>`}
+      </div>
     </div>
 
     ${site.status === 'paused' && site.paused_reason
@@ -836,39 +835,6 @@ function siteForm(site: SiteRow | null): Html {
             <option value="active" ${site?.status === 'active' ? raw('selected') : raw('')}>active</option>
             <option value="paused" ${site?.status !== 'active' ? raw('selected') : raw('')}>paused</option>
           </select>
-        </div>
-      </div>
-
-      <div class="field-row">
-        <div class="field">
-          <label>Why it is paused</label>
-          <input type="text" name="paused_reason" value="${site?.paused_reason ?? ''}"
-                 placeholder="e.g. their API is down" />
-          <div class="help">
-            Only used while paused, and cleared when you set it active again. A pause with no
-            note is one nobody dares undo a fortnight later.
-          </div>
-        </div>
-        <div class="field">
-          <label>Un-pause automatically</label>
-          <input type="datetime-local" name="paused_until"
-                 value="${forDatetimeInput(site?.paused_until ?? null)}" />
-          <div class="help">Leave blank to stay paused until you say otherwise.</div>
-        </div>
-        <div class="field">
-          <label>Publishing</label>
-          <select name="auto_publish">
-            <option value="1" ${site?.auto_publish !== 0 ? raw('selected') : raw('')}>
-              publish automatically
-            </option>
-            <option value="0" ${site?.auto_publish === 0 ? raw('selected') : raw('')}>
-              hold every article for approval
-            </option>
-          </select>
-          <div class="help">
-            Holding stops the run after the article is written. Nothing reaches the site until
-            you read it and approve.
-          </div>
         </div>
       </div>
 

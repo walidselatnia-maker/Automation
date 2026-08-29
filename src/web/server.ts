@@ -36,6 +36,7 @@ import type { KeywordFilterView, SiteMark } from './views/pages.js';
 import { importKeywordsCsv, importSitesCsv } from './import.js';
 import {
   activateSite,
+  setAutoPublish,
   bulkDeleteKeywords,
   bulkSetKeywordStatus,
   bulkSetLinks,
@@ -498,21 +499,6 @@ export function buildServer(
     return Math.round(amount * factor);
   };
 
-  /**
-   * The datetime-local field back into an instant.
-   *
-   * That control submits local wall-clock time with no zone, so it is read as
-   * the server's local time — the same clock the operator's browser is on in
-   * every deployment this has. Blank means "no automatic end".
-   */
-  const readPausedUntil = (value: unknown): string | null => {
-    const text = asString(value).trim();
-    if (!text) return null;
-
-    const at = new Date(text);
-    return Number.isNaN(at.getTime()) ? null : at.toISOString();
-  };
-
   const saveSite = (body: Record<string, unknown>, id?: number): number =>
     upsertSite(
       {
@@ -523,9 +509,14 @@ export function buildServer(
         project_id: asString(body.project_id).trim(),
         daily_target: Math.max(0, asNumber(body.daily_target, 0)),
         interval_minutes: readIntervalMinutes(body),
-        paused_reason: asString(body.paused_reason).trim(),
-        paused_until: readPausedUntil(body.paused_until),
-        auto_publish: asString(body.auto_publish, '1') !== '0',
+        // Absent, not blank. The site form no longer carries these — pausing
+        // and publishing mode are their own controls on the site page — and
+        // upsertSite reads undefined as "keep what is stored". Reading them
+        // off the body regardless would make every save of the settings form
+        // silently clear the pause reason and switch approval back on.
+        paused_reason: 'paused_reason' in body ? asString(body.paused_reason).trim() : undefined,
+        auto_publish:
+          'auto_publish' in body ? asString(body.auto_publish, '1') !== '0' : undefined,
         // Blank means "keep the stored credential".
         apiToken: asString(body.api_token),
         bufferToken: asString(body.buffer_token),
@@ -599,6 +590,29 @@ export function buildServer(
       message: until
         ? `${site.domain} is paused and will resume by itself in ${hours} hour(s).`
         : `${site.domain} is paused until you resume it.`,
+    });
+  });
+
+  /**
+   * Whether this site publishes on its own or holds each article for you.
+   *
+   * Its own control beside Pause rather than a field in the settings form:
+   * both answer "what is this site doing right now", and neither means
+   * anything on a site that does not exist yet.
+   */
+  app.post('/sites/:id/publishing', async (request, reply) => {
+    const id = asNumber((request.params as { id: string }).id, 0);
+    const site = getSite(id);
+    if (!site) return redirect(reply, '/sites', { kind: 'error', message: 'Site not found' });
+
+    const auto = asString(formBody(request).auto_publish, '1') !== '0';
+    setAutoPublish(id, auto);
+
+    return redirect(reply, `/sites/${id}`, {
+      kind: 'ok',
+      message: auto
+        ? `${site.domain} publishes automatically again.`
+        : `${site.domain} will hold every article until you approve it.`,
     });
   });
 

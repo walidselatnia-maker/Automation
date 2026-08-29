@@ -1597,3 +1597,12 @@ export const keywordImageCounts = (keywordId: number): KeywordImageCounts => {
     articleGenerated: generatedRuns * ARTICLE_IMAGES_PER_RUN,
   };
 };
+
+/** Whether this site publishes on its own or holds each article for approval. */
+export const setAutoPublish = (id: number, auto: boolean): void => {
+  run(
+    "UPDATE sites SET auto_publish = ?, updated_at = datetime('now') WHERE id = ?",
+    fromBool(auto),
+    id,
+  );
+};

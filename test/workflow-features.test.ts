@@ -151,6 +151,42 @@ describe('the new workflow features', () => {
       expect(getSite(id)?.status).toBe('paused');
     });
 
+    it('does not clear the pause when the settings form is saved', () => {
+      // The form no longer carries paused_reason or auto_publish — they are
+      // their own controls now — so saving it must leave them alone. Reading
+      // an absent field as an empty one would un-pause a site every time
+      // somebody changed its daily target.
+      const id = seedSite('bitespoon.com', { auto_publish: false });
+      pauseSite(id, 'their API is down', null);
+
+      upsertSite(
+        {
+          name: 'bitespoon',
+          domain: 'bitespoon.com',
+          status: 'paused',
+          pin_username: '',
+          project_id: '',
+          daily_target: 9,
+          interval_minutes: 60,
+        },
+        KEY,
+      );
+
+      const site = getSite(id)!;
+      expect(site.daily_target).toBe(9);
+      expect(site.paused_reason).toBe('their API is down');
+      expect(site.auto_publish).toBe(0);
+    });
+
+    it('switches publishing mode from its own control', async () => {
+      const id = seedSite('bitespoon.com');
+      await post(`/sites/${id}/publishing`, { auto_publish: '0' });
+      expect(getSite(id)?.auto_publish).toBe(0);
+
+      await post(`/sites/${id}/publishing`, { auto_publish: '1' });
+      expect(getSite(id)?.auto_publish).toBe(1);
+    });
+
     it('clears the reason when the site is made active again', () => {
       const id = seedSite('bitespoon.com');
       pauseSite(id, 'a reason', null);
