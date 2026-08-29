@@ -108,18 +108,6 @@ export const SETTING_SPECS: SettingSpec[] = [
       'an instance running somewhere else.',
   },
   {
-    key: 'image_api_key',
-    label: 'Image service API key',
-    group: 'images',
-    secret: true,
-    // The imagegen container reads the same value from its environment, so
-    // defaulting to it here means setting it once at deploy time rather than
-    // typing the same secret into two places. Still overridable in the UI.
-    default: process.env.IMAGE_API_KEY ?? '',
-    type: 'password',
-    help: 'Sent as the X-API-Key header. Defaults to IMAGE_API_KEY from the environment.',
-  },
-  {
     key: 'flow_project_id',
     label: 'Flow project ID',
     group: 'images',
@@ -212,17 +200,38 @@ function sharedImageApiKey(): string {
   }
 }
 
+/**
+ * The key the two containers authenticate with.
+ *
+ * Not a setting, and no longer a field on the settings page. It was one back
+ * when the image service was a separate project that had to be wired up by
+ * hand; now they ship together, imagegen generates the key into a volume both
+ * containers mount, and the platform reads it. Nobody types it, and a box
+ * inviting them to is a way to break a working deployment.
+ *
+ * The environment still wins, because deploying the two halves on different
+ * hosts means no shared volume and the key has to come from somewhere.
+ *
+ * Any stored value from when this was editable is deliberately ignored: the
+ * generated one is what imagegen actually checks against, so preferring it
+ * repairs a mismatch instead of preserving one.
+ */
+function imageApiKey(): string {
+  return (process.env.IMAGE_API_KEY ?? '').trim() || sharedImageApiKey();
+}
+
 export class Settings {
   constructor(private readonly encryptionKey: Buffer) {}
 
   get(key: string): string {
-    const spec = BY_KEY.get(key);
+    // Resolved from the deployment, never from the settings table — see
+    // imageApiKey above.
+    if (key === 'image_api_key') return imageApiKey();
+
     const stored = getSetting(key, this.encryptionKey);
     if (stored !== '') return stored;
 
-    const fallback = spec?.default ?? '';
-    if (fallback === '' && key === 'image_api_key') return sharedImageApiKey();
-    return fallback;
+    return BY_KEY.get(key)?.default ?? '';
   }
 
   getNumber(key: string): number {
@@ -251,7 +260,12 @@ export class Settings {
     const problems: string[] = [];
 
     if (!this.has('image_api_key')) {
-      problems.push('Image service API key is not set (Settings → Images).');
+      problems.push(
+        'Image service API key is missing. The image service writes it into a volume both ' +
+          'containers mount, so this normally sorts itself out within a minute of a deploy. ' +
+          'If it persists, check the shared-secret volume is mounted, or set IMAGE_API_KEY ' +
+          'in the deployment environment.',
+      );
     }
     if (!this.has('flow_project_id')) {
       problems.push(

@@ -1319,8 +1319,10 @@ export function settingsPage(
             <td class="mono small nowrap">IMAGE_API_KEY</td>
             <td class="mono small">generated</td>
             <td class="small">
-              The shared secret between the two containers. The field above must
-              match it &mdash; saving checks that it does.
+              The shared secret between the two containers. Generated
+              automatically into a volume they both mount, so it needs setting
+              only when the two halves run on different hosts and cannot share
+              one.
             </td>
           </tr>
           <tr>

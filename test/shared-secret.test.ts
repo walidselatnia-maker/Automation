@@ -85,6 +85,27 @@ describe('the shared image API key', () => {
     expect(settings.get('image_api_key')).toBe('c'.repeat(64));
   });
 
+  it('is not a field anybody can type into', async () => {
+    // It was one when the image service was a separate project wired up by
+    // hand. Now the containers ship together and generate it between
+    // themselves, so a box inviting someone to overwrite it is only a way to
+    // break a working deployment.
+    const { SETTING_SPECS } = await import('../src/settings.js');
+    expect(SETTING_SPECS.some((spec: { key: string }) => spec.key === 'image_api_key')).toBe(false);
+  });
+
+  it('ignores a value stored from when it was editable', async () => {
+    // The generated key is the one imagegen checks against, so preferring it
+    // repairs a mismatch rather than preserving one.
+    const keyPath = join(dir, 'image-api-key');
+    writeFileSync(keyPath, 'the-real-generated-key');
+
+    const settings = await settingsFor(keyPath);
+    settings.set('image_api_key', 'a-stale-value-somebody-typed');
+
+    expect(settings.get('image_api_key')).toBe('the-real-generated-key');
+  });
+
   it('lets an explicit environment variable win', async () => {
     const keyPath = join(dir, 'image-api-key');
     writeFileSync(keyPath, 'from-the-volume');

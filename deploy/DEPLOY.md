@@ -55,7 +55,7 @@ variables and redeploy.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `IMAGE_API_KEY` | generated | Shared secret between the containers. Set it only when deploying the two halves separately, where they cannot share a volume |
+| `IMAGE_API_KEY` | generated | Shared secret between the containers. Generated into a volume they both mount, so it is not a setting in the UI — set it only when the two halves run on different hosts and cannot share one |
 | `AUTH_PASSWORD` | generated | UI password |
 | `ENCRYPTION_KEY` | generated | 64 hex chars; encrypts stored credentials |
 | `FLOW_PROJECT_ID` | — | Optional here; easier to set in Settings → Images |
@@ -133,8 +133,9 @@ Give it a domain and you undo all of this — do not.
 - **LLM** — base URL, normally `https://ollama.com`
 - **LLM API keys** — add each key one at a time. Label plus key; nothing else.
   They all share the base URL above.
-- **Images** — the **Flow project ID**. The service URL and API key are already
-  filled in.
+- **Images** — the **Flow project ID**. The service URL is already filled in,
+  and the API key is not a field: the image service generates it into a volume
+  both containers mount, and the platform reads it.
 
   The Flow project ID must be a **real project id from the Google Flow UI**. It
   is sent to Google with every generation as `clientContext.projectId`; a made
