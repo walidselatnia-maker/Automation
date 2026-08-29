@@ -979,3 +979,42 @@ body.signin main {
 .group-chip.big { font-size: 14px; padding: 3px 12px; }
 
 .groupcard { border-left: 3px solid var(--violet); }
+
+/* ------------------------------------------------- page headers that fit */
+
+/* A button label must never wrap. On the keyword page the heading is the
+   article's own title — sometimes two hundred characters of it — and in a
+   flex row that title took every pixel, shrinking "Write a test article"
+   into a three-line column beside it. */
+button, .button { white-space: nowrap; }
+
+/* The actions keep their natural width; the heading gets whatever is left
+   and wraps, which is the one of the two that can. */
+.spread > .row {
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+/* Without min-width:0 a flex item refuses to shrink below its longest word,
+   which is what let the heading push the buttons off. */
+.spread > :first-child { min-width: 0; }
+
+/* Long headings stay readable rather than running off the side. */
+h1 { overflow-wrap: anywhere; }
+
+/* An article title is a heading, not a billboard — three lines is plenty
+   before it starts pushing the page it describes off the screen. */
+h1.long {
+  font-size: 22px;
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+@media (max-width: 700px) {
+  .spread { flex-direction: column; }
+  .spread > .row { justify-content: flex-start; }
+}

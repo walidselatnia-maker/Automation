@@ -2005,10 +2005,12 @@ export function keywordDetailPage(
   return html`
     <div class="spread">
       <div>
-        <h1>${keyword.spy_title || keyword.seed_keyword}</h1>
-        <p class="subtitle">
-          Keyword: <span class="mono">${keyword.seed_keyword}</span>
-        </p>
+        <!-- A spy title can run to a couple of hundred characters, so a long
+             one is clamped rather than allowed to become the whole page. -->
+        <h1 class="${(keyword.spy_title || '').length > 70 ? 'long' : ''}"
+            title="${keyword.spy_title || keyword.seed_keyword}">
+          ${keyword.spy_title || keyword.seed_keyword}
+        </h1>
       </div>
       <div class="row">
         <a class="button" href="/keywords">All keywords</a>
@@ -2217,7 +2219,6 @@ function imagesSection(
   images: SharedImageInfo | undefined,
   counts: KeywordImageCounts,
 ): Html {
-  const expectedArticle = images || counts.articleGenerated > 0 ? 4 : 0;
 
   return html`
     <h2>Its images</h2>
@@ -2227,9 +2228,11 @@ function imagesSection(
         <div class="value">${counts.articleGenerated}</div>
         <div class="label">Article images made</div>
         <div class="muted small">
-          ${expectedArticle === 0
+          ${counts.generatedRuns === 0
             ? 'none yet'
-            : `four per keyword${counts.articleGenerated > 4 ? ', regenerated since' : ''}`}
+            : counts.generatedRuns === 1
+              ? 'four, made once and reused'
+              : `${counts.generatedRuns} sets of four — regenerated since`}
         </div>
       </div>
       <div class="stat">
@@ -2237,10 +2240,14 @@ function imagesSection(
         <div class="label">Sites that copied them</div>
         <div class="muted small">no call to Google</div>
       </div>
-      <div class="stat">
-        <div class="value">${counts.pinGenerated}</div>
+      <div class="stat ${counts.pinsFailed > 0 ? 'supply-low' : ''}">
+        <div class="value">${counts.pinsMade}</div>
         <div class="label">Pinterest graphics made</div>
-        <div class="muted small">one per site, never shared</div>
+        <div class="muted small">
+          one per site, never shared${counts.pinsFailed > 0
+            ? `, ${counts.pinsFailed} attempt(s) failed`
+            : ''}
+        </div>
       </div>
     </div>
 

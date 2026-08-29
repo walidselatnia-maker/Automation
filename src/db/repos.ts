@@ -1521,38 +1521,79 @@ export const sharedImageInfo = (keywordId: number): SharedImageInfo | undefined 
 };
 
 export interface KeywordImageCounts {
-  /** Calls to Google for the four article images. 4 per keyword when shared. */
-  articleGenerated: number;
-  /** Calls to Google for Pinterest graphics. One per site, never shared. */
-  pinGenerated: number;
-  /** Runs that copied an existing set instead of generating. */
+  /** Runs that generated a fresh set of four article images. */
+  generatedRuns: number;
+  /** Runs that copied an existing set instead of calling Google. */
   copiedRuns: number;
+  /** Pinterest graphics successfully made. One per site, never shared. */
+  pinsMade: number;
+  /** Attempts at a Pinterest graphic that failed. */
+  pinsFailed: number;
+  /** Article images that reached Google: four per generating run. */
+  articleGenerated: number;
 }
 
+/** How many article images one generating run makes. */
+export const ARTICLE_IMAGES_PER_RUN = 4;
+
 /**
- * What this keyword has actually cost at the image service.
+ * What this keyword has cost at the image service.
  *
- * Read from run_steps.images, which counts generations only — a copied image
- * moved bytes between two of your own servers and never entered Google's
- * queue, so counting it here would answer a different question than the one
- * being asked.
+ * Counts *runs* from facts that have always been recorded — a step's status,
+ * and which site the stored image set came from — rather than summing
+ * run_steps.images.
+ *
+ * That column arrived in migration 005 with DEFAULT 0, so every run from
+ * before that deploy reports zero. Summing it made a run that generated four
+ * images indistinguishable from one that copied them, and the page confidently
+ * reported "0 article images made" directly above the four images it was
+ * displaying. A column added later is not evidence about what happened
+ * earlier, and a counter that cannot say "I do not know" will instead say
+ * something false.
+ *
+ * The tell for a generating run is `images > 0` where that was measured, or
+ * being the site the image set is recorded against where it was not.
  */
 export const keywordImageCounts = (keywordId: number): KeywordImageCounts => {
-  const row = get<{ article: number; pin: number; copied: number }>(
+  const row = get<{
+    generated: number;
+    copied: number;
+    pins_made: number;
+    pins_failed: number;
+  }>(
     `SELECT
-       COALESCE(SUM(CASE WHEN s.step = 'generate-images'    THEN s.images ELSE 0 END), 0) AS article,
-       COALESCE(SUM(CASE WHEN s.step = 'generate-pin-image' THEN s.images ELSE 0 END), 0) AS pin,
-       COALESCE(SUM(CASE WHEN s.step = 'generate-images' AND s.status = 'ok' AND s.images = 0
-                         THEN 1 ELSE 0 END), 0)                                           AS copied
+       COALESCE(SUM(CASE
+         WHEN s.step = 'generate-images' AND s.status = 'ok'
+          AND (s.images > 0 OR r.site_id = (
+                SELECT source_site_id FROM keyword_images WHERE keyword_id = ?))
+         THEN 1 ELSE 0 END), 0)                                        AS generated,
+
+       COALESCE(SUM(CASE
+         WHEN s.step = 'generate-images' AND s.status = 'ok'
+          AND s.images = 0
+          AND (r.site_id IS NULL OR r.site_id IS NOT (
+                SELECT source_site_id FROM keyword_images WHERE keyword_id = ?))
+         THEN 1 ELSE 0 END), 0)                                        AS copied,
+
+       COALESCE(SUM(CASE WHEN s.step = 'generate-pin-image' AND s.status = 'ok'
+                         THEN 1 ELSE 0 END), 0)                        AS pins_made,
+       COALESCE(SUM(CASE WHEN s.step = 'generate-pin-image' AND s.status = 'failed'
+                         THEN 1 ELSE 0 END), 0)                        AS pins_failed
      FROM run_steps s
      JOIN runs r ON r.id = s.run_id
      WHERE r.keyword_id = ?`,
     keywordId,
+    keywordId,
+    keywordId,
   );
 
+  const generatedRuns = Number(row?.generated ?? 0);
+
   return {
-    articleGenerated: Number(row?.article ?? 0),
-    pinGenerated: Number(row?.pin ?? 0),
+    generatedRuns,
     copiedRuns: Number(row?.copied ?? 0),
+    pinsMade: Number(row?.pins_made ?? 0),
+    pinsFailed: Number(row?.pins_failed ?? 0),
+    articleGenerated: generatedRuns * ARTICLE_IMAGES_PER_RUN,
   };
 };
