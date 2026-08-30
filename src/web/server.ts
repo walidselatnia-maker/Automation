@@ -746,6 +746,59 @@ export function buildServer(
     );
   });
 
+  app.post('/keywords/import', async (request, reply) => {
+    try {
+      const file = await request.file();
+      if (!file) {
+        return redirect(reply, '/keywords', { kind: 'error', message: 'No file received.' });
+      }
+
+      const report = importKeywordsCsv((await file.toBuffer()).toString('utf8'));
+
+      if (report.errors.length > 0 && report.imported === 0) {
+        return redirect(reply, '/keywords', {
+          kind: 'error',
+          message: report.errors.slice(0, 3).join(' '),
+        });
+      }
+
+      const parts: string[] = [];
+      if (report.imported) parts.push(`${report.imported} keyword(s) added`);
+      if (report.updated) parts.push(`${report.updated} updated`);
+      parts.push(`${report.linksSet} site link(s) set`);
+      if (report.skipped) parts.push(`${report.skipped} row(s) skipped`);
+
+      let message = `${parts.join(', ')}.`;
+
+      // A keyword linked to no site is not work â€” it will sit there looking
+      // like supply and publish nothing. Say so plainly rather than reporting
+      // a successful import and leaving the queue empty.
+      if (report.matchedDomains === 0) {
+        message +=
+          ' No column matched a site, so nothing will publish yet.' +
+          (report.unknownDomains.length
+            ? ` These headings match no site you have configured: ${report.unknownDomains.join(', ')}.` +
+              ' Check the domains under Sites, or download the template â€” its columns always match.'
+            : ' Add one column per site domain.');
+      } else if (report.linksSet === 0) {
+        message +=
+          ` ${report.matchedDomains} site column(s) matched, but every cell was empty.` +
+          ' Put go, done or no in the cells to say where each keyword should run.';
+      } else if (report.unknownDomains.length) {
+        message += ` Columns matching no site were ignored: ${report.unknownDomains.join(', ')}.`;
+      }
+
+      const wrong = report.matchedDomains === 0 || report.linksSet === 0;
+
+      return redirect(reply, '/keywords', {
+        kind: wrong ? 'warn' : report.unknownDomains.length ? 'warn' : 'ok',
+        message,
+      });
+    } catch (err) {
+      return redirect(reply, '/keywords', { kind: 'error', message: errorMessage(err) });
+    }
+  });
+
   app.get('/keywords/add', async (request, reply) =>
     page(reply, 'Add keywords', '/keywords', keywordAddPage(), readFlash(request.query)),
   );
