@@ -711,7 +711,41 @@ pre {
 
 /* ----------------------------------------------------------- the article */
 
-.article { max-width: 74ch; }
+/* The article, folded. The summary carries the title so the fold is still
+   informative shut — a row reading "Read the article" tells you nothing you
+   did not already know from the page you clicked. */
+.article > summary {
+  font-family: var(--display);
+  font-size: 17px;
+  font-weight: 700;
+  font-stretch: 105%;
+  letter-spacing: -0.015em;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  list-style: none;
+}
+.article > summary::-webkit-details-marker { display: none; }
+
+/* A caret drawn in CSS, so it turns with the fold rather than being a glyph
+   that has to be swapped. */
+.article > summary::before {
+  content: '';
+  flex: none;
+  width: 0;
+  height: 0;
+  border-left: 6px solid var(--blood);
+  border-top: 4.5px solid transparent;
+  border-bottom: 4.5px solid transparent;
+  transform: translateY(-1px);
+  transition: transform var(--step);
+}
+.article[open] > summary::before { transform: rotate(90deg) translateX(-1px); }
+
+.article > summary .muted { margin-left: auto; font-weight: 400; }
+
+.article-body { max-width: 74ch; margin-top: 20px; }
+
 .article-title {
   font-family: var(--display);
   font-size: 26px;

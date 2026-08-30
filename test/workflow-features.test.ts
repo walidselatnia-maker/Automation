@@ -306,8 +306,17 @@ describe('the new workflow features', () => {
 
     it('renders the article as prose rather than a JSON blob', async () => {
       const response = await get(`/runs/${runId}`);
-      expect(response.body).toContain('article-title');
+
+      // Field sections, not a <pre> of JSON. The title lives in the fold's
+      // summary so it reads as something shut, rather than as a row saying
+      // "Read the article" over content you cannot see.
+      expect(response.body).toContain('article-block');
       expect(response.body).toContain('First Title');
+    });
+
+    it('opens the article on a held run, where reading it is the task', async () => {
+      const response = await get(`/runs/${runId}`);
+      expect(response.body).toMatch(/<details class="card article" open>/);
     });
   });
 

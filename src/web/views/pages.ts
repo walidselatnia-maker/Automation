@@ -536,13 +536,23 @@ function articlePreview(
 
   return html`
     <h2>The article</h2>
-    <div class="card article">
-      ${title ? html`<h3 class="article-title">${title}</h3>` : raw('')}
-      ${text('description') || text('intro') || text('summary')
-        ? html`<p class="muted">${text('description') || text('intro') || text('summary')}</p>`
-        : raw('')}
-      ${body}
-    </div>
+
+    <!-- Folded away by default, like the step outputs below it. A finished
+         recipe is a couple of thousand words, and on a run you opened to find
+         out why Buffer rejected it, that is the whole page pushed off screen.
+         Open on a held run, where reading it is the entire task. -->
+    <details class="card article" ${editable ? raw('open') : raw('')}>
+      <summary>
+        ${title || 'Read the article'}
+        <span class="muted small">${editable ? 'waiting for you' : 'read it'}</span>
+      </summary>
+      <div class="article-body">
+        ${text('description') || text('intro') || text('summary')
+          ? html`<p class="muted">${text('description') || text('intro') || text('summary')}</p>`
+          : raw('')}
+        ${body}
+      </div>
+    </details>
 
     ${editable
       ? html`<details class="card">

@@ -4,8 +4,10 @@ import type { FastifyInstance } from 'fastify';
 import { closeDatabase, get as dbGet, openDatabase, run } from '../src/db/index.js';
 import {
   bulkSetKeywordStatus,
+  createRun,
   getLinkShare,
   getKeyword,
+  markRunPublished,
   insertKeyword,
   loadLinkGrid,
   setLink,
@@ -192,6 +194,30 @@ describe('web UI after the layout changes', () => {
       const response = await get('/');
       expect(response.body).toContain('table-wrap scroll-y');
     });
+  });
+
+  it("folds a published run's article away", async () => {
+    // Browsing runs is the common case: you opened one to see why Buffer
+    // rejected it, not to reread two thousand words of recipe.
+    const siteId = seedSite('bitespoon.com');
+    const keywordId = insertKeyword({
+      seed_keyword: 'chicken',
+      spy_title: 'Honey Soy',
+      status: 'go',
+    });
+    const runId = createRun(keywordId, siteId);
+    run(
+      `INSERT INTO run_steps (run_id, step, status, output_json)
+       VALUES (?, 'generate-article', 'ok', ?)`,
+      runId,
+      JSON.stringify({ title: 'Honey Soy', body: 'text' }),
+    );
+    markRunPublished(runId, 'p1', 'https://bitespoon.com/a', 'Honey Soy');
+
+    const response = await get(`/runs/${runId}`);
+
+    expect(response.body).toContain('<details class="card article" >');
+    expect(response.body).not.toContain('<details class="card article" open>');
   });
 
   /* -- the view picker --------------------------------------------------- */
