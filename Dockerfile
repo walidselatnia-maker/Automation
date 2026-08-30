@@ -10,7 +10,7 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 
-COPY tsconfig.json ./
+COPY tsconfig.json tailwind.config.js ./
 COPY scripts ./scripts
 COPY src ./src
 RUN npm run build && npm prune --omit=dev

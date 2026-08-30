@@ -8,9 +8,12 @@
     "node": ">=24"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json && node scripts/copy-assets.mjs",
+    "build:css": "tailwindcss -i ./src/web/styles/input.css -o ./src/web/public/style.css --minify",
+    "build": "npm run build:css && tsc -p tsconfig.json && node scripts/copy-assets.mjs",
     "start": "node dist/index.js",
+    "predev": "npm run build:css",
     "dev": "tsx watch src/index.ts",
+    "watch:css": "tailwindcss -i ./src/web/styles/input.css -o ./src/web/public/style.css --watch",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",

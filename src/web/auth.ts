@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual, randomBytes } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { escapeHtml } from './views/layout.js';
+import { escapeHtml, head } from './views/layout.js';
 import { storedPasswordHash, verifyPassword } from './password.js';
 
 /**
@@ -64,13 +64,7 @@ function readCookie(request: FastifyRequest, name: string): string | null {
 function loginPage(error?: string, generated?: boolean): string {
   return `<!doctype html>
 <html lang="en"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sign in · Article Platform</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..900&family=DM+Mono:wght@400;500&display=swap">
-<link rel="stylesheet" href="/static/style.css">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' fill='%230a0a0a'/><rect x='7' y='7' width='8' height='8' fill='%23c1121f'/><rect x='7' y='19' width='18' height='2.5' fill='white'/><rect x='7' y='24' width='11' height='2.5' fill='%23808080'/></svg>">
+${head('Sign in')}
 </head><body class="signin">
 <main>
   <div class="docket">

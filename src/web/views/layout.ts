@@ -47,7 +47,20 @@ export function html(strings: TemplateStringsArray, ...values: unknown[]): Html 
 export interface NavItem {
   href: string;
   label: string;
+  /** Inline stroke icon, sized and coloured by CSS via `currentColor`. */
+  icon: string;
 }
+
+/**
+ * Nav icons.
+ *
+ * Drawn inline rather than pulled from an icon font: six glyphs is not worth a
+ * network request, and `currentColor` means they inherit the link's colour in
+ * both themes and in the active state without a second rule.
+ */
+const ICON = (paths: string): string =>
+  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" ` +
+  `stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
 
 /**
  * The rail holds destinations you navigate between and nothing else.
@@ -57,13 +70,91 @@ export interface NavItem {
  * became a button in the top-right corner because it opens its own tab.
  */
 const NAV: NavItem[] = [
-  { href: '/', label: 'Dashboard' },
-  { href: '/runs', label: 'Runs' },
-  { href: '/sites', label: 'Sites' },
-  { href: '/keywords', label: 'Keywords' },
-  { href: '/events', label: 'Events' },
-  { href: '/settings', label: 'Settings' },
+  {
+    href: '/',
+    label: 'Dashboard',
+    icon: ICON('<rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/>' +
+      '<rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/>'),
+  },
+  {
+    href: '/runs',
+    label: 'Runs',
+    icon: ICON('<polygon points="6 4 20 12 6 20 6 4"/>'),
+  },
+  {
+    href: '/sites',
+    label: 'Sites',
+    icon: ICON('<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/>' +
+      '<path d="M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0-18z"/>'),
+  },
+  {
+    href: '/keywords',
+    label: 'Keywords',
+    icon: ICON('<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>'),
+  },
+  {
+    href: '/events',
+    label: 'Events',
+    icon: ICON('<path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h10"/>'),
+  },
+  {
+    href: '/settings',
+    label: 'Settings',
+    icon: ICON('<circle cx="12" cy="12" r="3"/>' +
+      '<path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2' +
+      'a2 2 0 1 1-4 0a1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 3 15' +
+      'a2 2 0 1 1 0-4a1.7 1.7 0 0 0 1.5-2.6l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 10 4.6' +
+      'a2 2 0 1 1 4 0a1.7 1.7 0 0 0 2.6 1.5l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1A1.7 1.7 0 0 0 21 11' +
+      'a2 2 0 1 1 0 4a1.7 1.7 0 0 0-1.6 0z"/>'),
+  },
 ];
+
+/**
+ * The theme, applied before the first paint.
+ *
+ * This runs in <head> rather than at the end of <body> deliberately: setting
+ * the class after the page has painted means a light flash on every navigation
+ * for anyone using dark mode. The stored choice wins; with nothing stored the
+ * OS preference is the starting point.
+ */
+const THEME_BOOT = `<script>
+(function () {
+  try {
+    var stored = localStorage.theme;
+    var dark = stored === 'dark' ||
+      (!stored && matchMedia('(prefers-color-scheme: dark)').matches);
+    document.documentElement.classList.toggle('dark', dark);
+  } catch (e) { /* private mode: fall through to the light default */ }
+})();
+</script>`;
+
+/** Flips the class on <html> and remembers the choice. */
+const THEME_TOGGLE = `<script>
+(function () {
+  var button = document.getElementById('theme-toggle');
+  // The boot script has already decided; the switch just catches up with it.
+  button.setAttribute('aria-checked',
+    String(document.documentElement.classList.contains('dark')));
+})();
+document.getElementById('theme-toggle').addEventListener('click', function () {
+  var dark = document.documentElement.classList.toggle('dark');
+  this.setAttribute('aria-checked', String(dark));
+  try { localStorage.theme = dark ? 'dark' : 'light'; } catch (e) {}
+});
+</script>`;
+
+/** Shared <head> contents, so the sign-in page cannot drift from the app. */
+export function head(title: string): string {
+  return `<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${escapeHtml(title)} · Article Platform</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="/static/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%23e63946'/><rect x='9' y='9' width='14' height='2.5' rx='1.25' fill='white'/><rect x='9' y='15' width='14' height='2.5' rx='1.25' fill='white' opacity='.75'/><rect x='9' y='21' width='8' height='2.5' rx='1.25' fill='white' opacity='.5'/></svg>">
+${THEME_BOOT}`;
+}
 
 export interface LayoutOptions {
   title: string;
@@ -77,7 +168,7 @@ export function layout(options: LayoutOptions): string {
   const nav = NAV.map(
     (item) => html`
       <a href="${item.href}" class="${item.href === options.active ? 'active' : ''}"
-        >${item.label}</a
+        >${raw(item.icon)}<span>${item.label}</span></a
       >
     `,
   );
@@ -96,32 +187,29 @@ export function layout(options: LayoutOptions): string {
   return `<!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${escapeHtml(options.title)} · Article Platform</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..900&family=DM+Mono:wght@400;500&display=swap">
-<link rel="stylesheet" href="/static/style.css">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' fill='%230a0a0a'/><rect x='7' y='7' width='8' height='8' fill='%23c1121f'/><rect x='7' y='19' width='18' height='2.5' fill='white'/><rect x='7' y='24' width='11' height='2.5' fill='%23808080'/></svg>">
+${head(options.title)}
 </head>
 <body>
 <header class="topbar">
-  <div class="brand"><a href="/">Article&nbsp;Platform</a>${status}</div>
+  <div class="brand"><a href="/">Article&nbsp;Platform</a>${status.value}</div>
   <nav>${nav.map((n) => n.value).join('')}</nav>
-  <div class="rail-foot">One article per run.<br>Every skip has a recorded reason.</div>
-</header>
-<main>
-  <div class="pagebar">
+  <div class="rail-utils">
+    <button type="button" id="theme-toggle" class="theme-switch"
+            role="switch" aria-checked="false" title="Switch between light and dark">
+      <span>Dark mode</span><span class="track"></span>
+    </button>
     <a class="button browser" href="/browser" target="_blank" rel="noopener"
        title="The live Chrome session used to generate images">Browser</a>
     <form method="post" action="/logout">
       <button type="submit">Sign out</button>
     </form>
   </div>
+</header>
+<main>
 ${flash.value}
 ${options.body.value}
 </main>
+${THEME_TOGGLE}
 </body>
 </html>`;
 }
@@ -204,10 +292,10 @@ export function sparkline(
       <title>${day.day}: ${day.published} published, ${day.failed} failed</title>
       <rect x="${x.toFixed(1)}" y="${(height - failedHeight).toFixed(1)}"
         width="${barWidth.toFixed(1)}" height="${failedHeight.toFixed(1)}"
-        fill="var(--red)" opacity="0.85"></rect>
+        fill="#e63946" opacity="0.85"></rect>
       <rect x="${x.toFixed(1)}" y="${(height - failedHeight - publishedHeight).toFixed(1)}"
         width="${barWidth.toFixed(1)}" height="${publishedHeight.toFixed(1)}"
-        fill="var(--brand)"></rect>
+        fill="#10b981"></rect>
     </g>`;
   });
 
