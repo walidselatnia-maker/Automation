@@ -128,7 +128,7 @@ export function dashboardPage(data: DashboardData): Html {
               <span class="key red"></span> failed
             </span>
           </div>
-          <div class="chart">${sparkline(data.activity, { width: 720, height: 52 })}</div>
+          <div class="chart">${sparkline(data.activity, { width: 720, height: 64 })}</div>
         </div>`
       : raw('')}
 

@@ -101,9 +101,9 @@ export function layout(options: LayoutOptions): string {
 <title>${escapeHtml(options.title)} · Article Platform</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..900&family=DM+Mono:wght@400;500&display=swap">
 <link rel="stylesheet" href="/static/style.css">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='%236366f1'/><stop offset='0.55' stop-color='%23a855f7'/><stop offset='1' stop-color='%23ec4899'/></linearGradient></defs><rect width='32' height='32' rx='8' fill='url(%23g)'/><rect x='8' y='10' width='16' height='3' rx='1.5' fill='white'/><rect x='8' y='16' width='16' height='2.5' rx='1.25' fill='white' opacity='0.75'/><rect x='8' y='21' width='10' height='2.5' rx='1.25' fill='white' opacity='0.55'/></svg>">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' fill='%230a0a0a'/><rect x='7' y='7' width='8' height='8' fill='%23c1121f'/><rect x='7' y='19' width='18' height='2.5' fill='white'/><rect x='7' y='24' width='11' height='2.5' fill='%23808080'/></svg>">
 </head>
 <body>
 <header class="topbar">
@@ -211,7 +211,13 @@ export function sparkline(
     </g>`;
   });
 
+  // preserveAspectRatio="none" so the chart fills the card it is in. The
+  // default keeps the viewBox's ratio, which drew a small chart floating in
+  // the middle of a wide empty box — the bars are what carry the meaning and
+  // stretching them horizontally costs nothing, since only their heights are
+  // being compared.
   return html`<svg class="spark" viewBox="0 0 ${width} ${height}" width="100%" height="${height}"
+    preserveAspectRatio="none"
     role="img" aria-label="Articles published per day">${bars}</svg>`;
 }
 
