@@ -778,8 +778,12 @@ export function sitesPage(sites: SiteRow[], views: SiteView[]): Html {
         ? emptyState('No sites yet. Add your first one below.')
         : html`<table>
             <thead>
+              <!-- No Name column: in practice every site's name is its domain,
+                   so the column was a second copy of the one beside it. The
+                   field is still on the form, and still what the run log and
+                   notifications call a site. -->
               <tr>
-                <th>Name</th><th>Domain</th><th>Status</th><th>Publishing</th><th>Target</th>
+                <th>Domain</th><th>Status</th><th>Publishing</th><th>Target</th>
                 <th>Interval</th><th>Credentials</th><th>Today</th><th>Last publish</th><th></th>
               </tr>
             </thead>
@@ -787,7 +791,6 @@ export function sitesPage(sites: SiteRow[], views: SiteView[]): Html {
               ${sites.map((s) => {
                 const v = views.find((x) => x.id === s.id);
                 return html`<tr>
-                  <td>${s.name}</td>
                   <td class="mono">${s.domain}</td>
                   <td>
                     ${statusBadge(s.status)}
