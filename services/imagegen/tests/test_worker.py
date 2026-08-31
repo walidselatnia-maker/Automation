@@ -247,7 +247,10 @@ async def test_the_tab_is_refreshed_before_a_claimed_batch(monkeypatch):
     controller = processor.WorkerController()
     await controller._ensure_token(3)
 
-    assert fake.refresh_calls == [processor.TOKEN_MAX_AGE_BEFORE_BATCH]
+    # 0 = reload every time. The refresh is a step of the sequence, not
+    # something a timer decides to skip.
+    assert fake.refresh_calls == [0]
+    assert processor.TOKEN_MAX_AGE_BEFORE_BATCH == 0
 
 
 @pytest.mark.asyncio

@@ -243,9 +243,9 @@ class FlowClient:
         A reload, not a re-auth: cookies and the signed-in Google account are
         untouched, so nobody has to sign in again.
 
-        `max_age_s` of 0 forces the reload. Anything else is a hint the
-        extension checks against its own capture timestamp, which is the only
-        clock that knows how old the token really is.
+        `max_age_s` of 0 — the default the worker passes — always reloads.
+        Anything else is a hint the extension checks against its own capture
+        timestamp, for a deployment that would rather skip a recent one.
         """
         if not self._extension_ws:
             return {"ok": False, "error": "Extension not connected"}

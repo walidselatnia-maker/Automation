@@ -82,11 +82,10 @@ class WorkerController:
                 free = MAX_CONCURRENT_REQUESTS - len(self._running)
                 if free > 0 and get_flow_client().connected:
                     claimed = await jobs.claim_pending(free)
-                    if claimed:
-                        # Refresh before the batch, not after it fails. Done
-                        # here rather than per job so a queue of twenty does
-                        # not reload the tab twenty times, and only when there
-                        # is work — an idle agent has no reason to touch it.
+                    # Refresh, then generate — in that order, every time.
+                    # Skipped only while other jobs are still in flight, since
+                    # reloading the tab takes their requests down with it.
+                    if claimed and not self._running:
                         await self._ensure_token(len(claimed))
                     for job in claimed:
                         self._running.add(job["id"])
