@@ -92,6 +92,12 @@ CREATE TABLE IF NOT EXISTS keyword_sites (
   -- behaviour that should need no thought. Generating fresh is the exception.
   share_images INTEGER NOT NULL DEFAULT 1 CHECK (share_images IN (0, 1)),
   updated_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+  -- Set by the scheduler when a pair has failed the same way often enough that
+  -- offering it again only spends the site's slot on a known failure. Kept
+  -- separate from `status` on purpose: 'no' is a person's decision, and a
+  -- system that writes into it makes the two indistinguishable.
+  blocked_at     TEXT,
+  blocked_reason TEXT,
   PRIMARY KEY (keyword_id, site_id)
 );
 CREATE INDEX IF NOT EXISTS idx_ks_site_status ON keyword_sites (site_id, status);

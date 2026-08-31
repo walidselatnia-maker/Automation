@@ -2301,6 +2301,16 @@ export function keywordDetailPage(
                     ${verdict.ready
                       ? html`<span class="badge ok">ready</span> ${verdict.reason}`
                       : verdict.reason}
+                    ${verdict.blocked
+                      ? html`<form method="post"
+                                   action="/keywords/${keyword.id}/unblock/${verdict.siteId}"
+                                   style="margin-top:6px">
+                          <button class="small" type="submit"
+                                  title="Offer this pair again on the next check">
+                            Put it back in the running
+                          </button>
+                        </form>`
+                      : raw('')}
                   </td>
                 </tr>`;
               })}

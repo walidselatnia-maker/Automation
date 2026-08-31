@@ -429,9 +429,102 @@ export const loadKeywordViews = (): KeywordView[] =>
   }));
 
 export const loadLinkViews = (): LinkView[] =>
-  all<{ keyword_id: number; site_id: number; status: 'go' | 'done' | 'no' }>(
-    'SELECT keyword_id, site_id, status FROM keyword_sites',
-  ).map((r) => ({ keywordId: r.keyword_id, siteId: r.site_id, status: r.status }));
+  all<{
+    keyword_id: number;
+    site_id: number;
+    status: 'go' | 'done' | 'no';
+    blocked_at: string | null;
+  }>('SELECT keyword_id, site_id, status, blocked_at FROM keyword_sites').map((r) => ({
+    keywordId: r.keyword_id,
+    siteId: r.site_id,
+    status: r.status,
+    blocked: r.blocked_at !== null,
+  }));
+
+/* -- Pairs that keep failing ---------------------------------------------- */
+
+/**
+ * How many times this pair has failed since it last got anywhere.
+ *
+ * Derived from the runs table rather than kept in a counter: a counter has to
+ * be incremented in every failure path and reset in every success path, and
+ * the first one anybody forgets makes it lie. The runs are the record, so the
+ * count is a question asked of them.
+ *
+ * "Got anywhere" is deliberately wider than published: a run held for approval
+ * proves the pair can produce an article, which is the thing being doubted.
+ */
+export const consecutiveFailuresForPair = (keywordId: number, siteId: number): number =>
+  get<{ n: number }>(
+    `SELECT COUNT(*) AS n
+       FROM runs
+      WHERE keyword_id = ? AND site_id = ? AND status = 'failed'
+        AND id > COALESCE(
+              (SELECT MAX(id) FROM runs
+                WHERE keyword_id = ? AND site_id = ? AND status <> 'failed'),
+              0)`,
+    keywordId,
+    siteId,
+    keywordId,
+    siteId,
+  )?.n ?? 0;
+
+/** Take a pair out of the running, with the reason on the record. */
+export const blockLink = (keywordId: number, siteId: number, reason: string): void => {
+  run(
+    `UPDATE keyword_sites
+        SET blocked_at = datetime('now'), blocked_reason = ?, updated_at = datetime('now')
+      WHERE keyword_id = ? AND site_id = ?`,
+    reason.slice(0, 500),
+    keywordId,
+    siteId,
+  );
+};
+
+export const unblockLink = (keywordId: number, siteId: number): void => {
+  run(
+    `UPDATE keyword_sites
+        SET blocked_at = NULL, blocked_reason = NULL, updated_at = datetime('now')
+      WHERE keyword_id = ? AND site_id = ?`,
+    keywordId,
+    siteId,
+  );
+};
+
+export interface BlockedPair {
+  keywordId: number;
+  siteId: number;
+  seedKeyword: string;
+  domain: string;
+  blockedAt: string;
+  blockedReason: string;
+}
+
+/** Everything currently held back, for the page that has to show it. */
+export const listBlockedPairs = (): BlockedPair[] =>
+  all<{
+    keyword_id: number;
+    site_id: number;
+    seed_keyword: string;
+    domain: string;
+    blocked_at: string;
+    blocked_reason: string;
+  }>(
+    `SELECT ks.keyword_id, ks.site_id, k.seed_keyword, s.domain,
+            ks.blocked_at, ks.blocked_reason
+       FROM keyword_sites ks
+       JOIN keywords k ON k.id = ks.keyword_id
+       JOIN sites    s ON s.id = ks.site_id
+      WHERE ks.blocked_at IS NOT NULL
+      ORDER BY ks.blocked_at DESC`,
+  ).map((r) => ({
+    keywordId: r.keyword_id,
+    siteId: r.site_id,
+    seedKeyword: r.seed_keyword,
+    domain: r.domain,
+    blockedAt: r.blocked_at,
+    blockedReason: r.blocked_reason ?? '',
+  }));
 
 export const setLink = (
   keywordId: number,
@@ -450,8 +543,14 @@ export const setLink = (
 };
 
 export const getLinksForKeyword = (keywordId: number) =>
-  all<{ site_id: number; status: string; domain: string }>(
-    `SELECT ks.site_id, ks.status, s.domain
+  all<{
+    site_id: number;
+    status: string;
+    domain: string;
+    blocked_at: string | null;
+    blocked_reason: string | null;
+  }>(
+    `SELECT ks.site_id, ks.status, s.domain, ks.blocked_at, ks.blocked_reason
        FROM keyword_sites ks JOIN sites s ON s.id = ks.site_id
       WHERE ks.keyword_id = ? ORDER BY s.name`,
     keywordId,

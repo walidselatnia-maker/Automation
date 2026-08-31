@@ -12,13 +12,15 @@ import {
   loadSiteViews,
   pruneDecisions,
   pruneEvents,
+  blockLink,
+  consecutiveFailuresForPair,
   markRunFailed,
   pauseSite,
   recordDecisions,
   resumeExpiredPauses,
   scheduleRetry,
 } from '../db/repos.js';
-import { planRetry, type RetryPolicy } from '../core/retry.js';
+import { isTransient, planRetry, type RetryPolicy } from '../core/retry.js';
 import { announceNotices } from '../core/notices.js';
 import { localDateKey, selectTask } from '../core/selector.js';
 import { isBufferExhausted } from '../integrations/buffer-pool.js';
@@ -130,7 +132,63 @@ function considerRetry(
   if (decision.retry) log.info(`run ${runId}: ${decision.reason}`);
   else log.debug(`run ${runId}: not retrying — ${decision.reason}`);
 
-  return decision.reason;
+  // Only once the retries are done with it. A run that is going to be tried
+  // again has not failed yet in the sense that matters here.
+  const held = decision.retry ? '' : considerBlockingPair(runId, error, settings);
+
+  return held ? `${decision.reason} ${held}` : decision.reason;
+}
+
+/**
+ * Stop offering a pair that keeps failing the same way.
+ *
+ * The count is deliberately narrow, because the obvious version of this is
+ * wrong in three ways:
+ *
+ *   It would punish a pair for the world's problems. When the image service is
+ *   down, every pair that runs fails, and none of them is what broke. So only
+ *   failures that `isTransient` calls permanent are counted — the ones that
+ *   will happen identically next time. That is the same classifier the retry
+ *   policy uses, rather than a second opinion that can drift from it.
+ *
+ *   It would count across successes. A pair that published fine last week and
+ *   failed twice today is not a hopeless pair. The count runs from the last run
+ *   that got somewhere, so any success clears it.
+ *
+ *   It would write 'no' into the link, which is where a person records that a
+ *   keyword does not belong on a site. Then nobody could tell a decision from a
+ *   surrender, and unblocking would mean guessing which it was. This sets its
+ *   own field and leaves the status alone.
+ *
+ * What it deliberately does not do is require the same failing step each time.
+ * Three permanent failures at three different steps is still a pair nothing can
+ * publish, and demanding they match would keep offering it for as long as it
+ * found new ways to fail.
+ */
+function considerBlockingPair(runId: number, error: string, settings: Settings): string {
+  const limit = Math.max(0, settings.getNumber('pair_failure_limit'));
+  if (limit === 0) return '';
+
+  const row = get<{ keyword_id: number | null; site_id: number | null }>(
+    'SELECT keyword_id, site_id FROM runs WHERE id = ?',
+    runId,
+  );
+  if (!row?.keyword_id || !row.site_id) return '';
+
+  // The world's problems are the retry policy's business, not this one's.
+  if (isTransient(error)) return '';
+
+  const failures = consecutiveFailuresForPair(row.keyword_id, row.site_id);
+  if (failures < limit) return '';
+
+  const reason =
+    `Failed ${failures} times in a row with nothing published in between. ` +
+    `Last error: ${error.slice(0, 300)}`;
+
+  blockLink(row.keyword_id, row.site_id, reason);
+  log.warn(`keyword ${row.keyword_id} held back on site ${row.site_id}: ${reason}`);
+
+  return `Held back on this site after ${failures} failures — clear it on the keyword page.`;
 }
 
 /**

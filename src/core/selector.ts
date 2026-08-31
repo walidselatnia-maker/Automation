@@ -213,7 +213,10 @@ export function selectTask(
     }
 
     const candidates = (linksByKeyword.get(keyword.id) ?? [])
-      .filter((link) => link.status === 'go')
+      // A blocked pair is still 'go' — nobody decided against it — but it has
+      // failed the same way often enough that offering it again would spend
+      // the site's slot on a known failure. It waits for a person instead.
+      .filter((link) => link.status === 'go' && !link.blocked)
       .map((link) => eligibleById.get(link.siteId))
       .filter((site): site is SiteView => site !== undefined)
       .sort(longestWaiting);

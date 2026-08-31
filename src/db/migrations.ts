@@ -195,6 +195,15 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+
+  {
+    id: '008-block-hopeless-pairs',
+    description: 'Quarantine a keyword-site pair that keeps failing the same way',
+    up(db) {
+      addColumn(db, 'keyword_sites', 'blocked_at', 'TEXT');
+      addColumn(db, 'keyword_sites', 'blocked_reason', 'TEXT');
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */

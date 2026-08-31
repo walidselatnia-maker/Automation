@@ -27,6 +27,8 @@ export interface SiteVerdict {
   reason: string;
   /** Roughly when this site is free again, when that is what is blocking. */
   waitMinutes: number | null;
+  /** Held back by the scheduler after repeated failures, awaiting a person. */
+  blocked?: boolean;
 }
 
 export interface KeywordDiagnosis {
@@ -42,10 +44,13 @@ export interface KeywordDiagnosis {
 export function diagnoseKeyword(
   keyword: { id: number; seedKeyword: string; status: LinkStatus },
   sites: SiteView[],
-  links: { siteId: number; status: LinkStatus }[],
+  links: { siteId: number; status: LinkStatus; blocked?: boolean; blockedReason?: string }[],
   options: SelectorOptions,
 ): KeywordDiagnosis {
   const linkBySite = new Map(links.map((l) => [l.siteId, l.status]));
+  const blockedBySite = new Map(
+    links.filter((l) => l.blocked).map((l) => [l.siteId, l.blockedReason ?? '']),
+  );
 
   const keywordProblem =
     keyword.status === 'go'
@@ -79,6 +84,20 @@ export function diagnoseKeyword(
         ...base,
         ready: false,
         reason: 'Set to no for this site.',
+        waitMinutes: null,
+      };
+    }
+
+    // Held back after repeated identical failures. Checked before the site's
+    // condition because a healthy site does not make a blocked pair publish,
+    // and "ready" here would be the exact lie this page exists to prevent.
+    const blockedReason = blockedBySite.get(site.id);
+    if (blockedReason !== undefined) {
+      return {
+        ...base,
+        ready: false,
+        blocked: true,
+        reason: `Held back after repeated failures here. ${blockedReason}`.trim(),
         waitMinutes: null,
       };
     }

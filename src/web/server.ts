@@ -82,6 +82,7 @@ import {
   deleteBufferAccount,
   listBufferAccounts,
   loadKeywordViews,
+  unblockLink,
   upsertBufferAccount,
   loadLinkViews,
   loadSiteViews,
@@ -1022,6 +1023,24 @@ export function buildServer(
    * out, why?" — and reuses the selector's own evaluateSite, so a verdict here
    * and a verdict in the scheduler cannot drift apart.
    */
+  /**
+   * Put a held-back pair back in the running.
+   *
+   * The scheduler stops offering a pair that failed the same way repeatedly.
+   * Clearing that is a person's call — they either fixed what was wrong or
+   * decided it is worth another go — so there is no automatic expiry.
+   */
+  app.post('/keywords/:id/unblock/:siteId', async (request, reply) => {
+    const params = request.params as { id: string; siteId: string };
+    const keywordId = asNumber(params.id, 0);
+
+    unblockLink(keywordId, asNumber(params.siteId, 0));
+    return redirect(reply, `/keywords/${keywordId}`, {
+      kind: 'ok',
+      message: 'Back in the running. It will be offered again on the next check.',
+    });
+  });
+
   app.get('/keywords/:id', async (request, reply) => {
     const id = asNumber((request.params as { id: string }).id, 0);
     const keyword = getKeyword(id);
@@ -1039,6 +1058,8 @@ export function buildServer(
       getLinksForKeyword(id).map((l) => ({
         siteId: l.site_id,
         status: l.status as 'go' | 'done' | 'no',
+        blocked: l.blocked_at !== null,
+        blockedReason: l.blocked_reason ?? '',
       })),
       { now, timezone },
     );

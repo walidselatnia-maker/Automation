@@ -100,6 +100,21 @@ export const SETTING_SPECS: SettingSpec[] = [
     help: 'Doubled on each further attempt, so a service that is properly down is left alone.',
   },
 
+  {
+    key: 'pair_failure_limit',
+    label: 'Hold a keyword back after (failures on one site)',
+    group: 'retry',
+    secret: false,
+    default: '3',
+    type: 'number',
+    help:
+      'Counts only failures that would happen identically next time, and only ' +
+      'since that pair last produced an article — a rate limit or the image ' +
+      'service restarting does not count, because the pair is not what went ' +
+      'wrong. At the limit the pair waits for you on the keyword page rather ' +
+      'than taking the site’s slot again. 0 turns it off.',
+  },
+
   // -- LLM -----------------------------------------------------------------
   {
     key: 'llm_base_url',

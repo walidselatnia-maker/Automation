@@ -40,6 +40,14 @@ export interface LinkView {
   keywordId: number;
   siteId: number;
   status: LinkStatus;
+  /**
+   * Held back after repeated identical failures.
+   *
+   * Separate from `status` because they answer different questions: status is
+   * what a person decided, this is what the scheduler observed. Merging them
+   * would make "I said no" and "it gave up" the same fact.
+   */
+  blocked?: boolean;
 }
 
 export type DecisionKind = 'selected' | 'eligible' | 'rejected' | 'skipped' | 'none';
