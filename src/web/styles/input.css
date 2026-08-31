@@ -690,6 +690,30 @@
 
   /* --------------------------------------------------------------- empty */
 
+  /* The manual run picker. A native <dialog>, so the backdrop, the modal
+     behaviour and Escape-to-close come from the browser. */
+  .picker {
+    @apply w-[min(28rem,calc(100vw-2rem))] p-6;
+    @apply border border-edge bg-surface text-slate-900;
+    @apply dark:border-edge-dark dark:bg-surface-dark dark:text-slate-100;
+  }
+
+  .picker::backdrop {
+    @apply bg-slate-900/50 backdrop-blur-sm;
+  }
+
+  .picker h2 {
+    @apply mb-1 text-lg font-semibold tracking-tight;
+  }
+
+  .picker .subtitle {
+    @apply mb-5 mt-0;
+  }
+
+  .picker .save-bar {
+    @apply mt-6 justify-end;
+  }
+
   .empty {
     @apply px-5 py-10 text-center text-sm text-slate-500 dark:text-slate-400;
   }

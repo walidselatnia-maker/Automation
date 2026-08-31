@@ -79,6 +79,8 @@ import {
   deletePromptOverride,
   getPromptOverride,
   loadLinkGrid,
+  loadKeywordViews,
+  loadLinkViews,
   loadSiteViews,
   setPromptOverride,
   getRun,
@@ -255,6 +257,8 @@ export function buildServer(
         problems: problemsFor(settings),
         busy: Boolean(lock?.locked_at),
         lockedAt: lock?.locked_at ?? null,
+        keywords: loadKeywordViews(),
+        links: loadLinkViews(),
         cycles,
         selectedCycle,
         decisions: selectedCycle ? listDecisions(selectedCycle) : [],
@@ -303,10 +307,26 @@ export function buildServer(
     // A dry run exercises the whole pipeline and stops before posting, which
     // is the only way to see what a prompt change does without a live site
     // finding out first.
-    const mode = asString(formBody(request).mode) === 'dry' ? 'dry' : 'live';
+    const body = formBody(request);
+    const mode = asString(body.mode) === 'dry' ? 'dry' : 'live';
+
+    // A hand-picked pair runs immediately: no eligibility check, no waiting
+    // for the next scheduler tick, no queued retry taking the slot. Both ids
+    // or neither — half a pair would silently fall back to the selector and
+    // publish something the person did not ask for.
+    const siteId = asNumber(body.site_id, 0);
+    const keywordId = asNumber(body.keyword_id, 0);
+    const pick = siteId > 0 && keywordId > 0 ? { siteId, keywordId } : undefined;
+
+    if ((siteId > 0) !== (keywordId > 0)) {
+      return redirect(reply, '/', {
+        kind: 'error',
+        message: 'Pick both a site and a keyword, or neither.',
+      });
+    }
 
     try {
-      const result = await tick(settings, encryptionKey, { mode });
+      const result = await tick(settings, encryptionKey, { mode, pick });
       const flash = describeTick(result);
       return redirect(reply, result.runId ? `/runs/${result.runId}` : '/', flash);
     } catch (err) {

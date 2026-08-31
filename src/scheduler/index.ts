@@ -19,6 +19,7 @@ import {
 import { planRetry, type RetryPolicy } from '../core/retry.js';
 import { announceNotices } from '../core/notices.js';
 import { localDateKey, selectTask } from '../core/selector.js';
+import type { Decision } from '../core/types.js';
 import { executePipeline, PipelineContext } from '../pipeline/index.js';
 import type { Settings } from '../settings.js';
 import { createLogger, errorMessage } from '../lib/logger.js';
@@ -167,10 +168,11 @@ export function forceReleaseLock(): void {
 export async function tick(
   settings: Settings,
   encryptionKey: Buffer,
-  options: { mode?: 'live' | 'dry' } = {},
+  options: { mode?: 'live' | 'dry'; pick?: { siteId: number; keywordId: number } } = {},
 ): Promise<TickResult> {
   const cycleId = randomUUID();
   const mode = options.mode ?? 'live';
+  const pick = options.pick;
 
   // Before anything else: a pause that has run out is not a pause. Done here
   // rather than derived at read time so the sites table never says "paused"
@@ -181,7 +183,11 @@ export async function tick(
   // The automation switch guards publishing. A dry run publishes nothing, and
   // "try a prompt before turning automation on" is the main thing it is for,
   // so it is not gated on that switch.
-  if (mode === 'live' && !settings.getBool('automation_enabled')) {
+  //
+  // Neither is a hand-picked run. The switch decides whether the scheduler
+  // acts on its own; someone standing at the dashboard choosing a site and a
+  // keyword has already made that decision themselves.
+  if (mode === 'live' && !pick && !settings.getBool('automation_enabled')) {
     return { cycleId, outcome: 'disabled' };
   }
 
@@ -209,7 +215,9 @@ export async function tick(
     // A failure that is due to be tried again takes this slot ahead of new
     // work. It is cheaper — every completed step is reused — and leaving it
     // behind new work would mean a busy queue never retries anything.
-    const retry = mode === 'live' ? dueRetry() : undefined;
+    // A hand-picked run skips this: it was asked for by name, and handing its
+    // slot to a queued retry would run something the person did not choose.
+    const retry = mode === 'live' && !pick ? dueRetry() : undefined;
     if (retry) {
       releaseLock();
       log.info(`run ${retry.id}: automatic retry (attempt ${retry.attempts + 1})`);
@@ -223,12 +231,27 @@ export async function tick(
     const now = new Date();
     const dayKey = localDateKey(now, timezone);
 
-    const sites = loadSiteViews(dayKey, timezone);
-    const keywords = loadKeywordViews();
-    const links = loadLinkViews();
+    // A hand-picked run goes straight to the pipeline. The selector's job is
+    // to answer "what should run next", and that question has already been
+    // answered by a person — running it anyway would only find reasons to
+    // refuse a pair they can see on the screen in front of them: the site's
+    // daily target, its interval since the last post, a keyword already used
+    // elsewhere. Those pace the automation. They are not a veto over someone
+    // asking for one article now.
+    let task: { siteId: number; keywordId: number } | null = null;
+    let decisions: Decision[] = [];
 
-    const { task, decisions } = selectTask(sites, keywords, links, { now, timezone });
-    recordDecisions(cycleId, decisions);
+    if (pick) {
+      task = { siteId: pick.siteId, keywordId: pick.keywordId };
+    } else {
+      const sites = loadSiteViews(dayKey, timezone);
+      const keywords = loadKeywordViews();
+      const links = loadLinkViews();
+      const selection = selectTask(sites, keywords, links, { now, timezone });
+      recordDecisions(cycleId, selection.decisions);
+      task = selection.task;
+      decisions = selection.decisions;
+    }
 
     if (!task) {
       const reason = decisions.at(-1)?.reason ?? 'No valid pair';
@@ -241,12 +264,32 @@ export async function tick(
     // there is still time to act rather than only once it has stopped.
     void announce(settings);
 
-    log.info(`selected "${task.seedKeyword}" for ${task.siteDomain}`);
-
     const site = getSite(task.siteId);
     const keyword = getKeyword(task.keywordId);
     if (!site || !keyword) {
-      return { cycleId, outcome: 'no-task', detail: 'Selected site or keyword disappeared' };
+      return {
+        cycleId,
+        outcome: 'no-task',
+        detail: pick ? 'That site or keyword no longer exists' : 'Selected site or keyword disappeared',
+      };
+    }
+
+    log.info(
+      `${pick ? 'hand-picked' : 'selected'} "${keyword.seed_keyword}" for ${site.domain}`,
+    );
+
+    // Recorded so the events log says why this ran, since no selector
+    // decision explains it.
+    if (pick) {
+      recordDecisions(cycleId, [
+        {
+          subjectType: 'cycle',
+          subjectId: null,
+          subjectLabel: '',
+          decision: 'eligible',
+          reason: `Manual run: "${keyword.seed_keyword}" on ${site.domain}, chosen by hand`,
+        },
+      ]);
     }
 
     const runId = createRun(task.keywordId, task.siteId, mode);

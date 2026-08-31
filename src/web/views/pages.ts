@@ -21,7 +21,7 @@ import type {
   SiteRow,
   StepRow,
 } from '../../db/repos.js';
-import type { SiteView } from '../../core/types.js';
+import type { KeywordView, LinkView, SiteView } from '../../core/types.js';
 import { formatMinutes } from '../../core/selector.js';
 import type { Endpoint } from '../../llm/pool.js';
 import type { SettingSpec } from '../../settings.js';
@@ -54,10 +54,136 @@ export interface DashboardData {
   cycles: { cycle_id: string; created_at: string; n: number }[];
   selectedCycle: string | null;
   decisions: DecisionRow[];
+  /** For the manual run picker: what a person may choose to run right now. */
+  keywords: KeywordView[];
+  links: LinkView[];
   /** Articles written and stopped before publishing, waiting for a person. */
   held: RunListRow[];
   /** Published and failed per day, oldest first. */
   activity: { day: string; published: number; failed: number }[];
+}
+
+/**
+ * The manual run picker.
+ *
+ * "Run once now" used to hand the decision to the selector, which meant it ran
+ * whatever the scheduler would have run anyway — and refused when every site
+ * had hit its daily target, which is exactly when someone reaches for it. It
+ * now asks which site and which keyword, and runs that pair immediately.
+ *
+ * A <dialog>, so the modal behaviour, the backdrop and Escape to close are the
+ * browser's rather than three more handlers to maintain.
+ */
+function runPicker(data: DashboardData): Html {
+  // Paused sites are listed, and labelled. Pausing stops the scheduler from
+  // choosing a site; it is not meant to stop a person who names it.
+  const runnable = data.sites;
+
+  // Which keywords are linked to which sites, so choosing a site narrows the
+  // keyword list to the pairs that were actually planned.
+  const linkedSites = new Map<number, number[]>();
+  for (const link of data.links) {
+    if (link.status !== 'go') continue;
+    const list = linkedSites.get(link.keywordId) ?? [];
+    list.push(link.siteId);
+    linkedSites.set(link.keywordId, list);
+  }
+
+  const choosable = data.keywords.filter((k) => k.status !== 'no');
+
+  return html`
+    <dialog id="run-once" class="card picker">
+      <form method="post" action="/run-now">
+        <h2>Run once now</h2>
+        <p class="subtitle">
+          This starts immediately and ignores the daily target and the interval
+          since the last post. It publishes for real.
+        </p>
+
+        <div class="field">
+          <label for="pick-site">Site</label>
+          <select id="pick-site" name="site_id" required>
+            ${runnable.map(
+              (site) => html`<option value="${site.id}">
+                ${site.domain}${site.status === 'paused' ? ' (paused)' : ''}
+              </option>`,
+            )}
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="pick-keyword">Keyword</label>
+          <select id="pick-keyword" name="keyword_id" required>
+            ${choosable.map(
+              (keyword) => html`<option value="${keyword.id}"
+                data-sites="${(linkedSites.get(keyword.id) ?? []).join(',')}"
+                >${keyword.spyTitle || keyword.seedKeyword}</option
+              >`,
+            )}
+          </select>
+          <p class="help">
+            <label class="choice">
+              <input type="checkbox" id="pick-all" />
+              Show keywords that are not linked to this site
+            </label>
+          </p>
+        </div>
+
+        ${runnable.length === 0 || choosable.length === 0
+          ? html`<div class="flash warn">
+              Add at least one site and one keyword before running by hand.
+            </div>`
+          : raw('')}
+
+        <div class="save-bar">
+          <button type="button" id="run-once-cancel">Cancel</button>
+          <button class="primary" type="submit"
+                  ${runnable.length === 0 || choosable.length === 0 ? raw('disabled') : raw('')}>
+            Run now
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <script>
+      (function () {
+        var dialog = document.getElementById('run-once');
+        var site = document.getElementById('pick-site');
+        var keyword = document.getElementById('pick-keyword');
+        var all = document.getElementById('pick-all');
+
+        // Hidden rather than removed, so unchecking the box brings them back
+        // without rebuilding the list.
+        function filter() {
+          var chosen = site.value;
+          var firstVisible = null;
+          for (var i = 0; i < keyword.options.length; i++) {
+            var option = keyword.options[i];
+            var linked = (option.dataset.sites || '').split(',').indexOf(chosen) !== -1;
+            var show = all.checked || linked;
+            option.hidden = !show;
+            option.disabled = !show;
+            if (show && firstVisible === null) firstVisible = option;
+          }
+          // A hidden option can stay selected, which submits a pair the person
+          // cannot see. Move to the first one they can.
+          if (keyword.selectedOptions[0] && keyword.selectedOptions[0].hidden) {
+            keyword.value = firstVisible ? firstVisible.value : '';
+          }
+        }
+
+        document.getElementById('run-once-open').addEventListener('click', function () {
+          filter();
+          dialog.showModal();
+        });
+        document.getElementById('run-once-cancel').addEventListener('click', function () {
+          dialog.close();
+        });
+        site.addEventListener('change', filter);
+        all.addEventListener('change', filter);
+      })();
+    </script>
+  `;
 }
 
 export function dashboardPage(data: DashboardData): Html {
@@ -92,13 +218,14 @@ export function dashboardPage(data: DashboardData): Html {
             Dry run
           </button>
         </form>
-        <form method="post" action="/run-now">
-          <button class="primary" type="submit" ${data.busy ? raw('disabled') : raw('')}>
-            Run once now
-          </button>
-        </form>
+        <button class="primary" type="button" id="run-once-open"
+                ${data.busy ? raw('disabled') : raw('')}>
+          Run once now
+        </button>
       </div>
     </div>
+
+    ${runPicker(data)}
 
     ${problems} ${busy}
 
