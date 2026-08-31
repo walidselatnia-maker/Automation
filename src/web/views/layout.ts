@@ -68,6 +68,10 @@ const ICON = (paths: string): string =>
  * Prompts moved under Settings (it is configuration, not a place you visit
  * daily), Decisions became a section of the dashboard, and the live browser
  * became a button in the top-right corner because it opens its own tab.
+ *
+ * The order is the operator's, not alphabetical and not the order these pages
+ * were built in: the ones opened daily sit at the top, and Runs is last
+ * because it is where you go after something has already gone wrong.
  */
 const NAV: NavItem[] = [
   {
@@ -77,15 +81,20 @@ const NAV: NavItem[] = [
       '<rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/>'),
   },
   {
-    href: '/runs',
-    label: 'Runs',
-    icon: ICON('<polygon points="6 4 20 12 6 20 6 4"/>'),
-  },
-  {
     href: '/sites',
     label: 'Sites',
     icon: ICON('<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/>' +
       '<path d="M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0-18z"/>'),
+  },
+  {
+    href: '/settings',
+    label: 'Settings',
+    icon: ICON('<circle cx="12" cy="12" r="3"/>' +
+      '<path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2' +
+      'a2 2 0 1 1-4 0a1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 3 15' +
+      'a2 2 0 1 1 0-4a1.7 1.7 0 0 0 1.5-2.6l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 10 4.6' +
+      'a2 2 0 1 1 4 0a1.7 1.7 0 0 0 2.6 1.5l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1A1.7 1.7 0 0 0 21 11' +
+      'a2 2 0 1 1 0 4a1.7 1.7 0 0 0-1.6 0z"/>'),
   },
   {
     href: '/keywords',
@@ -98,14 +107,9 @@ const NAV: NavItem[] = [
     icon: ICON('<path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h10"/>'),
   },
   {
-    href: '/settings',
-    label: 'Settings',
-    icon: ICON('<circle cx="12" cy="12" r="3"/>' +
-      '<path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2' +
-      'a2 2 0 1 1-4 0a1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 3 15' +
-      'a2 2 0 1 1 0-4a1.7 1.7 0 0 0 1.5-2.6l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 10 4.6' +
-      'a2 2 0 1 1 4 0a1.7 1.7 0 0 0 2.6 1.5l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1A1.7 1.7 0 0 0 21 11' +
-      'a2 2 0 1 1 0 4a1.7 1.7 0 0 0-1.6 0z"/>'),
+    href: '/runs',
+    label: 'Runs',
+    icon: ICON('<polygon points="6 4 20 12 6 20 6 4"/>'),
   },
 ];
 
