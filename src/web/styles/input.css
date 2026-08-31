@@ -453,6 +453,41 @@
     flex: 1 1 220px;
   }
 
+  /* A field whose control is a button: no label above it, so it needs pushing
+     down to sit on the same line as the inputs beside it. */
+  .field-row .field-action {
+    @apply flex items-end;
+    flex: 0 0 auto;
+  }
+
+  /* A checkbox and its words on one line, at text size. The card-sized
+     .choice is for picking between options and is far too heavy for a
+     yes/no inside a table row. */
+  .inline-check {
+    @apply m-0 inline-flex cursor-pointer items-center gap-2;
+    @apply text-sm font-normal normal-case tracking-normal;
+    @apply text-slate-700 dark:text-slate-300;
+  }
+
+  .inline-check input[type='checkbox'] {
+    @apply m-0 h-4 w-4 flex-none;
+  }
+
+  /* Inputs inside a table row: no bottom margin, and sized by their column
+     rather than by an inline width on every one of them. */
+  table.accounts td {
+    @apply align-middle;
+  }
+
+  table.accounts input[type='text'],
+  table.accounts input[type='password'] {
+    @apply my-0 w-full min-w-[9rem];
+  }
+
+  table.accounts td:first-child {
+    @apply w-8;
+  }
+
   label {
     @apply mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.08em];
     @apply text-slate-500 dark:text-slate-400;

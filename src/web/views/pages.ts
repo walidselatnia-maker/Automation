@@ -998,36 +998,45 @@ export function siteEditPage(site: SiteRow, bufferAccounts: BufferAccount[] = []
 function bufferAccountsCard(site: SiteRow, accounts: BufferAccount[]): Html {
   const room = BUFFER_ACCOUNT_LIMIT - accounts.length;
 
+  // Each row is its own form, so saving one account cannot carry another's
+  // half-typed token with it. The inputs sit in headed columns rather than
+  // in a line of placeholders: a password field whose only label is
+  // "saved — leave blank to keep" does not say what it is a field for.
   const row = (account: BufferAccount): Html => html`
     <tr>
-      <td class="nowrap">${account.position}</td>
+      <td class="muted">${account.position}</td>
       <td>
-        <form method="post" action="/sites/${site.id}/buffer/${account.id}" class="row wrap">
-          <input type="text" name="label" value="${account.label}" style="width:auto" />
-          <input type="password" name="token" autocomplete="new-password" style="width:auto"
-                 placeholder="saved — leave blank to keep" />
-          <label class="choice">
-            <input type="checkbox" name="enabled" value="1"
-                   ${account.enabled ? raw('checked') : raw('')} />
-            enabled
-          </label>
-          <button type="submit">Save</button>
-        </form>
+        <input type="text" form="buffer-${account.id}" name="label"
+               value="${account.label}" aria-label="Label for account ${account.position}" />
       </td>
       <td>
+        <input type="password" form="buffer-${account.id}" name="token"
+               autocomplete="new-password" placeholder="leave blank to keep the saved one"
+               aria-label="Buffer API token for account ${account.position}" />
+      </td>
+      <td class="nowrap">
+        <label class="inline-check">
+          <input type="checkbox" form="buffer-${account.id}" name="enabled" value="1"
+                 ${account.enabled ? raw('checked') : raw('')} />
+          in rotation
+        </label>
+      </td>
+      <td class="nowrap">
         ${account.fullUntil && account.fullUntil > new Date()
-          ? html`<span class="badge warn" title="${account.lastError ?? ''}"
-              >queue full — back ${timeAgo(account.fullUntil.toISOString())}</span
-            >`
+          ? html`<span class="badge warn" title="${account.lastError ?? ''}">queue full</span>`
           : account.enabled
             ? html`<span class="badge ok">ready</span>`
             : html`<span class="badge muted">off</span>`}
-        ${account.lastUsedAt
-          ? html`<div class="muted small">last used ${timeAgo(account.lastUsedAt)}</div>`
-          : raw('')}
+        <div class="muted small">
+          ${account.lastUsedAt ? html`used ${timeAgo(account.lastUsedAt)}` : 'never used'}
+        </div>
       </td>
       <td class="nowrap">
+        <form method="post" action="/sites/${site.id}/buffer/${account.id}"
+              id="buffer-${account.id}"></form>
+        <button class="small" type="submit" form="buffer-${account.id}">Save</button>
         <form method="post" action="/sites/${site.id}/buffer/${account.id}/delete"
+              style="display:inline"
               onsubmit="return confirm('Remove ${account.label}?')">
           <button class="danger small" type="submit">Remove</button>
         </form>
@@ -1049,9 +1058,16 @@ function bufferAccountsCard(site: SiteRow, accounts: BufferAccount[]): Html {
             'No Buffer accounts yet. The token on the form above is still used until you add one.',
           )
         : html`<div class="table-wrap">
-            <table>
+            <table class="accounts">
               <thead>
-                <tr><th>#</th><th>Account</th><th>State</th><th></th></tr>
+                <tr>
+                  <th>#</th>
+                  <th>Label</th>
+                  <th>API token</th>
+                  <th>Rotation</th>
+                  <th>State</th>
+                  <th></th>
+                </tr>
               </thead>
               <tbody>
                 ${accounts.map(row)}
@@ -1060,13 +1076,26 @@ function bufferAccountsCard(site: SiteRow, accounts: BufferAccount[]): Html {
           </div>`}
 
       ${room > 0
-        ? html`<form method="post" action="/sites/${site.id}/buffer" class="row wrap"
-                     style="margin-top:12px">
-            <input type="text" name="label" placeholder="label (optional)" style="width:auto" />
-            <input type="password" name="token" autocomplete="new-password" required
-                   placeholder="Buffer API token" style="width:auto" />
-            <input type="hidden" name="enabled" value="1" />
-            <button class="primary" type="submit">Add account</button>
+        ? html`<form method="post" action="/sites/${site.id}/buffer" class="field-row"
+                     style="margin-top:16px">
+            <div class="field">
+              <label for="new-buffer-label">Label</label>
+              <input type="text" id="new-buffer-label" name="label"
+                     placeholder="e.g. Overflow" />
+              <div class="help">Optional. Names this account in the run log.</div>
+            </div>
+            <div class="field">
+              <label for="new-buffer-token">Buffer API token</label>
+              <input type="password" id="new-buffer-token" name="token" required
+                     autocomplete="new-password" />
+              <div class="help">
+                From the Buffer account you want as number ${accounts.length + 1}.
+              </div>
+            </div>
+            <div class="field field-action">
+              <input type="hidden" name="enabled" value="1" />
+              <button class="primary" type="submit">Add account</button>
+            </div>
           </form>`
         : html`<p class="muted small">
             All ${BUFFER_ACCOUNT_LIMIT} slots are in use. Remove one to add another.
@@ -1074,6 +1103,7 @@ function bufferAccountsCard(site: SiteRow, accounts: BufferAccount[]): Html {
     </div>
   `;
 }
+
 
 function siteForm(site: SiteRow | null): Html {
   const action = site ? `/sites/${site.id}` : '/sites';
