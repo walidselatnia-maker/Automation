@@ -130,7 +130,13 @@ import {
 } from '../pipeline/prompts.js';
 import { unknownVariables, variablesFor } from '../pipeline/prompt-contexts.js';
 import { SETTING_SPECS, type Settings } from '../settings.js';
-import { lockStatus, resumeRun, setImageServiceProblem, tick } from '../scheduler/index.js';
+import {
+  lockStatus,
+  resumeRun,
+  setImageServiceProblem,
+  stopRun,
+  tick,
+} from '../scheduler/index.js';
 import { createLogger, errorMessage } from '../lib/logger.js';
 import { normaliseDomain } from '../lib/domain.js';
 
@@ -334,6 +340,37 @@ export function buildServer(
       return redirect(reply, result.runId ? `/runs/${result.runId}` : '/', flash);
     } catch (err) {
       return redirect(reply, '/', { kind: 'error', message: errorMessage(err) });
+    }
+  });
+
+  /**
+   * Stop whatever is running, and pick it back up.
+   *
+   * A hung run held the lock until it went stale ninety minutes later, with
+   * nothing on the page to clear it. Stop closes the run and frees the lock;
+   * Restart resumes it from its last completed step, so the article written
+   * before it hung is not written again.
+   */
+  app.post('/run/stop', async (request, reply) => {
+    const runId = stopRun();
+    return redirect(reply, runId ? `/runs/${runId}` : '/', {
+      kind: runId ? 'ok' : 'warn',
+      message: runId ? `Run ${runId} stopped and the lock released.` : 'Nothing was running.',
+    });
+  });
+
+  app.post('/run/restart', async (request, reply) => {
+    // Stop first: resume cannot take the lock while the stuck run holds it.
+    const runId = stopRun('Stopped and restarted from the dashboard');
+    if (!runId) {
+      return redirect(reply, '/', { kind: 'warn', message: 'Nothing was running.' });
+    }
+
+    try {
+      const result = await resumeRun(runId, settings, encryptionKey);
+      return redirect(reply, `/runs/${runId}`, describeTick(result));
+    } catch (err) {
+      return redirect(reply, `/runs/${runId}`, { kind: 'error', message: errorMessage(err) });
     }
   });
 

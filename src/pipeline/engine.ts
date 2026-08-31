@@ -1,4 +1,4 @@
-import { beginStep, finishStep, getCompletedStep } from '../db/repos.js';
+import { beginStep, finishStep, getCompletedStep, touchSchedulerLock } from '../db/repos.js';
 import { createLogger, errorMessage } from '../lib/logger.js';
 import type { PipelineContext } from './context.js';
 
@@ -49,6 +49,43 @@ function isStepResult<T>(value: unknown): value is StepResult<T> {
  * Execute one step, honouring any existing checkpoint.
  * Throws StepFailedError so the caller always knows which step ended a run.
  */
+/**
+ * A step that stops responding must fail, not sit there.
+ *
+ * Every network call in this codebase has its own timeout, and a run still
+ * managed to hang with the lock held and nothing to look at — an await that
+ * never settles is invisible from the outside, and the only cure was waiting
+ * ninety minutes for the lock to go stale.
+ *
+ * The losing promise is not cancelled: there is nothing to cancel it with, and
+ * whatever it was doing will end on its own timeout or be collected with the
+ * process. What matters is that the run stops waiting and reports why.
+ */
+async function withTimeout<T>(work: Promise<T>, ms: number, name: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () =>
+            reject(
+              new Error(
+                `Step "${name}" timed out after ${Math.round(ms / 60_000)} minute(s) with ` +
+                  `no response. ` +
+                  `Raise the step timeout in Settings if this step legitimately takes longer.`,
+              ),
+            ),
+          ms,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export async function runStep<TIn, TOut>(
   context: PipelineContext,
   step: Step<TIn, TOut>,
@@ -66,13 +103,19 @@ export async function runStep<TIn, TOut>(
   }
 
   beginStep(context.runId, step.name);
+  // Progress, for the watchdog that reaps a run whose process died mid-step.
+  touchSchedulerLock();
   const started = Date.now();
   // Whatever the previous step left behind is not this step's cost.
   context.resetUsage();
   log.info(`run ${context.runId}: → ${step.name}`);
 
   try {
-    const raw = await step.run(context, input);
+    const raw = await withTimeout(
+      step.run(context, input),
+      Math.max(1, context.settings.getNumber('run_step_timeout_minutes')) * 60_000,
+      step.name,
+    );
     const result = isStepResult<TOut>(raw) ? raw : { value: raw as TOut };
     const usage = context.takeUsage();
 

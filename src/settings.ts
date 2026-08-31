@@ -155,6 +155,31 @@ export const SETTING_SPECS: SettingSpec[] = [
     help: 'Bounds the polling loop. 40 attempts at 15s is a 10 minute ceiling.',
   },
 
+  {
+    key: 'run_step_timeout_minutes',
+    label: 'Step timeout (minutes)',
+    group: 'schedule',
+    secret: false,
+    default: '20',
+    type: 'number',
+    help:
+      'A step that returns nothing for this long is treated as hung: the run fails ' +
+      'with a clear reason and the lock is released, rather than sitting there. ' +
+      'Keep it above what image generation legitimately takes — four images at the ' +
+      'polling ceiling is 40 minutes, so raise this if your image service is slow.',
+  },
+  {
+    key: 'run_timeout_minutes',
+    label: 'Run timeout (minutes)',
+    group: 'schedule',
+    secret: false,
+    default: '60',
+    type: 'number',
+    help:
+      'The backstop for a run that keeps moving but never finishes. Counted from ' +
+      'the first step, and it stops the run wherever it is.',
+  },
+
   // -- Buffer --------------------------------------------------------------
   {
     key: 'buffer_enabled',

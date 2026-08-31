@@ -49,6 +49,17 @@ export function siteSecrets(site: SiteRow, key: Buffer): SiteSecrets {
   };
 }
 
+/**
+ * Mark the running pipeline as still alive.
+ *
+ * Lives here rather than in the scheduler so the pipeline can call it without
+ * importing the scheduler that runs it. See the stall watchdog in
+ * src/scheduler/index.ts for what reads it.
+ */
+export function touchSchedulerLock(): void {
+  run("UPDATE scheduler_lock SET heartbeat_at = datetime('now') WHERE id = 1");
+}
+
 /* -- Buffer accounts ------------------------------------------------------ */
 
 /**

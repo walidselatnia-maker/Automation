@@ -196,8 +196,25 @@ export function dashboardPage(data: DashboardData): Html {
       </div>`
     : raw('');
 
+  // A run in progress gets its own controls. Without them a run that hung had
+  // to be waited out: the lock only goes stale after ninety minutes, and until
+  // then nothing else can start and the page just says it is running.
   const busy = data.busy
-    ? html`<div class="flash ok">A run is in progress (started ${timeAgo(data.lockedAt)}).</div>`
+    ? html`<div class="flash ok spread">
+        <span>A run is in progress (started ${timeAgo(data.lockedAt)}).</span>
+        <span class="row wrap">
+          <form method="post" action="/run/restart">
+            <button type="submit"
+                    title="Stop it and pick up from the last completed step">
+              Restart
+            </button>
+          </form>
+          <form method="post" action="/run/stop"
+                onsubmit="return confirm('Stop this run? It will be marked failed.')">
+            <button class="danger" type="submit">Stop</button>
+          </form>
+        </span>
+      </div>`
     : raw('');
 
   return html`

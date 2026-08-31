@@ -12,6 +12,7 @@ import {
   loadSiteViews,
   pruneDecisions,
   pruneEvents,
+  markRunFailed,
   recordDecisions,
   resumeExpiredPauses,
   scheduleRetry,
@@ -304,7 +305,7 @@ export async function tick(
       shareImages: getLinkShare(keyword.id, site.id),
       mode,
     });
-    const outcome = await executePipeline(ctx);
+    const outcome = await withRunTimeout(executePipeline(ctx), settings, runId);
 
     const detail =
       outcome.status === 'failed'
@@ -389,6 +390,93 @@ export async function resumeRun(
   }
 }
 
+/**
+ * The backstop for a run that keeps moving but never finishes.
+ *
+ * The step timeout catches one step that stops responding. This catches the
+ * other shape: steps that each return in time, on a run that has been going
+ * for an hour and is not going to stop on its own.
+ */
+async function withRunTimeout<T>(
+  work: Promise<T>,
+  settings: Settings,
+  runId: number,
+): Promise<T> {
+  const minutes = Math.max(1, settings.getNumber('run_timeout_minutes'));
+  let timer: NodeJS.Timeout | undefined;
+
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`Run ${runId} exceeded the ${minutes} minute run timeout`)),
+          minutes * 60_000,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/**
+ * Reap a run whose process is gone.
+ *
+ * The two timeouts above only fire inside the process that started the run. A
+ * container killed mid-run leaves the lock held and the run row saying
+ * "running" forever — until now, for ninety minutes, with the dashboard
+ * cheerfully reporting a run in progress and no way to clear it.
+ *
+ * Silence is the signal: the engine stamps the lock at every step, so a
+ * heartbeat older than the step timeout means nothing is running any more.
+ */
+export function reapStalledRun(settings: Settings, now = new Date()): number | null {
+  const lock = lockStatus();
+  if (!lock?.locked_at) return null;
+
+  const stallMinutes = Math.max(1, settings.getNumber('run_step_timeout_minutes')) + 5;
+  const last = lock.heartbeat_at ?? lock.locked_at;
+  const silentFor = now.getTime() - Date.parse(`${last.replace(' ', 'T')}Z`);
+
+  if (!Number.isFinite(silentFor) || silentFor < stallMinutes * 60_000) return null;
+
+  const minutes = Math.round(silentFor / 60_000);
+  const reason =
+    `Stalled: nothing happened for ${minutes} minutes. The run was abandoned — ` +
+    `usually the container restarted mid-run. Resume it to carry on from the ` +
+    `last completed step.`;
+
+  log.warn(`run ${lock.run_id ?? '?'}: ${reason}`);
+
+  if (lock.run_id) {
+    markRunFailed(lock.run_id, reason, 'stalled');
+    considerRetry(lock.run_id, reason, 0, settings);
+  }
+  releaseLock();
+
+  return lock.run_id;
+}
+
+/**
+ * Stop the run in progress, by hand.
+ *
+ * The pipeline itself cannot be interrupted — it is awaiting somebody else's
+ * network call — so this marks the run failed and frees the lock, which is
+ * what unblocks the scheduler and the dashboard. Any late reply from the work
+ * still in flight lands on a run that is already closed and changes nothing.
+ */
+export function stopRun(reason = 'Stopped by hand from the dashboard'): number | null {
+  const lock = lockStatus();
+  if (!lock?.locked_at) return null;
+
+  log.warn(`run ${lock.run_id ?? '?'} stopped by hand`);
+  if (lock.run_id) markRunFailed(lock.run_id, reason, 'stopped');
+  releaseLock();
+
+  return lock.run_id;
+}
+
 /* -- Loop ---------------------------------------------------------------- */
 
 export class Scheduler {
@@ -414,6 +502,10 @@ export class Scheduler {
     this.running = true;
 
     try {
+      // Before anything else: a lock held by a run that no longer exists is
+      // not a run in progress, and leaving it would block every tick after it.
+      reapStalledRun(this.settings);
+
       const result = await tick(this.settings, this.encryptionKey);
       if (result.outcome !== 'disabled' && result.outcome !== 'busy') {
         log.debug(`tick: ${result.outcome}`);
