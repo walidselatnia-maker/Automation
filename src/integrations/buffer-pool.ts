@@ -59,6 +59,18 @@ const ROTATE_ON = [
   'expired',
 ];
 
+/**
+ * The marker that says every account is spent.
+ *
+ * Matched as text rather than caught as a type: the error crosses the step
+ * boundary wrapped in StepFailedError and reaches the scheduler as a message,
+ * so the message is the only part that survives the journey.
+ */
+export const BUFFER_EXHAUSTED = 'All Buffer accounts are full';
+
+export const isBufferExhausted = (error: unknown): boolean =>
+  errorMessage(error).includes(BUFFER_EXHAUSTED);
+
 export const isRotatable = (error: unknown): boolean => {
   const text = errorMessage(error).toLowerCase();
   return ROTATE_ON.some((marker) => text.includes(marker));
@@ -269,8 +281,8 @@ export class BufferPool {
     }
 
     throw new BufferError(
-      `All ${this.accounts.length} Buffer account(s) for ${this.site.domain} refused the post. ` +
-        `Last reason: ${lastError}`,
+      `${BUFFER_EXHAUSTED}: all ${this.accounts.length} Buffer account(s) for ` +
+        `${this.site.domain} refused the post. Last reason: ${lastError}`,
     );
   }
 

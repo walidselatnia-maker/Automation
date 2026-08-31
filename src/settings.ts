@@ -189,6 +189,18 @@ export const SETTING_SPECS: SettingSpec[] = [
     secret: false,
     default: 'true',
   },
+  {
+    key: 'buffer_hold_hours',
+    label: 'Hold a site for (hours) when every Buffer account is full',
+    group: 'buffer',
+    secret: false,
+    default: '12',
+    type: 'number',
+    help:
+      'A site with no account left to try is paused for this long rather than ' +
+      'failing. When the pause lifts, the same article resumes and posts its pin ' +
+      'before the site takes on anything new.',
+  },
 
   // -- Telegram ------------------------------------------------------------
   {

@@ -1,13 +1,26 @@
 import { randomBytes } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { closeDatabase, openDatabase } from '../src/db/index.js';
+import { closeDatabase, openDatabase, get as dbGet, run as dbRun } from '../src/db/index.js';
 import {
   BUFFER_ACCOUNT_LIMIT,
+  createRun,
+  dueRetry,
+  getSite,
+  insertKeyword,
   listBufferAccounts,
+  markRunFailed,
+  resumeExpiredPauses,
   upsertBufferAccount,
   upsertSite,
 } from '../src/db/repos.js';
-import { BufferPool, isRotatable } from '../src/integrations/buffer-pool.js';
+import {
+  BUFFER_EXHAUSTED,
+  BufferPool,
+  isBufferExhausted,
+  isRotatable,
+} from '../src/integrations/buffer-pool.js';
+import { holdForBufferQueue } from '../src/scheduler/index.js';
+import { Settings } from '../src/settings.js';
 import { setLogLevel } from '../src/lib/logger.js';
 
 /**
@@ -216,7 +229,11 @@ describe('a site with several Buffer accounts', () => {
     }) as unknown as typeof fetch;
 
     const pool = new BufferPool({ id: siteId, domain: 'bitespoon.com', pinUsername: '' }, KEY);
-    await expect(pool.createPost(post, 'Dinners')).rejects.toThrow(/All 2 Buffer account/);
+    // The marker the scheduler keys on: it is what turns a spent site into a
+    // twelve-hour hold rather than an ordinary failure.
+    await expect(pool.createPost(post, 'Dinners')).rejects.toThrow(
+      /All Buffer accounts are full/,
+    );
   });
 
   it('does not spend accounts on a rejection no account can fix', async () => {
@@ -291,5 +308,62 @@ describe('the account limit', () => {
     const [account] = listBufferAccounts(siteId, KEY);
     expect(account!.label).toBe('Renamed');
     expect(account!.token).toBe('token-1');
+  });
+});
+
+describe('a site with nothing left to try', () => {
+  it('is paused, and its article comes back when the pause lifts', () => {
+    // Not a failure worth retrying on the usual schedule: the article is
+    // written and already live on the site, and the only thing that fixes a
+    // full queue is time. Retrying every fifteen minutes would spend the
+    // attempt budget against a queue that will not move for hours.
+    const siteId = seedSite();
+    const keywordId = insertKeyword({
+      seed_keyword: 'chicken thighs',
+      spy_title: 'Honey Soy Chicken Thighs',
+      status: 'go',
+    });
+    const runId = createRun(keywordId, siteId);
+    markRunFailed(runId, `${BUFFER_EXHAUSTED}: nowhere left to post`, 'publish-to-buffer');
+
+    const detail = holdForBufferQueue(runId, siteId, new Settings(KEY));
+
+    const site = getSite(siteId);
+    expect(site?.status).toBe('paused');
+    expect(site?.paused_reason).toContain('Every Buffer account is full');
+    expect(detail).toContain('12h');
+
+    // The same instant for both, so the site comes back exactly when its
+    // article is due rather than the two drifting apart.
+    const run = dbGet<{ retry_after: string }>('SELECT retry_after FROM runs WHERE id = ?', runId);
+    expect(run?.retry_after).toBe(site?.paused_until);
+
+    // Twelve hours out, so nothing picks it up now.
+    expect(dueRetry()).toBeUndefined();
+  });
+
+  it('resumes the same run once the hold has passed', () => {
+    const siteId = seedSite();
+    const keywordId = insertKeyword({
+      seed_keyword: 'chicken thighs',
+      spy_title: 'Honey Soy Chicken Thighs',
+      status: 'go',
+    });
+    const runId = createRun(keywordId, siteId);
+    markRunFailed(runId, `${BUFFER_EXHAUSTED}: nowhere left to post`, 'publish-to-buffer');
+    holdForBufferQueue(runId, siteId, new Settings(KEY));
+
+    // Wind both clocks forward the way twelve hours would.
+    dbRun("UPDATE runs SET retry_after = datetime('now', '-1 minute') WHERE id = ?", runId);
+    dbRun("UPDATE sites SET paused_until = datetime('now', '-1 minute') WHERE id = ?", siteId);
+
+    expect(dueRetry()?.id).toBe(runId);
+    expect(resumeExpiredPauses()).toContain('bitespoon.com');
+    expect(getSite(siteId)?.status).toBe('active');
+  });
+
+  it('recognises the message the pool actually throws', () => {
+    expect(isBufferExhausted(new Error(`${BUFFER_EXHAUSTED}: all 2 accounts refused`))).toBe(true);
+    expect(isBufferExhausted(new Error('Buffer rejected the post: image missing'))).toBe(false);
   });
 });

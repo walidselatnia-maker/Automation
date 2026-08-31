@@ -13,6 +13,7 @@ import {
   pruneDecisions,
   pruneEvents,
   markRunFailed,
+  pauseSite,
   recordDecisions,
   resumeExpiredPauses,
   scheduleRetry,
@@ -20,6 +21,7 @@ import {
 import { planRetry, type RetryPolicy } from '../core/retry.js';
 import { announceNotices } from '../core/notices.js';
 import { localDateKey, selectTask } from '../core/selector.js';
+import { isBufferExhausted } from '../integrations/buffer-pool.js';
 import type { Decision } from '../core/types.js';
 import { executePipeline, PipelineContext } from '../pipeline/index.js';
 import type { Settings } from '../settings.js';
@@ -111,7 +113,17 @@ function considerRetry(
   error: string,
   attempts: number,
   settings: Settings,
+  siteId?: number,
 ): string {
+  // A site whose Buffer accounts are all full is not a broken run. The article
+  // is written, the images are made, the post is live on the site — only the
+  // pin is missing, and the one thing that fixes it is time. Retrying on the
+  // usual schedule would burn the attempt budget against a queue that will not
+  // move for hours and then give up for good.
+  if (siteId && isBufferExhausted(error)) {
+    return holdForBufferQueue(runId, siteId, settings);
+  }
+
   const decision = planRetry(error, attempts, retryPolicy(settings), new Date());
   scheduleRetry(runId, decision.retryAfter);
 
@@ -119,6 +131,35 @@ function considerRetry(
   else log.debug(`run ${runId}: not retrying — ${decision.reason}`);
 
   return decision.reason;
+}
+
+/**
+ * Park a site whose Buffer accounts are all full, and finish the article later.
+ *
+ * The site is paused so the selector stops handing it new work — publishing
+ * more articles it cannot pin would only deepen the backlog — and the run is
+ * scheduled to resume when the pause lifts. Resume reuses every completed
+ * step, so it picks up at the pin: the same article, on the same site, posted
+ * to Buffer as soon as there is room for it.
+ *
+ * Both use the same instant, so the site comes back exactly when its article
+ * is due rather than the two drifting apart.
+ */
+export function holdForBufferQueue(runId: number, siteId: number, settings: Settings): string {
+  const hours = Math.max(1, settings.getNumber('buffer_hold_hours'));
+  const until = new Date(Date.now() + hours * 60 * 60 * 1000);
+  const site = getSite(siteId);
+  const domain = site?.domain ?? `site ${siteId}`;
+
+  const reason =
+    `Every Buffer account is full. Paused for ${hours} hours, then run ${runId} ` +
+    `resumes and posts its pin.`;
+
+  pauseSite(siteId, reason, until.toISOString());
+  scheduleRetry(runId, until.toISOString());
+
+  log.warn(`${domain}: ${reason}`);
+  return `Buffer queue full — ${domain} paused for ${hours}h, resuming run ${runId} after that.`;
 }
 
 /* -- Lock ---------------------------------------------------------------- */
@@ -309,7 +350,13 @@ export async function tick(
 
     const detail =
       outcome.status === 'failed'
-        ? `${outcome.error ?? ''} ${considerRetry(runId, outcome.error ?? '', 0, settings)}`.trim()
+        ? `${outcome.error ?? ''} ${considerRetry(
+            runId,
+            outcome.error ?? '',
+            0,
+            settings,
+            task.siteId,
+          )}`.trim()
         : (outcome.error ?? outcome.postUrl);
 
     return { cycleId, outcome: outcome.status, runId, detail, hold: outcome.hold };
@@ -381,6 +428,7 @@ export async function resumeRun(
             outcome.error ?? '',
             runRow.attempts ?? 0,
             settings,
+            runRow.site_id ?? undefined,
           )}`.trim()
         : (outcome.error ?? outcome.postUrl);
 
