@@ -18,6 +18,7 @@ from agent.config import (
     MAX_RETRIES,
     POLL_INTERVAL,
     STALE_PROCESSING_TIMEOUT,
+    TOKEN_MAX_AGE_BEFORE_BATCH,
 )
 from agent.db import jobs
 from agent.services.flow_client import get_flow_client
@@ -42,9 +43,16 @@ ASPECT_RATIOS = {
 #
 # Deliberately not "session_expired": that one needs a person to sign in, and
 # retrying it just fails five times more slowly.
+# 401 is here because an expired bearer is a property of the moment, not of
+# the request: the extension reloads the Flow tab and re-sends once, and if
+# that has not landed by the time we see it, the next attempt is spaced by
+# API_COOLDOWN — by which point the reload has produced a token. Without it a
+# whole queue died on attempt one of five every time the hour rolled over, and
+# the only cure anyone had was refreshing the tab by hand.
 RETRYABLE = ("quota", "rate_limit", "exhausted", "resource_exhausted", "429",
              "no_flow_key", "not connected", "timeout", "503",
-             "recaptcha", "captcha_timeout")
+             "recaptcha", "captcha_timeout",
+             "http 401", "api_401", "unauthenticated", "invalid authentication")
 
 
 class WorkerController:
@@ -73,7 +81,14 @@ class WorkerController:
 
                 free = MAX_CONCURRENT_REQUESTS - len(self._running)
                 if free > 0 and get_flow_client().connected:
-                    for job in await jobs.claim_pending(free):
+                    claimed = await jobs.claim_pending(free)
+                    if claimed:
+                        # Refresh before the batch, not after it fails. Done
+                        # here rather than per job so a queue of twenty does
+                        # not reload the tab twenty times, and only when there
+                        # is work — an idle agent has no reason to touch it.
+                        await self._ensure_token(len(claimed))
+                    for job in claimed:
                         self._running.add(job["id"])
                         asyncio.create_task(self._run(job))
             except Exception:
@@ -85,6 +100,23 @@ class WorkerController:
                 pass
 
         logger.info("worker stopping")
+
+    async def _ensure_token(self, job_count: int) -> None:
+        """Age out the bearer before a batch goes near it.
+
+        Never fatal: a failed refresh is worth a log line and nothing more.
+        The jobs still get their attempt, and if the token really is dead they
+        come back through the retry path rather than being dropped here.
+        """
+        try:
+            result = await get_flow_client().ensure_fresh_token(TOKEN_MAX_AGE_BEFORE_BATCH)
+            if result.get("reloaded"):
+                logger.info("reloaded the Flow tab before %d job(s): ok=%s",
+                            job_count, result.get("ok"))
+            elif result.get("error"):
+                logger.warning("token refresh before batch failed: %s", result["error"])
+        except Exception:
+            logger.exception("token refresh before batch raised")
 
     async def _run(self, job: dict) -> None:
         job_id = job["id"]

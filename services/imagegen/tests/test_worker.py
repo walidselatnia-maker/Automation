@@ -197,3 +197,67 @@ def test_the_job_is_released_from_the_in_flight_set(monkeypatch):
     # Leaking here would shrink the concurrency budget until it reached zero
     # and the worker silently stopped claiming anything.
     assert controller._running == set()
+
+
+# --- Expired tokens ------------------------------------------------------
+# A 401 used to be classed as a permanent bad request, so an entire queue died
+# on attempt one every time the hour-long bearer expired. The only cure anyone
+# had was reloading the Flow tab by hand.
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        "HTTP 401",
+        "API_401",
+        "Request had invalid authentication credentials",
+        "UNAUTHENTICATED",
+    ],
+)
+def test_an_expired_token_is_worth_another_attempt(error):
+    assert any(marker in error.lower() for marker in processor.RETRYABLE)
+
+
+def test_a_bad_request_is_still_not_worth_retrying():
+    # The guard against widening RETRYABLE into "retry everything": a 400 fails
+    # identically on every attempt and retrying it only burns quota faster.
+    for error in ("HTTP 400", "No image url in response: {}"):
+        assert not any(marker in error.lower() for marker in processor.RETRYABLE)
+
+
+# --- Refreshing before a batch -------------------------------------------
+
+class _FakeFlowClient:
+    """Records what the worker asked of the extension, and answers plausibly."""
+
+    connected = True
+
+    def __init__(self) -> None:
+        self.refresh_calls: list[float] = []
+
+    async def ensure_fresh_token(self, max_age_s: float) -> dict:
+        self.refresh_calls.append(max_age_s)
+        return {"ok": True, "reloaded": True}
+
+
+@pytest.mark.asyncio
+async def test_the_tab_is_refreshed_before_a_claimed_batch(monkeypatch):
+    fake = _FakeFlowClient()
+    monkeypatch.setattr(processor, "get_flow_client", lambda: fake)
+
+    controller = processor.WorkerController()
+    await controller._ensure_token(3)
+
+    assert fake.refresh_calls == [processor.TOKEN_MAX_AGE_BEFORE_BATCH]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_refresh_does_not_stop_the_batch(monkeypatch):
+    # The jobs still get their attempt: a token that is genuinely dead comes
+    # back through the retry path, which is spaced and bounded, rather than
+    # being dropped here where nothing would ever pick it up again.
+    class Broken(_FakeFlowClient):
+        async def ensure_fresh_token(self, max_age_s: float) -> dict:
+            raise RuntimeError("extension went away")
+
+    monkeypatch.setattr(processor, "get_flow_client", Broken)
+    await processor.WorkerController()._ensure_token(1)

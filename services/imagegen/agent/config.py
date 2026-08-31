@@ -37,6 +37,11 @@ API_COOLDOWN = int(os.environ.get("API_COOLDOWN", "10"))
 MAX_CONCURRENT_REQUESTS = int(os.environ.get("MAX_CONCURRENT_REQUESTS", "2"))
 STALE_PROCESSING_TIMEOUT = int(os.environ.get("STALE_PROCESSING_TIMEOUT", "600"))
 
+# How old the captured bearer may be when a batch starts. Google's expire at
+# roughly an hour; 25 minutes leaves room for a long batch to finish on a token
+# that was already valid when it began. Set to 0 to reload before every batch.
+TOKEN_MAX_AGE_BEFORE_BATCH = int(os.environ.get("TOKEN_MAX_AGE_BEFORE_BATCH", "1500"))
+
 # --- Models -------------------------------------------------
 # Part of the frozen request surface: the alias table decides which model name
 # reaches Google, and NARWHAL is what the UI sends.

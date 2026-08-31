@@ -231,6 +231,34 @@ class FlowClient:
     _UUID_RE = __import__("re").compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
     _SAFE_URL_RE = __import__("re").compile(r'^https://(storage\.googleapis\.com|lh3\.googleusercontent\.com)/')
 
+    async def ensure_fresh_token(self, max_age_s: float) -> dict:
+        """Reload the Flow tab so the batch starts on a token that will outlive it.
+
+        The bearer lasts about an hour and nothing renews it on its own: capture
+        is passive, driven by the Authorization header on requests the Flow page
+        makes, so an idle tab keeps serving the same expiring token until someone
+        reloads it by hand. That is the manual refresh operators kept having to
+        do, and this is it done on schedule instead.
+
+        A reload, not a re-auth: cookies and the signed-in Google account are
+        untouched, so nobody has to sign in again.
+
+        `max_age_s` of 0 forces the reload. Anything else is a hint the
+        extension checks against its own capture timestamp, which is the only
+        clock that knows how old the token really is.
+        """
+        if not self._extension_ws:
+            return {"ok": False, "error": "Extension not connected"}
+
+        return await self._send(
+            "refresh_token",
+            {"maxAgeMs": int(max_age_s * 1000)},
+            # Bounded well under the worker's poll: the reload polls for a new
+            # token for up to 20s, and a batch delayed is better than a batch
+            # sent on a token that is about to expire.
+            timeout=45,
+        )
+
     async def refresh_project_urls(self, project_id: str) -> dict:
         """Refresh media URLs for a project.
 

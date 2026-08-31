@@ -426,6 +426,26 @@ function connectToAgent() {
             metrics,
           },
         });
+      } else if (msg.method === 'refresh_token') {
+        // Called by the worker before it starts a batch. Reloading the Flow
+        // tab is the only thing that renews the bearer — see refreshFlowToken —
+        // and it keeps cookies and the signed-in Google account untouched,
+        // because it is a page reload and not a sign-out.
+        const maxAgeMs = msg.params?.maxAgeMs ?? 0;
+        await ensureHydrated();
+        const age = metrics.tokenCapturedAt ? Date.now() - metrics.tokenCapturedAt : Infinity;
+        if (maxAgeMs && flowKey && age < maxAgeMs) {
+          sendToAgent({ id: msg.id, result: { ok: true, reloaded: false, tokenAgeMs: age } });
+        } else {
+          const ok = await refreshFlowToken('on-demand');
+          const freshAge = metrics.tokenCapturedAt
+            ? Date.now() - metrics.tokenCapturedAt
+            : null;
+          sendToAgent({
+            id: msg.id,
+            result: { ok, reloaded: true, tokenAgeMs: freshAge, flowKeyPresent: !!flowKey },
+          });
+        }
       } else if (msg.method === 'get_diagnostics') {
         sendToAgent({ id: msg.id, result: await collectDiagnostics() });
       } else if (msg.type === 'callback_secret') {
@@ -1052,6 +1072,7 @@ async function handleApiRequest(msg) {
     };
 
     // Step 4: Make the API call from browser context
+    let _retriedAuth = false;
     let { res: response, text: responseText, parsed: responseData } = await send(finalBody);
 
     // Step 5: A rejected score is recoverable — reset the session and re-send.
@@ -1096,6 +1117,24 @@ async function handleApiRequest(msg) {
       if (response.ok) {
         metrics.recaptchaRecovered = (metrics.recaptchaRecovered || 0) + 1;
         console.log('[FlowAgent] Recovered from reCAPTCHA rejection');
+      }
+    }
+
+    // Step 6: A 401 means the bearer expired between capture and send. The
+    // pre-flight checks above cannot catch it — the token is present, just no
+    // longer valid — so this is the only place it can be recovered. Reload the
+    // Flow tab for a fresh one and send the same body again, once.
+    if (response.status === 401 && !_retriedAuth) {
+      _retriedAuth = true;
+      console.warn('[FlowAgent] 401 — token expired, refreshing and re-sending');
+      updateRequestLog(logId, { status: 'processing', error: '401 — refreshing token' });
+
+      if (await refreshFlowToken('on-demand')) {
+        metrics.authRecovered = (metrics.authRecovered || 0) + 1;
+        ({ res: response, text: responseText, parsed: responseData } = await send(finalBody));
+        if (response.ok) console.log('[FlowAgent] Recovered from 401');
+      } else {
+        console.error('[FlowAgent] 401 and the tab reload produced no new token');
       }
     }
 
