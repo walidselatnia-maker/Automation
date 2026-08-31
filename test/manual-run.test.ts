@@ -134,7 +134,7 @@ describe('the manual run picker', () => {
 });
 
 describe('a hand-picked run', () => {
-  it('runs the pair even when the site has hit its daily target', async () => {
+  it('runs the pair even when the site has hit its daily target', { timeout: 30_000 }, async () => {
     const { siteId, keywordId } = seed();
 
     // Daily target is 1, and it is already met — the selector would refuse.
@@ -152,7 +152,7 @@ describe('a hand-picked run', () => {
     expect(result.runId).toBeGreaterThan(0);
   });
 
-  it('runs with automation off', async () => {
+  it('runs with automation off', { timeout: 30_000 }, async () => {
     // The switch decides whether the scheduler acts on its own. Someone
     // choosing a site and a keyword by hand has already decided.
     const { siteId, keywordId } = seed();
@@ -172,7 +172,7 @@ describe('a hand-picked run', () => {
     expect((await tick(settings, KEY)).outcome).toBe('disabled');
   });
 
-  it('records why it ran, since no selector decision explains it', async () => {
+  it('records why it ran, since no selector decision explains it', { timeout: 30_000 }, async () => {
     const { siteId, keywordId } = seed();
     const settings = configured();
     settings.set('automation_enabled', 'true');

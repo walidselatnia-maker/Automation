@@ -131,18 +131,28 @@ export const publishToBuffer: Step<
     const host = ctx.site.domain.replace(/^https?:\/\//, '').replace(/\/+$/, '');
     const href = String(input.pin.posted.href ?? '');
 
-    const postId = await ctx.buffer.createPost({
-      text: input.description,
-      channelId: input.target.channelId,
-      imageUrl: `https://${host}${input.pin.pinImageUrl}`,
-      altText: String(input.pin.posted.featuredText ?? input.pin.seo.title),
-      title: String(input.pin.posted.title ?? input.pin.seo.title),
-      linkUrl: `https://${host}${href}`,
-      boardServiceId: input.target.boardServiceId,
-    });
+    // The pool may move to another of this site's Buffer accounts partway
+    // through — a full queue is not a reason to lose a finished article — so
+    // the board it actually posted to is whatever comes back, not what was
+    // resolved earlier.
+    const result = await ctx.buffer.createPost(
+      {
+        text: input.description,
+        channelId: input.target.channelId,
+        imageUrl: `https://${host}${input.pin.pinImageUrl}`,
+        altText: String(input.pin.posted.featuredText ?? input.pin.seo.title),
+        title: String(input.pin.posted.title ?? input.pin.seo.title),
+        linkUrl: `https://${host}${href}`,
+        boardServiceId: input.target.boardServiceId,
+      },
+      input.target.boardName,
+    );
 
-    log.info(`scheduled Pinterest pin ${postId} on board "${input.target.boardName}"`);
-    return { postId };
+    log.info(
+      `scheduled Pinterest pin ${result.postId} on board "${result.destination.boardName}" ` +
+        `via Buffer account "${result.account}"`,
+    );
+    return { postId: result.postId };
   },
 };
 

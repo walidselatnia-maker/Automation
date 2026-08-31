@@ -49,6 +49,158 @@ export function siteSecrets(site: SiteRow, key: Buffer): SiteSecrets {
   };
 }
 
+/* -- Buffer accounts ------------------------------------------------------ */
+
+/**
+ * The Buffer accounts a site may post through, in the order they are tried.
+ *
+ * One site, several Buffer accounts: a Buffer queue takes ten posts a day and
+ * then refuses, and a site publishing more than that needs somewhere else to
+ * put them. Position decides the order; the pipeline moves down the list when
+ * Buffer refuses and keeps the run going. See src/integrations/buffer-pool.ts.
+ */
+export interface BufferAccountRow {
+  id: number;
+  site_id: number;
+  label: string;
+  token_encrypted: string;
+  position: number;
+  enabled: number;
+  full_until: string | null;
+  last_used_at: string | null;
+  last_error: string | null;
+  created_at: string;
+}
+
+export interface BufferAccount {
+  id: number;
+  siteId: number;
+  label: string;
+  token: string;
+  position: number;
+  enabled: boolean;
+  fullUntil: Date | null;
+  lastUsedAt: string | null;
+  lastError: string | null;
+}
+
+/** How many accounts one site may hold. Five, unless configured otherwise. */
+export const BUFFER_ACCOUNT_LIMIT = 5;
+
+export const listBufferAccountRows = (siteId: number): BufferAccountRow[] =>
+  all<BufferAccountRow>(
+    'SELECT * FROM buffer_accounts WHERE site_id = ? ORDER BY position, id',
+    siteId,
+  );
+
+export function listBufferAccounts(siteId: number, key: Buffer): BufferAccount[] {
+  return listBufferAccountRows(siteId).map((row) => {
+    let token = '';
+    try {
+      token = decrypt(row.token_encrypted, key);
+    } catch {
+      // Same reasoning as siteSecrets: an unreadable credential should fail at
+      // call time as an auth error, not while rendering a page.
+    }
+    return {
+      id: row.id,
+      siteId: row.site_id,
+      label: row.label,
+      token,
+      position: row.position,
+      enabled: row.enabled === 1,
+      fullUntil: row.full_until ? new Date(row.full_until) : null,
+      lastUsedAt: row.last_used_at,
+      lastError: row.last_error,
+    };
+  });
+}
+
+/**
+ * Add or update one account.
+ *
+ * A blank token on update means "keep the stored one", matching how every
+ * other credential field in this app behaves.
+ */
+export function upsertBufferAccount(
+  input: { siteId: number; label: string; token: string; enabled: boolean },
+  key: Buffer,
+  id?: number,
+): number {
+  const existing = id
+    ? get<BufferAccountRow>('SELECT * FROM buffer_accounts WHERE id = ?', id)
+    : undefined;
+
+  if (existing) {
+    const encrypted =
+      input.token.trim() !== '' ? encrypt(input.token.trim(), key) : existing.token_encrypted;
+    run(
+      'UPDATE buffer_accounts SET label = ?, token_encrypted = ?, enabled = ? WHERE id = ?',
+      input.label.trim(),
+      encrypted,
+      input.enabled ? 1 : 0,
+      existing.id,
+    );
+    return existing.id;
+  }
+
+  const count = listBufferAccountRows(input.siteId).length;
+  if (count >= BUFFER_ACCOUNT_LIMIT) {
+    throw new Error(`A site can hold at most ${BUFFER_ACCOUNT_LIMIT} Buffer accounts.`);
+  }
+  if (input.token.trim() === '') {
+    throw new Error('A new Buffer account needs a token.');
+  }
+
+  const next =
+    (get<{ n: number }>(
+      'SELECT COALESCE(MAX(position), 0) AS n FROM buffer_accounts WHERE site_id = ?',
+      input.siteId,
+    )?.n ?? 0) + 1;
+
+  run(
+    `INSERT INTO buffer_accounts (site_id, label, token_encrypted, position, enabled)
+     VALUES (?, ?, ?, ?, ?)`,
+    input.siteId,
+    input.label.trim() || `Account ${next}`,
+    encrypt(input.token.trim(), key),
+    next,
+    input.enabled ? 1 : 0,
+  );
+
+  return get<{ id: number }>('SELECT last_insert_rowid() AS id')?.id ?? 0;
+}
+
+export const deleteBufferAccount = (id: number): void => {
+  run('DELETE FROM buffer_accounts WHERE id = ?', id);
+};
+
+/**
+ * Take an account out of rotation until `until`.
+ *
+ * Buffer does not say when a queue empties, so the caller picks the horizon —
+ * see FULL_FOR_MS in the pool. Recorded rather than inferred so the site page
+ * can say which account is full and why, instead of a run failing silently.
+ */
+export function markBufferAccountFull(id: number, error: string, until: Date): void {
+  run(
+    `UPDATE buffer_accounts SET full_until = ?, last_error = ?, last_used_at = datetime('now')
+     WHERE id = ?`,
+    until.toISOString(),
+    error.slice(0, 500),
+    id,
+  );
+}
+
+export function markBufferAccountUsed(id: number): void {
+  run(
+    `UPDATE buffer_accounts SET full_until = NULL, last_error = NULL,
+       last_used_at = datetime('now')
+     WHERE id = ?`,
+    id,
+  );
+}
+
 /** True when a secret column holds something, without decrypting it. */
 export const hasSecret = (value: string): boolean => value.trim() !== '';
 

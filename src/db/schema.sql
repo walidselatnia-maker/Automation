@@ -350,3 +350,28 @@ CREATE TABLE IF NOT EXISTS notice_state (
   state      TEXT NOT NULL,
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- Buffer accounts for one site, tried in order.
+--
+-- A site's Buffer queue fills at ten posts a day and then refuses everything
+-- until tomorrow. Rather than failing the run there, the pipeline moves to the
+-- site's next account and carries on — see src/integrations/buffer-pool.ts.
+--
+-- Position 1 is the site's original single token, migrated in. The token stays
+-- encrypted with the same key as every other credential.
+CREATE TABLE IF NOT EXISTS buffer_accounts (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  site_id          INTEGER NOT NULL REFERENCES sites (id) ON DELETE CASCADE,
+  label            TEXT    NOT NULL DEFAULT '',
+  token_encrypted  TEXT    NOT NULL DEFAULT '',
+  position         INTEGER NOT NULL DEFAULT 1,
+  enabled          INTEGER NOT NULL DEFAULT 1,
+  -- Set when Buffer refuses a post. Cleared by the next success, and ignored
+  -- once it has passed, so a full queue takes an account out only until the
+  -- day it is full rolls over.
+  full_until       TEXT,
+  last_used_at     TEXT,
+  last_error       TEXT,
+  created_at       TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_buffer_accounts_site ON buffer_accounts (site_id, position);

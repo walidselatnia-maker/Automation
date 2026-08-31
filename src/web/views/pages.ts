@@ -11,7 +11,7 @@ import {
   statusBadge,
   timeAgo,
 } from './layout.js';
-import { hasSecret } from '../../db/repos.js';
+import { BUFFER_ACCOUNT_LIMIT, hasSecret, type BufferAccount } from '../../db/repos.js';
 import type {
   DecisionRow,
   EventRow,
@@ -845,7 +845,7 @@ export function sitesPage(sites: SiteRow[], views: SiteView[]): Html {
   `;
 }
 
-export function siteEditPage(site: SiteRow): Html {
+export function siteEditPage(site: SiteRow, bufferAccounts: BufferAccount[] = []): Html {
   return html`
     <div class="spread">
       <div>
@@ -898,6 +898,7 @@ export function siteEditPage(site: SiteRow): Html {
       : raw('')}
 
     <div class="card">${siteForm(site)}</div>
+    ${bufferAccountsCard(site, bufferAccounts)}
     <div class="card">
       <h3>Delete this site</h3>
       <p class="muted small">
@@ -907,6 +908,93 @@ export function siteEditPage(site: SiteRow): Html {
             onsubmit="return confirm('Delete ${site.domain}? This cannot be undone.')">
         <button class="danger" type="submit">Delete site</button>
       </form>
+    </div>
+  `;
+}
+
+/**
+ * The Buffer accounts this site posts through, in the order they are tried.
+ *
+ * A Buffer queue takes ten posts a day and then refuses. With one account that
+ * ended the run at its last step, with the article already written and
+ * published. With several, the run moves down this list and finishes.
+ */
+function bufferAccountsCard(site: SiteRow, accounts: BufferAccount[]): Html {
+  const room = BUFFER_ACCOUNT_LIMIT - accounts.length;
+
+  const row = (account: BufferAccount): Html => html`
+    <tr>
+      <td class="nowrap">${account.position}</td>
+      <td>
+        <form method="post" action="/sites/${site.id}/buffer/${account.id}" class="row wrap">
+          <input type="text" name="label" value="${account.label}" style="width:auto" />
+          <input type="password" name="token" autocomplete="new-password" style="width:auto"
+                 placeholder="saved — leave blank to keep" />
+          <label class="choice">
+            <input type="checkbox" name="enabled" value="1"
+                   ${account.enabled ? raw('checked') : raw('')} />
+            enabled
+          </label>
+          <button type="submit">Save</button>
+        </form>
+      </td>
+      <td>
+        ${account.fullUntil && account.fullUntil > new Date()
+          ? html`<span class="badge warn" title="${account.lastError ?? ''}"
+              >queue full — back ${timeAgo(account.fullUntil.toISOString())}</span
+            >`
+          : account.enabled
+            ? html`<span class="badge ok">ready</span>`
+            : html`<span class="badge muted">off</span>`}
+        ${account.lastUsedAt
+          ? html`<div class="muted small">last used ${timeAgo(account.lastUsedAt)}</div>`
+          : raw('')}
+      </td>
+      <td class="nowrap">
+        <form method="post" action="/sites/${site.id}/buffer/${account.id}/delete"
+              onsubmit="return confirm('Remove ${account.label}?')">
+          <button class="danger small" type="submit">Remove</button>
+        </form>
+      </td>
+    </tr>
+  `;
+
+  return html`
+    <div class="card">
+      <h3>Buffer accounts</h3>
+      <p class="muted small">
+        Tried top to bottom. When Buffer refuses a post — a full queue, an
+        expired token — the run moves to the next account and carries on rather
+        than failing. Up to ${BUFFER_ACCOUNT_LIMIT} accounts.
+      </p>
+
+      ${accounts.length === 0
+        ? emptyState(
+            'No Buffer accounts yet. The token on the form above is still used until you add one.',
+          )
+        : html`<div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>#</th><th>Account</th><th>State</th><th></th></tr>
+              </thead>
+              <tbody>
+                ${accounts.map(row)}
+              </tbody>
+            </table>
+          </div>`}
+
+      ${room > 0
+        ? html`<form method="post" action="/sites/${site.id}/buffer" class="row wrap"
+                     style="margin-top:12px">
+            <input type="text" name="label" placeholder="label (optional)" style="width:auto" />
+            <input type="password" name="token" autocomplete="new-password" required
+                   placeholder="Buffer API token" style="width:auto" />
+            <input type="hidden" name="enabled" value="1" />
+            <button class="primary" type="submit">Add account</button>
+          </form>`
+        : html`<p class="muted small">
+            All ${BUFFER_ACCOUNT_LIMIT} slots are in use. Remove one to add another.
+          </p>`}
     </div>
   `;
 }

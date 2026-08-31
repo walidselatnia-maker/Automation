@@ -1,5 +1,5 @@
 import type { Settings } from '../settings.js';
-import { BufferClient } from '../integrations/buffer.js';
+import { BufferPool } from '../integrations/buffer-pool.js';
 import { ImageClient } from '../integrations/images.js';
 import { resolveProjectId, type ResolvedProjectId } from '../core/project-id.js';
 import { SiteApiClient } from '../integrations/site-api.js';
@@ -81,7 +81,7 @@ export class PipelineContext {
 
   readonly siteApi: SiteApiClient;
   readonly images: ImageClient;
-  readonly buffer: BufferClient;
+  readonly buffer: BufferPool;
   readonly telegram: TelegramClient;
 
   constructor(init: {
@@ -128,7 +128,14 @@ export class PipelineContext {
       projectId: this.projectId.projectId,
     });
 
-    this.buffer = new BufferClient(secrets.bufferToken);
+    // A pool rather than a client: when one account's queue fills, the run
+    // moves to this site's next account instead of failing at the last step.
+    // A site with one account behaves exactly as it did before.
+    this.buffer = new BufferPool(
+      { id: init.site.id, domain: init.site.domain, pinUsername: init.site.pin_username },
+      init.encryptionKey,
+      secrets.bufferToken,
+    );
 
     this.telegram = new TelegramClient(
       init.settings.get('telegram_bot_token'),

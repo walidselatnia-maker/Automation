@@ -162,6 +162,39 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+
+  {
+    id: '007-buffer-account-rotation',
+    description: 'Per-site Buffer accounts, tried in order when a queue fills',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS buffer_accounts (
+          id               INTEGER PRIMARY KEY AUTOINCREMENT,
+          site_id          INTEGER NOT NULL REFERENCES sites (id) ON DELETE CASCADE,
+          label            TEXT    NOT NULL DEFAULT '',
+          token_encrypted  TEXT    NOT NULL DEFAULT '',
+          position         INTEGER NOT NULL DEFAULT 1,
+          enabled          INTEGER NOT NULL DEFAULT 1,
+          full_until       TEXT,
+          last_used_at     TEXT,
+          last_error       TEXT,
+          created_at       TEXT    NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_buffer_accounts_site ON buffer_accounts (site_id, position);
+      `);
+
+      // Every site that already had a token keeps posting through it, as
+      // account one. Nothing to re-enter, and a site with one account behaves
+      // exactly as it did before rotation existed.
+      db.exec(`
+        INSERT INTO buffer_accounts (site_id, label, token_encrypted, position)
+        SELECT id, 'Account 1', buffer_token_encrypted, 1
+          FROM sites
+         WHERE buffer_token_encrypted <> ''
+           AND id NOT IN (SELECT site_id FROM buffer_accounts);
+      `);
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */

@@ -79,7 +79,10 @@ import {
   deletePromptOverride,
   getPromptOverride,
   loadLinkGrid,
+  deleteBufferAccount,
+  listBufferAccounts,
   loadKeywordViews,
+  upsertBufferAccount,
   loadLinkViews,
   loadSiteViews,
   setPromptOverride,
@@ -497,7 +500,70 @@ export function buildServer(
   app.get('/sites/:id', async (request, reply) => {
     const site = getSite(asNumber((request.params as { id: string }).id, 0));
     if (!site) return redirect(reply, '/sites', { kind: 'error', message: 'Site not found' });
-    return page(reply, site.domain, '/sites', siteEditPage(site), readFlash(request.query));
+    return page(
+      reply,
+      site.domain,
+      '/sites',
+      siteEditPage(site, listBufferAccounts(site.id, encryptionKey)),
+      readFlash(request.query),
+    );
+  });
+
+  /* -- Buffer accounts --------------------------------------------------- */
+  // Several per site, tried in order. When Buffer refuses a post the run moves
+  // to the next one rather than failing — see src/integrations/buffer-pool.ts.
+
+  app.post('/sites/:id/buffer', async (request, reply) => {
+    const siteId = asNumber((request.params as { id: string }).id, 0);
+    const body = formBody(request);
+
+    try {
+      upsertBufferAccount(
+        {
+          siteId,
+          label: asString(body.label),
+          token: asString(body.token),
+          enabled: asString(body.enabled, '1') !== '0',
+        },
+        encryptionKey,
+      );
+      return redirect(reply, `/sites/${siteId}`, { kind: 'ok', message: 'Buffer account added.' });
+    } catch (err) {
+      return redirect(reply, `/sites/${siteId}`, { kind: 'error', message: errorMessage(err) });
+    }
+  });
+
+  app.post('/sites/:id/buffer/:accountId', async (request, reply) => {
+    const params = request.params as { id: string; accountId: string };
+    const siteId = asNumber(params.id, 0);
+    const body = formBody(request);
+
+    try {
+      upsertBufferAccount(
+        {
+          siteId,
+          label: asString(body.label),
+          token: asString(body.token),
+          // An unchecked checkbox sends nothing, so absence is "off" here
+          // rather than "leave it alone".
+          enabled: 'enabled' in body,
+        },
+        encryptionKey,
+        asNumber(params.accountId, 0),
+      );
+      return redirect(reply, `/sites/${siteId}`, { kind: 'ok', message: 'Buffer account saved.' });
+    } catch (err) {
+      return redirect(reply, `/sites/${siteId}`, { kind: 'error', message: errorMessage(err) });
+    }
+  });
+
+  app.post('/sites/:id/buffer/:accountId/delete', async (request, reply) => {
+    const params = request.params as { id: string; accountId: string };
+    deleteBufferAccount(asNumber(params.accountId, 0));
+    return redirect(reply, `/sites/${asNumber(params.id, 0)}`, {
+      kind: 'ok',
+      message: 'Buffer account removed.',
+    });
   });
 
   /** Convert the form's amount + unit pair into stored minutes. */
