@@ -210,8 +210,10 @@ ${head(options.title)}
   </div>
 </header>
 <main>
+  <div class="page">
 ${flash.value}
 ${options.body.value}
+  </div>
 </main>
 ${THEME_TOGGLE}
 </body>

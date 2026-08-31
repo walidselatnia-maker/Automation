@@ -187,11 +187,21 @@
 
   /* ------------------------------------------------------- main container */
 
+  /* The rail is fixed, so main is padded past it rather than pushed by a
+     margin. That keeps main the full width of the window, which is what makes
+     the page background reach the right-hand edge on a wide monitor instead of
+     stopping where the content stops. */
   main {
-    /* Left-aligned after the rail rather than centred in what remains: on a
-       wide monitor centring pushes the content into the middle and leaves a
-       gutter the width of the sidebar on the left of it. */
-    @apply ml-64 max-w-7xl px-6 py-8;
+    @apply min-h-screen pl-64;
+  }
+
+  /* The content column. Centred in the space beside the rail — a column pinned
+     left on a 2560px monitor leaves half the window empty — and capped at a
+     width where a table of eight columns is still comfortable to read across.
+     Wider than the old 7xl cap, which was leaving a third of the window unused
+     on the screens this is actually run on. */
+  .page {
+    @apply mx-auto w-full max-w-[92rem] px-8 pb-16 pt-8;
   }
 
   .pagebar {
@@ -473,19 +483,87 @@
     @apply m-0 h-4 w-4 flex-none;
   }
 
-  /* Inputs inside a table row: no bottom margin, and sized by their column
-     rather than by an inline width on every one of them. */
-  table.accounts td {
-    @apply align-middle;
+  /* -------------------------------------------------- Buffer account list */
+  /* One column definition, shared by every row, so the fields line up down the
+     card without a table stretching them to fill it. The two text fields take
+     the slack; everything after them is as wide as its content. */
+  .accounts {
+    @apply m-0 mt-4 list-none space-y-2 p-0;
   }
 
-  table.accounts input[type='text'],
-  table.accounts input[type='password'] {
-    @apply my-0 w-full min-w-[9rem];
+  /* No background of its own: the row takes the card's, so the fields inside
+     it keep the contrast they have everywhere else on the page. Filling the
+     row with the input colour made every field vanish into it. */
+  .account {
+    @apply grid items-end gap-x-4 gap-y-3 rounded-xl border p-4;
+    @apply border-edge dark:border-edge-dark;
+    grid-template-columns:
+      1.5rem
+      minmax(10rem, 1fr)
+      minmax(14rem, 1.6fr)
+      auto
+      auto
+      auto;
   }
 
-  table.accounts td:first-child {
-    @apply w-8;
+  .account-index {
+    @apply pb-2 font-mono text-xs text-slate-400 dark:text-slate-500;
+  }
+
+  /* The label sits above its field, in the same small caps the rest of the
+     forms use, so a token box is never an unexplained rectangle. */
+  .account-field {
+    @apply m-0 block min-w-0 normal-case tracking-normal;
+  }
+
+  .account-field > span {
+    @apply mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.08em];
+    @apply text-slate-500 dark:text-slate-400;
+  }
+
+  .account-field input {
+    @apply my-0 w-full;
+  }
+
+  .account-rotation,
+  .account-state,
+  .account-actions {
+    @apply pb-2;
+  }
+
+  .account-state {
+    @apply flex flex-col items-start gap-1 whitespace-nowrap;
+  }
+
+  .account-actions {
+    @apply flex items-center gap-2;
+  }
+
+  .account-actions form {
+    @apply m-0;
+  }
+
+  /* Adding one reads as the same row, one step further down the card. */
+  .account-add {
+    @apply mt-4 flex flex-wrap items-end gap-4 border-t pt-4;
+    @apply border-edge dark:border-edge-dark;
+  }
+
+  .account-add .account-field {
+    flex: 1 1 16rem;
+  }
+
+  @media (max-width: 900px) {
+    .account {
+      grid-template-columns: 1.5rem 1fr;
+    }
+    .account-field,
+    .account-rotation,
+    .account-state,
+    .account-actions {
+      grid-column: 2;
+      @apply pb-0;
+    }
   }
 
   label {
@@ -921,7 +999,7 @@
 @layer utilities {
   /* The sign-in page has no sidebar, so main must not be offset by one. */
   body.signin main {
-    @apply ml-0 grid min-h-screen max-w-none place-items-center px-6 py-6;
+    @apply grid min-h-screen place-items-center px-6 py-6 pl-6;
   }
 
   @media (max-width: 1024px) {
@@ -946,7 +1024,10 @@
       @apply hidden;
     }
     main {
-      @apply ml-0 px-4 py-6;
+      @apply min-h-0 pl-0;
+    }
+    .page {
+      @apply px-4 pb-10 pt-6;
     }
   }
 }

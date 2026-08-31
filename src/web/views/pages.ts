@@ -998,107 +998,96 @@ export function siteEditPage(site: SiteRow, bufferAccounts: BufferAccount[] = []
 function bufferAccountsCard(site: SiteRow, accounts: BufferAccount[]): Html {
   const room = BUFFER_ACCOUNT_LIMIT - accounts.length;
 
-  // Each row is its own form, so saving one account cannot carry another's
-  // half-typed token with it. The inputs sit in headed columns rather than
-  // in a line of placeholders: a password field whose only label is
-  // "saved — leave blank to keep" does not say what it is a field for.
-  const row = (account: BufferAccount): Html => html`
-    <tr>
-      <td class="muted">${account.position}</td>
-      <td>
-        <input type="text" form="buffer-${account.id}" name="label"
-               value="${account.label}" aria-label="Label for account ${account.position}" />
-      </td>
-      <td>
-        <input type="password" form="buffer-${account.id}" name="token"
-               autocomplete="new-password" placeholder="leave blank to keep the saved one"
-               aria-label="Buffer API token for account ${account.position}" />
-      </td>
-      <td class="nowrap">
-        <label class="inline-check">
+  // A grid rather than a table. A table spreads its columns to fill the card,
+  // which on a wide screen put a hand's width of nothing between the token
+  // field and the switch beside it. The grid gives the two text fields the
+  // room and holds everything else to the width it needs, and header and rows
+  // share one column definition so they cannot fall out of line.
+  const row = (account: BufferAccount): Html => {
+    const full = account.fullUntil !== null && account.fullUntil > new Date();
+
+    return html`
+      <li class="account">
+        <span class="account-index">${account.position}</span>
+
+        <label class="account-field">
+          <span>Label</span>
+          <input type="text" form="buffer-${account.id}" name="label"
+                 value="${account.label}" />
+        </label>
+
+        <label class="account-field">
+          <span>API token</span>
+          <input type="password" form="buffer-${account.id}" name="token"
+                 autocomplete="new-password" placeholder="leave blank to keep the saved one" />
+        </label>
+
+        <label class="inline-check account-rotation">
           <input type="checkbox" form="buffer-${account.id}" name="enabled" value="1"
                  ${account.enabled ? raw('checked') : raw('')} />
           in rotation
         </label>
-      </td>
-      <td class="nowrap">
-        ${account.fullUntil && account.fullUntil > new Date()
-          ? html`<span class="badge warn" title="${account.lastError ?? ''}">queue full</span>`
-          : account.enabled
-            ? html`<span class="badge ok">ready</span>`
-            : html`<span class="badge muted">off</span>`}
-        <div class="muted small">
-          ${account.lastUsedAt ? html`used ${timeAgo(account.lastUsedAt)}` : 'never used'}
+
+        <div class="account-state">
+          ${full
+            ? html`<span class="badge warn" title="${account.lastError ?? ''}">queue full</span>`
+            : account.enabled
+              ? html`<span class="badge ok">ready</span>`
+              : html`<span class="badge muted">out</span>`}
+          <span class="muted small">
+            ${account.lastUsedAt ? html`used ${timeAgo(account.lastUsedAt)}` : 'never used'}
+          </span>
         </div>
-      </td>
-      <td class="nowrap">
-        <form method="post" action="/sites/${site.id}/buffer/${account.id}"
-              id="buffer-${account.id}"></form>
-        <button class="small" type="submit" form="buffer-${account.id}">Save</button>
-        <form method="post" action="/sites/${site.id}/buffer/${account.id}/delete"
-              style="display:inline"
-              onsubmit="return confirm('Remove ${account.label}?')">
-          <button class="danger small" type="submit">Remove</button>
-        </form>
-      </td>
-    </tr>
-  `;
+
+        <div class="account-actions">
+          <form method="post" action="/sites/${site.id}/buffer/${account.id}"
+                id="buffer-${account.id}"></form>
+          <button class="small" type="submit" form="buffer-${account.id}">Save</button>
+          <form method="post" action="/sites/${site.id}/buffer/${account.id}/delete"
+                onsubmit="return confirm('Remove ${account.label}? Posts will use the next account.')">
+            <button class="danger small" type="submit">Remove</button>
+          </form>
+        </div>
+      </li>
+    `;
+  };
 
   return html`
     <div class="card">
-      <h3>Buffer accounts</h3>
+      <div class="spread">
+        <h3>Buffer accounts</h3>
+        <span class="muted small">${accounts.length} of ${BUFFER_ACCOUNT_LIMIT} in use</span>
+      </div>
       <p class="muted small">
-        Tried top to bottom. When Buffer refuses a post — a full queue, an
-        expired token — the run moves to the next account and carries on rather
-        than failing. Up to ${BUFFER_ACCOUNT_LIMIT} accounts.
+        Used in order. When Buffer refuses a post &mdash; a full queue, an expired
+        token &mdash; the run moves to the next account and finishes rather than
+        failing.
       </p>
 
       ${accounts.length === 0
         ? emptyState(
-            'No Buffer accounts yet. The token on the form above is still used until you add one.',
+            'No accounts yet. The Buffer token on the form above keeps working until you add one.',
           )
-        : html`<div class="table-wrap">
-            <table class="accounts">
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>Label</th>
-                  <th>API token</th>
-                  <th>Rotation</th>
-                  <th>State</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                ${accounts.map(row)}
-              </tbody>
-            </table>
-          </div>`}
+        : html`<ul class="accounts">
+            ${accounts.map(row)}
+          </ul>`}
 
       ${room > 0
-        ? html`<form method="post" action="/sites/${site.id}/buffer" class="field-row"
-                     style="margin-top:16px">
-            <div class="field">
-              <label for="new-buffer-label">Label</label>
-              <input type="text" id="new-buffer-label" name="label"
-                     placeholder="e.g. Overflow" />
-              <div class="help">Optional. Names this account in the run log.</div>
-            </div>
-            <div class="field">
-              <label for="new-buffer-token">Buffer API token</label>
-              <input type="password" id="new-buffer-token" name="token" required
-                     autocomplete="new-password" />
-              <div class="help">
-                From the Buffer account you want as number ${accounts.length + 1}.
-              </div>
-            </div>
-            <div class="field field-action">
-              <input type="hidden" name="enabled" value="1" />
-              <button class="primary" type="submit">Add account</button>
-            </div>
+        ? html`<form method="post" action="/sites/${site.id}/buffer" class="account-add">
+            <label class="account-field">
+              <span>Label</span>
+              <input type="text" name="label" placeholder="e.g. Overflow" />
+            </label>
+            <label class="account-field">
+              <span>API token</span>
+              <input type="password" name="token" required autocomplete="new-password"
+                     placeholder="from the Buffer account to add" />
+            </label>
+            <input type="hidden" name="enabled" value="1" />
+            <button class="primary" type="submit">Add account</button>
           </form>`
         : html`<p class="muted small">
-            All ${BUFFER_ACCOUNT_LIMIT} slots are in use. Remove one to add another.
+            All ${BUFFER_ACCOUNT_LIMIT} in use. Remove one to add another.
           </p>`}
     </div>
   `;
