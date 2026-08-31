@@ -91,9 +91,9 @@ describe('reaping a run whose process is gone', () => {
   });
 
   it('fails a silent run and frees the lock', () => {
-    // Default step timeout is 20 minutes, and the watchdog allows 5 more.
+    // Default step timeout is 8 minutes, and the watchdog allows 5 more.
     const runId = startedRun();
-    holdLock(runId, 40);
+    holdLock(runId, 20);
 
     expect(reapStalledRun(new Settings(KEY))).toBe(runId);
     expect(lockStatus()?.locked_at).toBeNull();
@@ -105,7 +105,7 @@ describe('reaping a run whose process is gone', () => {
 
   it('says what happened, so the run page is not a mystery', () => {
     const runId = startedRun();
-    holdLock(runId, 40);
+    holdLock(runId, 20);
     reapStalledRun(new Settings(KEY));
 
     // The point of the message: it names the likely cause and the way out,

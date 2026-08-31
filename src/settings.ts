@@ -160,24 +160,25 @@ export const SETTING_SPECS: SettingSpec[] = [
     label: 'Step timeout (minutes)',
     group: 'schedule',
     secret: false,
-    default: '20',
+    default: '8',
     type: 'number',
     help:
       'A step that returns nothing for this long is treated as hung: the run fails ' +
       'with a clear reason and the lock is released, rather than sitting there. ' +
-      'Keep it above what image generation legitimately takes — four images at the ' +
-      'polling ceiling is 40 minutes, so raise this if your image service is slow.',
+      'Deliberately under the run timeout, so the failure names the step that hung ' +
+      'rather than the run that contained it.',
   },
   {
     key: 'run_timeout_minutes',
     label: 'Run timeout (minutes)',
     group: 'schedule',
     secret: false,
-    default: '60',
+    default: '10',
     type: 'number',
     help:
       'The backstop for a run that keeps moving but never finishes. Counted from ' +
-      'the first step, and it stops the run wherever it is.',
+      'the first step, and it stops the run wherever it is. Ten because runs on ' +
+      'this platform take four to six minutes; raise it if that changes.',
   },
 
   // -- Buffer --------------------------------------------------------------
