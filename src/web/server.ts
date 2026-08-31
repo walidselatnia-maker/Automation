@@ -79,6 +79,11 @@ import {
   deletePromptOverride,
   getPromptOverride,
   loadLinkGrid,
+  bulkActivate,
+  bulkPause,
+  bulkSetAutoPublish,
+  bulkSetDailyTarget,
+  bulkSetInterval,
   deleteBufferAccount,
   listBufferAccounts,
   loadKeywordViews,
@@ -116,7 +121,7 @@ import {
   upsertEndpoint,
 } from '../llm/pool.js';
 import { executePipeline, PipelineContext } from '../pipeline/index.js';
-import { evaluateSite, localDateKey } from '../core/selector.js';
+import { evaluateSite, formatMinutes, localDateKey } from '../core/selector.js';
 import { diagnoseKeyword } from '../core/diagnosis.js';
 import { findDuplicate } from '../core/similar-title.js';
 import { readSupply, supplyWarning } from '../core/supply.js';
@@ -545,6 +550,70 @@ export function buildServer(
       siteEditPage(site, listBufferAccounts(site.id, encryptionKey)),
       readFlash(request.query),
     );
+  });
+
+  /**
+   * One change across many sites.
+   *
+   * Editing eight sites to move the daily target meant eight pages, and the
+   * eighth was where the typo went. Every action here is the same one the site
+   * page performs, applied to the ticked rows.
+   */
+  app.post('/sites/bulk', async (request, reply) => {
+    const body = formBody(request);
+
+    // Fastify's form parser gives a single string for one checkbox and an
+    // array for several; nothing ticked gives nothing at all.
+    const picked = body.ids;
+    const ids = (Array.isArray(picked) ? picked : picked === undefined ? [] : [picked])
+      .map((value) => asNumber(value, 0))
+      .filter((id) => id > 0);
+
+    if (ids.length === 0) {
+      return redirect(reply, '/sites', {
+        kind: 'warn',
+        message: 'Nothing was ticked, so nothing changed.',
+      });
+    }
+
+    const done = (n: number, what: string): FastifyReply =>
+      redirect(reply, '/sites', {
+        kind: 'ok',
+        message: `${n} site${n === 1 ? '' : 's'} ${what}.`,
+      });
+
+    switch (asString(body.action)) {
+      case 'activate':
+        return done(bulkActivate(ids), 'activated');
+
+      case 'pause':
+        // No end time and a reason that says where it came from: a bulk pause
+        // is a deliberate stop, and one that expired on its own would be a
+        // surprise later.
+        return done(bulkPause(ids, 'Paused from the sites list'), 'paused');
+
+      case 'auto':
+        return done(bulkSetAutoPublish(ids, true), 'set to publish automatically');
+
+      case 'hold':
+        return done(bulkSetAutoPublish(ids, false), 'set to hold for approval');
+
+      case 'target': {
+        const target = Math.max(0, asNumber(body.daily_target, 0));
+        return done(bulkSetDailyTarget(ids, target), `set to ${target} article(s) a day`);
+      }
+
+      case 'interval': {
+        const minutes = readIntervalMinutes({
+          interval_amount: body.interval_amount,
+          interval_unit: body.interval_unit,
+        });
+        return done(bulkSetInterval(ids, minutes), `set to wait ${formatMinutes(minutes)}`);
+      }
+
+      default:
+        return redirect(reply, '/sites', { kind: 'error', message: 'Unknown bulk action.' });
+    }
   });
 
   /* -- Buffer accounts --------------------------------------------------- */

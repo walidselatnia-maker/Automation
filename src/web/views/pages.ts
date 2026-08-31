@@ -773,6 +773,55 @@ export function sitesPage(sites: SiteRow[], views: SiteView[]): Html {
       they can never drift out of step with reality.
     </p>
 
+    ${sites.length === 0
+      ? raw('')
+      : html`
+          <!-- Every control is a verb applied to the ticked rows, matching the
+               keywords page. The two fields that need a value carry it beside
+               the button that uses it, so no action depends on a field the
+               person cannot see from the button they press. -->
+          <form method="post" action="/sites/bulk" id="bulk" class="bulkbar">
+            <div class="bulk-count">
+              <span id="pick-count">0</span> selected
+              <span class="muted small" id="pick-hint">— tick a row to act on it</span>
+            </div>
+
+            <div class="bulk-actions">
+              <div class="bulk-group">
+                <button type="submit" name="action" value="activate" class="primary">
+                  Activate
+                </button>
+                <button type="submit" name="action" value="pause">Pause</button>
+              </div>
+
+              <div class="bulk-group">
+                <span class="muted small">Publishing</span>
+                <button type="submit" name="action" value="auto">Automatic</button>
+                <button type="submit" name="action" value="hold">Hold for approval</button>
+              </div>
+
+              <div class="bulk-group">
+                <label class="muted small" for="bulk-target">Articles a day</label>
+                <input type="number" id="bulk-target" name="daily_target" min="0" max="100"
+                       value="8" style="width:5rem" />
+                <button type="submit" name="action" value="target" formnovalidate>Set</button>
+              </div>
+
+              <div class="bulk-group">
+                <label class="muted small" for="bulk-interval">Wait between posts</label>
+                <input type="number" id="bulk-interval" name="interval_amount" min="0"
+                       value="3" style="width:5rem" />
+                <select name="interval_unit" style="width:auto">
+                  <option value="minutes">minutes</option>
+                  <option value="hours" selected>hours</option>
+                  <option value="days">days</option>
+                </select>
+                <button type="submit" name="action" value="interval" formnovalidate>Set</button>
+              </div>
+            </div>
+          </form>
+        `}
+
     <div class="card table-wrap">
       ${sites.length === 0
         ? emptyState('No sites yet. Add your first one below.')
@@ -783,6 +832,9 @@ export function sitesPage(sites: SiteRow[], views: SiteView[]): Html {
                    field is still on the form, and still what the run log and
                    notifications call a site. -->
               <tr>
+                <th class="pick">
+                  <input type="checkbox" id="pick-all" title="Select every site" />
+                </th>
                 <th>Domain</th><th>Status</th><th>Publishing</th><th>Target</th>
                 <th>Interval</th><th>Credentials</th><th>Today</th><th>Last publish</th><th></th>
               </tr>
@@ -791,6 +843,9 @@ export function sitesPage(sites: SiteRow[], views: SiteView[]): Html {
               ${sites.map((s) => {
                 const v = views.find((x) => x.id === s.id);
                 return html`<tr>
+                  <td class="pick">
+                    <input type="checkbox" form="bulk" name="ids" value="${s.id}" />
+                  </td>
                   <td class="mono">${s.domain}</td>
                   <td>
                     ${statusBadge(s.status)}
@@ -862,6 +917,7 @@ export function sitesPage(sites: SiteRow[], views: SiteView[]): Html {
         </div>
       </form>
     </div>
+    ${raw(BULK_SELECTION_SCRIPT)}
   `;
 }
 

@@ -1413,6 +1413,47 @@ export const pauseSite = (
   );
 };
 
+/* -- Bulk edits from the sites table -------------------------------------- */
+
+/**
+ * One field across several sites.
+ *
+ * Separate small updates rather than a route through upsertSite: that one
+ * takes a whole site and treats a missing field as "keep", which is right for
+ * a form that submits every field and wrong here, where the whole point is to
+ * change one thing and touch nothing else.
+ */
+export const bulkSetDailyTarget = (ids: number[], target: number): number =>
+  bulkUpdateSites(ids, 'daily_target = ?', Math.max(0, Math.round(target)));
+
+export const bulkSetInterval = (ids: number[], minutes: number): number =>
+  bulkUpdateSites(ids, 'interval_minutes = ?', Math.max(0, Math.round(minutes)));
+
+export const bulkSetAutoPublish = (ids: number[], on: boolean): number =>
+  bulkUpdateSites(ids, 'auto_publish = ?', on ? 1 : 0);
+
+export const bulkActivate = (ids: number[]): number =>
+  bulkUpdateSites(ids, "status = 'active', paused_reason = '', paused_until = NULL");
+
+export const bulkPause = (ids: number[], reason: string): number =>
+  bulkUpdateSites(ids, "status = 'paused', paused_until = NULL, paused_reason = ?", reason.trim());
+
+function bulkUpdateSites(
+  ids: number[],
+  assignment: string,
+  ...values: (string | number)[]
+): number {
+  if (ids.length === 0) return 0;
+
+  const holes = ids.map(() => '?').join(', ');
+  const result = run(
+    `UPDATE sites SET ${assignment}, updated_at = datetime('now') WHERE id IN (${holes})`,
+    ...values,
+    ...ids,
+  );
+  return result.changes;
+}
+
 export const activateSite = (id: number): void => {
   run(
     `UPDATE sites SET status = 'active', paused_reason = '', paused_until = NULL,
