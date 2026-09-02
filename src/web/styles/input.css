@@ -483,6 +483,64 @@
     @apply m-0 h-4 w-4 flex-none;
   }
 
+  /* ------------------------------------------------------------ Reels */
+  /* Thumbnails of the four article images, in the candidate list. Small
+     enough that four of them sit in a table cell without the row growing
+     taller than the text beside it. */
+  .thumb-row {
+    @apply flex gap-1;
+  }
+
+  .thumb {
+    @apply h-12 w-9 flex-none rounded object-cover;
+    @apply ring-1 ring-slate-200 dark:ring-slate-700;
+  }
+
+  /* The composer's picker. Bigger, because this is where the choice is
+     actually made and a 36px-wide crop is not enough to judge a shot by. */
+  .thumb-picker {
+    @apply mt-3 grid gap-3;
+    grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+  }
+
+  .thumb-choice {
+    @apply flex cursor-pointer flex-col gap-1 rounded-lg p-2;
+    @apply ring-1 ring-slate-200 dark:ring-slate-700;
+    @apply transition-shadow;
+  }
+
+  /* The whole tile reads as selected, not just the box: at this size the
+     checkbox alone is easy to miss when scanning four of them. */
+  .thumb-choice:has(input:checked) {
+    @apply ring-2 ring-red-600;
+  }
+
+  .thumb-lg {
+    @apply aspect-[9/16] w-full rounded object-cover;
+  }
+
+  /* Capped rather than full width: a 9:16 video at column width would push
+     every other cell in the row off the screen. */
+  .reel-preview {
+    @apply w-32 rounded-lg;
+    @apply ring-1 ring-slate-200 dark:ring-slate-700;
+  }
+
+  /* A row of labelled fields ending in a button -- the add-a-page and
+     add-a-route forms. Wraps rather than scrolls on a narrow screen. */
+  .row-form {
+    @apply mt-4 flex flex-wrap items-end gap-3;
+  }
+
+  .row-form label {
+    @apply flex flex-col gap-1 text-xs font-medium uppercase tracking-wide;
+    @apply text-slate-500 dark:text-slate-400;
+  }
+
+  .row-form label.check {
+    @apply flex-row items-center gap-2 normal-case tracking-normal;
+  }
+
   /* -------------------------------------------------- Buffer account list */
   /* One column definition, shared by every row, so the fields line up down the
      card without a table stretching them to fill it. The two text fields take

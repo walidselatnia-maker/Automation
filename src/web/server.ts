@@ -29,6 +29,10 @@ import {
   settingsPage,
   siteEditPage,
   sitesPage,
+  facebookSettingsPage,
+  reelComposerPage,
+  reelsPage,
+  type ReelImages,
 } from './views/pages.js';
 import type { KeywordFilterView, SiteMark } from './views/pages.js';
 import { importKeywordsCsv, importSitesCsv } from './import.js';
@@ -98,6 +102,21 @@ import {
   setLink,
   setLinkShareImages,
   upsertSite,
+  createReel,
+  deleteFbPage,
+  deleteFbRoute,
+  deleteReel,
+  getReel,
+  keywordGroups,
+  listFbPages,
+  listFbRoutes,
+  listReels,
+  reelCandidates,
+  resolveFbPage,
+  updateReel,
+  upsertFbPage,
+  upsertFbRoute,
+  type ReelCandidate,
 } from '../db/repos.js';
 import { get } from '../db/index.js';
 import {
@@ -144,9 +163,57 @@ import {
   tick,
 } from '../scheduler/index.js';
 import { createLogger, errorMessage } from '../lib/logger.js';
+import { FacebookClient } from '../integrations/facebook.js';
+import { defaultDeps, publishReel, startGeneration } from '../reels/engine.js';
+import { loadTemplate } from '../pipeline/prompts.js';
 import { normaliseDomain } from '../lib/domain.js';
 
 const log = createLogger('web');
+
+/* -- Reels ---------------------------------------------------------------- */
+
+/**
+ * The four image paths a published run left behind.
+ *
+ * Read from the generate-images checkpoint rather than from keyword_images:
+ * that table only holds a row when sharing is on, and a site that generated
+ * its own images has just as much to build a reel from. A checkpoint that
+ * cannot be read is not an error worth showing -- the run simply cannot become
+ * a reel, and the page says so.
+ */
+function readReelImages(candidate: ReelCandidate): ReelImages | null {
+  if (!candidate.images_json) return null;
+
+  try {
+    const parsed = JSON.parse(candidate.images_json) as Partial<ReelImages>;
+    if (!parsed.feature || !parsed.topShot || !parsed.textureMacro || !parsed.beforeAfter) {
+      return null;
+    }
+    return parsed as ReelImages;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The video prompt a reel starts with.
+ *
+ * A template rather than a model call: the operator edits it in the composer
+ * before anything is generated, and asking an LLM to write a prompt that a
+ * person is about to rewrite spends a call to save a paragraph.
+ */
+function buildReelPrompt(candidate: ReelCandidate): string {
+  return loadTemplate('reel-video.template.txt', {
+    seo: { title: candidate.title || candidate.spy_title, category: candidate.seed_keyword },
+    spy: { title: candidate.spy_title, group: candidate.seed_keyword },
+  });
+}
+
+/** A caption to start from. Edited in the composer, like the prompt. */
+function buildReelCaption(candidate: ReelCandidate): string {
+  const title = candidate.title || candidate.spy_title;
+  return candidate.post_url ? `${title}\n\n${candidate.post_url}` : title;
+}
 
 type Flash = { kind: 'ok' | 'error' | 'warn'; message: string } | null;
 
@@ -896,6 +963,254 @@ export function buildServer(
       siteId: Math.max(0, asNumber(q.site, 0)),
     };
   };
+
+  /* -- Reels ------------------------------------------------------------ */
+
+  app.get('/reels', async (request, reply) => {
+    const candidates = reelCandidates().map((c) => ({ ...c, images: readReelImages(c) }));
+
+    return page(
+      reply,
+      'Reels',
+      '/reels',
+      reelsPage({
+        candidates,
+        reels: listReels(),
+        configured: settings.get('fb_system_token') !== '' && listFbPages().length > 0,
+        enabled: settings.getBool('fb_enabled'),
+        pages: listFbPages().length,
+      }),
+      readFlash(request.query),
+    );
+  });
+
+  app.get('/reels/new/:runId', async (request, reply) => {
+    const runId = asNumber((request.params as { runId: string }).runId, 0);
+    const candidate = reelCandidates(500).find((c) => c.run_id === runId);
+    if (!candidate) return reply.callNotFound();
+
+    const images = readReelImages(candidate);
+    if (!images) {
+      return redirect(reply, '/reels', {
+        kind: 'error',
+        message: 'That run’s images could not be read.',
+      });
+    }
+
+    return page(
+      reply,
+      'Make a reel',
+      '/reels',
+      reelComposerPage({
+        candidate,
+        images,
+        prompt: buildReelPrompt(candidate),
+        caption: buildReelCaption(candidate),
+        route: resolveFbPage(candidate.site_id, candidate.seed_keyword),
+      }),
+      readFlash(request.query),
+    );
+  });
+
+  app.post('/reels/new/:runId', async (request, reply) => {
+    const runId = asNumber((request.params as { runId: string }).runId, 0);
+    const body = request.body as {
+      reference?: string | string[];
+      prompt?: string;
+      caption?: string;
+    };
+
+    const candidate = reelCandidates(500).find((c) => c.run_id === runId);
+    if (!candidate) return reply.callNotFound();
+
+    const images = readReelImages(candidate);
+    if (!images) {
+      return redirect(reply, '/reels', {
+        kind: 'error',
+        message: 'That run’s images could not be read.',
+      });
+    }
+
+    // One checkbox arrives as a string, several as an array.
+    const chosen = ([] as string[]).concat(body.reference ?? []);
+    if (chosen.length === 0) {
+      return redirect(reply, `/reels/new/${runId}`, {
+        kind: 'error',
+        message: 'Pick at least one reference image.',
+      });
+    }
+
+    const host = candidate.site_domain.replace(/^https?:\/\//, '').replace(/\/+$/, '');
+    const references = chosen
+      .map((key) => images[key as keyof typeof images])
+      .filter((path): path is string => Boolean(path))
+      .map((path) => `https://${host}${path}`);
+
+    const route = resolveFbPage(candidate.site_id, candidate.seed_keyword);
+
+    const reelId = createReel({
+      runId,
+      siteId: candidate.site_id,
+      keywordId: candidate.keyword_id,
+      fbPageId: route?.page.id ?? null,
+      prompt: (body.prompt ?? '').trim() || buildReelPrompt(candidate),
+      caption: (body.caption ?? '').trim(),
+      references,
+    });
+
+    const reel = getReel(reelId);
+    if (!reel) return redirect(reply, '/reels');
+
+    try {
+      await startGeneration(reel, settings, defaultDeps(settings));
+    } catch (err) {
+      updateReel(reelId, { status: 'failed', error: errorMessage(err) });
+      return redirect(reply, '/reels', { kind: 'error', message: errorMessage(err) });
+    }
+
+    return redirect(reply, '/reels', {
+      kind: 'ok',
+      message: 'Generating the video. It takes a few minutes.',
+    });
+  });
+
+  app.post('/reels/:id/publish', async (request, reply) => {
+    const id = asNumber((request.params as { id: string }).id, 0);
+    const reel = getReel(id);
+    if (!reel) return reply.callNotFound();
+
+    try {
+      await publishReel(reel, defaultDeps(settings));
+    } catch (err) {
+      updateReel(id, { status: 'failed', error: errorMessage(err) });
+      return redirect(reply, '/reels', { kind: 'error', message: errorMessage(err) });
+    }
+
+    return redirect(reply, '/reels', { kind: 'ok', message: 'Reel published.' });
+  });
+
+  app.post('/reels/:id/retry', async (request, reply) => {
+    const id = asNumber((request.params as { id: string }).id, 0);
+    const reel = getReel(id);
+    if (!reel) return reply.callNotFound();
+
+    try {
+      // A reel that already has its video failed at publishing, and the video
+      // is the expensive half -- so retry the publish rather than the whole
+      // thing. Only a reel with nothing to show is generated again.
+      if (reel.video_url) {
+        updateReel(id, { status: 'ready', error: null });
+      } else {
+        await startGeneration(reel, settings, defaultDeps(settings));
+      }
+    } catch (err) {
+      updateReel(id, { status: 'failed', error: errorMessage(err) });
+      return redirect(reply, '/reels', { kind: 'error', message: errorMessage(err) });
+    }
+
+    return redirect(reply, '/reels', { kind: 'ok', message: 'Retrying.' });
+  });
+
+  app.post('/reels/:id/discard', async (request, reply) => {
+    deleteReel(asNumber((request.params as { id: string }).id, 0));
+    return redirect(reply, '/reels', { kind: 'ok', message: 'Reel discarded.' });
+  });
+
+  /* -- Settings -> Facebook ---------------------------------------------- */
+
+  app.get('/settings/facebook', async (request, reply) =>
+    page(
+      reply,
+      'Facebook',
+      '/settings',
+      facebookSettingsPage({
+        pages: listFbPages(),
+        routes: listFbRoutes(),
+        sites: listSites(),
+        groups: keywordGroups(),
+        tokenSet: settings.get('fb_system_token') !== '',
+        check: null,
+      }),
+      readFlash(request.query),
+    ),
+  );
+
+  app.post('/settings/facebook/verify', async (_request, reply) => {
+    const client = new FacebookClient({ systemUserToken: settings.get('fb_system_token') });
+    const check = await client.healthCheck();
+
+    return page(
+      reply,
+      'Facebook',
+      '/settings',
+      facebookSettingsPage({
+        pages: listFbPages(),
+        routes: listFbRoutes(),
+        sites: listSites(),
+        groups: keywordGroups(),
+        tokenSet: settings.get('fb_system_token') !== '',
+        check,
+      }),
+      null,
+    );
+  });
+
+  app.post('/settings/facebook/pages', async (request, reply) => {
+    const body = request.body as {
+      pageId?: string;
+      name?: string;
+      autoPublish?: string;
+    };
+
+    try {
+      upsertFbPage({
+        pageId: body.pageId ?? '',
+        name: body.name ?? '',
+        autoPublish: body.autoPublish === '1',
+        enabled: true,
+      });
+    } catch (err) {
+      return redirect(reply, '/settings/facebook', {
+        kind: 'error',
+        message: errorMessage(err),
+      });
+    }
+
+    return redirect(reply, '/settings/facebook', { kind: 'ok', message: 'Page saved.' });
+  });
+
+  app.post('/settings/facebook/pages/:id/delete', async (request, reply) => {
+    deleteFbPage(asNumber((request.params as { id: string }).id, 0));
+    return redirect(reply, '/settings/facebook', { kind: 'ok', message: 'Page removed.' });
+  });
+
+  app.post('/settings/facebook/routes', async (request, reply) => {
+    const body = request.body as {
+      siteId?: string;
+      seedKeyword?: string;
+      fbPageId?: string;
+    };
+
+    try {
+      upsertFbRoute({
+        siteId: body.siteId ? asNumber(body.siteId, 0) : null,
+        seedKeyword: body.seedKeyword ?? '',
+        fbPageId: asNumber(body.fbPageId, 0),
+      });
+    } catch (err) {
+      return redirect(reply, '/settings/facebook', {
+        kind: 'error',
+        message: errorMessage(err),
+      });
+    }
+
+    return redirect(reply, '/settings/facebook', { kind: 'ok', message: 'Route saved.' });
+  });
+
+  app.post('/settings/facebook/routes/:id/delete', async (request, reply) => {
+    deleteFbRoute(asNumber((request.params as { id: string }).id, 0));
+    return redirect(reply, '/settings/facebook', { kind: 'ok', message: 'Route removed.' });
+  });
 
   app.get('/keywords', async (request, reply) => {
     const q = request.query as { page?: string };

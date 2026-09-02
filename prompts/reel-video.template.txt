@@ -1,0 +1,11 @@
+A short vertical food video for social media, 9:16, built from the reference images provided.
+
+Subject: {{spy.title}}
+Dish: {{seo.title}}
+Category: {{seo.category}}
+
+Motion: slow cinematic camera push toward the dish, gentle parallax, steam rising, natural movement only. Keep the food exactly as it appears in the reference images -- same plating, same colours, same styling. Do not add, remove or rearrange any ingredient, and do not add green herbs, basil, parsley or leaf garnish.
+
+Lighting: soft natural window light, shallow depth of field, warm and appetising, premium food photography.
+
+No text, no captions, no logos, no watermarks, no hands, no people. No cuts or transitions -- one continuous shot.

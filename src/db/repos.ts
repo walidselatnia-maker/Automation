@@ -1870,3 +1870,350 @@ export const setAutoPublish = (id: number, auto: boolean): void => {
     id,
   );
 };
+
+/* -- Facebook pages, routes and reels ------------------------------------- */
+
+/**
+ * A Facebook Page this platform may publish Reels to.
+ *
+ * Registered by hand rather than synced from Graph: the system user token can
+ * see every page in the business, and only some of them are pages this should
+ * ever post to. No credential is stored here -- the page token is minted from
+ * the system user token at publish time, so a page that loses permission stops
+ * working immediately rather than at the next manual re-entry.
+ */
+export interface FbPageRow {
+  id: number;
+  page_id: string;
+  name: string;
+  auto_publish: number;
+  enabled: number;
+  last_used_at: string | null;
+  last_error: string | null;
+  created_at: string;
+}
+
+/** Every distinct keyword group, for the route picker's suggestions. */
+export const keywordGroups = (): string[] =>
+  all<{ seed_keyword: string }>(
+    `SELECT DISTINCT seed_keyword FROM keywords
+      WHERE seed_keyword != '' ORDER BY seed_keyword COLLATE NOCASE`,
+  ).map((r) => r.seed_keyword);
+
+export const listFbPages = (): FbPageRow[] =>
+  all<FbPageRow>('SELECT * FROM fb_pages ORDER BY name, page_id');
+
+export const getFbPage = (id: number): FbPageRow | undefined =>
+  get<FbPageRow>('SELECT * FROM fb_pages WHERE id = ?', id);
+
+export function upsertFbPage(
+  input: { pageId: string; name: string; autoPublish: boolean; enabled: boolean },
+  id?: number,
+): number {
+  const pageId = input.pageId.trim();
+  if (!pageId) throw new Error('A page needs its Facebook page id.');
+
+  if (id) {
+    run(
+      'UPDATE fb_pages SET page_id = ?, name = ?, auto_publish = ?, enabled = ? WHERE id = ?',
+      pageId,
+      input.name.trim(),
+      input.autoPublish ? 1 : 0,
+      input.enabled ? 1 : 0,
+      id,
+    );
+    return id;
+  }
+
+  run(
+    `INSERT INTO fb_pages (page_id, name, auto_publish, enabled) VALUES (?, ?, ?, ?)
+     ON CONFLICT (page_id) DO UPDATE SET
+       name = excluded.name,
+       auto_publish = excluded.auto_publish,
+       enabled = excluded.enabled`,
+    pageId,
+    input.name.trim(),
+    input.autoPublish ? 1 : 0,
+    input.enabled ? 1 : 0,
+  );
+
+  return get<{ id: number }>('SELECT id FROM fb_pages WHERE page_id = ?', pageId)?.id ?? 0;
+}
+
+export const deleteFbPage = (id: number): void => {
+  run('DELETE FROM fb_pages WHERE id = ?', id);
+};
+
+export function markFbPageUsed(id: number): void {
+  run(
+    "UPDATE fb_pages SET last_used_at = datetime('now'), last_error = NULL WHERE id = ?",
+    id,
+  );
+}
+
+export function markFbPageFailed(id: number, error: string): void {
+  run(
+    "UPDATE fb_pages SET last_used_at = datetime('now'), last_error = ? WHERE id = ?",
+    error.slice(0, 500),
+    id,
+  );
+}
+
+export interface FbRouteRow {
+  id: number;
+  site_id: number | null;
+  seed_keyword: string;
+  fb_page_id: number;
+  created_at: string;
+}
+
+/** Routes with the page and site names attached, for the settings table. */
+export interface FbRouteView extends FbRouteRow {
+  page_name: string;
+  page_external_id: string;
+  site_domain: string | null;
+}
+
+export const listFbRoutes = (): FbRouteView[] =>
+  all<FbRouteView>(
+    `SELECT r.*, p.name AS page_name, p.page_id AS page_external_id, s.domain AS site_domain
+       FROM fb_page_routes r
+       JOIN fb_pages p ON p.id = r.fb_page_id
+       LEFT JOIN sites s ON s.id = r.site_id
+      ORDER BY r.seed_keyword COLLATE NOCASE, s.domain`,
+  );
+
+export function upsertFbRoute(input: {
+  siteId: number | null;
+  seedKeyword: string;
+  fbPageId: number;
+}): void {
+  const seed = input.seedKeyword.trim();
+  if (!seed) throw new Error('A route needs a keyword group.');
+
+  // COALESCE matches the unique index: NULL never equals NULL, so a plain
+  // `site_id = ?` would never find an existing fallback route to update and
+  // the insert would be rejected by the index instead.
+  run(
+    `INSERT INTO fb_page_routes (site_id, seed_keyword, fb_page_id) VALUES (?, ?, ?)
+     ON CONFLICT (COALESCE(site_id, 0), seed_keyword COLLATE NOCASE)
+       DO UPDATE SET fb_page_id = excluded.fb_page_id`,
+    input.siteId,
+    seed,
+    input.fbPageId,
+  );
+}
+
+export const deleteFbRoute = (id: number): void => {
+  run('DELETE FROM fb_page_routes WHERE id = ?', id);
+};
+
+/** Why a reel is going where it is going, for the composer to show. */
+export interface ResolvedFbPage {
+  page: FbPageRow;
+  /** 'site' when a route named this site, 'fallback' when it did not. */
+  via: 'site' | 'fallback';
+}
+
+/**
+ * Which page a reel for this site and niche publishes to.
+ *
+ * The specific route wins over the shared one: a niche normally posts to the
+ * same page everywhere, and a site that needs its own page for that niche says
+ * so with a route of its own. No match returns undefined, and the caller holds
+ * the reel -- guessing a page means posting a recipe to the wrong audience,
+ * which is worse than waiting.
+ */
+export function resolveFbPage(
+  siteId: number,
+  seedKeyword: string,
+): ResolvedFbPage | undefined {
+  const specific = get<FbPageRow>(
+    `SELECT p.* FROM fb_page_routes r
+       JOIN fb_pages p ON p.id = r.fb_page_id
+      WHERE r.site_id = ? AND r.seed_keyword = ? COLLATE NOCASE AND p.enabled = 1`,
+    siteId,
+    seedKeyword,
+  );
+  if (specific) return { page: specific, via: 'site' };
+
+  const fallback = get<FbPageRow>(
+    `SELECT p.* FROM fb_page_routes r
+       JOIN fb_pages p ON p.id = r.fb_page_id
+      WHERE r.site_id IS NULL AND r.seed_keyword = ? COLLATE NOCASE AND p.enabled = 1`,
+    seedKeyword,
+  );
+  return fallback ? { page: fallback, via: 'fallback' } : undefined;
+}
+
+export type ReelStatus =
+  | 'draft'
+  | 'generating'
+  | 'ready'
+  | 'publishing'
+  | 'published'
+  | 'failed';
+
+export interface ReelRow {
+  id: number;
+  run_id: number | null;
+  site_id: number | null;
+  keyword_id: number | null;
+  fb_page_id: number | null;
+  status: ReelStatus;
+  prompt: string;
+  caption: string;
+  reference_json: string;
+  job_id: string | null;
+  video_url: string | null;
+  fb_video_id: string | null;
+  error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** A reel with the names needed to render it, joined once rather than per row. */
+export interface ReelView extends ReelRow {
+  site_domain: string | null;
+  seed_keyword: string | null;
+  run_title: string | null;
+  post_url: string | null;
+  page_name: string | null;
+  page_external_id: string | null;
+}
+
+const REEL_VIEW_SQL = `
+  SELECT r.*, s.domain AS site_domain, k.seed_keyword,
+         run.title AS run_title, run.post_url,
+         p.name AS page_name, p.page_id AS page_external_id
+    FROM reels r
+    LEFT JOIN sites s     ON s.id = r.site_id
+    LEFT JOIN keywords k  ON k.id = r.keyword_id
+    LEFT JOIN runs run    ON run.id = r.run_id
+    LEFT JOIN fb_pages p  ON p.id = r.fb_page_id
+`;
+
+export const listReels = (limit = 100): ReelView[] =>
+  all<ReelView>(`${REEL_VIEW_SQL} ORDER BY r.created_at DESC LIMIT ?`, limit);
+
+export const getReel = (id: number): ReelView | undefined =>
+  get<ReelView>(`${REEL_VIEW_SQL} WHERE r.id = ?`, id);
+
+/** Reels the scheduler still has work to do on. */
+export const activeReels = (): ReelView[] =>
+  all<ReelView>(
+    `${REEL_VIEW_SQL} WHERE r.status IN ('generating', 'ready', 'publishing')
+      ORDER BY r.created_at`,
+  );
+
+export function createReel(input: {
+  runId: number;
+  siteId: number;
+  keywordId: number;
+  fbPageId: number | null;
+  prompt: string;
+  caption: string;
+  references: string[];
+}): number {
+  run(
+    `INSERT INTO reels (run_id, site_id, keyword_id, fb_page_id, prompt, caption, reference_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    input.runId,
+    input.siteId,
+    input.keywordId,
+    input.fbPageId,
+    input.prompt,
+    input.caption,
+    JSON.stringify(input.references),
+  );
+  return get<{ id: number }>('SELECT last_insert_rowid() AS id')?.id ?? 0;
+}
+
+/**
+ * Move a reel along.
+ *
+ * One writer for every transition so `updated_at` cannot be forgotten -- the
+ * scheduler uses it to spot a reel that stopped moving.
+ */
+export function updateReel(
+  id: number,
+  fields: Partial<{
+    status: ReelStatus;
+    jobId: string | null;
+    videoUrl: string | null;
+    fbVideoId: string | null;
+    fbPageId: number | null;
+    caption: string;
+    error: string | null;
+  }>,
+): void {
+  const sets: string[] = [];
+  const values: (string | number | null)[] = [];
+
+  const column: Record<string, string> = {
+    status: 'status',
+    jobId: 'job_id',
+    videoUrl: 'video_url',
+    fbVideoId: 'fb_video_id',
+    fbPageId: 'fb_page_id',
+    caption: 'caption',
+    error: 'error',
+  };
+
+  for (const [key, value] of Object.entries(fields)) {
+    if (value === undefined) continue;
+    sets.push(`${column[key]} = ?`);
+    // Errors are truncated here rather than at every call site: a stack trace
+    // pasted into this column is worth reading, not worth storing whole.
+    values.push(key === 'error' && typeof value === 'string' ? value.slice(0, 1000) : value);
+  }
+
+  if (sets.length === 0) return;
+
+  sets.push("updated_at = datetime('now')");
+  run(`UPDATE reels SET ${sets.join(', ')} WHERE id = ?`, ...values, id);
+}
+
+export const deleteReel = (id: number): void => {
+  run('DELETE FROM reels WHERE id = ?', id);
+};
+
+/** Runs that could become a reel: published, with images, and not used yet. */
+export interface ReelCandidate {
+  run_id: number;
+  site_id: number;
+  keyword_id: number;
+  site_domain: string;
+  seed_keyword: string;
+  spy_title: string;
+  title: string;
+  post_url: string | null;
+  published_at: string | null;
+  images_json: string | null;
+}
+
+/**
+ * Published articles with their four images still available.
+ *
+ * The images come from the generate-images checkpoint rather than from
+ * keyword_images, because the latter only holds a row when sharing is on --
+ * and a site that generated its own images has just as much to make a reel
+ * from. A run whose checkpoint is gone simply does not appear.
+ */
+export const reelCandidates = (limit = 50): ReelCandidate[] =>
+  all<ReelCandidate>(
+    `SELECT r.id AS run_id, r.site_id, r.keyword_id, s.domain AS site_domain,
+            k.seed_keyword, k.spy_title, r.title, r.post_url, r.published_at,
+            st.output_json AS images_json
+       FROM runs r
+       JOIN sites s     ON s.id = r.site_id
+       JOIN keywords k  ON k.id = r.keyword_id
+       JOIN run_steps st ON st.run_id = r.id
+                        AND st.step = 'generate-images'
+                        AND st.status = 'ok'
+      WHERE r.status = 'published'
+        AND NOT EXISTS (SELECT 1 FROM reels x WHERE x.run_id = r.id)
+      ORDER BY r.published_at DESC
+      LIMIT ?`,
+    limit,
+  );

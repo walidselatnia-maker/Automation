@@ -17,6 +17,8 @@ export interface ImageJob {
   job_id: string;
   status: string;
   image_url: string | null;
+  /** Populated for video jobs; the same URL also arrives as image_url. */
+  video_url?: string | null;
   image_expires_at: string | null;
   error: string | null;
   prompt?: string;
@@ -86,6 +88,49 @@ export class ImageClient {
     const json = (await response.json()) as { job_id?: string };
     if (!json.job_id) {
       throw new ImageGenerationError('Image service did not return a job_id');
+    }
+    return json.job_id;
+  }
+
+  /**
+   * Queue a video built from reference images.
+   *
+   * Same job table and the same `poll` as an image, so nothing downstream has
+   * to know which kind it is waiting on -- only that it takes minutes rather
+   * than seconds, which is the caller's business, not this method's.
+   *
+   * The reference URLs are ordinary public image URLs. The service uploads
+   * each one to Flow at generation time, which is what lets an article of any
+   * age become a video without having stored a Flow media id for it.
+   */
+  async submitVideo(input: {
+    prompt: string;
+    referenceUrls: string[];
+    projectId?: string;
+    orientation?: string;
+  }): Promise<string> {
+    const response = await fetch(this.url('/v1/generate-video'), {
+      method: 'POST',
+      headers: this.headers(),
+      body: JSON.stringify({
+        prompt: input.prompt,
+        reference_urls: input.referenceUrls,
+        orientation: input.orientation ?? 'VERTICAL',
+        ...(input.projectId ? { project_id: input.projectId } : {}),
+      }),
+      signal: AbortSignal.timeout(60_000),
+    });
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      throw new ImageGenerationError(
+        `Video generation request failed: HTTP ${response.status} ${text.slice(0, 200)}`,
+      );
+    }
+
+    const json = (await response.json()) as { job_id?: string };
+    if (!json.job_id) {
+      throw new ImageGenerationError('Image service did not return a job_id for the video');
     }
     return json.job_id;
   }

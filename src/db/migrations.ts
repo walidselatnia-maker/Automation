@@ -204,6 +204,84 @@ export const MIGRATIONS: Migration[] = [
       addColumn(db, 'keyword_sites', 'blocked_reason', 'TEXT');
     },
   },
+  {
+    id: '009-facebook-reels',
+    description: 'Facebook pages, their keyword-group routes, and reels',
+    up(db) {
+      // Pages are registered by hand rather than synced from Graph. The token
+      // can see every page in the business, and only some of them are ones
+      // this platform should ever post to.
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS fb_pages (
+          id            INTEGER PRIMARY KEY AUTOINCREMENT,
+          page_id       TEXT    NOT NULL UNIQUE,
+          name          TEXT    NOT NULL DEFAULT '',
+          -- Per page, not per site: a niche page that has earned trust can
+          -- publish unattended while a new one still waits to be read.
+          auto_publish  INTEGER NOT NULL DEFAULT 0 CHECK (auto_publish IN (0, 1)),
+          enabled       INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+          last_used_at  TEXT,
+          last_error    TEXT,
+          created_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+        );
+      `);
+
+      // Which page a reel goes to, decided by (site, niche).
+      //
+      // One site carries several nano-niches and each niche has its own page,
+      // so the site alone cannot decide and the niche alone cannot either. A
+      // NULL site_id is the fallback for a niche whose page is shared across
+      // every site, which is why site_id is nullable rather than required.
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS fb_page_routes (
+          id           INTEGER PRIMARY KEY AUTOINCREMENT,
+          site_id      INTEGER REFERENCES sites (id) ON DELETE CASCADE,
+          seed_keyword TEXT    NOT NULL,
+          fb_page_id   INTEGER NOT NULL REFERENCES fb_pages (id) ON DELETE CASCADE,
+          created_at   TEXT    NOT NULL DEFAULT (datetime('now'))
+        );
+      `);
+
+      // COALESCE, because NULL never equals NULL in a UNIQUE index and two
+      // identical fallback routes would both be accepted without it.
+      db.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_fb_route_unique
+          ON fb_page_routes (COALESCE(site_id, 0), seed_keyword COLLATE NOCASE);
+      `);
+
+      // A reel is an artefact of a run, not a second kind of run: it borrows a
+      // published article's images and caption and has its own short life
+      // afterwards. Keeping it out of `runs` keeps every derived counter on the
+      // dashboard meaning what it already means.
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS reels (
+          id             INTEGER PRIMARY KEY AUTOINCREMENT,
+          run_id         INTEGER REFERENCES runs (id)     ON DELETE SET NULL,
+          site_id        INTEGER REFERENCES sites (id)    ON DELETE SET NULL,
+          keyword_id     INTEGER REFERENCES keywords (id) ON DELETE SET NULL,
+          fb_page_id     INTEGER REFERENCES fb_pages (id) ON DELETE SET NULL,
+          status         TEXT    NOT NULL DEFAULT 'draft'
+                         CHECK (status IN ('draft','generating','ready',
+                                           'publishing','published','failed')),
+          prompt         TEXT    NOT NULL DEFAULT '',
+          caption        TEXT    NOT NULL DEFAULT '',
+          -- The images chosen as references, in order, as JSON.
+          reference_json TEXT    NOT NULL DEFAULT '[]',
+          job_id         TEXT,
+          video_url      TEXT,
+          fb_video_id    TEXT,
+          error          TEXT,
+          created_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+          updated_at     TEXT    NOT NULL DEFAULT (datetime('now'))
+        );
+      `);
+
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_reels_status ON reels (status, created_at DESC);
+      `);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_reels_run ON reels (run_id);`);
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */

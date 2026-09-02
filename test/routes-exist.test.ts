@@ -39,6 +39,8 @@ const PAGES = [
   '/sites',
   '/keywords',
   '/keywords/add',
+  '/reels',
+  '/settings/facebook',
   '/events',
   '/settings',
   '/settings/keys',

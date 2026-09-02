@@ -53,6 +53,7 @@ export const STEP_CONTEXTS: Record<string, Record<string, unknown>> = {
   },
   'pick-board': { seo: SEO, boardsJson: '{}' },
   'repair-json': { postError: 'e', articleJson: '{}' },
+  'reel-caption': { seo: SEO, spy: SPY, url: 'https://example.com/a-recipe' },
 };
 
 for (const part of ['part-1', 'part-2', 'part-3']) {
@@ -60,13 +61,30 @@ for (const part of ['part-1', 'part-2', 'part-3']) {
   STEP_CONTEXTS[`${part}.fallback`] = ARTICLE_CONTEXT;
 }
 
-/** The pin graphic is a template rather than a prompt pair, so it stands alone. */
-export const PIN_GRAPHIC_CONTEXT = {
-  seo: SEO,
-  cta: 'Try it!',
-  site: { domain: 'example.com' },
-  imagePrompts: { feature: 'f', textureMacro: 'm' },
+/**
+ * Templates rendered on their own, rather than as a system/user prompt pair.
+ *
+ * They are not sent to an LLM -- they are assembled and handed to an image or
+ * video model -- so they have no entry in PROMPT_MODELS. They still need their
+ * variables declared, because the placeholder check is the only thing standing
+ * between a renamed field and a prompt that silently renders "{{seo.titel}}"
+ * into a paid generation.
+ */
+export const TEMPLATE_CONTEXTS: Record<string, Record<string, unknown>> = {
+  'pin-graphic.template': {
+    seo: SEO,
+    cta: 'Try it!',
+    site: { domain: 'example.com' },
+    imagePrompts: { feature: 'f', textureMacro: 'm' },
+  },
+  'reel-video.template': {
+    seo: SEO,
+    spy: SPY,
+  },
 };
+
+/** Kept for the callers that named it before there was more than one. */
+export const PIN_GRAPHIC_CONTEXT = TEMPLATE_CONTEXTS['pin-graphic.template']!;
 
 /** Flatten a context into the dotted paths a template may use. */
 function dottedPaths(value: unknown, prefix = ''): string[] {
@@ -79,8 +97,7 @@ function dottedPaths(value: unknown, prefix = ''): string[] {
 
 /** Every variable this prompt may reference, sorted. Empty if unknown. */
 export function variablesFor(promptName: string): string[] {
-  const context =
-    promptName === 'pin-graphic.template' ? PIN_GRAPHIC_CONTEXT : STEP_CONTEXTS[promptName];
+  const context = TEMPLATE_CONTEXTS[promptName] ?? STEP_CONTEXTS[promptName];
   return context ? dottedPaths(context).sort() : [];
 }
 

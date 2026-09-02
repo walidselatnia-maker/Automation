@@ -35,9 +35,12 @@ describe('prompt files', () => {
   });
 
   it.skipIf(!hasPrompts)('every prompt file is claimed by a step context', () => {
+    // Standalone templates are excluded by shape rather than by name: they
+    // declare their variables in TEMPLATE_CONTEXTS instead of STEP_CONTEXTS,
+    // and naming each one here meant the next one was simply forgotten.
     const names = new Set(
       readdirSync(PROMPTS_DIR)
-        .filter((f) => f.endsWith('.txt') && !f.startsWith('pin-graphic'))
+        .filter((f) => f.endsWith('.txt') && !f.endsWith('.template.txt'))
         .map((f) => f.replace(/\.(system|user)\.txt$/, '')),
     );
 

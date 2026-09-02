@@ -9,7 +9,15 @@ import { getSetting, setSetting } from './db/repos.js';
 export interface SettingSpec {
   key: string;
   label: string;
-  group: 'general' | 'llm' | 'images' | 'buffer' | 'telegram' | 'schedule' | 'retry';
+  group:
+    | 'general'
+    | 'llm'
+    | 'images'
+    | 'buffer'
+    | 'facebook'
+    | 'telegram'
+    | 'schedule'
+    | 'retry';
   secret: boolean;
   default: string;
   help?: string;
@@ -197,6 +205,36 @@ export const SETTING_SPECS: SettingSpec[] = [
   },
 
   // -- Buffer --------------------------------------------------------------
+  {
+    key: 'fb_enabled',
+    label: 'Publish reels to Facebook',
+    group: 'facebook',
+    secret: false,
+    default: 'false',
+  },
+  {
+    key: 'fb_system_token',
+    label: 'System user access token',
+    group: 'facebook',
+    secret: true,
+    default: '',
+    type: 'password',
+    help:
+      'From Business Settings → Users → System Users. Unlike a personal token ' +
+      'this one does not expire, and one token covers every page. It needs ' +
+      'pages_manage_posts, pages_read_engagement and pages_show_list.',
+  },
+  {
+    key: 'flow_video_model_key',
+    label: 'Video model key (optional)',
+    group: 'facebook',
+    secret: false,
+    default: '',
+    help:
+      'Leave empty to use the Veo model the image service ships with. Set it ' +
+      'to override — the Flow UI uses model names that are not published ' +
+      'anywhere, so the value has to be read off a real request in DevTools.',
+  },
   {
     key: 'buffer_enabled',
     label: 'Publish to Buffer',

@@ -28,6 +28,7 @@ import type { Decision } from '../core/types.js';
 import { executePipeline, PipelineContext } from '../pipeline/index.js';
 import type { Settings } from '../settings.js';
 import { createLogger, errorMessage } from '../lib/logger.js';
+import { defaultDeps, tickReels } from '../reels/engine.js';
 
 const log = createLogger('scheduler');
 
@@ -616,11 +617,34 @@ export class Scheduler {
       if (result.outcome !== 'disabled' && result.outcome !== 'busy') {
         log.debug(`tick: ${result.outcome}`);
       }
+
+      // After the article run, not instead of it. Reels wait on Google and on
+      // Facebook rather than on the scheduler lock, so they advance on every
+      // tick regardless of whether an article was published on this one.
+      await this.tickReels();
+
       this.maybePrune();
     } catch (err) {
       log.error('scheduler tick threw', errorMessage(err));
     } finally {
       this.running = false;
+    }
+  }
+
+  /**
+   * Advance any reels that are waiting on something.
+   *
+   * Isolated from the article tick: a reel that cannot publish must never be
+   * the reason an article does not.
+   */
+  private async tickReels(): Promise<void> {
+    try {
+      const reels = await tickReels(this.settings, defaultDeps(this.settings));
+      if (reels.advanced > 0 || reels.failed > 0) {
+        log.info(`reels: ${reels.advanced} advanced, ${reels.failed} failed`);
+      }
+    } catch (err) {
+      log.error('the reel tick threw', errorMessage(err));
     }
   }
 

@@ -102,6 +102,12 @@ const NAV: NavItem[] = [
     icon: ICON('<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>'),
   },
   {
+    href: '/reels',
+    label: 'Reels',
+    icon: ICON('<rect x="3" y="4" width="18" height="16" rx="2"/>' +
+      '<polygon points="10 9 15 12 10 15 10 9"/>'),
+  },
+  {
     href: '/events',
     label: 'Events',
     icon: ICON('<path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h10"/>'),
