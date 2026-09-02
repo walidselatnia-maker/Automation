@@ -162,7 +162,7 @@ export function head(title: string): string {
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap">
 <link rel="stylesheet" href="/static/style.css">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%23e63946'/><rect x='9' y='9' width='14' height='2.5' rx='1.25' fill='white'/><rect x='9' y='15' width='14' height='2.5' rx='1.25' fill='white' opacity='.75'/><rect x='9' y='21' width='8' height='2.5' rx='1.25' fill='white' opacity='.5'/></svg>">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%232563eb'/><rect x='9' y='9' width='14' height='2.5' rx='1.25' fill='white'/><rect x='9' y='15' width='14' height='2.5' rx='1.25' fill='white' opacity='.75'/><rect x='9' y='21' width='8' height='2.5' rx='1.25' fill='white' opacity='.5'/></svg>">
 ${THEME_BOOT}`;
 }
 

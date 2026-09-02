@@ -541,6 +541,17 @@
     @apply flex-row items-center gap-2 normal-case tracking-normal;
   }
 
+  /* Numbered setup steps inside a card. Indented enough that the numbers sit
+     clear of the card edge, which list-inside does not manage on its own. */
+  .steps {
+    @apply mt-3 list-decimal space-y-1 pl-5;
+  }
+
+  .steps code {
+    @apply rounded px-1 py-0.5 text-xs;
+    @apply bg-slate-100 dark:bg-slate-800;
+  }
+
   /* -------------------------------------------------- Buffer account list */
   /* One column definition, shared by every row, so the fields line up down the
      card without a table stretching them to fill it. The two text fields take

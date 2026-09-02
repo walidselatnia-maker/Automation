@@ -2872,6 +2872,33 @@ export function facebookSettingsPage(data: FacebookSettingsData): Html {
         expiry, and page tokens are derived from it for each post &mdash; so a page you add
         later needs no new credential.
       </p>
+
+      <p class="small">
+        <a class="button" target="_blank" rel="noopener"
+           href="https://business.facebook.com/settings/system-users">
+          Open Business Settings &rarr; System Users
+        </a>
+      </p>
+
+      <!-- Written out because this is the step people get wrong: the token is
+           generated from a system user inside Business Settings, not from the
+           Graph API Explorer, and a token made the usual way expires in sixty
+           days and takes unattended publishing down with it. -->
+      <ol class="small muted steps">
+        <li>Open the link above and pick your business.</li>
+        <li><strong>Add</strong> a system user &mdash; give it the Admin role.</li>
+        <li>
+          <strong>Add assets</strong> &rarr; Pages &rarr; select every page you will
+          post to, and switch on <em>Manage Page</em> for each.
+        </li>
+        <li>
+          <strong>Generate new token</strong>, choose your app, and tick
+          <code>pages_manage_posts</code>, <code>pages_read_engagement</code> and
+          <code>pages_show_list</code>.
+        </li>
+        <li>Copy it into <a href="/settings">Settings &rarr; Facebook</a> and verify below.</li>
+      </ol>
+
       <p class="small">
         Token: ${data.tokenSet
           ? html`${statusBadge('ok')} stored`
