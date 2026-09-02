@@ -51,11 +51,29 @@ with open(_MODELS_FILE) as _f:
     _MODELS = json.load(_f)
 
 IMAGE_MODELS = _MODELS["image_models"]
+VIDEO_MODELS = _MODELS["video_models"]
+
+# Which Veo model generates a video from reference images.
+#
+# The tier decides which table in models.json is consulted; the override skips
+# the table entirely. Flow's UI has moved on to model names ("Omni") that are
+# not in this file, and the only way to learn one is to read a real request in
+# DevTools -- so the override exists to let that value be pasted in without a
+# redeploy. Empty means "use the table", which is the shipped behaviour.
+VIDEO_PAYGATE_TIER = os.environ.get("VIDEO_PAYGATE_TIER", "PAYGATE_TIER_ONE").strip()
+VIDEO_MODEL_KEY = os.environ.get("VIDEO_MODEL_KEY", "").strip()
+
+# Video generation is minutes, not the 30-90 seconds an image takes, so it gets
+# its own budget rather than inheriting numbers chosen for images.
+VIDEO_POLL_INTERVAL = int(os.environ.get("VIDEO_POLL_INTERVAL", "15"))
+VIDEO_MAX_POLLS = int(os.environ.get("VIDEO_MAX_POLLS", "80"))
 
 # --- API Endpoints ------------------------------------------
 # Frozen: these paths and their query shape are what the Flow UI calls.
 ENDPOINTS = {
     "generate_images": "/v1/projects/{project_id}/flowMedia:batchGenerateImages",
+    "generate_video_references": "/v1/video:batchAsyncGenerateVideoReferenceImages",
+    "check_video_status": "/v1/video:batchCheckAsyncVideoGenerationStatus",
     "upload_image": "/v1/flow/uploadImage",
     "get_credits": "/v1/credits",
     "get_media": "/v1/media/{media_id}",

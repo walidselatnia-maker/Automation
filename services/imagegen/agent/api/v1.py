@@ -50,6 +50,20 @@ class GenerateRequest(BaseModel):
     project_id: Optional[str] = Field(default=None, max_length=200)
 
 
+class GenerateVideoRequest(BaseModel):
+    """A video composed from images the platform already published.
+
+    reference_urls are ordinary public image URLs, not Flow media ids: the
+    service uploads each one at generation time, which means an article of any
+    age can become a video and no media id has to outlive the job that made it.
+    """
+
+    prompt: str = Field(..., min_length=1, max_length=5000)
+    reference_urls: list[str] = Field(..., min_length=1, max_length=8)
+    orientation: Literal["VERTICAL", "HORIZONTAL"] = "VERTICAL"
+    project_id: Optional[str] = Field(default=None, max_length=200)
+
+
 class GenerateResponse(BaseModel):
     job_id: str
     status: str
@@ -58,21 +72,28 @@ class GenerateResponse(BaseModel):
 class JobResponse(BaseModel):
     job_id: str
     status: Literal["PENDING", "PROCESSING", "COMPLETED", "FAILED"]
+    kind: Literal["image", "video"] = "image"
+
+    # image_url is kept populated for both kinds. The platform's ImageClient
+    # reads that field and predates video entirely, so changing its meaning
+    # would break the caller to save one line here; video_url is the honest
+    # name for new callers, and both point at the same URL.
     image_url: Optional[str] = None
+    video_url: Optional[str] = None
     image_expires_at: Optional[int] = None
+    media_id: Optional[str] = None
     error: Optional[str] = None
     prompt: Optional[str] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
 
 
-@router.post("/generate", response_model=GenerateResponse, status_code=202)
-async def generate(body: GenerateRequest) -> GenerateResponse:
-    """Queue an image generation. Returns immediately with a job_id to poll."""
-    # Fail loudly rather than queueing work that cannot move. Without these the
-    # job would sit PENDING until someone noticed, and the caller would poll it
-    # forever.
-    project_id = (body.project_id or FLOW_PROJECT_ID or "").strip()
+def _reject_if_unavailable(project_id: str) -> None:
+    """The two reasons a job could never move, refused at submit time.
+
+    Without these the job sits PENDING until somebody notices, and the caller
+    polls something that was never going to finish.
+    """
     if not project_id:
         raise HTTPException(
             503,
@@ -83,12 +104,39 @@ async def generate(body: GenerateRequest) -> GenerateResponse:
     if not get_flow_client().connected:
         raise HTTPException(
             503,
-            "Browser extension not connected — nothing can be generated right "
+            "Browser extension not connected -- nothing can be generated right "
             "now. Open the Browser page to check the Google session.",
         )
 
+
+@router.post("/generate", response_model=GenerateResponse, status_code=202)
+async def generate(body: GenerateRequest) -> GenerateResponse:
+    """Queue an image generation. Returns immediately with a job_id to poll."""
+    project_id = (body.project_id or FLOW_PROJECT_ID or "").strip()
+    _reject_if_unavailable(project_id)
+
     job = await jobs.create(body.prompt, body.orientation, project_id)
     logger.info("queued job %s for project %s", job["id"][:8], project_id)
+    return GenerateResponse(job_id=job["id"], status=job["status"])
+
+
+@router.post("/generate-video", response_model=GenerateResponse, status_code=202)
+async def generate_video(body: GenerateVideoRequest) -> GenerateResponse:
+    """Queue a video generation from reference images.
+
+    Same job table and the same polling endpoint as an image -- only slower.
+    Expect minutes rather than the 30-90 seconds an image takes.
+    """
+    project_id = (body.project_id or FLOW_PROJECT_ID or "").strip()
+    _reject_if_unavailable(project_id)
+
+    job = await jobs.create_video(
+        body.prompt, body.reference_urls, project_id, body.orientation
+    )
+    logger.info(
+        "queued video job %s for project %s (%d reference image(s))",
+        job["id"][:8], project_id, len(body.reference_urls),
+    )
     return GenerateResponse(job_id=job["id"], status=job["status"])
 
 
@@ -99,11 +147,16 @@ async def get_job(job_id: str) -> JobResponse:
     if not job:
         raise HTTPException(404, f"No job with id {job_id}")
 
+    kind = job["kind"] if "kind" in job.keys() else "image"
+
     return JobResponse(
         job_id=job["id"],
         status=job["status"],
+        kind=kind,
         image_url=job["output_url"],
+        video_url=job["output_url"] if kind == "video" else None,
         image_expires_at=_expires_at(job["output_url"]),
+        media_id=job["media_id"],
         error=job["error_message"],
         prompt=job["prompt"],
         created_at=job["created_at"],

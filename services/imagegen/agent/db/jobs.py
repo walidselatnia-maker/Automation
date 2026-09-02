@@ -4,6 +4,7 @@ Deliberately not a generic table-name-driven CRUD layer. There is one table and
 five things anyone does to it, so each of them is a named function whose SQL is
 visible at the call site.
 """
+import json
 import logging
 import uuid
 from typing import Optional
@@ -25,6 +26,38 @@ async def create(prompt: str, orientation: str = "VERTICAL", project_id: str = "
     )
     await db.commit()
     return await get(job_id)
+
+
+async def create_video(
+    prompt: str,
+    reference_urls: list[str],
+    project_id: str = "",
+    orientation: str = "VERTICAL",
+) -> dict:
+    """Queue a video generation from reference images. Returns the new row."""
+    job_id = str(uuid.uuid4())
+    db = await get_db()
+    await db.execute(
+        """INSERT INTO job (id, prompt, orientation, project_id, kind, reference_urls)
+                VALUES (?, ?, ?, ?, 'video', ?)""",
+        (job_id, prompt, orientation, project_id, json.dumps(reference_urls)),
+    )
+    await db.commit()
+    return await get(job_id)
+
+
+async def set_operation(job_id: str, operation: dict) -> None:
+    """Record the Flow operation a submitted video is waiting on.
+
+    Stored rather than held in memory so a worker that restarts mid-generation
+    resumes polling the operation instead of paying for the video twice.
+    """
+    db = await get_db()
+    await db.execute(
+        f"UPDATE job SET operation_json = ?, updated_at = {_NOW} WHERE id = ?",
+        (json.dumps(operation), job_id),
+    )
+    await db.commit()
 
 
 async def get(job_id: str) -> Optional[dict]:

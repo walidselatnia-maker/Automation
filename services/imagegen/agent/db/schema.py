@@ -33,6 +33,17 @@ CREATE TABLE IF NOT EXISTS job (
     -- project, so a value baked into the environment could only ever be
     -- right for one of them.
     project_id    TEXT NOT NULL DEFAULT '',
+
+    -- 'image' or 'video'. Defaulted so every row written before video existed
+    -- reads back correctly, and so the image path needs no changes at all.
+    kind          TEXT NOT NULL DEFAULT 'image'
+                  CHECK(kind IN ('image','video')),
+
+    -- Video only: the source images to compose from, and the Flow operation
+    -- handed back at submit time that the worker polls until it resolves.
+    reference_urls TEXT NOT NULL DEFAULT '[]',
+    operation_json TEXT,
+
     status        TEXT NOT NULL DEFAULT 'PENDING'
                   CHECK(status IN ('PENDING','PROCESSING','COMPLETED','FAILED')),
     media_id      TEXT,
@@ -76,6 +87,12 @@ async def get_db() -> aiosqlite.Connection:
 # data and it cannot fail on a second run.
 ADDED_COLUMNS = [
     ("job", "project_id", "TEXT NOT NULL DEFAULT ''"),
+    # Video, added alongside images rather than in a table of its own: a job is
+    # still "a prompt went to Flow and something came back", and the queue,
+    # retry, stale-reset and watchdog logic are all worth having once.
+    ("job", "kind", "TEXT NOT NULL DEFAULT 'image'"),
+    ("job", "reference_urls", "TEXT NOT NULL DEFAULT '[]'"),
+    ("job", "operation_json", "TEXT"),
 ]
 
 

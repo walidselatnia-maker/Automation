@@ -1,9 +1,10 @@
-"""Reading Google Flow's batchGenerateImages response.
+"""Reading Google Flow's generation responses.
 
-Trimmed to the image shape; the video branches went with the video pipeline.
-The rules below were recovered from real responses and are worth stating
-plainly, because getting either wrong produces a job that looks successful and
-returns nothing usable.
+Two shapes: images come back under `media[]` immediately, videos come back as
+an `operations[]` handle that has to be polled until it carries a URL. The
+rules below were recovered from real responses and are worth stating plainly,
+because getting either wrong produces a job that looks successful and returns
+nothing usable.
 """
 import logging
 import re
@@ -90,3 +91,77 @@ def extract_output_url(result: dict) -> str:
             return url
 
     return data.get("imageUri", "") or ""
+
+
+# --- Video -----------------------------------------------------------------
+#
+# A video response is an operation, not a result. The submit call returns one
+# with no URL on it; the same structure comes back from check_video_status with
+# a fifeUrl once Google has finished. So the same two readers serve both, and
+# "no URL yet" is the normal state rather than a failure.
+
+
+def extract_operation(result: dict) -> dict | None:
+    """The operation handle to poll, from a video submit response."""
+    data = result.get("data", result)
+    ops = data.get("operations") or []
+    if not ops:
+        return None
+
+    # Sent back verbatim: check_video_status expects the operation exactly as
+    # it was handed out, and trimming it to the fields that look useful is how
+    # you get an empty status response with no error to explain it.
+    return ops[0]
+
+
+def _video_metadata(result: dict) -> dict:
+    data = result.get("data", result)
+    ops = data.get("operations") or []
+    if not ops:
+        return {}
+    return ops[0].get("operation", {}).get("metadata", {}).get("video", {}) or {}
+
+
+def extract_video_url(result: dict) -> str:
+    """The finished video's URL, or "" while it is still generating."""
+    return _video_metadata(result).get("fifeUrl", "") or ""
+
+
+def extract_video_media_id(result: dict) -> str | None:
+    """The finished video's mediaId.
+
+    Same UUID rule as images: mediaGenerationId sitting beside it is a base64
+    protobuf, and passing that on produces requests Google rejects.
+    """
+    meta = _video_metadata(result)
+
+    candidate = meta.get("mediaId", "")
+    if candidate and _UUID.match(candidate):
+        return candidate
+
+    found = _UUID_IN_URL.search(meta.get("fifeUrl", "") or "")
+    return found.group(1) if found else None
+
+
+def video_failed(result: dict) -> str:
+    """A terminal error reported inside the operation, as readable text.
+
+    Separate from is_error: an operation can carry a failure while the HTTP
+    call around it succeeded, which would otherwise be polled until the
+    attempt budget ran out and reported as a timeout rather than the reason.
+    """
+    data = result.get("data", result)
+    ops = data.get("operations") or []
+    if not ops:
+        return ""
+
+    operation = ops[0].get("operation", {})
+    error = operation.get("error")
+    if isinstance(error, dict) and (error.get("message") or error.get("code")):
+        return str(error.get("message") or f"code {error.get('code')}")
+
+    status = ops[0].get("status") or operation.get("metadata", {}).get("video", {}).get("status", "")
+    if isinstance(status, str) and status.upper() in ("MEDIA_GENERATION_STATUS_FAILED", "FAILED"):
+        return f"Flow reported {status}"
+
+    return ""

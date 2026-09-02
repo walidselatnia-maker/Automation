@@ -14,7 +14,7 @@ from typing import Optional
 
 from agent.config import (
     GOOGLE_FLOW_API, GOOGLE_API_KEY, ENDPOINTS,
-    IMAGE_MODELS,
+    IMAGE_MODELS, VIDEO_MODELS, VIDEO_MODEL_KEY, VIDEO_PAYGATE_TIER,
 )
 from agent.services.headers import random_headers
 
@@ -448,6 +448,80 @@ class FlowClient:
             "body": body,
             "captchaAction": "IMAGE_GENERATION",
         })
+
+    async def generate_video_from_references(
+        self,
+        reference_media_ids: list[str],
+        prompt: str,
+        project_id: str,
+        aspect_ratio: str = "VIDEO_ASPECT_RATIO_PORTRAIT",
+        model_key: str = "",
+    ) -> dict:
+        """Generate a video composed from reference images (r2v).
+
+        The request body is part of the frozen surface: it is what the Flow UI
+        sends, recovered from a working capture. Reshaping any of it -- the
+        nesting of textInput, the imageUsageType, the empty metadata -- produces
+        requests Google rejects with no useful detail.
+
+        reference_media_ids come from upload_image, not from anything we stored
+        earlier: uploading at generation time means an article from any date can
+        be turned into a video, and no media id has to outlive its job.
+        """
+        key = (
+            model_key
+            or VIDEO_MODEL_KEY
+            or VIDEO_MODELS.get(VIDEO_PAYGATE_TIER, {})
+            .get("reference_frame_2_video", {})
+            .get(aspect_ratio, "")
+        )
+
+        if not key:
+            return {"error": (
+                f"No video model for tier={VIDEO_PAYGATE_TIER} "
+                f"ratio={aspect_ratio}. Set VIDEO_MODEL_KEY."
+            )}
+
+        if not reference_media_ids:
+            return {"error": "No reference images to generate a video from"}
+
+        request = {
+            "aspectRatio": aspect_ratio,
+            "seed": int(time.time()) % 10000,
+            "textInput": {"structuredPrompt": {"parts": [{"text": prompt}]}},
+            "videoModelKey": key,
+            "referenceImages": [
+                {"mediaId": mid, "imageUsageType": "IMAGE_USAGE_TYPE_ASSET"}
+                for mid in reference_media_ids
+            ],
+            "metadata": {},
+        }
+
+        body = {
+            "mediaGenerationContext": {"batchId": f"{uuid.uuid4()}"},
+            "clientContext": self._client_context(project_id, VIDEO_PAYGATE_TIER),
+            "requests": [request],
+            "useV2ModelConfig": True,
+        }
+
+        url = self._build_url("generate_video_references")
+        return await self._send("api_request", {
+            "url": url,
+            "method": "POST",
+            "headers": random_headers(),
+            "body": body,
+            "captchaAction": "VIDEO_GENERATION",
+        }, timeout=60)  # Submit only -- polling is separate.
+
+    async def check_video_status(self, operations: list[dict]) -> dict:
+        """Poll asynchronous video operations. Consumes no captcha."""
+        url = self._build_url("check_video_status")
+        return await self._send("api_request", {
+            "url": url,
+            "method": "POST",
+            "headers": random_headers(),
+            "body": {"operations": operations},
+        }, timeout=30)
 
     async def get_credits(self) -> dict:
         """Get user credits and tier."""

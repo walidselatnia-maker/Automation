@@ -1,15 +1,20 @@
-"""The worker: pending job -> Google Flow -> image URL.
+"""The worker: pending job -> Google Flow -> image or video URL.
 
-One loop, one request type. The version this replaced dispatched nine request
-types through an SDK operations layer that resolved character references,
-chained scenes, and saved raw video bytes — all of which existed for the video
-pipeline.
+One loop, two request kinds. What is preserved exactly is the call itself:
+`generate_images()` and `generate_video_from_references()` build the payloads
+Google's own UI sends, and nothing here reshapes them.
 
-What is preserved exactly is the call itself: `flow_client.generate_images()`
-builds the batch payload Google's own UI sends, and nothing here reshapes it.
+Images resolve in one call. Video does not: the submit returns an operation
+handle, and the result arrives minutes later from a separate status endpoint.
+That polling happens inside the job's own task rather than by returning it to
+the queue, so a half-generated video is never re-submitted and paid for twice.
 """
 import asyncio
+import base64
+import json
 import logging
+
+import httpx
 
 from agent.config import (
     API_COOLDOWN,
@@ -19,10 +24,21 @@ from agent.config import (
     POLL_INTERVAL,
     STALE_PROCESSING_TIMEOUT,
     TOKEN_MAX_AGE_BEFORE_BATCH,
+    VIDEO_MAX_POLLS,
+    VIDEO_POLL_INTERVAL,
 )
 from agent.db import jobs
 from agent.services.flow_client import get_flow_client
-from agent.worker._parsing import extract_media_id, extract_output_url, is_error, error_text
+from agent.worker._parsing import (
+    error_text,
+    extract_media_id,
+    extract_operation,
+    extract_output_url,
+    extract_video_media_id,
+    extract_video_url,
+    is_error,
+    video_failed,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +46,17 @@ ASPECT_RATIOS = {
     "VERTICAL": "IMAGE_ASPECT_RATIO_PORTRAIT",
     "HORIZONTAL": "IMAGE_ASPECT_RATIO_LANDSCAPE",
 }
+
+VIDEO_ASPECT_RATIOS = {
+    "VERTICAL": "VIDEO_ASPECT_RATIO_PORTRAIT",
+    "HORIZONTAL": "VIDEO_ASPECT_RATIO_LANDSCAPE",
+}
+
+# A reference image is fetched over the public internet from the site that
+# published it, so it is bounded: a redirect loop or a wrong URL must fail the
+# job rather than hold a worker slot open.
+REFERENCE_DOWNLOAD_TIMEOUT = 60
+MAX_REFERENCE_BYTES = 12 * 1024 * 1024
 
 # Failures worth retrying: the browser is momentarily absent, or Google is
 # rate-limiting. Anything else is a bad request that will fail identically on
@@ -120,25 +147,10 @@ class WorkerController:
     async def _run(self, job: dict) -> None:
         job_id = job["id"]
         try:
-            result = await get_flow_client().generate_images(
-                prompt=job["prompt"],
-                # The job's own project. FLOW_PROJECT_ID is only the fallback
-                # for a caller that sent none, applied when the job was queued.
-                project_id=job["project_id"] or FLOW_PROJECT_ID,
-                aspect_ratio=ASPECT_RATIOS.get(job["orientation"], ASPECT_RATIOS["VERTICAL"]),
-            )
-
-            if is_error(result):
-                await self._handle_failure(job, error_text(result))
-                return
-
-            url = extract_output_url(result)
-            if not url:
-                await self._handle_failure(job, f"No image url in response: {str(result)[:300]}")
-                return
-
-            await jobs.complete(job_id, extract_media_id(result), url)
-            logger.info("job %s COMPLETED", job_id[:8])
+            if job["kind"] == "video":
+                await self._run_video(job)
+            else:
+                await self._run_image(job)
 
         except Exception as exc:
             logger.exception("job %s raised", job_id[:8])
@@ -148,6 +160,166 @@ class WorkerController:
             # Spacing between calls, not between loop iterations: bursts are
             # what earn a rate limit.
             await asyncio.sleep(API_COOLDOWN)
+
+    async def _run_image(self, job: dict) -> None:
+        job_id = job["id"]
+        result = await get_flow_client().generate_images(
+            prompt=job["prompt"],
+            # The job's own project. FLOW_PROJECT_ID is only the fallback for a
+            # caller that sent none, applied when the job was queued.
+            project_id=job["project_id"] or FLOW_PROJECT_ID,
+            aspect_ratio=ASPECT_RATIOS.get(job["orientation"], ASPECT_RATIOS["VERTICAL"]),
+        )
+
+        if is_error(result):
+            await self._handle_failure(job, error_text(result))
+            return
+
+        url = extract_output_url(result)
+        if not url:
+            await self._handle_failure(job, f"No image url in response: {str(result)[:300]}")
+            return
+
+        await jobs.complete(job_id, extract_media_id(result), url)
+        logger.info("job %s COMPLETED", job_id[:8])
+
+    async def _run_video(self, job: dict) -> None:
+        """Reference images -> Flow -> a finished video URL.
+
+        Three stages in one task: upload each reference so Google has a media
+        id for it, submit the generation, then poll the operation until it
+        carries a URL. The polling stays here rather than going back through
+        the queue, because a requeued video would be submitted again -- and a
+        second submission is a second video paid for.
+        """
+        job_id = job["id"]
+        client = get_flow_client()
+        project_id = job["project_id"] or FLOW_PROJECT_ID
+
+        try:
+            reference_urls = json.loads(job["reference_urls"] or "[]")
+        except json.JSONDecodeError:
+            await jobs.fail(job_id, "reference_urls is not valid JSON")
+            return
+
+        if not reference_urls:
+            await jobs.fail(job_id, "A video needs at least one reference image")
+            return
+
+        # -- Stage 1: give Google the reference images. ----------------------
+        media_ids: list[str] = []
+        for url in reference_urls:
+            uploaded = await self._upload_reference(client, url, project_id)
+            if isinstance(uploaded, dict):
+                await self._handle_failure(job, uploaded["error"])
+                return
+            media_ids.append(uploaded)
+
+        logger.info("job %s uploaded %d reference image(s)", job_id[:8], len(media_ids))
+
+        # -- Stage 2: submit. ------------------------------------------------
+        submitted = await client.generate_video_from_references(
+            reference_media_ids=media_ids,
+            prompt=job["prompt"],
+            project_id=project_id,
+            aspect_ratio=VIDEO_ASPECT_RATIOS.get(
+                job["orientation"], VIDEO_ASPECT_RATIOS["VERTICAL"]
+            ),
+        )
+
+        if is_error(submitted):
+            await self._handle_failure(job, error_text(submitted))
+            return
+
+        operation = extract_operation(submitted)
+        if not operation:
+            await self._handle_failure(
+                job, f"No operation in video response: {str(submitted)[:300]}"
+            )
+            return
+
+        await jobs.set_operation(job_id, operation)
+        logger.info("job %s submitted, polling for the video", job_id[:8])
+
+        # -- Stage 3: wait. --------------------------------------------------
+        await self._await_video(job, operation)
+
+    async def _upload_reference(self, client, url: str, project_id: str):
+        """One reference image, fetched and handed to Flow.
+
+        Returns the media id, or a {"error": ...} dict for the caller to route
+        through the retry policy -- a transient fetch failure is worth the same
+        treatment as a transient Flow failure, not a different one.
+        """
+        try:
+            async with httpx.AsyncClient(
+                timeout=REFERENCE_DOWNLOAD_TIMEOUT, follow_redirects=True
+            ) as http:
+                response = await http.get(url)
+                response.raise_for_status()
+                data = response.content
+        except Exception as exc:
+            return {"error": f"Could not fetch reference image {url}: {exc}"}
+
+        if not data:
+            return {"error": f"Reference image {url} was empty"}
+        if len(data) > MAX_REFERENCE_BYTES:
+            return {"error": f"Reference image {url} is {len(data)} bytes, over the limit"}
+
+        result = await client.upload_image(
+            image_base64=base64.b64encode(data).decode("ascii"),
+            mime_type=response.headers.get("content-type", "image/jpeg").split(";")[0],
+            project_id=project_id,
+            file_name=url.rsplit("/", 1)[-1][:100] or "reference.jpg",
+        )
+
+        if is_error(result):
+            return {"error": f"Uploading {url} to Flow failed: {error_text(result)}"}
+
+        media_id = result.get("_mediaId")
+        if not media_id:
+            return {"error": f"Flow returned no mediaId for {url}"}
+
+        return media_id
+
+    async def _await_video(self, job: dict, operation: dict) -> None:
+        """Poll one operation until it resolves, fails, or runs out of budget."""
+        job_id = job["id"]
+        client = get_flow_client()
+
+        for attempt in range(1, VIDEO_MAX_POLLS + 1):
+            await asyncio.sleep(VIDEO_POLL_INTERVAL)
+
+            # A shutdown mid-generation leaves the job PROCESSING with its
+            # operation stored, so reset_stale returns it to the queue and the
+            # next attempt resumes rather than paying for a second video.
+            if self._shutdown.is_set():
+                logger.info("job %s: polling interrupted by shutdown", job_id[:8])
+                return
+
+            status = await client.check_video_status([operation])
+
+            if is_error(status):
+                await self._handle_failure(job, error_text(status))
+                return
+
+            failure = video_failed(status)
+            if failure:
+                await self._handle_failure(job, f"Video generation failed: {failure}")
+                return
+
+            url = extract_video_url(status)
+            if url:
+                await jobs.complete(job_id, extract_video_media_id(status), url)
+                logger.info("job %s COMPLETED after %d poll(s)", job_id[:8], attempt)
+                return
+
+        waited = VIDEO_MAX_POLLS * VIDEO_POLL_INTERVAL
+        await self._handle_failure(
+            job,
+            f"Video did not finish within {waited}s ({VIDEO_MAX_POLLS} polls). "
+            "Raise VIDEO_MAX_POLLS if generation is legitimately slower.",
+        )
 
     async def _handle_failure(self, job: dict, error: str) -> None:
         job_id = job["id"]
