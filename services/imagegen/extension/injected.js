@@ -1,5 +1,5 @@
 /**
- * Injected into MAIN world on labs.google — has access to window.grecaptcha
+ * Injected into MAIN world on the Flow app — has access to window.grecaptcha
  * Also intercepts TRPC fetch responses to capture fresh signed media URLs.
  */
 const SITE_KEY = '6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV';
@@ -13,7 +13,8 @@ window.fetch = async function (...args) {
   const response = await _originalFetch.apply(this, args);
   try {
     const url = typeof args[0] === 'string' ? args[0] : args[0]?.url || '';
-    // Only intercept TRPC calls on labs.google that return project/flow data
+    // Only intercept TRPC calls that return project/flow data. Matched on the
+    // path, so it survived Flow moving host.
     if (url.includes('/fx/api/trpc/') && response.ok) {
       const clone = response.clone();
       clone.text().then(text => {
