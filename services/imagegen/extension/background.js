@@ -302,6 +302,10 @@ async function collectDiagnostics() {
 
 const TOKEN_MAX_AGE_MS = 30 * 60 * 1000;   // refresh well inside the ~60min life
 const TAB_RECYCLE_MINUTES = 12 * 60;       // unconditional Flow tab reload
+// How long to let a reloaded tab settle before anyone messages it. Longer
+// than a healthy Flow load and shorter than the agent's 45s refresh_token
+// timeout, so a slow page delays a batch rather than failing the call.
+const RELOAD_SETTLE_TIMEOUT_MS = 25000;
 let _refreshInFlight = false;
 
 async function refreshFlowToken(reason) {
@@ -347,16 +351,43 @@ async function refreshFlowToken(reason) {
 
     const before = metrics.tokenCapturedAt;
     console.log('[FlowAgent] Reloading Flow tab to refresh token (' + reason + ')');
+    // Listener attached before the reload, not after: an idle tab emits no
+    // onUpdated events, so the first 'complete' we see is this reload's -- and
+    // attaching afterwards can miss a fast reload entirely and then sit out
+    // the whole timeout on every batch.
+    const settled = waitForTabLoad(tabs[0].id, RELOAD_SETTLE_TIMEOUT_MS);
     await chrome.tabs.reload(tabs[0].id, { bypassCache: false });
 
-    // The header listener fires as the page re-requests. Poll briefly rather
-    // than guessing a fixed delay.
+    // Wait for the page to finish loading, not just for a token to appear.
+    //
+    // These are seconds apart and the gap is the whole bug. The Authorization
+    // header travels on the page's very first request, so tokenCapturedAt
+    // updates almost immediately -- while the document is still loading and
+    // content.js is not in place yet. Returning there told the agent the tab
+    // was ready, it dispatched the batch, and the captcha message went to a
+    // tab that was still navigating: the channel closed mid-solve
+    // ("a listener indicated an asynchronous response ... message channel
+    // closed"), solveCaptcha called that a transport failure, and recovery
+    // opened a fresh Flow tab. Once per batch, because the reload is once per
+    // batch.
+    //
+    // A reload that does not settle is not fatal on its own -- the captcha
+    // path has its own recovery -- so a timeout here is a warning and the
+    // token check below still decides the outcome.
+    try {
+      await settled;
+    } catch (e) {
+      console.warn('[FlowAgent] Flow tab did not finish loading after reload:', e.message);
+    }
+
+    // The header listener has almost certainly fired by now. Poll anyway: a
+    // page served from cache can settle without re-requesting.
     for (let i = 0; i < 20; i++) {
-      await sleep(1000);
       if (metrics.tokenCapturedAt && metrics.tokenCapturedAt !== before) {
         console.log('[FlowAgent] Token refreshed after reload');
         return true;
       }
+      await sleep(1000);
     }
     console.warn('[FlowAgent] Reloaded but no new token seen within 20s');
     return false;
