@@ -484,79 +484,123 @@
   }
 
   /* ------------------------------------------------------------ Reels */
-  /* Thumbnails of the four article images, in the candidate list. Small
-     enough that four of them sit in a table cell without the row growing
-     taller than the text beside it. */
-  .thumb-row {
-    @apply flex gap-1;
+  /* Tiles, not table rows. What is being judged on this page is a video and
+     four photographs; a table forces that into a column narrow enough to wrap
+     a title over four lines while a 9:16 preview stretches the row past the
+     height of the screen. .grid already lays out auto-fit columns -- .tiles
+     only widens the minimum, because a 200px tile crops a portrait video to
+     the point of uselessness. */
+  .tiles {
+    grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
   }
 
-  .thumb {
-    @apply h-12 w-9 flex-none rounded object-cover;
-    @apply ring-1 ring-slate-200 dark:ring-slate-700;
+  /* A column, so .tile-actions can be pushed to the bottom: grid stretches
+     tiles to equal height, and without this a tile carrying an error message
+     lands its buttons lower than the tiles either side of it. */
+  .tile {
+    @apply flex flex-col overflow-hidden rounded-xl border border-edge bg-surface shadow-sm;
+    @apply dark:border-edge-dark dark:bg-surface-dark dark:shadow-none;
   }
 
-  /* The composer's picker. Bigger, because this is where the choice is
-     actually made and a 36px-wide crop is not enough to judge a shot by. */
-  .thumb-picker {
+  /* Fixed aspect so a row of tiles lines up whatever the media is, and the
+     page does not reflow as each video reports its dimensions. */
+  .tile-media {
+    @apply flex items-center justify-center bg-fill dark:bg-fill-dark;
+    aspect-ratio: 9 / 16;
+    max-height: 17rem;
+  }
+
+  .tile-media video {
+    @apply h-full w-full object-cover;
+  }
+
+  .tile-placeholder {
+    @apply p-4 text-center text-xs text-slate-500 dark:text-slate-400;
+  }
+
+  /* The candidate's four images, side by side. Short, because they are here to
+     say which article this is, not to be examined -- that is the composer. */
+  .tile-strip {
+    @apply flex gap-px bg-fill dark:bg-fill-dark;
+  }
+
+  .tile-strip img {
+    @apply h-24 min-w-0 flex-1 object-cover;
+  }
+
+  .tile-body {
+    @apply flex flex-1 flex-col gap-1.5 p-4;
+  }
+
+  .tile-title {
+    @apply text-sm font-medium leading-snug text-slate-800 dark:text-slate-100;
+  }
+
+  .tile-error {
+    @apply rounded-md px-2 py-1.5 text-brand;
+    @apply bg-brand-soft dark:bg-transparent;
+  }
+
+  /* Pushed to the bottom edge of the tile and separated by a rule, so tiles of
+     different text lengths still line their buttons up with each other. */
+  .tile-actions {
+    @apply mt-auto gap-2 border-t pt-3;
+    @apply border-edge dark:border-edge-dark;
+  }
+
+  /* ------------------------------------------------- Reel image picker */
+  /* Wider minimum than .tiles: this is where the choice is actually made, and
+     a thumbnail too small to read the plating by is a thumbnail that gets
+     picked at random. */
+  .picker {
     @apply mt-3 grid gap-3;
-    grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(8rem, 1fr));
   }
 
-  .thumb-choice {
-    @apply flex cursor-pointer flex-col gap-1 rounded-lg p-2;
-    @apply ring-1 ring-slate-200 dark:ring-slate-700;
-    @apply transition-shadow;
+  .pick-tile {
+    @apply relative flex cursor-pointer flex-col gap-1 rounded-lg p-2 transition-shadow;
+    @apply border border-edge dark:border-edge-dark;
   }
 
-  /* The whole tile reads as selected, not just the box: at this size the
-     checkbox alone is easy to miss when scanning four of them. */
-  .thumb-choice:has(input:checked) {
-    @apply ring-2 ring-red-600;
+  /* The whole tile reads as chosen, not just the box. At this size a checkbox
+     alone is easy to miss when scanning four of them at once. */
+  .pick-tile:has(input:checked) {
+    @apply border-brand ring-1 ring-brand;
   }
 
-  .thumb-lg {
-    @apply aspect-[9/16] w-full rounded object-cover;
+  .pick-tile input[type='checkbox'] {
+    @apply absolute right-3 top-3 m-0 w-auto;
   }
 
-  /* Capped rather than full width: a 9:16 video at column width would push
-     every other cell in the row off the screen. */
-  .reel-preview {
-    @apply w-32 rounded-lg;
-    @apply ring-1 ring-slate-200 dark:ring-slate-700;
+  .pick-tile img {
+    @apply w-full rounded object-cover;
+    aspect-ratio: 9 / 16;
   }
 
-  /* A row of labelled fields ending in a button -- the add-a-page and
-     add-a-route forms. Wraps rather than scrolls on a narrow screen. */
-  .row-form {
-    @apply mt-4 flex flex-wrap items-end gap-3;
+  .pick-label {
+    @apply text-xs font-medium text-slate-700 dark:text-slate-300;
   }
 
-  .row-form label {
-    @apply flex flex-col gap-1 text-xs font-medium uppercase tracking-wide;
-    @apply text-slate-500 dark:text-slate-400;
+  /* -------------------------------------------------------- Disclosure */
+  /* Used for the token instructions and the published list: steps you follow
+     once, and work already finished, both of which are worth finding and worth
+     nothing in the space where current work is judged. */
+  summary {
+    @apply cursor-pointer select-none py-1 text-sm font-medium;
+    @apply text-slate-700 dark:text-slate-300;
   }
 
-  .row-form label.check {
-    @apply flex-row items-center gap-2 normal-case tracking-normal;
+  details[open] > summary {
+    @apply mb-2;
   }
 
-  /* Numbered setup steps inside a card. Indented enough that the numbers sit
-     clear of the card edge, which list-inside does not manage on its own. */
-  .steps {
-    @apply mt-3 list-decimal space-y-1 pl-5;
+  details ol {
+    @apply list-decimal space-y-1 pl-5;
   }
 
-  .steps code {
+  details code {
     @apply rounded px-1 py-0.5 text-xs;
-    @apply bg-slate-100 dark:bg-slate-800;
-  }
-
-  /* Links that belong to the fields above them, inside a settings card. The
-     rule separates them from the last field without needing a heading. */
-  .field-links {
-    @apply mt-4 gap-2 border-t pt-4;
-    @apply border-slate-200 dark:border-slate-700;
+    @apply bg-fill dark:bg-fill-dark;
   }
 
   /* -------------------------------------------------- Buffer account list */

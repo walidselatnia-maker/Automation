@@ -1578,17 +1578,12 @@ export function settingsPage(
       // empty.
       footer: html`
         <div class="row wrap field-links">
-          <a class="button" target="_blank" rel="noopener"
-             href="https://business.facebook.com/settings/system-users">
-            Get a token &rarr;
-          </a>
-          <a class="button" href="/settings/facebook">Pages &amp; routes</a>
+          <a class="button primary" href="/settings/facebook">Pages &amp; routes</a>
         </div>
         <p class="small muted">
-          In Business Settings: add a system user, <strong>Add assets</strong> &rarr; Pages
-          &rarr; switch on <em>Manage Page</em>, then <strong>Generate new token</strong>
-          with the three permissions above. A token made in the Graph API Explorer
-          instead will expire in sixty days and stop publishing without warning.
+          That page links straight to Business Settings and lists the steps. A token
+          made in the Graph API Explorer instead will expire in sixty days and stop
+          publishing without warning.
         </p>
       `,
     },
@@ -2623,165 +2618,181 @@ export interface ReelsPageData {
 
 const REEL_STATE: Record<string, { label: string; badge: string }> = {
   draft: { label: 'Draft', badge: 'pending' },
-  generating: { label: 'Generating video', badge: 'pending' },
+  generating: { label: 'Generating', badge: 'pending' },
   ready: { label: 'Ready to review', badge: 'ok' },
   publishing: { label: 'Publishing', badge: 'pending' },
   published: { label: 'Published', badge: 'ok' },
   failed: { label: 'Failed', badge: 'failed' },
 };
 
-function reelBadge(status: string): Html {
-  const state = REEL_STATE[status] ?? { label: status, badge: 'pending' };
-  return html`${statusBadge(state.badge)} <span class="small">${state.label}</span>`;
+/** An absolute URL for an image the site published. */
+const onSite = (domain: string | null, path: string): string =>
+  `https://${(domain ?? '').replace(/^https?:\/\//, '').replace(/\/+$/, '')}${path}`;
+
+/**
+ * One reel, as a tile.
+ *
+ * A tile rather than a table row: the thing being judged here is a video and
+ * four photographs, and a table forces that into a column narrow enough to
+ * wrap a title onto four lines while a 9:16 preview stretches the row past the
+ * height of a screen. Tiles let the media be the size it needs to be and the
+ * text sit under it.
+ */
+function reelTile(reel: ReelView): Html {
+  const state = REEL_STATE[reel.status] ?? { label: reel.status, badge: 'pending' };
+  const live = reel.fb_video_id ? `https://www.facebook.com/reel/${reel.fb_video_id}` : '';
+
+  return html`
+    <article class="tile">
+      <div class="tile-media">
+        ${reel.video_url
+          ? html`<video src="${reel.video_url}" controls muted playsinline preload="metadata"></video>`
+          : html`<div class="tile-placeholder">
+              ${reel.status === 'generating' ? 'Generating…' : 'No video yet'}
+            </div>`}
+      </div>
+
+      <div class="tile-body">
+        <div class="row wrap">
+          ${statusBadge(state.badge)}<span class="small">${state.label}</span>
+        </div>
+
+        <div class="tile-title">${reel.run_title ?? '(untitled)'}</div>
+        <div class="help">
+          ${reel.site_domain ?? ''} &middot; ${reel.seed_keyword ?? ''}
+        </div>
+        <div class="help">
+          ${reel.page_name
+            ? html`To <strong>${reel.page_name}</strong>`
+            : html`<a href="/settings/facebook">No page set &mdash; add a route</a>`}
+        </div>
+
+        ${reel.error ? html`<div class="tile-error small">${reel.error}</div>` : raw('')}
+
+        <div class="row wrap tile-actions">
+          ${reel.status === 'ready' && reel.fb_page_id
+            ? html`<form method="post" action="/reels/${reel.id}/publish">
+                <button class="primary" type="submit">Publish</button>
+              </form>`
+            : raw('')}
+          ${reel.status === 'failed'
+            ? html`<form method="post" action="/reels/${reel.id}/retry">
+                <button type="submit">Retry</button>
+              </form>`
+            : raw('')}
+          ${live ? html`<a class="button" href="${live}" target="_blank" rel="noopener">View</a>` : raw('')}
+          <form method="post" action="/reels/${reel.id}/discard"
+                onsubmit="return confirm('Discard this reel?')">
+            <button class="danger" type="submit">Discard</button>
+          </form>
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+/** One published article that could become a reel. */
+function candidateTile(c: ReelCandidate & { images: ReelImages | null }): Html {
+  const images = c.images;
+
+  return html`
+    <article class="tile">
+      <div class="tile-strip">
+        ${images
+          ? [images.feature, images.topShot, images.textureMacro, images.beforeAfter].map(
+              (src) => html`<img src="${onSite(c.site_domain, src)}" alt="" loading="lazy">`,
+            )
+          : html`<div class="tile-placeholder">Images unavailable</div>`}
+      </div>
+
+      <div class="tile-body">
+        <div class="tile-title">${c.title || c.spy_title}</div>
+        <div class="help">
+          ${c.site_domain} &middot; ${c.seed_keyword} &middot; ${timeAgo(c.published_at ?? '')}
+        </div>
+        <div class="row wrap tile-actions">
+          ${images
+            ? html`<a class="button" href="/reels/new/${c.run_id}">Make a reel</a>`
+            : raw('')}
+        </div>
+      </div>
+    </article>
+  `;
 }
 
 export function reelsPage(data: ReelsPageData): Html {
-  const waiting = data.reels.filter((r) => r.status !== 'published');
+  const working = data.reels.filter((r) => r.status !== 'published');
   const published = data.reels.filter((r) => r.status === 'published');
 
   return html`
-    <h1>Reels</h1>
-    <p class="subtitle">
-      Turn an article you have already published into a Facebook Reel, using the
-      images it was built from.
-    </p>
+    <div class="spread">
+      <div>
+        <h1>Reels</h1>
+        <p class="subtitle">
+          Turn an article you have already published into a Facebook Reel, using the
+          images it was built from.
+        </p>
+      </div>
+      <div class="row wrap">
+        <a class="button" href="/settings/facebook">Pages &amp; routes</a>
+      </div>
+    </div>
 
     ${!data.configured
-      ? html`<div class="card notice">
+      ? html`<div class="flash warn">
           <strong>Facebook is not set up yet.</strong>
-          <p class="small muted">
-            Add a system user token and at least one page under
-            <a href="/settings/facebook">Settings &rarr; Facebook</a> before making a reel.
-          </p>
+          Add a system user token and at least one page under
+          <a href="/settings/facebook">Settings &rarr; Facebook</a> before making a reel.
         </div>`
       : !data.enabled
-        ? html`<div class="card notice">
+        ? html`<div class="flash warn">
             <strong>Reel publishing is switched off.</strong>
-            <p class="small muted">
-              Reels can still be generated and reviewed. Turn on
-              "Publish reels to Facebook" in <a href="/settings">Settings</a> to release them.
-            </p>
+            Reels can still be generated and reviewed. Turn on &ldquo;Publish reels to
+            Facebook&rdquo; in <a href="/settings">Settings</a> to release them.
           </div>`
         : raw('')}
 
     <h2>In progress</h2>
-    <div class="card table-wrap">
-      ${waiting.length === 0
-        ? emptyState('No reels on the go.')
-        : html`<table>
-            <thead>
-              <tr>
-                <th>Article</th><th>Page</th><th>State</th><th>Video</th><th></th>
-              </tr>
-            </thead>
-            <tbody>
-              ${waiting.map(
-                (reel) => html`<tr>
-                  <td>
-                    <div>${reel.run_title ?? '(untitled)'}</div>
-                    <div class="muted small">${reel.site_domain ?? ''} &middot; ${reel.seed_keyword ?? ''}</div>
-                  </td>
-                  <td class="small">
-                    ${reel.page_name
-                      ? html`${reel.page_name}`
-                      : html`<span class="muted">No page &mdash;
-                          <a href="/settings/facebook">add a route</a></span>`}
-                  </td>
-                  <td class="nowrap">
-                    ${reelBadge(reel.status)}
-                    ${reel.error ? html`<div class="muted small">${reel.error}</div>` : raw('')}
-                  </td>
-                  <td>
-                    ${reel.video_url
-                      ? html`<video src="${reel.video_url}" controls muted playsinline
-                               preload="metadata" class="reel-preview"></video>`
-                      : html`<span class="muted small">&mdash;</span>`}
-                  </td>
-                  <td class="nowrap">
-                    ${reel.status === 'ready' && reel.fb_page_id
-                      ? html`<form method="post" action="/reels/${reel.id}/publish" class="inline">
-                          <button class="button primary small">Publish</button>
-                        </form>`
-                      : raw('')}
-                    ${reel.status === 'failed'
-                      ? html`<form method="post" action="/reels/${reel.id}/retry" class="inline">
-                          <button class="button small">Retry</button>
-                        </form>`
-                      : raw('')}
-                    <form method="post" action="/reels/${reel.id}/discard" class="inline"
-                          onsubmit="return confirm('Discard this reel?')">
-                      <button class="button danger small">Discard</button>
-                    </form>
-                  </td>
-                </tr>`,
-              )}
-            </tbody>
-          </table>`}
-    </div>
+    ${working.length === 0
+      ? html`<div class="card">${emptyState('No reels on the go.')}</div>`
+      : html`<div class="grid tiles">${working.map(reelTile)}</div>`}
 
-    <h2>Ready to make</h2>
+    <h2>Make a reel from</h2>
     <p class="subtitle">Published articles whose images are still on file.</p>
-    <div class="card table-wrap">
-      ${data.candidates.length === 0
-        ? emptyState('Nothing to turn into a reel yet. Publish an article first.')
-        : html`<table>
-            <thead>
-              <tr><th>Article</th><th>Site</th><th>Niche</th><th>Images</th><th></th></tr>
-            </thead>
-            <tbody>
-              ${data.candidates.map(
-                (c) => html`<tr>
-                  <td>
-                    <div>${c.title || c.spy_title}</div>
-                    <div class="muted small">${timeAgo(c.published_at ?? '')}</div>
-                  </td>
-                  <td class="small">${c.site_domain}</td>
-                  <td class="small">${c.seed_keyword}</td>
-                  <td>
-                    ${c.images
-                      ? html`<div class="thumb-row">
-                          ${[c.images.feature, c.images.topShot, c.images.textureMacro,
-                             c.images.beforeAfter].map(
-                            (src) => html`<img class="thumb" src="https://${c.site_domain}${src}" alt="" loading="lazy">`,
-                          )}
-                        </div>`
-                      : html`<span class="muted small">unreadable</span>`}
-                  </td>
-                  <td class="nowrap">
-                    ${c.images
-                      ? html`<a class="button small" href="/reels/new/${c.run_id}">Make reel</a>`
-                      : raw('')}
-                  </td>
-                </tr>`,
-              )}
-            </tbody>
-          </table>`}
-    </div>
+    ${data.candidates.length === 0
+      ? html`<div class="card">
+          ${emptyState('Nothing to turn into a reel yet. Publish an article first.')}
+        </div>`
+      : html`<div class="grid tiles">${data.candidates.map(candidateTile)}</div>`}
 
     ${published.length === 0
       ? raw('')
       : html`
-          <h2>Published</h2>
-          <div class="card table-wrap">
-            <table>
-              <thead><tr><th>Article</th><th>Page</th><th>When</th><th></th></tr></thead>
-              <tbody>
-                ${published.map(
-                  (reel) => html`<tr>
-                    <td>${reel.run_title ?? '(untitled)'}</td>
-                    <td class="small">${reel.page_name ?? ''}</td>
-                    <td class="muted small nowrap">${timeAgo(reel.updated_at)}</td>
-                    <td class="nowrap">
-                      ${reel.fb_video_id
-                        ? html`<a class="button small" target="_blank" rel="noopener"
-                                 href="https://www.facebook.com/reel/${reel.fb_video_id}">View</a>`
-                        : raw('')}
-                    </td>
-                  </tr>`,
-                )}
-              </tbody>
-            </table>
-          </div>`}
+          <!-- Folded away: finished work is worth being able to find, and worth
+               nothing at all in the space where the current work is judged. -->
+          <details class="card">
+            <summary>Published (${published.length})</summary>
+            <div class="table-wrap scroll-y">
+              <table>
+                <thead><tr><th>Article</th><th>Page</th><th>When</th><th></th></tr></thead>
+                <tbody>
+                  ${published.map(
+                    (reel) => html`<tr>
+                      <td>${reel.run_title ?? '(untitled)'}</td>
+                      <td class="small">${reel.page_name ?? ''}</td>
+                      <td class="muted small nowrap">${timeAgo(reel.updated_at)}</td>
+                      <td class="nowrap">
+                        ${reel.fb_video_id
+                          ? html`<a class="button" target="_blank" rel="noopener"
+                                   href="https://www.facebook.com/reel/${reel.fb_video_id}">View</a>`
+                          : raw('')}
+                      </td>
+                    </tr>`,
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </details>`}
   `;
 }
 
@@ -2797,8 +2808,8 @@ export interface ReelComposerData {
  * Choose what the reel is made from.
  *
  * The four images are offered individually because they are not equivalent:
- * the feature shot and the top shot carry the dish, while the texture macro is
- * a close-up that on its own produces a video of an unidentifiable surface.
+ * the feature and top shots carry the dish, while the texture macro is a
+ * close-up that on its own produces a video of an unidentifiable surface.
  */
 export function reelComposerPage(data: ReelComposerData): Html {
   const choices: { key: keyof ReelImages; label: string; hint: string; on: boolean }[] = [
@@ -2816,60 +2827,72 @@ export function reelComposerPage(data: ReelComposerData): Html {
     </p>
 
     <form method="post" action="/reels/new/${data.candidate.run_id}">
-      <div class="card">
-        <h2>Reference images</h2>
-        <p class="small muted">
-          Google composes the video from whichever of these you keep. Fewer and
-          more consistent usually beats all four.
-        </p>
-        <div class="thumb-picker">
-          ${choices.map(
-            (choice) => html`
-              <label class="thumb-choice">
-                <input type="checkbox" name="reference" value="${choice.key}"
-                       ${choice.on ? raw('checked') : raw('')}>
-                <img class="thumb-lg"
-                     src="https://${data.candidate.site_domain}${data.images[choice.key]}"
-                     alt="${choice.label}" loading="lazy">
-                <span class="small">${choice.label}</span>
-                <span class="muted small">${choice.hint}</span>
-              </label>`,
-          )}
+      <div class="split">
+        <div class="card">
+          <h2>Reference images</h2>
+          <p class="help">
+            Google composes the video from whichever of these you keep. Fewer and more
+            consistent usually beats all four.
+          </p>
+          <div class="picker">
+            ${choices.map(
+              (choice) => html`
+                <label class="pick-tile">
+                  <input type="checkbox" name="reference" value="${choice.key}"
+                         ${choice.on ? raw('checked') : raw('')}>
+                  <img src="${onSite(data.candidate.site_domain, data.images[choice.key])}"
+                       alt="${choice.label}" loading="lazy">
+                  <span class="pick-label">${choice.label}</span>
+                  <span class="help">${choice.hint}</span>
+                </label>`,
+            )}
+          </div>
+        </div>
+
+        <div>
+          <div class="card">
+            <h2>Where it goes</h2>
+            ${data.route
+              ? html`
+                  <p>
+                    <strong>${data.route.page.name || data.route.page.page_id}</strong>
+                  </p>
+                  <p class="help">
+                    ${data.route.via === 'site'
+                      ? html`Routed for ${data.candidate.site_domain} &middot;
+                          ${data.candidate.seed_keyword}.`
+                      : html`The shared page for ${data.candidate.seed_keyword}.`}
+                    ${data.route.page.auto_publish === 1
+                      ? raw('It publishes automatically once the video is ready.')
+                      : raw('It will be held for you to review.')}
+                  </p>`
+              : html`<div class="flash warn">
+                  No page is routed for <strong>${data.candidate.seed_keyword}</strong> on
+                  ${data.candidate.site_domain}. The reel will be generated and then wait.
+                  <a href="/settings/facebook">Add a route</a> to send it somewhere.
+                </div>`}
+          </div>
+
+          <div class="card">
+            <div class="field">
+              <label for="reel-prompt">Video prompt</label>
+              <textarea id="reel-prompt" name="prompt" rows="9" class="mono"
+                        spellcheck="false">${data.prompt}</textarea>
+            </div>
+
+            <div class="field">
+              <label for="reel-caption">Caption</label>
+              <textarea id="reel-caption" name="caption" rows="6">${data.caption}</textarea>
+              <p class="help">Posted with the reel. You can still edit it before publishing.</p>
+            </div>
+          </div>
         </div>
       </div>
 
-      <div class="card">
-        <h2>Where it goes</h2>
-        ${data.route
-          ? html`<p>
-              <strong>${data.route.page.name || data.route.page.page_id}</strong>
-              <span class="muted small">
-                &mdash; ${data.route.via === 'site'
-                  ? html`routed for ${data.candidate.site_domain} &middot; ${data.candidate.seed_keyword}`
-                  : html`the shared page for ${data.candidate.seed_keyword}`}
-                ${data.route.page.auto_publish === 1
-                  ? raw(', publishes automatically')
-                  : raw(', held for you to review')}
-              </span>
-            </p>`
-          : html`<p class="notice small">
-              No page is routed for <strong>${data.candidate.seed_keyword}</strong> on
-              ${data.candidate.site_domain}. The reel will be generated and then wait.
-              <a href="/settings/facebook">Add a route</a> to send it somewhere.
-            </p>`}
-      </div>
-
-      <div class="card">
-        <h2>Video prompt</h2>
-        <textarea name="prompt" rows="8" class="mono">${data.prompt}</textarea>
-
-        <h2>Caption</h2>
-        <textarea name="caption" rows="6">${data.caption}</textarea>
-      </div>
-
-      <div class="actions">
-        <button class="button primary">Generate the video</button>
+      <div class="save-bar">
+        <button class="primary" type="submit">Generate the video</button>
         <a class="button" href="/reels">Cancel</a>
+        <span class="muted small">Takes a few minutes. It appears under In progress.</span>
       </div>
     </form>
   `;
@@ -2896,64 +2919,74 @@ export function facebookSettingsPage(data: FacebookSettingsData): Html {
     </p>
 
     <div class="card">
-      <h2>Access</h2>
-      <p class="small muted">
-        Publishing uses a Business Manager <strong>system user</strong> token. It has no
-        expiry, and page tokens are derived from it for each post &mdash; so a page you add
-        later needs no new credential.
+      <div class="spread">
+        <div>
+          <h2>Access</h2>
+          <p class="help">
+            Publishing uses a Business Manager <strong>system user</strong> token. It has no
+            expiry, and page tokens are derived from it for each post &mdash; so a page you
+            add later needs no new credential.
+          </p>
+        </div>
+        <div class="row wrap">
+          <a class="button" target="_blank" rel="noopener"
+             href="https://business.facebook.com/settings/system-users">
+            Business Settings &rarr;
+          </a>
+        </div>
+      </div>
+
+      <p class="row wrap">
+        <span class="small">Token</span>
+        ${data.tokenSet
+          ? html`${statusBadge('ok')}<span class="small">stored</span>`
+          : html`${statusBadge('failed')}<span class="small">
+              not set &mdash; <a href="/settings">add it under Settings</a></span>`}
       </p>
 
-      <p class="small">
-        <a class="button" target="_blank" rel="noopener"
-           href="https://business.facebook.com/settings/system-users">
-          Open Business Settings &rarr; System Users
-        </a>
-      </p>
-
-      <!-- Written out because this is the step people get wrong: the token is
-           generated from a system user inside Business Settings, not from the
-           Graph API Explorer, and a token made the usual way expires in sixty
-           days and takes unattended publishing down with it. -->
-      <ol class="small muted steps">
-        <li>Open the link above and pick your business.</li>
-        <li><strong>Add</strong> a system user &mdash; give it the Admin role.</li>
-        <li>
-          <strong>Add assets</strong> &rarr; Pages &rarr; select every page you will
-          post to, and switch on <em>Manage Page</em> for each.
-        </li>
-        <li>
-          <strong>Generate new token</strong>, choose your app, and tick
-          <code>pages_manage_posts</code>, <code>pages_read_engagement</code> and
-          <code>pages_show_list</code>.
-        </li>
-        <li>Copy it into <a href="/settings">Settings &rarr; Facebook</a> and verify below.</li>
-      </ol>
-
-      <p class="small">
-        Token: ${data.tokenSet
-          ? html`${statusBadge('ok')} stored`
-          : html`${statusBadge('failed')} not set &mdash;
-              <a href="/settings">add it under Settings</a>`}
-      </p>
       ${data.check
-        ? html`<p class="small">
-            ${data.check.ok
-              ? html`${statusBadge('ok')} the token works and can see
-                  ${data.check.pages} page(s).`
-              : html`${statusBadge('failed')} ${data.check.error}`}
-          </p>`
+        ? data.check.ok
+          ? html`<div class="flash ok">
+              The token works and can see ${data.check.pages} page(s).
+            </div>`
+          : html`<div class="flash error">${data.check.error}</div>`
         : raw('')}
-      <form method="post" action="/settings/facebook/verify" class="inline">
-        <button class="button small">Verify the token</button>
+
+      <!-- Collapsed: it is five steps you follow once, and it should not sit
+           permanently on top of the two tables that get used every week. -->
+      <details>
+        <summary>How to generate the token</summary>
+        <ol class="help">
+          <li>Open Business Settings above and pick your business.</li>
+          <li><strong>Add</strong> a system user &mdash; give it the Admin role.</li>
+          <li>
+            <strong>Add assets</strong> &rarr; Pages &rarr; select every page you will post
+            to, and switch on <em>Manage Page</em> for each.
+          </li>
+          <li>
+            <strong>Generate new token</strong>, choose your app, and tick
+            <code>pages_manage_posts</code>, <code>pages_read_engagement</code> and
+            <code>pages_show_list</code>.
+          </li>
+          <li>Copy it into <a href="/settings">Settings</a>, then verify below.</li>
+        </ol>
+        <p class="help">
+          A token made in the Graph API Explorer instead will expire in sixty days and stop
+          publishing without warning.
+        </p>
+      </details>
+
+      <form method="post" action="/settings/facebook/verify" class="mt-4">
+        <button type="submit">Verify the token</button>
       </form>
     </div>
 
     <div class="card">
       <h2>Pages</h2>
-      <div class="table-wrap">
-        ${data.pages.length === 0
-          ? emptyState('No pages registered yet.')
-          : html`<table>
+      ${data.pages.length === 0
+        ? emptyState('No pages registered yet.')
+        : html`<div class="table-wrap">
+            <table>
               <thead>
                 <tr><th>Name</th><th>Page id</th><th>Publishing</th><th>Last used</th><th></th></tr>
               </thead>
@@ -2961,49 +2994,62 @@ export function facebookSettingsPage(data: FacebookSettingsData): Html {
                 ${data.pages.map(
                   (page) => html`<tr>
                     <td>${page.name || '(unnamed)'}</td>
-                    <td class="mono small">${page.page_id}</td>
-                    <td class="small">
-                      ${page.auto_publish === 1
-                        ? html`${statusBadge('ok')} automatic`
-                        : html`${statusBadge('pending')} hold for review`}
-                      ${page.enabled === 1 ? raw('') : html` &middot; <span class="muted">disabled</span>`}
+                    <td class="mono small nowrap">${page.page_id}</td>
+                    <td class="nowrap">
+                      <span class="row">
+                        ${page.auto_publish === 1
+                          ? html`${statusBadge('ok')}<span class="small">automatic</span>`
+                          : html`${statusBadge('pending')}<span class="small">hold for review</span>`}
+                      </span>
                     </td>
                     <td class="muted small nowrap">
-                      ${page.last_used_at ? timeAgo(page.last_used_at) : '&mdash;'}
-                      ${page.last_error ? html`<div class="small">${page.last_error}</div>` : raw('')}
+                      ${page.last_used_at ? timeAgo(page.last_used_at) : raw('&mdash;')}
+                      ${page.last_error ? html`<div>${page.last_error}</div>` : raw('')}
                     </td>
                     <td class="nowrap">
                       <form method="post" action="/settings/facebook/pages/${page.id}/delete"
-                            class="inline" onsubmit="return confirm('Remove this page?')">
-                        <button class="button danger small">Remove</button>
+                            onsubmit="return confirm('Remove this page?')">
+                        <button class="danger" type="submit">Remove</button>
                       </form>
                     </td>
                   </tr>`,
                 )}
               </tbody>
-            </table>`}
-      </div>
+            </table>
+          </div>`}
 
-      <form method="post" action="/settings/facebook/pages" class="row-form">
-        <label>Page id<input name="pageId" required placeholder="1234567890"></label>
-        <label>Name<input name="name" placeholder="Slow Cooker Suppers"></label>
-        <label class="check">
-          <input type="checkbox" name="autoPublish" value="1"> Publish automatically
-        </label>
-        <button class="button">Add page</button>
+      <form method="post" action="/settings/facebook/pages">
+        <div class="field-row">
+          <div class="field">
+            <label for="fb-page-id">Page id</label>
+            <input id="fb-page-id" name="pageId" required placeholder="1234567890">
+          </div>
+          <div class="field">
+            <label for="fb-page-name">Name</label>
+            <input id="fb-page-name" name="name" placeholder="Slow Cooker Suppers">
+          </div>
+        </div>
+        <div class="field">
+          <label class="inline-check">
+            <input type="checkbox" name="autoPublish" value="1">
+            Publish reels to this page automatically
+          </label>
+        </div>
+        <button type="submit">Add page</button>
       </form>
     </div>
 
     <div class="card">
       <h2>Routes</h2>
-      <p class="small muted">
-        A route sends one niche, on one site, to one page. Leave the site blank to use
-        that page for the niche across every site.
+      <p class="help">
+        A route sends one niche, on one site, to one page. Leave the site blank to use that
+        page for the niche across every site.
       </p>
-      <div class="table-wrap">
-        ${data.routes.length === 0
-          ? emptyState('No routes yet. A reel with no route is generated and then waits.')
-          : html`<table>
+
+      ${data.routes.length === 0
+        ? emptyState('No routes yet. A reel with no route is generated and then waits.')
+        : html`<div class="table-wrap">
+            <table>
               <thead><tr><th>Niche</th><th>Site</th><th>Page</th><th></th></tr></thead>
               <tbody>
                 ${data.routes.map(
@@ -3014,39 +3060,48 @@ export function facebookSettingsPage(data: FacebookSettingsData): Html {
                     </td>
                     <td class="small">${route.page_name || route.page_external_id}</td>
                     <td class="nowrap">
-                      <form method="post" action="/settings/facebook/routes/${route.id}/delete"
-                            class="inline">
-                        <button class="button danger small">Remove</button>
+                      <form method="post" action="/settings/facebook/routes/${route.id}/delete">
+                        <button class="danger" type="submit">Remove</button>
                       </form>
                     </td>
                   </tr>`,
                 )}
               </tbody>
-            </table>`}
-      </div>
+            </table>
+          </div>`}
 
-      <form method="post" action="/settings/facebook/routes" class="row-form">
-        <label>Niche
-          <input name="seedKeyword" required list="reel-groups" placeholder="chicken thighs">
-        </label>
-        <datalist id="reel-groups">
-          ${data.groups.map((g) => html`<option value="${g}"></option>`)}
-        </datalist>
-        <label>Site
-          <select name="siteId">
-            <option value="">Every site</option>
-            ${data.sites.map((site) => html`<option value="${site.id}">${site.domain}</option>`)}
-          </select>
-        </label>
-        <label>Page
-          <select name="fbPageId" required>
-            ${data.pages.map(
-              (page) => html`<option value="${page.id}">${page.name || page.page_id}</option>`,
-            )}
-          </select>
-        </label>
-        <button class="button">Add route</button>
-      </form>
+      ${data.pages.length === 0
+        ? html`<p class="help">Add a page above before routing a niche to it.</p>`
+        : html`<form method="post" action="/settings/facebook/routes">
+            <div class="field-row">
+              <div class="field">
+                <label for="fb-route-niche">Niche</label>
+                <input id="fb-route-niche" name="seedKeyword" required list="reel-groups"
+                       placeholder="chicken thighs">
+                <datalist id="reel-groups">
+                  ${data.groups.map((g) => html`<option value="${g}"></option>`)}
+                </datalist>
+              </div>
+              <div class="field">
+                <label for="fb-route-site">Site</label>
+                <select id="fb-route-site" name="siteId">
+                  <option value="">Every site</option>
+                  ${data.sites.map(
+                    (site) => html`<option value="${site.id}">${site.domain}</option>`,
+                  )}
+                </select>
+              </div>
+              <div class="field">
+                <label for="fb-route-page">Page</label>
+                <select id="fb-route-page" name="fbPageId" required>
+                  ${data.pages.map(
+                    (page) => html`<option value="${page.id}">${page.name || page.page_id}</option>`,
+                  )}
+                </select>
+              </div>
+            </div>
+            <button type="submit">Add route</button>
+          </form>`}
     </div>
   `;
 }
