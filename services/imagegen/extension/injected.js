@@ -50,17 +50,19 @@ window.addEventListener('GET_CAPTCHA', async ({ detail }) => {
 /**
  * Get to a working grecaptcha.enterprise, loading it if the page has not.
  *
- * On labs.google the Flow page had already loaded reCAPTCHA Enterprise by the
- * time we asked, so waiting was enough. On flow.google.com it is not there on
- * every page — the project list has no reason to load it — and waiting ten
- * seconds for a script nobody is fetching just fails slowly.
+ * On labs.google the Flow page had already loaded reCAPTCHA by the time we
+ * asked, so waiting was enough. On flow.google.com it is not on every page —
+ * the project list has no reason to load it — and waiting ten seconds for a
+ * script nobody is fetching just fails slowly.
  *
- * So: wait briefly for the page's own copy, and if it does not appear, add the
- * script ourselves. It is the same library from the same origin with the same
- * site key, and a second copy is a no-op if the page loads one later.
+ * The script tag is added by the content script rather than here. This file
+ * runs in the page's own world, where flow.google.com enforces Trusted Types:
+ * assigning a string to script.src throws "This document requires
+ * 'TrustedScriptURL' assignment". A content script runs in an isolated world
+ * that the page's Trusted Types policy does not govern, so it can add the tag
+ * the page will not let us add — and the script still executes in the page,
+ * which is where grecaptcha has to end up.
  */
-const ENTERPRISE_SRC = 'https://www.google.com/recaptcha/enterprise.js?render=' + SITE_KEY;
-
 function grecaptchaReady() {
   return typeof window.grecaptcha?.enterprise?.execute === 'function';
 }
@@ -77,42 +79,18 @@ function pollFor(predicate, timeout) {
   });
 }
 
-let _loadingEnterprise = null;
-
-function loadEnterprise() {
-  if (_loadingEnterprise) return _loadingEnterprise;
-
-  _loadingEnterprise = new Promise((resolve, reject) => {
-    const existing = document.querySelector('script[src^="https://www.google.com/recaptcha/"]');
-    if (existing && grecaptchaReady()) return resolve();
-
-    const script = document.createElement('script');
-    script.src = ENTERPRISE_SRC;
-    script.async = true;
-    script.onerror = () => reject(new Error('recaptcha enterprise failed to load'));
-    script.onload = () => {
-      // The script defines grecaptcha.enterprise.ready, which fires once the
-      // library is actually usable — onload alone is too early to execute.
-      if (window.grecaptcha?.enterprise?.ready) {
-        window.grecaptcha.enterprise.ready(() => resolve());
-      } else {
-        resolve();
-      }
-    };
-    (document.head || document.documentElement).appendChild(script);
-  });
-
-  return _loadingEnterprise;
-}
-
 async function waitForGrecaptcha(timeout = 10000) {
   // The page's own copy, if it is coming. Short: this is the fast path, and
-  // when it is not there at all, every second here is a second wasted.
+  // when the page is never going to load one, every second here is a second
+  // added to a request that has a deadline.
   if (await pollFor(grecaptchaReady, 2500)) return;
 
-  await loadEnterprise();
+  window.dispatchEvent(new CustomEvent('FLOWKIT_LOAD_RECAPTCHA', {
+    detail: { siteKey: SITE_KEY },
+  }));
 
   if (!(await pollFor(grecaptchaReady, timeout))) {
     throw new Error('grecaptcha not available after loading enterprise.js');
   }
 }
+
