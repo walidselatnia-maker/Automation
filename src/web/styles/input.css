@@ -552,6 +552,13 @@
     @apply bg-slate-100 dark:bg-slate-800;
   }
 
+  /* Links that belong to the fields above them, inside a settings card. The
+     rule separates them from the last field without needing a heading. */
+  .field-links {
+    @apply mt-4 gap-2 border-t pt-4;
+    @apply border-slate-200 dark:border-slate-700;
+  }
+
   /* -------------------------------------------------- Buffer account list */
   /* One column definition, shared by every row, so the fields line up down the
      card without a table stretching them to fill it. The two text fields take

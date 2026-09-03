@@ -1556,14 +1556,42 @@ export function settingsPage(
   values: Map<string, string>,
   problems: string[],
 ): Html {
-  const groups: { key: SettingSpec['group']; title: string; blurb?: string }[] = [
+  const groups: {
+    key: SettingSpec['group'];
+    title: string;
+    blurb?: string;
+    /** Links that belong with these fields rather than at the top of the page. */
+    footer?: Html;
+  }[] = [
     { key: 'general', title: 'General' },
     { key: 'schedule', title: 'Schedule' },
     { key: 'retry', title: 'Retries' },
     { key: 'llm', title: 'LLM' },
     { key: 'images', title: 'Image generation' },
     { key: 'buffer', title: 'Buffer' },
-    { key: 'facebook', title: 'Facebook' },
+    {
+      key: 'facebook',
+      title: 'Facebook',
+      // Beside the token field, not on another page: the token is the one
+      // setting here nobody can produce from memory, and a field whose help
+      // text names a screen you have to go and find is a field people leave
+      // empty.
+      footer: html`
+        <div class="row wrap field-links">
+          <a class="button" target="_blank" rel="noopener"
+             href="https://business.facebook.com/settings/system-users">
+            Get a token &rarr;
+          </a>
+          <a class="button" href="/settings/facebook">Pages &amp; routes</a>
+        </div>
+        <p class="small muted">
+          In Business Settings: add a system user, <strong>Add assets</strong> &rarr; Pages
+          &rarr; switch on <em>Manage Page</em>, then <strong>Generate new token</strong>
+          with the three permissions above. A token made in the Graph API Explorer
+          instead will expire in sixty days and stop publishing without warning.
+        </p>
+      `,
+    },
     { key: 'telegram', title: 'Telegram' },
   ];
 
@@ -1579,6 +1607,7 @@ export function settingsPage(
       <a class="button" href="/settings/prompts">Prompts &amp; models</a>
       <a class="button" href="/settings/account">Change password</a>
       <a class="button" href="/settings/data">History &amp; storage</a>
+      <a class="button" href="/settings/facebook">Facebook pages</a>
     </div>
 
     ${problems.length
@@ -1599,6 +1628,7 @@ export function settingsPage(
           <h2>${group.title}</h2>
           <div class="card">
             ${fields.map((spec) => settingField(spec, values.get(spec.key) ?? ''))}
+            ${group.footer ?? raw('')}
           </div>
         `;
       })}
