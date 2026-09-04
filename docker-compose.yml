@@ -88,17 +88,6 @@ services:
     build: ./services/imagegen
     restart: unless-stopped
 
-    # A ceiling, not a target. Chrome renders the Flow page in software — there
-    # is no GPU in here — and a page left open renders forever, so without a
-    # limit this container will take every core on the box and starve the
-    # platform beside it. Two cores is more than a browser driving one tab
-    # needs; raise it only if generation is measurably slower for it.
-    deploy:
-      resources:
-        limits:
-          cpus: "${IMAGEGEN_CPUS:-2.0}"
-          memory: ${IMAGEGEN_MEMORY:-3g}
-
     # Deliberately no `expose`, no `ports`, and no domain. This container holds
     # a signed-in Google session and a browser someone can drive, and that is
     # what keeps it unreachable: Docker routes inbound traffic to published
