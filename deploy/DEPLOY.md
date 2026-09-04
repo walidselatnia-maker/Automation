@@ -44,7 +44,7 @@ It is printed in the container logs on every start until you set your own:
 │  quartz-nectar-violet-6493                              │
 └─────────────────────────────────────────────────────────┘
 ```
-
+xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 Open your platform's log view for the container and search for
 `ADMIN PASSWORD`.
 
