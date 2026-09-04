@@ -723,6 +723,58 @@ function recordTabEvent(action, reason, extra = {}) {
  */
 const isDeadProjectPage = (url) => (url || '').includes('/404');
 
+/**
+ * Be on a project page before asking for a captcha.
+ *
+ * Measured in the page, both ways:
+ *
+ *   https://flow.google.com/            grecaptcha undefined
+ *   https://flow.google.com/project/…   grecaptcha.enterprise.execute exists
+ *
+ * The list has nothing to generate, so it never loads reCAPTCHA, and a solve
+ * from there fails however long it waits.
+ *
+ * Which project does not matter — the generation request names its own in
+ * clientContext — so the address comes from a link on the page rather than
+ * from a configured id. That is not a detail: building the URL from the site's
+ * project id put the tab on Flow's 404 for an id this account cannot open, and
+ * a 404 issues no requests, so the bearer token stopped arriving and every job
+ * after it failed with NO_FLOW_KEY. A link that is on the page is a project
+ * this account can open.
+ */
+async function ensureFlowTabOnProject() {
+  const tab = (await queryFlowTabs())[0];
+  if (!tab) return;
+  if ((tab.url || '').includes('/project/')) return;
+
+  const found = await chrome.tabs
+    .sendMessage(tab.id, { type: 'FIND_PROJECT_URL' })
+    .catch(() => null);
+
+  if (!found?.url) {
+    console.warn(
+      '[FlowAgent] No project link on the Flow page — captcha will not solve ' +
+        'from the project list. Is the account signed in with at least one project?',
+    );
+    return;
+  }
+
+  console.log('[FlowAgent] Moving to a project page for the captcha: ' + found.url);
+  const settled = waitForTabLoad(tab.id, 20000);
+  await chrome.tabs.update(tab.id, { url: found.url });
+  await settled.catch((e) =>
+    console.warn('[FlowAgent] Project page did not finish loading:', e.message),
+  );
+
+  // Belt to the braces: never leave the tab somewhere that serves no requests.
+  const after = await chrome.tabs.get(tab.id).catch(() => null);
+  if (after && isDeadProjectPage(after.url)) {
+    const back = waitForTabLoad(tab.id, 20000);
+    await chrome.tabs.update(tab.id, { url: FLOW_HOME });
+    await back.catch(() => {});
+  }
+}
+
 // Strict lookup — the set of tabs we are willing to message/inject into.
 async function queryFlowTabs() {
   return chrome.tabs.query({ url: FLOW_TAB_URLS });
@@ -1051,6 +1103,9 @@ async function handleApiRequest(msg) {
   }
 
   try {
+    // Step 0: reCAPTCHA exists on a project page and not on the project list.
+    if (captchaAction) await ensureFlowTabOnProject();
+
     // Step 1: Solve captcha if needed
     let captchaToken = null;
     if (captchaAction) {
