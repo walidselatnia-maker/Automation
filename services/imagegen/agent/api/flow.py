@@ -121,3 +121,72 @@ async def process_table() -> dict:
         "total_cpu_percent": round(sum(r["cpu_percent"] for r in rows), 1),
         "processes": rows[:25],
     }
+
+
+@router.get("/threads/{pid}")
+async def thread_table(pid: int) -> dict:
+    """Per-thread CPU inside one process, which is where the answer usually is.
+
+    A Chrome process is a dozen named threads doing unrelated jobs, and the
+    process total says nothing about which. The GPU process alone runs the viz
+    compositor, the SwiftShader worker pool, a watchdog and the raster workers
+    — and 300% could be any of them, with a different fix each time.
+
+    Chrome names its threads, and /proc/<pid>/task/<tid>/comm is that name. So
+    this answers "VizCompositorThread" or "swiftshader" or "GpuWatchdog"
+    instead of leaving it to be guessed at, which has not gone well.
+    """
+    interval = 1.0
+    task_dir = f"/proc/{pid}/task"
+
+    def snapshot() -> dict[int, tuple[int, str]]:
+        """tid -> (cpu jiffies, thread name)."""
+        out: dict[int, tuple[int, str]] = {}
+        try:
+            entries = list(os.scandir(task_dir))
+        except OSError:
+            return out
+        for entry in entries:
+            if not entry.name.isdigit():
+                continue
+            tid = int(entry.name)
+            try:
+                with open(f"{task_dir}/{tid}/stat", encoding="utf-8", errors="replace") as f:
+                    raw = f.read()
+                fields = raw[raw.rindex(")") + 2:].split()
+                jiffies = int(fields[11]) + int(fields[12])
+                with open(f"{task_dir}/{tid}/comm", encoding="utf-8", errors="replace") as f:
+                    name = f.read().strip()
+            except (OSError, ValueError, IndexError):
+                continue  # the thread ended while we were reading it
+            out[tid] = (jiffies, name)
+        return out
+
+    first = await asyncio.to_thread(snapshot)
+    if not first:
+        raise HTTPException(404, f"no process {pid}")
+    await asyncio.sleep(interval)
+    second = await asyncio.to_thread(snapshot)
+
+    ticks = os.sysconf("SC_CLK_TCK")
+    rows = []
+    for tid, (jiffies, name) in second.items():
+        before = first.get(tid)
+        if before is None:
+            continue
+        rows.append(
+            {
+                "tid": tid,
+                "cpu_percent": round((jiffies - before[0]) / ticks / interval * 100, 1),
+                "name": name,
+            }
+        )
+
+    rows.sort(key=lambda r: r["cpu_percent"], reverse=True)
+    return {
+        "pid": pid,
+        "sampled_over_seconds": interval,
+        "thread_count": len(rows),
+        "total_cpu_percent": round(sum(r["cpu_percent"] for r in rows), 1),
+        "threads": rows[:40],
+    }

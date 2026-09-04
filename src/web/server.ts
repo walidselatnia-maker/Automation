@@ -1951,6 +1951,50 @@ export function buildServer(
     }
   });
 
+  /**
+   * Per-thread CPU inside one process in the image container.
+   *
+   * /browser/procs says which process; this says which thread inside it, and
+   * Chrome's thread names (VizCompositorThread, swiftshader, GpuWatchdog) are
+   * specific enough to point at a fix. Two rounds of plausible-sounding Chrome
+   * flags were spent not knowing this.
+   */
+  app.get('/browser/threads/:pid', async (request, reply) => {
+    const base = settings.get('image_base_url').replace(/\/+$/, '');
+    if (!base) return reply.type('text/plain').send('No image service URL is set.');
+    const pid = asNumber((request.params as { pid: string }).pid, 0);
+
+    try {
+      const response = await fetch(`${base}/flow/threads/${pid}`, {
+        headers: { 'X-API-Key': settings.get('image_api_key') },
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!response.ok) {
+        return reply.type('text/plain').send(`Image service answered HTTP ${response.status}.`);
+      }
+
+      const body = (await response.json()) as {
+        pid: number;
+        thread_count: number;
+        total_cpu_percent: number;
+        threads: { tid: number; cpu_percent: number; name: string }[];
+      };
+
+      const lines = [
+        `pid ${body.pid} — ${body.thread_count} threads, ${body.total_cpu_percent}% CPU total`,
+        '',
+        `${'TID'.padStart(7)}  ${'CPU%'.padStart(7)}  THREAD`,
+        ...body.threads.map(
+          (t) =>
+            `${String(t.tid).padStart(7)}  ${t.cpu_percent.toFixed(1).padStart(7)}  ${t.name}`,
+        ),
+      ];
+      return reply.type('text/plain').send(lines.join('\n'));
+    } catch (err) {
+      return reply.type('text/plain').send(`Could not reach the image service: ${errorMessage(err)}`);
+    }
+  });
+
   /* -- Health ------------------------------------------------------------ */
 
   app.get('/healthz', async (_request, reply) => {
