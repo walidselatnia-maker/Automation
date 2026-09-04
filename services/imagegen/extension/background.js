@@ -715,82 +715,13 @@ function recordTabEvent(action, reason, extra = {}) {
 }
 
 /**
- * Park the Flow tab on the project the request is for.
+ * Flow's own "no such project" page, which serves no API calls at all.
  *
- * reCAPTCHA lives on the project page and nowhere else. On labs.google the one
- * Flow URL was the tool itself, so it was always there; on flow.google.com the
- * root is a list of projects, and a list has nothing to generate — so it never
- * loads reCAPTCHA, grecaptcha.enterprise is undefined, and every solve fails.
- * Confirmed in the page: undefined on https://flow.google.com/, a function on
- * https://flow.google.com/project/<id>.
- *
- * Adding the script ourselves is not an option: the page's CSP allows the
- * extension's own resources but not www.google.com/recaptcha, so the tag lands
- * in the DOM and is never executed. Being on the right page is what makes
- * reCAPTCHA available, and it is where a person generating by hand would be.
+ * Nothing navigates to a project any more — that change broke generation and
+ * was reverted — but a tab left stranded on this page would never produce a
+ * token again, so the refresh path still checks for it and retreats.
  */
-const flowProjectUrl = (projectId) => 'https://flow.google.com/project/' + projectId;
-
-/** The project a generation request is aimed at, from the body or the path. */
-function projectIdFrom(url, body) {
-  const fromBody =
-    body?.clientContext?.projectId ||
-    body?.requests?.[0]?.clientContext?.projectId ||
-    '';
-  if (fromBody) return String(fromBody);
-
-  const match = /\/projects\/([^/]+)\//.exec(url || '');
-  return match ? match[1] : '';
-}
-
-/**
- * Make sure the Flow tab is showing that project before anyone asks it for a
- * captcha. Navigates the tab we already have rather than opening another —
- * this runs before every generation, and a tab per generation is the failure
- * this whole area keeps producing.
- */
-/** Flow's own "no such project" page, which serves no API calls at all. */
 const isDeadProjectPage = (url) => (url || '').includes('/404');
-
-async function ensureFlowTabOnProject(projectId) {
-  if (!projectId) return;
-
-  const wanted = flowProjectUrl(projectId);
-  const tabs = await queryFlowTabs();
-  const tab = tabs[0];
-
-  if (!tab) {
-    await openFlowTab('project-page', wanted);
-    return;
-  }
-
-  if ((tab.url || '').includes('/project/' + projectId)) return;
-
-  console.log('[FlowAgent] Moving Flow tab to project ' + projectId);
-  const settled = waitForTabLoad(tab.id, 20000);
-  await chrome.tabs.update(tab.id, { url: wanted });
-  await settled.catch((e) =>
-    console.warn('[FlowAgent] Project page did not finish loading:', e.message),
-  );
-
-  // A project id the signed-in account cannot open lands on flow.google.com/404,
-  // and that page makes no API calls — so the token listener never fires again
-  // and every job after it fails with NO_FLOW_KEY, on a tab nobody is watching.
-  // Being on the wrong page costs one captcha; being stranded on a dead one
-  // costs everything, so this always retreats to somewhere that still works.
-  const after = await chrome.tabs.get(tab.id).catch(() => null);
-  if (after && isDeadProjectPage(after.url)) {
-    console.error(
-      '[FlowAgent] Project ' + projectId + ' does not exist for this account — ' +
-        'check the project ID on the site, or the shared one in Settings. ' +
-        'Going back to the project list.',
-    );
-    const back = waitForTabLoad(tab.id, 20000);
-    await chrome.tabs.update(tab.id, { url: FLOW_HOME });
-    await back.catch(() => {});
-  }
-}
-
 
 // Strict lookup — the set of tabs we are willing to message/inject into.
 async function queryFlowTabs() {
@@ -1120,12 +1051,6 @@ async function handleApiRequest(msg) {
   }
 
   try {
-    // Step 0: be on the page that has reCAPTCHA. The project list does not
-    // load it, so a solve attempted from there fails however long it waits.
-    if (captchaAction) {
-      await ensureFlowTabOnProject(projectIdFrom(url, body));
-    }
-
     // Step 1: Solve captcha if needed
     let captchaToken = null;
     if (captchaAction) {
