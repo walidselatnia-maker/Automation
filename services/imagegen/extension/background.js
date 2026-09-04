@@ -84,6 +84,9 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === 'tab-recycle' || alarm.name === 'tab-recycle-retry') {
     await refreshFlowToken('periodic');
   }
+  if (alarm.name === 'flow-tab-idle') {
+    await closeIdleFlowTab();
+  }
 });
 
 // ─── State hydration ────────────────────────────────────────
@@ -136,6 +139,9 @@ async function init() {
   await ensureHydrated();
   connectToAgent();
   chrome.alarms.create('keepAlive', { periodInMinutes: 0.4 });
+  // One minute is the floor Chrome enforces for a repeating alarm; the idle
+  // window itself is FLOW_TAB_IDLE_CLOSE_MS and is checked inside.
+  chrome.alarms.create('flow-tab-idle', { periodInMinutes: 1 });
 }
 
 // ─── Token Capture ──────────────────────────────────────────
@@ -350,6 +356,18 @@ async function refreshFlowToken(reason) {
   try {
     const tabs = await queryFlowTabs();
     if (!tabs.length) {
+      // Nothing to recycle, and on a timer this must not become "open one".
+      //
+      // The tab is now closed on purpose between runs, and both the 15-minute
+      // token refresh and the 12-hour recycle land in that gap. Falling
+      // through to captureTokenFromFlowTab() here would reopen the tab and
+      // leave it open, which is the entire cost this closing was for. There is
+      // also nothing to keep fresh: the next run opens a new tab and captures
+      // a new token as it loads.
+      if (reason !== 'on-demand' && _flowTabUsers === 0) {
+        console.log('[FlowAgent] No Flow tab and none in use — nothing to refresh (' + reason + ')');
+        return false;
+      }
       // No tab to reload — fall back to the guarded open/inject path.
       await captureTokenFromFlowTab();
       return !!flowKey;
@@ -875,6 +893,79 @@ async function ensureFlowTab() {
   return !!(await waitForFlowTabReady());
 }
 
+// ─── Keep the Flow tab only while it is being used ──────────
+//
+// Measured on the deployed container: with the Flow tab closed the whole
+// service idles at 43% CPU, the GPU process at 11%. With it open the GPU
+// process alone takes 283%, while the renderer stays under 10% and the size of
+// the screen makes no difference at all. So the cost is not the page being
+// drawn -- it is a fixed-size canvas Flow animates without stop, executed by
+// SwiftShader on the CPU because the container has no GPU.
+//
+// The tab is not needed between runs. The generation request itself is sent
+// from this service worker with a stored bearer token, so the page is only
+// required for two things: capturing that token, and running the reCAPTCHA.
+// Both happen inside a run, and a run takes four to six minutes.
+//
+// So it is held open for the duration of a request and closed a couple of
+// minutes after the last one finishes. Three cores for five minutes a run,
+// instead of three cores forever.
+//
+// Opening a fresh tab per run also captures a fresh token on the way in, which
+// is the thing people were achieving by hand when they refreshed the tab to
+// get their access back.
+
+const FLOW_TAB_IDLE_CLOSE_MS = 120000;
+
+// A count, not a flag: the worker drives MAX_CONCURRENT_REQUESTS in parallel,
+// and the second request finishing must not close a tab the first is still
+// using.
+let _flowTabUsers = 0;
+let _flowTabIdleSince = null;
+
+/** Claim the tab. Call synchronously, before any await. */
+function holdFlowTab() {
+  _flowTabUsers++;
+  _flowTabIdleSince = null;
+}
+
+/** Give it back. The close happens on the idle alarm, not here. */
+function releaseFlowTab() {
+  _flowTabUsers = Math.max(0, _flowTabUsers - 1);
+  if (_flowTabUsers === 0) _flowTabIdleSince = Date.now();
+}
+
+/**
+ * Close the Flow tab once nothing has needed it for a while.
+ *
+ * Driven by an alarm rather than setTimeout on purpose. A timer dies with the
+ * service worker, and a tab left open because the worker was recycled is
+ * exactly the cost this is here to avoid. Alarms survive that.
+ */
+async function closeIdleFlowTab() {
+  // state is module-level and resets to 'idle' when the worker is revived, so
+  // it is checked alongside the counter rather than instead of it.
+  if (_flowTabUsers > 0 || state === 'running') {
+    _flowTabIdleSince = null;
+    return;
+  }
+  // Null after a revival as well as after a hold. Either way, start counting
+  // from now rather than assuming the tab has been idle all along.
+  if (_flowTabIdleSince === null) {
+    _flowTabIdleSince = Date.now();
+    return;
+  }
+  if (Date.now() - _flowTabIdleSince < FLOW_TAB_IDLE_CLOSE_MS) return;
+
+  const tabs = await queryFlowTabs();
+  if (!tabs.length) return;
+
+  recordTabEvent('closed', 'idle', { count: tabs.length });
+  await chrome.tabs
+    .remove(tabs.map((t) => t.id))
+    .catch((e) => console.warn('[FlowAgent] Could not close the idle Flow tab:', e.message));
+}
+
 async function requestCaptchaFromTab(tabId, requestId, pageAction) {
   try {
     return await chrome.tabs.sendMessage(tabId, {
@@ -1078,6 +1169,21 @@ async function handleTrpcRequest(msg) {
 }
 
 async function handleApiRequest(msg) {
+  // Claimed before anything can await, so a request arriving while the idle
+  // alarm is deciding cannot lose its tab underneath it.
+  holdFlowTab();
+  try {
+    // Best effort. Every downstream step already copes with a missing tab --
+    // the captcha path has its own recovery and the token path reopens -- so a
+    // failure here is not worth failing the request over.
+    await ensureFlowTab();
+    return await sendApiRequest(msg);
+  } finally {
+    releaseFlowTab();
+  }
+}
+
+async function sendApiRequest(msg) {
   const { id, params } = msg;
   const { url, method, headers, body, captchaAction } = params;
 
