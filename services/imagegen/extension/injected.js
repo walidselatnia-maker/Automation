@@ -48,49 +48,28 @@ window.addEventListener('GET_CAPTCHA', async ({ detail }) => {
 });
 
 /**
- * Get to a working grecaptcha.enterprise, loading it if the page has not.
+ * Wait for the page's reCAPTCHA.
  *
- * On labs.google the Flow page had already loaded reCAPTCHA by the time we
- * asked, so waiting was enough. On flow.google.com it is not on every page —
- * the project list has no reason to load it — and waiting ten seconds for a
- * script nobody is fetching just fails slowly.
- *
- * The script tag is added by the content script rather than here. This file
- * runs in the page's own world, where flow.google.com enforces Trusted Types:
- * assigning a string to script.src throws "This document requires
- * 'TrustedScriptURL' assignment". A content script runs in an isolated world
- * that the page's Trusted Types policy does not govern, so it can add the tag
- * the page will not let us add — and the script still executes in the page,
- * which is where grecaptcha has to end up.
+ * Not loaded here, and not loadable here: the page's CSP allows the
+ * extension's own resources but not www.google.com/recaptcha, so a tag we add
+ * lands in the DOM and is never executed. What makes grecaptcha available is
+ * being on a project page rather than the project list — background.js parks
+ * the tab there before asking. See ensureFlowTabOnProject.
  */
-function grecaptchaReady() {
-  return typeof window.grecaptcha?.enterprise?.execute === 'function';
-}
-
-function pollFor(predicate, timeout) {
-  return new Promise((resolve) => {
+function waitForGrecaptcha(timeout = 15000) {
+  return new Promise((resolve, reject) => {
     const start = Date.now();
     const check = () => {
-      if (predicate()) return resolve(true);
-      if (Date.now() - start > timeout) return resolve(false);
+      if (typeof window.grecaptcha?.enterprise?.execute === 'function') return resolve();
+      if (Date.now() - start > timeout) {
+        return reject(
+          new Error('grecaptcha not available — is the tab on a Flow project page?'),
+        );
+      }
       setTimeout(check, 200);
     };
     check();
   });
 }
 
-async function waitForGrecaptcha(timeout = 10000) {
-  // The page's own copy, if it is coming. Short: this is the fast path, and
-  // when the page is never going to load one, every second here is a second
-  // added to a request that has a deadline.
-  if (await pollFor(grecaptchaReady, 2500)) return;
-
-  window.dispatchEvent(new CustomEvent('FLOWKIT_LOAD_RECAPTCHA', {
-    detail: { siteKey: SITE_KEY },
-  }));
-
-  if (!(await pollFor(grecaptchaReady, timeout))) {
-    throw new Error('grecaptcha not available after loading enterprise.js');
-  }
-}
 

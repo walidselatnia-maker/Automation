@@ -705,6 +705,68 @@ function recordTabEvent(action, reason, extra = {}) {
   console.log(`[FlowAgent][tab] ${action} reason=${reason}`, extra);
 }
 
+/**
+ * Park the Flow tab on the project the request is for.
+ *
+ * reCAPTCHA lives on the project page and nowhere else. On labs.google the one
+ * Flow URL was the tool itself, so it was always there; on flow.google.com the
+ * root is a list of projects, and a list has nothing to generate — so it never
+ * loads reCAPTCHA, grecaptcha.enterprise is undefined, and every solve fails.
+ * Confirmed in the page: undefined on https://flow.google.com/, a function on
+ * https://flow.google.com/project/<id>.
+ *
+ * Adding the script ourselves is not an option: the page's CSP allows the
+ * extension's own resources but not www.google.com/recaptcha, so the tag lands
+ * in the DOM and is never executed. Being on the right page is what makes
+ * reCAPTCHA available, and it is where a person generating by hand would be.
+ */
+const flowProjectUrl = (projectId) => 'https://flow.google.com/project/' + projectId;
+
+/** The project a generation request is aimed at, from the body or the path. */
+function projectIdFrom(url, body) {
+  const fromBody =
+    body?.clientContext?.projectId ||
+    body?.requests?.[0]?.clientContext?.projectId ||
+    '';
+  if (fromBody) return String(fromBody);
+
+  const match = /\/projects\/([^/]+)\//.exec(url || '');
+  return match ? match[1] : '';
+}
+
+/**
+ * Make sure the Flow tab is showing that project before anyone asks it for a
+ * captcha. Navigates the tab we already have rather than opening another —
+ * this runs before every generation, and a tab per generation is the failure
+ * this whole area keeps producing.
+ */
+async function ensureFlowTabOnProject(projectId) {
+  if (!projectId) return;
+
+  const wanted = flowProjectUrl(projectId);
+  const tabs = await queryFlowTabs();
+
+  if (!tabs.length) {
+    await openFlowTab('project-page', wanted);
+    const ready = await waitForFlowTabReady();
+    if (ready && !(ready.url || '').includes('/project/' + projectId)) {
+      await chrome.tabs.update(ready.id, { url: wanted });
+      await waitForTabLoad(ready.id, 20000).catch(() => {});
+    }
+    return;
+  }
+
+  const tab = tabs[0];
+  if ((tab.url || '').includes('/project/' + projectId)) return;
+
+  console.log('[FlowAgent] Moving Flow tab to project ' + projectId);
+  const settled = waitForTabLoad(tab.id, 20000);
+  await chrome.tabs.update(tab.id, { url: wanted });
+  await settled.catch((e) =>
+    console.warn('[FlowAgent] Project page did not finish loading:', e.message),
+  );
+}
+
 // Strict lookup — the set of tabs we are willing to message/inject into.
 async function queryFlowTabs() {
   return chrome.tabs.query({ url: FLOW_TAB_URLS });
@@ -1033,6 +1095,12 @@ async function handleApiRequest(msg) {
   }
 
   try {
+    // Step 0: be on the page that has reCAPTCHA. The project list does not
+    // load it, so a solve attempted from there fails however long it waits.
+    if (captchaAction) {
+      await ensureFlowTabOnProject(projectIdFrom(url, body));
+    }
+
     // Step 1: Solve captcha if needed
     let captchaToken = null;
     if (captchaAction) {
