@@ -1,5 +1,5 @@
 /**
- * Injected into MAIN world on labs.google — has access to window.grecaptcha
+ * Injected into MAIN world on the Flow app — has access to window.grecaptcha
  * Also intercepts TRPC fetch responses to capture fresh signed media URLs.
  */
 const SITE_KEY = '6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV';
@@ -13,7 +13,8 @@ window.fetch = async function (...args) {
   const response = await _originalFetch.apply(this, args);
   try {
     const url = typeof args[0] === 'string' ? args[0] : args[0]?.url || '';
-    // Only intercept TRPC calls on labs.google that return project/flow data
+    // Only intercept TRPC calls that return project/flow data. Matched on the
+    // path, so it survived Flow moving host.
     if (url.includes('/fx/api/trpc/') && response.ok) {
       const clone = response.clone();
       clone.text().then(text => {
@@ -46,14 +47,29 @@ window.addEventListener('GET_CAPTCHA', async ({ detail }) => {
   }
 });
 
-function waitForGrecaptcha(timeout = 10000) {
+/**
+ * Wait for the page's reCAPTCHA.
+ *
+ * Not loaded here, and not loadable here: the page's CSP allows the
+ * extension's own resources but not www.google.com/recaptcha, so a tag we add
+ * lands in the DOM and is never executed. What makes grecaptcha available is
+ * being on a project page rather than the project list — background.js parks
+ * the tab there before asking. See ensureFlowTabOnProject.
+ */
+function waitForGrecaptcha(timeout = 15000) {
   return new Promise((resolve, reject) => {
     const start = Date.now();
     const check = () => {
-      if (window.grecaptcha?.enterprise?.execute) return resolve();
-      if (Date.now() - start > timeout) return reject(new Error('grecaptcha not available'));
+      if (typeof window.grecaptcha?.enterprise?.execute === 'function') return resolve();
+      if (Date.now() - start > timeout) {
+        return reject(
+          new Error('grecaptcha not available — is the tab on a Flow project page?'),
+        );
+      }
       setTimeout(check, 200);
     };
     check();
   });
 }
+
+

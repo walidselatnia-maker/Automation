@@ -163,7 +163,13 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
       ws.send(JSON.stringify({ type: 'token_captured', flowKey }));
     }
   },
-  { urls: ['https://aisandbox-pa.googleapis.com/*', 'https://labs.google/*'] },
+  {
+    urls: [
+      'https://aisandbox-pa.googleapis.com/*',
+      'https://flow.google.com/*',
+      'https://labs.google/*',
+    ],
+  },
   ['requestHeaders', 'extraHeaders'],
 );
 
@@ -171,7 +177,7 @@ let _openingFlowTab = false;
 
 async function captureTokenFromFlowTab() {
   const tabs = await chrome.tabs.query({
-    url: ['https://labs.google/fx/tools/flow*', 'https://labs.google/fx/*/tools/flow*'],
+    url: FLOW_TAB_URLS,
   });
   if (!tabs.length) {
     if (_openingFlowTab) {
@@ -183,7 +189,7 @@ async function captureTokenFromFlowTab() {
       await openFlowTab('token-refresh');
       await sleep(3000);
       const retryTabs = await chrome.tabs.query({
-        url: ['https://labs.google/fx/tools/flow*', 'https://labs.google/fx/*/tools/flow*'],
+        url: FLOW_TAB_URLS,
       });
       if (!retryTabs.length) {
         console.log('[FlowAgent] Flow tab not ready yet after open');
@@ -225,7 +231,7 @@ async function captureTokenFromFlowTab() {
 //   token in neither                  capture stopped happening entirely
 //   no Flow tab                       nothing can produce a token
 //   Flow tab discarded                Chrome evicted it under memory pressure
-//   tab URL not on labs.google        navigated away or bounced to a sign-in
+//   tab URL not a Flow host          navigated away or bounced to a sign-in
 
 async function collectDiagnostics() {
   const now = Date.now();
@@ -581,14 +587,14 @@ async function handleSwitchAccount(msg) {
 
   try {
     const tabs = await chrome.tabs.query({
-      url: ['https://labs.google/fx/tools/flow*', 'https://labs.google/fx/*/tools/flow*'],
+      url: FLOW_TAB_URLS,
     });
 
     if (!tabs.length) {
       // No Flow tab open — just update the index and try to open one
       currentAuthUser = targetUser;
       chrome.storage.local.set({ currentAuthUser });
-      await openFlowTab('switch-account', 'https://labs.google/fx/tools/flow?authuser=' + targetUser);
+      await openFlowTab('switch-account', FLOW_HOME + '?authuser=' + targetUser);
       await sleep(5000);
       await captureTokenFromFlowTab();
       sendToAgent({ id, result: { ok: true, authUser: targetUser, note: 'opened new tab' } });
@@ -657,13 +663,24 @@ function sendToAgent(msg) {
 // and retry instead of hard-failing. Recovery is bounded and only triggers on
 // fast-fail transport errors so it stays inside the agent's 60s submit window.
 
+// Google moved Flow to its own host. Both are listed because the old address
+// still redirects, and a tab opened before the move can still be sitting on it
+// — but everything this extension does keys off matching the tab's URL, so a
+// host it does not know about is a Flow tab it cannot see: no content script,
+// no token capture, no captcha, and a "missing" tab it opens another of on
+// every generation.
+const FLOW_ORIGINS = ['https://flow.google.com/', 'https://labs.google/'];
 const FLOW_TAB_URLS = [
+  'https://flow.google.com/*',
   'https://labs.google/fx/tools/flow*',
   'https://labs.google/fx/*/tools/flow*',
 ];
-const FLOW_HOME = 'https://labs.google/fx/tools/flow';
+const FLOW_HOME = 'https://flow.google.com/';
+
+/** True for any URL this extension treats as the Flow app. */
+const isFlowUrl = (url) => FLOW_ORIGINS.some((origin) => (url || '').startsWith(origin));
 const CAPTCHA_HARD_TIMEOUT_MS = 30000;
-const FLOW_TAB_READY_TIMEOUT_MS = 15000;   // how long to wait for a repair tab to land on labs.google
+const FLOW_TAB_READY_TIMEOUT_MS = 15000;   // how long to wait for a repair tab to land on Flow
 const RECOVERY_MAX_ATTEMPTS = 1;            // one bounded recovery beyond the initial try
 
 // ─── Flow tab creation choke point ──────────────────────────
@@ -688,6 +705,68 @@ function recordTabEvent(action, reason, extra = {}) {
   console.log(`[FlowAgent][tab] ${action} reason=${reason}`, extra);
 }
 
+/**
+ * Park the Flow tab on the project the request is for.
+ *
+ * reCAPTCHA lives on the project page and nowhere else. On labs.google the one
+ * Flow URL was the tool itself, so it was always there; on flow.google.com the
+ * root is a list of projects, and a list has nothing to generate — so it never
+ * loads reCAPTCHA, grecaptcha.enterprise is undefined, and every solve fails.
+ * Confirmed in the page: undefined on https://flow.google.com/, a function on
+ * https://flow.google.com/project/<id>.
+ *
+ * Adding the script ourselves is not an option: the page's CSP allows the
+ * extension's own resources but not www.google.com/recaptcha, so the tag lands
+ * in the DOM and is never executed. Being on the right page is what makes
+ * reCAPTCHA available, and it is where a person generating by hand would be.
+ */
+const flowProjectUrl = (projectId) => 'https://flow.google.com/project/' + projectId;
+
+/** The project a generation request is aimed at, from the body or the path. */
+function projectIdFrom(url, body) {
+  const fromBody =
+    body?.clientContext?.projectId ||
+    body?.requests?.[0]?.clientContext?.projectId ||
+    '';
+  if (fromBody) return String(fromBody);
+
+  const match = /\/projects\/([^/]+)\//.exec(url || '');
+  return match ? match[1] : '';
+}
+
+/**
+ * Make sure the Flow tab is showing that project before anyone asks it for a
+ * captcha. Navigates the tab we already have rather than opening another —
+ * this runs before every generation, and a tab per generation is the failure
+ * this whole area keeps producing.
+ */
+async function ensureFlowTabOnProject(projectId) {
+  if (!projectId) return;
+
+  const wanted = flowProjectUrl(projectId);
+  const tabs = await queryFlowTabs();
+
+  if (!tabs.length) {
+    await openFlowTab('project-page', wanted);
+    const ready = await waitForFlowTabReady();
+    if (ready && !(ready.url || '').includes('/project/' + projectId)) {
+      await chrome.tabs.update(ready.id, { url: wanted });
+      await waitForTabLoad(ready.id, 20000).catch(() => {});
+    }
+    return;
+  }
+
+  const tab = tabs[0];
+  if ((tab.url || '').includes('/project/' + projectId)) return;
+
+  console.log('[FlowAgent] Moving Flow tab to project ' + projectId);
+  const settled = waitForTabLoad(tab.id, 20000);
+  await chrome.tabs.update(tab.id, { url: wanted });
+  await settled.catch((e) =>
+    console.warn('[FlowAgent] Project page did not finish loading:', e.message),
+  );
+}
+
 // Strict lookup — the set of tabs we are willing to message/inject into.
 async function queryFlowTabs() {
   return chrome.tabs.query({ url: FLOW_TAB_URLS });
@@ -699,7 +778,8 @@ async function queryFlowTabs() {
 // that blind spot is what makes concurrent callers each open "the missing tab".
 async function flowTabLikelyExists() {
   if ((await queryFlowTabs()).length) return true;
-  if ((await chrome.tabs.query({ url: 'https://labs.google/*' })).length) return true;
+  if ((await chrome.tabs.query({ url: ['https://flow.google.com/*', 'https://labs.google/*'] })).length)
+    return true;
   const loading = await chrome.tabs.query({ status: 'loading' });
   return loading.some((t) => (t.url || '').startsWith('https://accounts.google.com/'));
 }
@@ -766,13 +846,13 @@ function classifyTerminalCaptchaError(msg) {
   return msg || 'CAPTCHA_FAILED';
 }
 
-// Wait for a Flow tab that is fully loaded on a labs.google URL. Returns the tab
+// Wait for a Flow tab that is fully loaded on a Flow host. Returns the tab
 // or null if none settles in time (e.g. session expired → redirected away).
 async function waitForFlowTabReady(timeoutMs = FLOW_TAB_READY_TIMEOUT_MS) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const tabs = await chrome.tabs.query({ url: FLOW_TAB_URLS });
-    const ready = tabs.find((t) => t.status === 'complete' && (t.url || '').startsWith('https://labs.google/'));
+    const ready = tabs.find((t) => t.status === 'complete' && isFlowUrl(t.url));
     if (ready) return ready;
     await sleep(500);
   }
@@ -800,7 +880,7 @@ async function requestCaptchaFromTab(tabId, requestId, pageAction) {
       msg.includes('Receiving end does not exist') ||
       msg.includes('Could not establish connection');
     if (!shouldInject) {
-      // sendMessage itself hit a host-access failure (tab navigated off labs.google).
+      // sendMessage itself hit a host-access failure (tab navigated off Flow).
       if (isContentsAccessError(error)) throw new Error('TAB_HOST_BLOCKED: ' + msg);
       throw error;
     }
@@ -862,7 +942,7 @@ async function solveCaptcha(requestId, captchaAction) {
     // Recovery: ensure a usable Flow tab exists on a permitted host.
     const recovered = await ensureFlowTab();
     if (!recovered) {
-      // Flow tab opened but didn't stay on labs.google → bounced to a
+      // Flow tab opened but didn't stay on a Flow host → bounced to a
       // login/consent/block page. Needs the user, not another retry.
       return { error: 'SESSION_EXPIRED' };
     }
@@ -951,7 +1031,7 @@ async function handleTrpcRequest(msg) {
   const { id, params } = msg;
   const { url, method = 'POST', headers = {}, body } = params;
 
-  if (!url || !url.startsWith('https://labs.google/')) {
+  if (!isFlowUrl(url)) {
     sendToAgent({ id, error: 'INVALID_TRPC_URL' });
     return;
   }
@@ -1015,6 +1095,12 @@ async function handleApiRequest(msg) {
   }
 
   try {
+    // Step 0: be on the page that has reCAPTCHA. The project list does not
+    // load it, so a solve attempted from there fails however long it waits.
+    if (captchaAction) {
+      await ensureFlowTabOnProject(projectIdFrom(url, body));
+    }
+
     // Step 1: Solve captcha if needed
     let captchaToken = null;
     if (captchaAction) {
@@ -1261,7 +1347,7 @@ chrome.runtime.onMessage.addListener((msg, _, reply) => {
 
   if (msg.type === 'OPEN_FLOW_TAB') {
     chrome.tabs.query({
-      url: ['https://labs.google/fx/tools/flow*', 'https://labs.google/fx/*/tools/flow*'],
+      url: FLOW_TAB_URLS,
     }).then((tabs) => {
       if (tabs.length) {
         chrome.tabs.update(tabs[0].id, { active: true });
@@ -1270,7 +1356,7 @@ chrome.runtime.onMessage.addListener((msg, _, reply) => {
         // User-initiated from the popup — deliberately not gated by the
         // cooldown, but recorded so the audit trail stays complete.
         recordTabEvent('created', 'user-popup', { url: FLOW_HOME });
-        chrome.tabs.create({ url: 'https://labs.google/fx/tools/flow' })
+        chrome.tabs.create({ url: FLOW_HOME })
           .then((tab) => reply({ ok: true, tabId: tab.id }))
           .catch((e) => reply({ error: e.message }));
       }
