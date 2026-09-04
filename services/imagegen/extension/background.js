@@ -355,6 +355,15 @@ async function refreshFlowToken(reason) {
       return !!flowKey;
     }
 
+    // Reloading a dead project page just loads it again, and it will never
+    // produce a token. Go somewhere that will.
+    if (isDeadProjectPage(tabs[0].url)) {
+      console.warn('[FlowAgent] Tab is on the Flow 404 page; returning to the project list');
+      const home = waitForTabLoad(tabs[0].id, 20000);
+      await chrome.tabs.update(tabs[0].id, { url: FLOW_HOME });
+      await home.catch(() => {});
+    }
+
     const before = metrics.tokenCapturedAt;
     console.log('[FlowAgent] Reloading Flow tab to refresh token (' + reason + ')');
     // Listener attached before the reload, not after: an idle tab emits no
@@ -740,23 +749,21 @@ function projectIdFrom(url, body) {
  * this runs before every generation, and a tab per generation is the failure
  * this whole area keeps producing.
  */
+/** Flow's own "no such project" page, which serves no API calls at all. */
+const isDeadProjectPage = (url) => (url || '').includes('/404');
+
 async function ensureFlowTabOnProject(projectId) {
   if (!projectId) return;
 
   const wanted = flowProjectUrl(projectId);
   const tabs = await queryFlowTabs();
+  const tab = tabs[0];
 
-  if (!tabs.length) {
+  if (!tab) {
     await openFlowTab('project-page', wanted);
-    const ready = await waitForFlowTabReady();
-    if (ready && !(ready.url || '').includes('/project/' + projectId)) {
-      await chrome.tabs.update(ready.id, { url: wanted });
-      await waitForTabLoad(ready.id, 20000).catch(() => {});
-    }
     return;
   }
 
-  const tab = tabs[0];
   if ((tab.url || '').includes('/project/' + projectId)) return;
 
   console.log('[FlowAgent] Moving Flow tab to project ' + projectId);
@@ -765,7 +772,25 @@ async function ensureFlowTabOnProject(projectId) {
   await settled.catch((e) =>
     console.warn('[FlowAgent] Project page did not finish loading:', e.message),
   );
+
+  // A project id the signed-in account cannot open lands on flow.google.com/404,
+  // and that page makes no API calls — so the token listener never fires again
+  // and every job after it fails with NO_FLOW_KEY, on a tab nobody is watching.
+  // Being on the wrong page costs one captcha; being stranded on a dead one
+  // costs everything, so this always retreats to somewhere that still works.
+  const after = await chrome.tabs.get(tab.id).catch(() => null);
+  if (after && isDeadProjectPage(after.url)) {
+    console.error(
+      '[FlowAgent] Project ' + projectId + ' does not exist for this account — ' +
+        'check the project ID on the site, or the shared one in Settings. ' +
+        'Going back to the project list.',
+    );
+    const back = waitForTabLoad(tab.id, 20000);
+    await chrome.tabs.update(tab.id, { url: FLOW_HOME });
+    await back.catch(() => {});
+  }
 }
+
 
 // Strict lookup — the set of tabs we are willing to message/inject into.
 async function queryFlowTabs() {
