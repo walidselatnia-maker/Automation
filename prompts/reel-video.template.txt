@@ -1,8 +1,8 @@
-Create a 10-second vertical (9:16) recipe Reel using the attached reference photo as the visual source of truth for the finished dish and the recipe name to determine how it is made.
+Create a 10-second vertical (9:16) recipe Reel using the four attached reference photos as the visual source of truth for the finished dish and the recipe name to determine how it is made.
 
 Recipe name: {{seo.title}}
 
-Step 1 — Analyze: Study the recipe name and reference photo together. Identify only the ingredients, textures, layers, colors, proportions, and final presentation that are visible or clearly implied. Do not invent or substitute ingredients.
+Step 1 — Analyze: Study the recipe name and all four reference photos together. Identify only the ingredients, textures, layers, colors, proportions, and final presentation that are visible or clearly implied. Do not invent or substitute ingredients.
 
 Step 2 — Select shots: Automatically choose 4–6 short, visually satisfying moments in natural chronological order:
 ingredients added ONE AT A TIME in exact recipe order → prep → cook/assemble → plate → final dish.
@@ -11,7 +11,7 @@ Every ingredient and preparation step must be shown. Never skip an ingredient or
 Step 3 — Physical cooking logic: Human hands MUST visibly perform every action throughout: arranging, chopping, pouring, stirring, transferring, cooking, and plating. Never show food, utensils, cookware, or ingredients moving by themselves.
 Prepare ingredients on the countertop. Any heating, frying, sautéing, boiling, simmering, or cooking MUST happen ONLY inside appropriate cookware placed on a clearly visible active stovetop or induction burner. NEVER cook directly on the table or countertop.
 
-Step 4 — Continuity: Keep the same realistic human hands, kitchen, cookware, ingredients, quantities, colors, textures, and visual style throughout. The final shot must closely match the attached reference photo.
+Step 4 — Continuity: Keep the same realistic human hands, kitchen, cookware, ingredients, quantities, colors, textures, and visual style throughout. The final shot must closely match the finished dish in the attached reference photos.
 
 Camera and visual style:
 Photorealistic professional food photography
@@ -40,7 +40,7 @@ Human hands must physically perform the actions
 Cooking happens ONLY in appropriate cookware on a stovetop/induction burner
 NEVER cook directly on the table
 Same hands and kitchen throughout
-Final shot closely matches the reference photo
+Final shot closely matches the finished dish in the reference photos
 No music
 No logos or watermarks
 No on-screen text except the final "Full recipe in comments 👇" CTA

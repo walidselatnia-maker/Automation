@@ -2807,16 +2807,23 @@ export interface ReelComposerData {
 /**
  * Choose what the reel is made from.
  *
- * The four images are offered individually because they are not equivalent:
- * the feature and top shots carry the dish, while the texture macro is a
- * close-up that on its own produces a video of an unidentifiable surface.
+ * All four are ticked by default. They were not, on the reasoning that a
+ * texture macro alone makes a video of an unidentifiable surface -- true of
+ * that image alone, and beside the point when it arrives alongside the other
+ * three. The prompt asks the model to read the dish from the photos together,
+ * and giving it two of the four to read from is throwing away the detail it
+ * needs to keep ingredients and textures honest. Untick one to exclude it.
+ *
+ * The Pinterest graphic is deliberately not here and never was: these come
+ * from the generate-images step, which produces the four article images, and
+ * the pin is built by a different step from a different template.
  */
 export function reelComposerPage(data: ReelComposerData): Html {
   const choices: { key: keyof ReelImages; label: string; hint: string; on: boolean }[] = [
     { key: 'feature', label: 'Feature', hint: 'The hero shot', on: true },
     { key: 'topShot', label: 'Top shot', hint: 'Overhead', on: true },
-    { key: 'textureMacro', label: 'Texture macro', hint: 'Close-up detail', on: false },
-    { key: 'beforeAfter', label: 'Before / after', hint: 'The comparison', on: false },
+    { key: 'textureMacro', label: 'Texture macro', hint: 'Close-up detail', on: true },
+    { key: 'beforeAfter', label: 'Before / after', hint: 'The comparison', on: true },
   ];
 
   return html`
