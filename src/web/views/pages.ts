@@ -2841,7 +2841,7 @@ export function reelComposerPage(data: ReelComposerData): Html {
             Google composes the video from whichever of these you keep. Fewer and more
             consistent usually beats all four.
           </p>
-          <div class="picker">
+          <div class="pick-grid">
             ${choices.map(
               (choice) => html`
                 <label class="pick-tile">

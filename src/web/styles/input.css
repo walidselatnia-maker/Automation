@@ -551,9 +551,21 @@
   /* ------------------------------------------------- Reel image picker */
   /* Wider minimum than .tiles: this is where the choice is actually made, and
      a thumbnail too small to read the plating by is a thumbnail that gets
-     picked at random. */
-  .picker {
-    @apply mt-3 grid gap-3;
+     picked at random.
+
+     Named .pick-grid, not .picker, and the distinction is not cosmetic: the
+     manual-run dialog further down this file is already .picker, and a second
+     rule of the same name turned that dialog into a grid container. It never
+     declares display itself, so it inherited this one's, and the modal
+     rendered as a squeezed column with its text clipped. Same name, same
+     specificity, different component. */
+  .pick-grid {
+    @apply mt-3 gap-3;
+    /* Written out rather than @apply'd, for the reason .grid above gives: this
+       file defines a .grid *component*, so `@apply grid` pulls in that whole
+       rule -- its my-5 and its 200px columns -- instead of the display utility
+       the name suggests. */
+    display: grid;
     grid-template-columns: repeat(auto-fill, minmax(8rem, 1fr));
   }
 
@@ -929,6 +941,15 @@
     @apply w-[min(28rem,calc(100vw-2rem))] p-6;
     @apply border border-edge bg-surface text-slate-900;
     @apply dark:border-edge-dark dark:bg-surface-dark dark:text-slate-100;
+  }
+
+  /* A closed <dialog> is hidden by the browser's own stylesheet, and any author
+     rule that sets display on it silently defeats that -- which is exactly what
+     happened when a second .picker existed. Stating it here, with a specificity
+     a bare class cannot match, means this dialog cannot be un-hidden by a rule
+     that merely shares its name. */
+  .picker:not([open]) {
+    @apply hidden;
   }
 
   .picker::backdrop {
