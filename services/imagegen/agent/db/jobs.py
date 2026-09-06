@@ -100,10 +100,18 @@ async def complete(job_id: str, media_id: Optional[str], output_url: str) -> Non
 
 
 async def fail(job_id: str, error: str) -> None:
+    """Record why a job died.
+
+    8000 characters, not 1000. A Flow response this service cannot read is the
+    single most expensive thing to diagnose here -- the generation is paid for
+    and the reply is the only evidence of what it did -- and 1000 characters
+    cut the one that mattered off mid-field. This column is the only copy that
+    reaches the platform.
+    """
     db = await get_db()
     await db.execute(
         f"UPDATE job SET status = 'FAILED', error_message = ?, updated_at = {_NOW} WHERE id = ?",
-        (error[:1000], job_id),
+        (error[:8000], job_id),
     )
     await db.commit()
 
@@ -113,7 +121,7 @@ async def requeue(job_id: str, error: str) -> None:
     db = await get_db()
     await db.execute(
         f"UPDATE job SET status = 'PENDING', error_message = ?, updated_at = {_NOW} WHERE id = ?",
-        (error[:1000], job_id),
+        (error[:8000], job_id),
     )
     await db.commit()
 

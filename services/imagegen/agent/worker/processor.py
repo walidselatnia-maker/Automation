@@ -30,6 +30,8 @@ from agent.config import (
 from agent.db import jobs
 from agent.services.flow_client import get_flow_client
 from agent.worker._parsing import (
+    extract_media_handle,
+    extract_media_url,
     error_text,
     extract_media_id,
     extract_operation,
@@ -232,34 +234,40 @@ class WorkerController:
             return
 
         operation = extract_operation(submitted)
-        if not operation:
-            # Whatever came back was accepted by Flow -- credits were spent and
-            # a workflow exists on their side -- so this is a response we do not
-            # know how to read, not a refusal. Log the whole thing: 300
-            # characters of a truncated dict is exactly enough to see that the
-            # shape is wrong and not enough to see what the shape is, and this
-            # is expensive to reproduce.
-            logger.error(
-                "job %s: cannot read the video submit response. Full body: %s",
-                job_id[:8],
-                json.dumps(submitted, default=str),
-            )
-            data = submitted.get("data", submitted)
-            shape = ",".join(sorted(data.keys())) if isinstance(data, dict) else type(data).__name__
-            await self._handle_failure(
-                job,
-                f"Video submitted and accepted, but the reply was not in a shape this "
-                f"service can read, so nothing polled for the result. The generation may "
-                f"still have run and the credits are spent. Reply carried: {shape}.\n\n"
-                f"{json.dumps(submitted, default=str)[:6000]}",
-            )
+        if operation:
+            await jobs.set_operation(job_id, operation)
+            logger.info("job %s submitted, polling the operation", job_id[:8])
+            await self._await_video(job, operation)
             return
 
-        await jobs.set_operation(job_id, operation)
-        logger.info("job %s submitted, polling for the video", job_id[:8])
+        # No operations[]: Google answers this submit with a workflow and the
+        # media record it will fill. Nothing in that can be handed to
+        # check_video_status, but the media id alone is enough -- get_media
+        # returns the signed URL once the video exists.
+        handle = extract_media_handle(submitted)
+        if handle:
+            await jobs.set_operation(job_id, handle)
+            logger.info(
+                "job %s submitted as workflow %s, polling media %s",
+                job_id[:8], handle["workflowId"][:8], handle["mediaId"][:8],
+            )
+            await self._await_media(job, handle)
+            return
 
-        # -- Stage 3: wait. --------------------------------------------------
-        await self._await_video(job, operation)
+        logger.error(
+            "job %s: cannot read the video submit response. Full body: %s",
+            job_id[:8],
+            json.dumps(submitted, default=str),
+        )
+        data = submitted.get("data", submitted)
+        shape = ",".join(sorted(data.keys())) if isinstance(data, dict) else type(data).__name__
+        await self._handle_failure(
+            job,
+            f"Video submitted and accepted, but the reply was not in a shape this "
+            f"service can read, so nothing polled for the result. The generation may "
+            f"still have run and the credits are spent. Reply carried: {shape}.\n\n"
+            f"{json.dumps(submitted, default=str)[:6000]}",
+        )
 
     async def _upload_reference(self, client, url: str, project_id: str):
         """One reference image, fetched and handed to Flow.
@@ -336,6 +344,55 @@ class WorkerController:
             job,
             f"Video did not finish within {waited}s ({VIDEO_MAX_POLLS} polls). "
             "Raise VIDEO_MAX_POLLS if generation is legitimately slower.",
+        )
+
+    async def _await_media(self, job: dict, handle: dict) -> None:
+        """Poll one media id until it carries a URL, or the budget runs out.
+
+        The same budget as _await_video on purpose: this is the same wait for
+        the same video, asked a different way, and giving it its own timeout
+        would mean two numbers to keep in step.
+        """
+        job_id = job["id"]
+        media_id = handle["mediaId"]
+        client = get_flow_client()
+        last = {}
+
+        for attempt in range(1, VIDEO_MAX_POLLS + 1):
+            await asyncio.sleep(VIDEO_POLL_INTERVAL)
+
+            # As in _await_video: the handle is stored, so a shutdown here
+            # resumes on the next attempt rather than paying for a second video.
+            if self._shutdown.is_set():
+                logger.info("job %s: polling interrupted by shutdown", job_id[:8])
+                return
+
+            status = await client.get_media(media_id)
+
+            # A media id that is not ready can answer 404 for a while. That is
+            # the wait, not a failure -- only a hard error ends it.
+            if is_error(status) and status.get("status") not in (404, 429):
+                await self._handle_failure(job, error_text(status))
+                return
+
+            last = status
+            url = extract_media_url(status)
+            if url:
+                await jobs.complete(job_id, media_id, url)
+                logger.info("job %s COMPLETED after %d media poll(s)", job_id[:8], attempt)
+                return
+
+        waited = VIDEO_MAX_POLLS * VIDEO_POLL_INTERVAL
+        logger.error(
+            "job %s: media %s never carried a URL. Last body: %s",
+            job_id[:8], media_id[:8], json.dumps(last, default=str),
+        )
+        await self._handle_failure(
+            job,
+            f"The video was submitted and Google created media {media_id}, but it "
+            f"carried no URL within {waited}s ({VIDEO_MAX_POLLS} polls). Raise "
+            f"VIDEO_MAX_POLLS if generation is legitimately slower.\n\n"
+            f"{json.dumps(last, default=str)[:6000]}",
         )
 
     async def _handle_failure(self, job: dict, error: str) -> None:

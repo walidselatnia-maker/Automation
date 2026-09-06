@@ -101,6 +101,73 @@ def extract_output_url(result: dict) -> str:
 # "no URL yet" is the normal state rather than a failure.
 
 
+def extract_media_handle(result: dict) -> dict | None:
+    """The media to poll for, from the workflow-shaped video submit response.
+
+    Google stopped answering the reference-to-video submit with operations[].
+    A submit now comes back as a workflow plus the media record it will fill:
+
+        data.workflows[0].metadata.primaryMediaId
+        data.media[0].name              (the same id)
+        data.media[0].workflowId / projectId
+
+    There is nothing to poll with check_video_status in that -- it wants an
+    operation -- but the media id is enough on its own, because /v1/media/{id}
+    answers with the signed URL once the video exists. That endpoint is not new
+    here; get_media has always been how a fresh URL is fetched for a media id.
+
+    Returns None when the response is not this shape, so the caller can tell
+    "old shape" from "unreadable".
+    """
+    data = result.get("data", result)
+    if not isinstance(data, dict):
+        return None
+
+    workflows = data.get("workflows") or []
+    media = data.get("media") or []
+
+    media_id = ""
+    if workflows and isinstance(workflows[0], dict):
+        media_id = (workflows[0].get("metadata") or {}).get("primaryMediaId") or ""
+    if not media_id and media and isinstance(media[0], dict):
+        media_id = media[0].get("name") or ""
+
+    if not media_id:
+        return None
+
+    first_workflow = workflows[0] if workflows and isinstance(workflows[0], dict) else {}
+    return {
+        "mediaId": media_id,
+        "workflowId": first_workflow.get("name", ""),
+        "projectId": first_workflow.get("projectId", ""),
+    }
+
+
+def extract_media_url(result: dict) -> str:
+    """The playable URL from a /v1/media/{id} response, or "" while it is not ready.
+
+    Two names for the same thing, and which one arrives has varied: fifeUrl is
+    what the video path already reads, servingUri is what get_media documents.
+    Accepting both costs a line and saves a second round of this.
+    """
+    data = result.get("data", result)
+    if not isinstance(data, dict):
+        return ""
+
+    for key in ("fifeUrl", "servingUri"):
+        if data.get(key):
+            return str(data[key])
+
+    # Some responses nest the same fields under the media object itself.
+    media = data.get("media")
+    if isinstance(media, dict):
+        for key in ("fifeUrl", "servingUri"):
+            if media.get(key):
+                return str(media[key])
+
+    return ""
+
+
 def extract_operation(result: dict) -> dict | None:
     """The operation handle to poll, from a video submit response."""
     data = result.get("data", result)
