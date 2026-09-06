@@ -2223,6 +2223,93 @@ export function buildServer(
     return redirect(reply, '/settings', { kind: 'ok', message: 'Key health reset.' });
   });
 
+  /**
+   * What is using the CPU inside the image container, as plain text.
+   *
+   * Deployment is Dokploy and there is no shell on the box, so `docker exec
+   * ... top` is not available when that container starts burning cores. This
+   * is the substitute: the agent samples /proc for a second and this renders
+   * it. Behind the session cookie like every other page, and read-only.
+   */
+  app.get('/browser/procs', async (_request, reply) => {
+    const base = settings.get('image_base_url').replace(/\/+$/, '');
+    if (!base) return reply.type('text/plain').send('No image service URL is set.');
+
+    try {
+      const response = await fetch(`${base}/flow/procs`, {
+        headers: { 'X-API-Key': settings.get('image_api_key') },
+        // The endpoint samples for a second before it answers.
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!response.ok) {
+        return reply.type('text/plain').send(`Image service answered HTTP ${response.status}.`);
+      }
+
+      const body = (await response.json()) as {
+        total_cpu_percent: number;
+        processes: { pid: number; cpu_percent: number; memory_mb: number; command: string }[];
+      };
+
+      const lines = [
+        `total ${body.total_cpu_percent}% CPU`,
+        '',
+        `${'PID'.padStart(7)}  ${'CPU%'.padStart(7)}  ${'MEM MB'.padStart(8)}  COMMAND`,
+        ...body.processes.map(
+          (p) =>
+            `${String(p.pid).padStart(7)}  ${p.cpu_percent.toFixed(1).padStart(7)}  ` +
+            `${p.memory_mb.toFixed(1).padStart(8)}  ${p.command}`,
+        ),
+      ];
+      return reply.type('text/plain').send(lines.join('\n'));
+    } catch (err) {
+      return reply.type('text/plain').send(`Could not reach the image service: ${errorMessage(err)}`);
+    }
+  });
+
+  /**
+   * Per-thread CPU inside one process in the image container.
+   *
+   * /browser/procs says which process; this says which thread inside it, and
+   * Chrome's thread names (VizCompositorThread, swiftshader, GpuWatchdog) are
+   * specific enough to point at a fix. Two rounds of plausible-sounding Chrome
+   * flags were spent not knowing this.
+   */
+  app.get('/browser/threads/:pid', async (request, reply) => {
+    const base = settings.get('image_base_url').replace(/\/+$/, '');
+    if (!base) return reply.type('text/plain').send('No image service URL is set.');
+    const pid = asNumber((request.params as { pid: string }).pid, 0);
+
+    try {
+      const response = await fetch(`${base}/flow/threads/${pid}`, {
+        headers: { 'X-API-Key': settings.get('image_api_key') },
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!response.ok) {
+        return reply.type('text/plain').send(`Image service answered HTTP ${response.status}.`);
+      }
+
+      const body = (await response.json()) as {
+        pid: number;
+        thread_count: number;
+        total_cpu_percent: number;
+        threads: { tid: number; cpu_percent: number; name: string }[];
+      };
+
+      const lines = [
+        `pid ${body.pid} — ${body.thread_count} threads, ${body.total_cpu_percent}% CPU total`,
+        '',
+        `${'TID'.padStart(7)}  ${'CPU%'.padStart(7)}  THREAD`,
+        ...body.threads.map(
+          (t) =>
+            `${String(t.tid).padStart(7)}  ${t.cpu_percent.toFixed(1).padStart(7)}  ${t.name}`,
+        ),
+      ];
+      return reply.type('text/plain').send(lines.join('\n'));
+    } catch (err) {
+      return reply.type('text/plain').send(`Could not reach the image service: ${errorMessage(err)}`);
+    }
+  });
+
   /* -- Health ------------------------------------------------------------ */
 
   app.get('/healthz', async (_request, reply) => {
