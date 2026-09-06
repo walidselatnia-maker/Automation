@@ -2657,7 +2657,9 @@ function reelTile(reel: ReelView): Html {
           ${statusBadge(state.badge)}<span class="small">${state.label}</span>
         </div>
 
-        <div class="tile-title">${reel.run_title ?? '(untitled)'}</div>
+        <div class="tile-title">
+          <a href="/reels/${reel.id}">${reel.run_title ?? '(untitled)'}</a>
+        </div>
         <div class="help">
           ${reel.site_domain ?? ''} &middot; ${reel.seed_keyword ?? ''}
         </div>
@@ -2667,7 +2669,12 @@ function reelTile(reel: ReelView): Html {
             : html`<a href="/settings/facebook">No page set &mdash; add a route</a>`}
         </div>
 
-        ${reel.error ? html`<div class="tile-error small">${reel.error}</div>` : raw('')}
+        ${reel.error
+          ? html`<div class="tile-error small">
+              ${reel.error.length > 200 ? html`${reel.error.slice(0, 200)}…` : html`${reel.error}`}
+              <a href="/reels/${reel.id}">Full report</a>
+            </div>`
+          : raw('')}
 
         <div class="row wrap tile-actions">
           ${reel.status === 'ready' && reel.fb_page_id

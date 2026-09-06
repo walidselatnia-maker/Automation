@@ -233,8 +233,25 @@ class WorkerController:
 
         operation = extract_operation(submitted)
         if not operation:
+            # Whatever came back was accepted by Flow -- credits were spent and
+            # a workflow exists on their side -- so this is a response we do not
+            # know how to read, not a refusal. Log the whole thing: 300
+            # characters of a truncated dict is exactly enough to see that the
+            # shape is wrong and not enough to see what the shape is, and this
+            # is expensive to reproduce.
+            logger.error(
+                "job %s: cannot read the video submit response. Full body: %s",
+                job_id[:8],
+                json.dumps(submitted, default=str),
+            )
+            data = submitted.get("data", submitted)
+            shape = ",".join(sorted(data.keys())) if isinstance(data, dict) else type(data).__name__
             await self._handle_failure(
-                job, f"No operation in video response: {str(submitted)[:300]}"
+                job,
+                f"Video submitted and accepted, but the reply was not in a shape this "
+                f"service can read, so nothing polled for the result. The generation may "
+                f"still have run and the credits are spent. Reply carried: {shape}.\n\n"
+                f"{json.dumps(submitted, default=str)[:6000]}",
             )
             return
 

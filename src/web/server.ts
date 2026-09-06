@@ -10,6 +10,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { layout } from './views/layout.js';
+import { reelDetailPage } from './views/reel-detail.js';
 import { passwordAccepted, registerAuth, type AuthOptions } from './auth.js';
 import { rejectionReason, storePassword, storedPasswordHash } from './password.js';
 import { registerBrowserProxy } from './browser-proxy.js';
@@ -1072,6 +1073,21 @@ export function buildServer(
       kind: 'ok',
       message: 'Generating the video. It takes a few minutes.',
     });
+  });
+
+  /**
+   * One reel, in full.
+   *
+   * The list card clips the error, and a video submit that comes back in an
+   * unexpected shape produces exactly the message you need to read whole. The
+   * prompt, the references and the job id were all stored already and had
+   * nowhere to be seen.
+   */
+  app.get('/reels/:id', async (request, reply) => {
+    const reel = getReel(asNumber((request.params as { id: string }).id, 0));
+    if (!reel) return reply.callNotFound();
+
+    return page(reply, 'Reel', '/reels', reelDetailPage(reel) as never, readFlash(request.query));
   });
 
   app.post('/reels/:id/publish', async (request, reply) => {
