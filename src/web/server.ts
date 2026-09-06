@@ -1155,6 +1155,83 @@ export function buildServer(
     );
   });
 
+  /**
+   * Read the pages off the token instead of having them typed in.
+   *
+   * The client could already do this -- listPages() asks the Graph API for
+   * every page the system user can see, and returns exactly the id and name
+   * this table stores -- but the only caller was the token check. So the ids
+   * were being copied by hand from Facebook into a form, which is a page id
+   * transcription error waiting to happen across thirty-odd pages.
+   *
+   * A page already here keeps its own auto_publish and enabled: upsertFbPage
+   * overwrites both from its input, and an import that quietly re-enabled a
+   * page someone had deliberately turned off would publish to it. Only the
+   * name is refreshed. New pages arrive disabled for auto-publish, because
+   * discovering a page is not the same as deciding to post to it unattended.
+   *
+   * This finds the pages inside the Business Manager the token belongs to. A
+   * page administered by someone outside it will not appear here, and that is
+   * the case Buffer exists to cover -- not something a longer page limit fixes.
+   */
+  app.post('/settings/facebook/pages/import', async (_request, reply) => {
+    const client = new FacebookClient({ systemUserToken: settings.get('fb_system_token') });
+
+    let discovered;
+    try {
+      discovered = await client.listPages();
+    } catch (err) {
+      return redirect(reply, '/settings/facebook', {
+        kind: 'error',
+        message: `Could not read the pages from the token: ${errorMessage(err)}`,
+      });
+    }
+
+    if (discovered.length === 0) {
+      return redirect(reply, '/settings/facebook', {
+        kind: 'warn',
+        message:
+          'The token is valid but sees no pages. The system user needs to be given ' +
+          'access to them in Business Manager.',
+      });
+    }
+
+    const known = new Map(listFbPages().map((row) => [row.page_id, row]));
+    let added = 0;
+    let renamed = 0;
+
+    for (const page of discovered) {
+      const existing = known.get(page.id);
+      if (!existing) {
+        upsertFbPage({ pageId: page.id, name: page.name, autoPublish: false, enabled: true });
+        added++;
+        continue;
+      }
+
+      if (existing.name === page.name) continue;
+      upsertFbPage(
+        {
+          pageId: page.id,
+          name: page.name,
+          autoPublish: existing.auto_publish === 1,
+          enabled: existing.enabled === 1,
+        },
+        existing.id,
+      );
+      renamed++;
+    }
+
+    const parts = [`${discovered.length} page(s) on the token`];
+    if (added) parts.push(`${added} added`);
+    if (renamed) parts.push(`${renamed} renamed`);
+    if (!added && !renamed) parts.push('nothing to change');
+
+    return redirect(reply, '/settings/facebook', {
+      kind: 'ok',
+      message: `${parts.join(' — ')}. New pages arrive with auto-publish off.`,
+    });
+  });
+
   app.post('/settings/facebook/pages', async (request, reply) => {
     const body = request.body as {
       pageId?: string;

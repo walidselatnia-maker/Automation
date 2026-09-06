@@ -2983,9 +2983,21 @@ export function facebookSettingsPage(data: FacebookSettingsData): Html {
         </p>
       </details>
 
-      <form method="post" action="/settings/facebook/verify" class="mt-4">
-        <button type="submit">Verify the token</button>
-      </form>
+      <div class="save-bar mt-4">
+        <form method="post" action="/settings/facebook/verify">
+          <button type="submit">Verify the token</button>
+        </form>
+        <form method="post" action="/settings/facebook/pages/import">
+          <button type="submit" ${data.tokenSet ? raw('') : raw('disabled')}>
+            Import pages from the token
+          </button>
+        </form>
+      </div>
+      <p class="help">
+        Importing reads every page the token can see and adds the ones missing below,
+        so their ids do not have to be copied by hand. Pages already listed keep their
+        own settings; only the name is refreshed.
+      </p>
     </div>
 
     <div class="card">
