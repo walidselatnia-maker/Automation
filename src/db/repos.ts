@@ -1988,8 +1988,11 @@ export function upsertFbRoute(input: {
   seedKeyword: string;
   fbPageId: number;
 }): void {
+  // '' is not missing input, it is the every-niche route: one page for
+  // everything a site publishes. Without it, a site with thirty niches needs
+  // thirty routes to say one thing, and the first niche someone forgets is a
+  // reel that generates and then waits forever.
   const seed = input.seedKeyword.trim();
-  if (!seed) throw new Error('A route needs a keyword group.');
 
   // COALESCE matches the unique index: NULL never equals NULL, so a plain
   // `site_id = ?` would never find an existing fallback route to update and
@@ -2009,6 +2012,16 @@ export const deleteFbRoute = (id: number): void => {
 };
 
 /** Why a reel is going where it is going, for the composer to show. */
+/**
+ * The seed_keyword of a route that matches whatever the run's niche is.
+ *
+ * An empty string rather than NULL: the column is NOT NULL and the unique
+ * index is built on it, and NULL never equals NULL, so a NULL wildcard would
+ * be un-updatable and duplicable in exactly the way the site_id COALESCE
+ * above exists to prevent.
+ */
+export const EVERY_NICHE = '';
+
 export interface ResolvedFbPage {
   page: FbPageRow;
   /** 'site' when a route named this site, 'fallback' when it did not. */
@@ -2028,22 +2041,38 @@ export function resolveFbPage(
   siteId: number,
   seedKeyword: string,
 ): ResolvedFbPage | undefined {
-  const specific = get<FbPageRow>(
-    `SELECT p.* FROM fb_page_routes r
-       JOIN fb_pages p ON p.id = r.fb_page_id
-      WHERE r.site_id = ? AND r.seed_keyword = ? COLLATE NOCASE AND p.enabled = 1`,
-    siteId,
-    seedKeyword,
-  );
-  if (specific) return { page: specific, via: 'site' };
+  // Most specific wins, and a route naming this site beats one that does not
+  // even when the looser route names the niche exactly. A page chosen for this
+  // site is a deliberate statement about this site's audience; a shared route
+  // is what to do when nobody made one.
+  const bySite = (seed: string): FbPageRow | undefined =>
+    get<FbPageRow>(
+      `SELECT p.* FROM fb_page_routes r
+         JOIN fb_pages p ON p.id = r.fb_page_id
+        WHERE r.site_id = ? AND r.seed_keyword = ? COLLATE NOCASE AND p.enabled = 1`,
+      siteId,
+      seed,
+    );
 
-  const fallback = get<FbPageRow>(
-    `SELECT p.* FROM fb_page_routes r
-       JOIN fb_pages p ON p.id = r.fb_page_id
-      WHERE r.site_id IS NULL AND r.seed_keyword = ? COLLATE NOCASE AND p.enabled = 1`,
-    seedKeyword,
-  );
-  return fallback ? { page: fallback, via: 'fallback' } : undefined;
+  const shared = (seed: string): FbPageRow | undefined =>
+    get<FbPageRow>(
+      `SELECT p.* FROM fb_page_routes r
+         JOIN fb_pages p ON p.id = r.fb_page_id
+        WHERE r.site_id IS NULL AND r.seed_keyword = ? COLLATE NOCASE AND p.enabled = 1`,
+      seed,
+    );
+
+  const siteAndNiche = bySite(seedKeyword);
+  if (siteAndNiche) return { page: siteAndNiche, via: 'site' };
+
+  const siteAnyNiche = bySite(EVERY_NICHE);
+  if (siteAnyNiche) return { page: siteAnyNiche, via: 'site' };
+
+  const sharedNiche = shared(seedKeyword);
+  if (sharedNiche) return { page: sharedNiche, via: 'fallback' };
+
+  const sharedAny = shared(EVERY_NICHE);
+  return sharedAny ? { page: sharedAny, via: 'fallback' } : undefined;
 }
 
 export type ReelStatus =

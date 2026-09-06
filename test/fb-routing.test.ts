@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { closeDatabase, openDatabase } from '../src/db/index.js';
 import {
   deleteFbPage,
+  EVERY_NICHE,
   deleteFbRoute,
   insertKeyword,
   keywordGroups,
@@ -61,6 +62,52 @@ describe('which page a reel publishes to', () => {
 
     expect(resolved?.page.page_id).toBe('111');
     expect(resolved?.via).toBe('site');
+  });
+
+  it('sends a whole site to one page with a single every-niche route', () => {
+    // The case that made this necessary: a site with its own page. Naming
+    // every niche one at a time is thirty routes to say one thing, and the
+    // first niche anyone forgets is a reel that waits forever.
+    const site = seedSite('bitespoon.com');
+    const page = addPage('333', 'Bitespoon');
+    upsertFbRoute({ siteId: site, seedKeyword: EVERY_NICHE, fbPageId: page });
+
+    expect(resolveFbPage(site, 'slow cooker')?.page.page_id).toBe('333');
+    expect(resolveFbPage(site, 'air fryer')?.page.page_id).toBe('333');
+  });
+
+  it('prefers the niche named on the site over that site catch-all', () => {
+    const site = seedSite('bitespoon.com');
+    const everything = addPage('333', 'Bitespoon');
+    const specific = addPage('444', 'Slow Cooker Suppers');
+    upsertFbRoute({ siteId: site, seedKeyword: EVERY_NICHE, fbPageId: everything });
+    upsertFbRoute({ siteId: site, seedKeyword: 'slow cooker', fbPageId: specific });
+
+    expect(resolveFbPage(site, 'slow cooker')?.page.page_id).toBe('444');
+    expect(resolveFbPage(site, 'air fryer')?.page.page_id).toBe('333');
+  });
+
+  it('prefers this site catch-all over a shared route that names the niche', () => {
+    // A page chosen for this site is a statement about this site's audience.
+    // A shared route is what to do when nobody made one.
+    const site = seedSite('bitespoon.com');
+    const mine = addPage('333', 'Bitespoon');
+    const shared = addPage('555', 'Slow Cooker Everywhere');
+    upsertFbRoute({ siteId: site, seedKeyword: EVERY_NICHE, fbPageId: mine });
+    upsertFbRoute({ siteId: null, seedKeyword: 'slow cooker', fbPageId: shared });
+
+    expect(resolveFbPage(site, 'slow cooker')?.page.page_id).toBe('333');
+  });
+
+  it('uses a shared every-niche route as the last resort', () => {
+    const site = seedSite('bitespoon.com');
+    const page = addPage('666', 'The Everything Page');
+    upsertFbRoute({ siteId: null, seedKeyword: EVERY_NICHE, fbPageId: page });
+
+    const resolved = resolveFbPage(site, 'anything at all');
+
+    expect(resolved?.page.page_id).toBe('666');
+    expect(resolved?.via).toBe('fallback');
   });
 
   it('falls back to the shared route when the site has none of its own', () => {

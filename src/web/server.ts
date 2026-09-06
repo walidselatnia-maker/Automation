@@ -1268,10 +1268,25 @@ export function buildServer(
       fbPageId?: string;
     };
 
+    // A niche that matches no keyword is a route that can never fire, and it
+    // looks identical to a working one in the table. The form is a select now,
+    // so this only catches a hand-made request -- but this was the actual bug:
+    // the field was free text beside a datalist, a niche typed slightly wrong
+    // was accepted without a word, and the reel then reported no route at all.
+    const seedKeyword = (body.seedKeyword ?? '').trim();
+    if (seedKeyword !== '' && !keywordGroups().some((g) => g.toLowerCase() === seedKeyword.toLowerCase())) {
+      return redirect(reply, '/settings/facebook', {
+        kind: 'error',
+        message:
+          `No keyword has the niche “${seedKeyword}”, so a route for it would never ` +
+          'match. Pick one from the list, or choose Every niche.',
+      });
+    }
+
     try {
       upsertFbRoute({
         siteId: body.siteId ? asNumber(body.siteId, 0) : null,
-        seedKeyword: body.seedKeyword ?? '',
+        seedKeyword,
         fbPageId: asNumber(body.fbPageId, 0),
       });
     } catch (err) {

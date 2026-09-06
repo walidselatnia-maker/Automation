@@ -3061,8 +3061,10 @@ export function facebookSettingsPage(data: FacebookSettingsData): Html {
     <div class="card">
       <h2>Routes</h2>
       <p class="help">
-        A route sends one niche, on one site, to one page. Leave the site blank to use that
-        page for the niche across every site.
+        A route sends one niche, on one site, to one page. Either half can be left as
+        <em>every</em>: one route of every niche on one site sends that whole site to a
+        page, which is usually what you want when a site has its own page. The most
+        specific route wins, and a route naming the site beats one that does not.
       </p>
 
       ${data.routes.length === 0
@@ -3073,7 +3075,11 @@ export function facebookSettingsPage(data: FacebookSettingsData): Html {
               <tbody>
                 ${data.routes.map(
                   (route) => html`<tr>
-                    <td>${route.seed_keyword}</td>
+                    <td>
+                      ${route.seed_keyword === ''
+                        ? html`<span class="muted">every niche</span>`
+                        : html`${route.seed_keyword}`}
+                    </td>
                     <td class="small">
                       ${route.site_domain ?? html`<span class="muted">every site</span>`}
                     </td>
@@ -3095,11 +3101,10 @@ export function facebookSettingsPage(data: FacebookSettingsData): Html {
             <div class="field-row">
               <div class="field">
                 <label for="fb-route-niche">Niche</label>
-                <input id="fb-route-niche" name="seedKeyword" required list="reel-groups"
-                       placeholder="chicken thighs">
-                <datalist id="reel-groups">
-                  ${data.groups.map((g) => html`<option value="${g}"></option>`)}
-                </datalist>
+                <select id="fb-route-niche" name="seedKeyword">
+                  <option value="">Every niche</option>
+                  ${data.groups.map((g) => html`<option value="${g}">${g}</option>`)}
+                </select>
               </div>
               <div class="field">
                 <label for="fb-route-site">Site</label>
