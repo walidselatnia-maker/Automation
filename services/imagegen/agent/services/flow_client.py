@@ -259,6 +259,15 @@ class FlowClient:
             timeout=45,
         )
 
+    async def get_diagnostics(self) -> dict:
+        """Everything the extension knows about its own state.
+
+        Short timeout on purpose: this is asked when something is already
+        wrong, and a diagnostic that hangs for five minutes is no use to the
+        person asking.
+        """
+        return await self._send("get_diagnostics", {}, timeout=15)
+
     async def refresh_project_urls(self, project_id: str) -> dict:
         """Refresh media URLs for a project.
 

@@ -4,6 +4,7 @@ import asyncio
 import pytest
 from fastapi.testclient import TestClient
 
+from agent import chrome
 from agent.db import jobs, schema
 
 
@@ -196,14 +197,38 @@ def test_generate_returns_202_and_a_job_id(monkeypatch):
     assert body["job_id"]
 
 
-def test_generate_is_refused_when_the_browser_is_disconnected(monkeypatch):
+def test_generate_is_refused_when_a_running_browser_has_no_extension(monkeypatch):
+    monkeypatch.setattr(chrome, "_wanted_running", True)
     response = build_client(monkeypatch, connected=False).post(
         "/v1/generate", json={"prompt": "soup"}
     )
 
-    # Queueing work that cannot move would leave the caller polling forever.
+    # Chrome is up and the extension still is not there. Waiting does not fix
+    # that, and queueing work that cannot move leaves the caller polling forever.
     assert response.status_code == 503
     assert "extension" in response.json()["detail"].lower()
+
+
+def test_generate_is_queued_while_chrome_is_asleep(monkeypatch):
+    """A stopped browser is the normal idle state, not a fault.
+
+    Chrome runs only while there is work, so between jobs the extension is not
+    connected -- and refusing on that is a deadlock: nothing can be queued
+    without a browser, and no browser starts without something queued. Three
+    generate calls were lost to it on the deployed container, and generation
+    only recovered when someone opened the Browser page and started Chrome by
+    hand.
+
+    The job is queued instead. The worker reads the queue rather than what it
+    has claimed, so a PENDING job is exactly what starts the browser.
+    """
+    monkeypatch.setattr(chrome, "_wanted_running", False)
+    response = build_client(monkeypatch, connected=False).post(
+        "/v1/generate", json={"prompt": "soup"}
+    )
+
+    assert response.status_code == 202
+    assert response.json()["status"] == "PENDING"
 
 
 def test_generate_is_refused_without_a_flow_project_id(monkeypatch):

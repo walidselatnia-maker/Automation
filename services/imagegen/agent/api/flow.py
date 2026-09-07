@@ -14,6 +14,7 @@ import os
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from agent import chrome
 from agent.auth import require_api_key
 from agent.config import FLOW_PROJECT_ID
 from agent.db import jobs
@@ -37,7 +38,60 @@ async def extension_status() -> dict:
         "flow_key_present": client._flow_key is not None,
         "project_id_configured": bool(FLOW_PROJECT_ID),
         "jobs": await jobs.count_by_status(),
+        # `connected: false` used to mean one thing -- sign in again. It now
+        # also means "Chrome is stopped because nothing is queued", which is
+        # normal and needs nobody. Anything rendering this has to read the two
+        # together or it will tell people their session is broken every time the
+        # container is idle, which is most of the day.
+        "chrome": chrome.state(),
     }
+
+
+@router.post("/chrome/start")
+async def chrome_start() -> dict:
+    """Bring Chrome up and pin it there for a while.
+
+    For the Browser page: signing in to Google needs a browser, and a browser is
+    no longer running just because the container is. Pinned rather than merely
+    started because a sign-in is not a queued job, so nothing else would hold it
+    and the idle stop would take the window away mid-sign-in.
+    """
+    chrome.hold_manually()
+    await chrome.ensure_running("asked for by hand")
+    return chrome.state()
+
+
+@router.post("/chrome/stop")
+async def chrome_stop() -> dict:
+    """Put Chrome down now rather than waiting out the idle timer."""
+    chrome.release_manual_hold()
+    await chrome.ensure_stopped("asked for by hand")
+    return chrome.state()
+
+
+@router.get("/diagnostics")
+async def extension_diagnostics() -> dict:
+    """What the extension knows about its own state, over the WS it already holds.
+
+    Same reason /procs exists: the deployment is Dokploy, there is no shell, and
+    the extension's own console goes to a devtools window nobody can open. So the
+    questions that decide whether the Flow tab should have closed -- is one open,
+    is a run still holding it, how long has it been idle, is the alarm still
+    scheduled -- were unanswerable from outside the container.
+
+    The tab is the single largest CPU cost in this service. A tab left open
+    because a counter leaked looks exactly like a tab held by a working run, and
+    telling those two apart by reading the source is guesswork.
+    """
+    client = get_flow_client()
+    if not client.connected:
+        raise HTTPException(503, "Extension not connected")
+
+    payload = await client.get_diagnostics()
+    if payload.get("error"):
+        raise HTTPException(502, payload["error"])
+
+    return payload.get("result", payload)
 
 
 @router.get("/credits")

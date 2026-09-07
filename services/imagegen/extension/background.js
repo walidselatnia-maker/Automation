@@ -256,6 +256,24 @@ async function collectDiagnostics() {
 
     metrics: { ...metrics },
     refresh_in_flight: _refreshInFlight,
+
+    // Why the idle close did or did not fire.
+    //
+    // These are the two module-level values closeIdleFlowTab() guards on, and
+    // without them a tab still open twenty minutes after the last job is
+    // indistinguishable from one being legitimately held: the extension's
+    // console never reaches `docker logs`, so nothing about that decision was
+    // observable from outside the browser. Both are counters a run mutates, so
+    // a run that leaks one strands the tab open at the cost this closing exists
+    // to avoid, and the only symptom is CPU that never comes down.
+    flow_tab_users: _flowTabUsers,
+    flow_tab_idle_since: _flowTabIdleSince
+      ? new Date(_flowTabIdleSince).toISOString()
+      : null,
+    flow_tab_idle_age_s: _flowTabIdleSince
+      ? Math.round((now - _flowTabIdleSince) / 1000)
+      : null,
+    flow_tab_idle_close_after_s: Math.round(FLOW_TAB_IDLE_CLOSE_MS / 1000),
   };
 
   try {
@@ -760,26 +778,69 @@ const isDeadProjectPage = (url) => (url || '').includes('/404');
  * after it failed with NO_FLOW_KEY. A link that is on the page is a project
  * this account can open.
  */
+/**
+ * Wait for a project link to exist on the page, rather than asking once.
+ *
+ * Asking once was right when Chrome had been up for hours and the Flow tab was
+ * long since loaded. Chrome now starts for a job and the first request arrives
+ * about a minute later, and at that point one of two things is usually still
+ * true: the content script has not been injected yet, so sendMessage rejects,
+ * or it has and the project list -- which renders its links from data it is
+ * still fetching -- has none to find. Both answer null, and the old code took
+ * null as "this account has no projects", warned, and went on to a captcha that
+ * cannot solve from the list.
+ *
+ * That is the CAPTCHA_FAILED that opened every cold run: it cost one whole
+ * pipeline retry per article and then succeeded, because by the second attempt
+ * the page had finished loading.
+ *
+ * Polling rather than a load event because neither failure is a load: the tab
+ * can be `complete` with the list still empty.
+ */
+const PROJECT_LINK_WAIT_MS = 20000;
+const PROJECT_LINK_POLL_MS = 1000;
+
+async function findProjectUrl(tabId) {
+  const deadline = Date.now() + PROJECT_LINK_WAIT_MS;
+  let attempts = 0;
+
+  while (Date.now() < deadline) {
+    attempts++;
+    const found = await chrome.tabs
+      .sendMessage(tabId, { type: 'FIND_PROJECT_URL' })
+      .catch(() => null);
+
+    if (found?.url) {
+      if (attempts > 1) {
+        console.log(`[FlowAgent] Project link appeared after ${attempts} attempt(s)`);
+      }
+      return found.url;
+    }
+    await sleep(PROJECT_LINK_POLL_MS);
+  }
+
+  return null;
+}
+
 async function ensureFlowTabOnProject() {
   const tab = (await queryFlowTabs())[0];
   if (!tab) return;
   if ((tab.url || '').includes('/project/')) return;
 
-  const found = await chrome.tabs
-    .sendMessage(tab.id, { type: 'FIND_PROJECT_URL' })
-    .catch(() => null);
+  const url = await findProjectUrl(tab.id);
 
-  if (!found?.url) {
+  if (!url) {
     console.warn(
-      '[FlowAgent] No project link on the Flow page — captcha will not solve ' +
-        'from the project list. Is the account signed in with at least one project?',
+      '[FlowAgent] No project link on the Flow page after ' +
+        `${PROJECT_LINK_WAIT_MS / 1000}s — captcha will not solve from the ` +
+        'project list. Is the account signed in with at least one project?',
     );
     return;
   }
 
-  console.log('[FlowAgent] Moving to a project page for the captcha: ' + found.url);
+  console.log('[FlowAgent] Moving to a project page for the captcha: ' + url);
   const settled = waitForTabLoad(tab.id, 20000);
-  await chrome.tabs.update(tab.id, { url: found.url });
+  await chrome.tabs.update(tab.id, { url });
   await settled.catch((e) =>
     console.warn('[FlowAgent] Project page did not finish loading:', e.message),
   );
@@ -959,6 +1020,31 @@ async function closeIdleFlowTab() {
 
   const tabs = await queryFlowTabs();
   if (!tabs.length) return;
+
+  // Never close Chrome's last tab.
+  //
+  // Chrome quits when its final tab goes, and supervisord has autorestart=true
+  // with startsecs=10 — a Chrome that lived the two minutes this timer waits
+  // counts as a successful start, so startretries never engages and the restart
+  // is unconditional and endless. It comes back on the command line's own
+  // https://labs.google/fx/tools/flow, in the foreground, animating the canvas
+  // that costs 283%. Closing the tab to save three cores would spend them.
+  //
+  // That is not hypothetical: Chrome is launched with exactly one URL, and it
+  // matches FLOW_TAB_URLS, so on a container that has never run a job every tab
+  // on the browser is a tab this function removes. `about:blank` used to be on
+  // that command line and would have covered it; it was removed by the revert
+  // in 620b7be, which landed after this close logic and never knew about it.
+  //
+  // Opening the blank tab here rather than putting it back on the command line
+  // keeps the invariant next to the code that depends on it, where the next
+  // person editing Chrome's flags cannot take it away by accident.
+  const allTabs = await chrome.tabs.query({});
+  if (allTabs.length <= tabs.length) {
+    await chrome.tabs
+      .create({ url: 'about:blank', active: true })
+      .catch((e) => console.warn('[FlowAgent] Could not open the blank tab:', e.message));
+  }
 
   recordTabEvent('closed', 'idle', { count: tabs.length });
   await chrome.tabs
