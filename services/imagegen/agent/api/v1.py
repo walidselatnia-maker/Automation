@@ -13,6 +13,7 @@ from urllib.parse import parse_qs, urlparse
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from agent import chrome
 from agent.auth import require_api_key
 from agent.config import FLOW_PROJECT_ID
 from agent.db import jobs
@@ -80,7 +81,25 @@ async def generate(body: GenerateRequest) -> GenerateResponse:
             "one on the site, under Settings, or as FLOW_PROJECT_ID here.",
         )
 
-    if not get_flow_client().connected:
+    # A disconnected extension used to mean one thing -- the browser is broken --
+    # because Chrome was always running. It now also means Chrome is asleep,
+    # which is the normal state between jobs: its GPU process costs 170% of a
+    # 185% container idle, so it runs only while there is work.
+    #
+    # Refusing on that is a deadlock, and it happened: three generate calls were
+    # turned away with this 503 while Chrome was stopped, and generation only
+    # started working once someone opened the Browser page by hand and started a
+    # browser that way. The job cannot be queued without an extension, and no
+    # extension exists until a queued job starts Chrome.
+    #
+    # So queue it. The worker starts Chrome on its next pass -- it reads the
+    # queue rather than what it has claimed, precisely so a stopped browser is
+    # something a PENDING job fixes -- and claims the job once the extension
+    # connects, about twenty seconds later.
+    #
+    # A browser that IS running and still has no extension is the original
+    # fault, and is still refused here: that one no amount of waiting fixes.
+    if chrome.wanted_running() and not get_flow_client().connected:
         raise HTTPException(
             503,
             "Browser extension not connected — nothing can be generated right "
