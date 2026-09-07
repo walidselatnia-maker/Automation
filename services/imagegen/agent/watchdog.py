@@ -22,6 +22,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Optional
 
+from agent import chrome
 from agent.db import jobs
 from agent.services.flow_client import get_flow_client
 
@@ -167,6 +168,16 @@ async def _check_circuit_breaker(controller) -> bool:
 
 async def _check_extension(controller) -> bool:
     """Restart Chrome if the extension has been gone too long. True if unhealthy."""
+    # A browser we stopped on purpose presents exactly as a wedged one -- the
+    # extension is not connected either way -- and the remedies are opposites.
+    # Without this the watchdog restarts Chrome the moment the worker stops it,
+    # every time, and the container never stops paying the 170% that stopping it
+    # was for. The disconnect clock is reset rather than left running, so the
+    # grace period starts from the next start rather than from the stop.
+    if not chrome.wanted_running():
+        state.disconnected_since = None
+        return False
+
     if get_flow_client().connected:
         if state.disconnected_since is not None:
             logger.info("Extension connected")
@@ -241,6 +252,13 @@ async def _log_tab_state() -> None:
     if _tab_log_tick % TAB_LOG_EVERY:
         return
 
+    # Say so rather than going quiet: a log that stops printing looks like a
+    # log that broke, and "stopped" is the state this whole change exists to
+    # reach. It is also the answer to "why is the container at 15%".
+    if not chrome.wanted_running():
+        logger.info("Chrome: stopped — no GPU process, nothing queued")
+        return
+
     client = get_flow_client()
     if not client.connected:
         return
@@ -251,13 +269,14 @@ async def _log_tab_state() -> None:
         return
 
     tabs = diag.get("flow_tabs")
+    chrome_state = chrome.state()
     logger.info(
-        "Flow tab: open=%s total=%s users=%s idle=%ss/%ss state=%s",
+        "Chrome: running, jobs=%s idle=%ss/%ss | Flow tab: open=%s total=%s state=%s",
+        chrome_state["users"],
+        chrome_state["idle_for_s"],
+        chrome_state["idle_stop_after_s"],
         len(tabs) if isinstance(tabs, list) else "?",
         diag.get("total_tabs"),
-        diag.get("flow_tab_users"),
-        diag.get("flow_tab_idle_age_s"),
-        diag.get("flow_tab_idle_close_after_s"),
         diag.get("state"),
     )
 

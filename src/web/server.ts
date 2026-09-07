@@ -204,6 +204,29 @@ export function buildServer(
   registerBrowserProxy(app, {
     targetUrl: process.env.IMAGEGEN_VNC_URL ?? 'http://imagegen:6080',
     secret: auth.secret,
+
+    // Chrome is no longer running just because the container is: its GPU
+    // process costs 170% of a 185% container with nothing loaded, so the agent
+    // starts it for a job and stops it afterwards. Opening this page is the
+    // other reason to want one — signing in to Google needs a window — and
+    // without this the page would come up on an empty display and look broken.
+    //
+    // Failure is deliberately not fatal. If the image service cannot be
+    // reached, showing the viewer and letting it say so beats refusing to
+    // render the page someone opened to find out what is wrong.
+    onOpen: async () => {
+      const base = settings.get('image_base_url').replace(/\/+$/, '');
+      if (!base) return;
+      try {
+        await fetch(`${base}/flow/chrome/start`, {
+          method: 'POST',
+          headers: { 'X-API-Key': settings.get('image_api_key') },
+          signal: AbortSignal.timeout(20_000),
+        });
+      } catch {
+        // The viewer will show an empty display; /browser/procs says why.
+      }
+    },
   });
 
   const page = (

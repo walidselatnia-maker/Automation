@@ -20,6 +20,7 @@ from agent.config import (
     STALE_PROCESSING_TIMEOUT,
     TOKEN_MAX_AGE_BEFORE_BATCH,
 )
+from agent import chrome
 from agent.db import jobs
 from agent.services.flow_client import get_flow_client
 from agent.worker._parsing import extract_media_id, extract_output_url, is_error, error_text
@@ -79,6 +80,14 @@ class WorkerController:
             try:
                 await jobs.reset_stale(STALE_PROCESSING_TIMEOUT)
 
+                # Chrome first, and from the queue rather than from what we
+                # managed to claim. The claim below needs a connected extension,
+                # the extension needs a browser, and the browser is only running
+                # when something asked for it -- so a queue whose Chrome is
+                # stopped would sit there forever if this read self._running.
+                counts = await jobs.count_by_status()
+                await chrome.reconcile(bool(counts.get("PENDING")))
+
                 free = MAX_CONCURRENT_REQUESTS - len(self._running)
                 if free > 0 and get_flow_client().connected:
                     claimed = await jobs.claim_pending(free)
@@ -89,6 +98,9 @@ class WorkerController:
                         await self._ensure_token(len(claimed))
                     for job in claimed:
                         self._running.add(job["id"])
+                        # Claimed here, before the task exists, so the idle stop
+                        # cannot land between creating it and it starting.
+                        chrome.hold()
                         asyncio.create_task(self._run(job))
             except Exception:
                 logger.exception("worker loop iteration failed")
@@ -145,6 +157,7 @@ class WorkerController:
             await self._handle_failure(job, str(exc))
         finally:
             self._running.discard(job_id)
+            chrome.release()
             # Spacing between calls, not between loop iterations: bursts are
             # what earn a rate limit.
             await asyncio.sleep(API_COOLDOWN)

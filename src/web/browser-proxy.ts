@@ -32,6 +32,14 @@ export interface BrowserProxyOptions {
   targetUrl: string;
   /** HMAC secret for session cookies. */
   secret: Buffer;
+  /**
+   * Called when someone opens the viewer page itself, before it is served.
+   *
+   * There is a browser to look at only while something wants one, so opening
+   * this page has to be one of the things that asks. Awaited so the display is
+   * already coming up as the page loads, and never allowed to fail the request.
+   */
+  onOpen?: () => Promise<void>;
 }
 
 /** Host and port of the proxy target, parsed once at registration. */
@@ -69,6 +77,12 @@ export function registerBrowserProxy(app: FastifyInstance, options: BrowserProxy
   const forward = async (request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply> => {
     const suffix = (request.url.split('?')[0] ?? '').replace(/^\/browser\/?/, '');
     const path = suffix === '' ? 'vnc.html' : suffix;
+
+    // The page itself, not its scripts and images — one call per open rather
+    // than one per asset.
+    if (path === 'vnc.html' && options.onOpen) {
+      await options.onOpen().catch(() => {});
+    }
 
     try {
       const upstream = await fetch(`${options.targetUrl}/${path}`, {
