@@ -960,6 +960,31 @@ async function closeIdleFlowTab() {
   const tabs = await queryFlowTabs();
   if (!tabs.length) return;
 
+  // Never close Chrome's last tab.
+  //
+  // Chrome quits when its final tab goes, and supervisord has autorestart=true
+  // with startsecs=10 — a Chrome that lived the two minutes this timer waits
+  // counts as a successful start, so startretries never engages and the restart
+  // is unconditional and endless. It comes back on the command line's own
+  // https://labs.google/fx/tools/flow, in the foreground, animating the canvas
+  // that costs 283%. Closing the tab to save three cores would spend them.
+  //
+  // That is not hypothetical: Chrome is launched with exactly one URL, and it
+  // matches FLOW_TAB_URLS, so on a container that has never run a job every tab
+  // on the browser is a tab this function removes. `about:blank` used to be on
+  // that command line and would have covered it; it was removed by the revert
+  // in 620b7be, which landed after this close logic and never knew about it.
+  //
+  // Opening the blank tab here rather than putting it back on the command line
+  // keeps the invariant next to the code that depends on it, where the next
+  // person editing Chrome's flags cannot take it away by accident.
+  const allTabs = await chrome.tabs.query({});
+  if (allTabs.length <= tabs.length) {
+    await chrome.tabs
+      .create({ url: 'about:blank', active: true })
+      .catch((e) => console.warn('[FlowAgent] Could not open the blank tab:', e.message));
+  }
+
   recordTabEvent('closed', 'idle', { count: tabs.length });
   await chrome.tabs
     .remove(tabs.map((t) => t.id))
