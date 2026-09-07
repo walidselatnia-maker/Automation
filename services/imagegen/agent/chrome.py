@@ -77,7 +77,14 @@ _lock = asyncio.Lock()
 # A person signing in to Google is not a queued job, so nothing would hold
 # Chrome up for them and the idle stop would close the browser under their
 # hands three minutes in. A manual start pins it for this long instead.
-MANUAL_HOLD_S = int(os.environ.get("CHROME_MANUAL_HOLD", "900"))
+#
+# Two minutes, not fifteen. This is a lease the viewer renews while its socket
+# is open, not a guess at how long someone might stay -- and as a guess it was
+# badly wrong: at fifteen minutes, one visit to the Browser page cost eighteen
+# minutes of a browser at 170%, so opening the page to see whether the CPU had
+# come down was the thing keeping it up. Every high-CPU window in the log that
+# proved it was self-inflicted that way.
+MANUAL_HOLD_S = int(os.environ.get("CHROME_MANUAL_HOLD", "120"))
 
 
 def hold_manually(seconds: int = MANUAL_HOLD_S) -> None:
@@ -156,6 +163,13 @@ async def ensure_stopped(reason: str) -> None:
     global _wanted_running, _idle_since
     async with _lock:
         if not _wanted_running:
+            return
+        # A job outranks anyone asking for a stop. /flow/chrome/stop is reachable
+        # while generation is in flight -- closing the Browser page calls it --
+        # and taking the browser away mid-run kills the request the bearer token
+        # is riding on, which surfaces as NO_FLOW_KEY and loses the job.
+        if _users > 0:
+            logger.info("Chrome: not stopping (%s) — %d job(s) still using it", reason, _users)
             return
         logger.info("Chrome: stopping (%s) — idle costs 170%% while it runs", reason)
         if await _supervisor("stop"):

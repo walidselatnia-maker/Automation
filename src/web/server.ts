@@ -227,6 +227,24 @@ export function buildServer(
         // The viewer will show an empty display; /browser/procs says why.
       }
     },
+
+    // Closing the tab is what says nobody is watching. Without it the hold has
+    // to be guessed at, and the guess was fifteen minutes: every visit to this
+    // page cost eighteen minutes of a browser at 170%, so checking whether the
+    // CPU had come down was itself what kept it up.
+    onViewerGone: async () => {
+      const base = settings.get('image_base_url').replace(/\/+$/, '');
+      if (!base) return;
+      try {
+        await fetch(`${base}/flow/chrome/stop`, {
+          method: 'POST',
+          headers: { 'X-API-Key': settings.get('image_api_key') },
+          signal: AbortSignal.timeout(20_000),
+        });
+      } catch {
+        // It stops on the idle timer anyway; this only makes it prompt.
+      }
+    },
   });
 
   const page = (
