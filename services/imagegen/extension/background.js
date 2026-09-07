@@ -256,6 +256,24 @@ async function collectDiagnostics() {
 
     metrics: { ...metrics },
     refresh_in_flight: _refreshInFlight,
+
+    // Why the idle close did or did not fire.
+    //
+    // These are the two module-level values closeIdleFlowTab() guards on, and
+    // without them a tab still open twenty minutes after the last job is
+    // indistinguishable from one being legitimately held: the extension's
+    // console never reaches `docker logs`, so nothing about that decision was
+    // observable from outside the browser. Both are counters a run mutates, so
+    // a run that leaks one strands the tab open at the cost this closing exists
+    // to avoid, and the only symptom is CPU that never comes down.
+    flow_tab_users: _flowTabUsers,
+    flow_tab_idle_since: _flowTabIdleSince
+      ? new Date(_flowTabIdleSince).toISOString()
+      : null,
+    flow_tab_idle_age_s: _flowTabIdleSince
+      ? Math.round((now - _flowTabIdleSince) / 1000)
+      : null,
+    flow_tab_idle_close_after_s: Math.round(FLOW_TAB_IDLE_CLOSE_MS / 1000),
   };
 
   try {

@@ -40,6 +40,31 @@ async def extension_status() -> dict:
     }
 
 
+@router.get("/diagnostics")
+async def extension_diagnostics() -> dict:
+    """What the extension knows about its own state, over the WS it already holds.
+
+    Same reason /procs exists: the deployment is Dokploy, there is no shell, and
+    the extension's own console goes to a devtools window nobody can open. So the
+    questions that decide whether the Flow tab should have closed -- is one open,
+    is a run still holding it, how long has it been idle, is the alarm still
+    scheduled -- were unanswerable from outside the container.
+
+    The tab is the single largest CPU cost in this service. A tab left open
+    because a counter leaked looks exactly like a tab held by a working run, and
+    telling those two apart by reading the source is guesswork.
+    """
+    client = get_flow_client()
+    if not client.connected:
+        raise HTTPException(503, "Extension not connected")
+
+    payload = await client.get_diagnostics()
+    if payload.get("error"):
+        raise HTTPException(502, payload["error"])
+
+    return payload.get("result", payload)
+
+
 @router.get("/credits")
 async def get_credits() -> dict:
     client = get_flow_client()
