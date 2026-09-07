@@ -55,6 +55,11 @@ FAILURE_THRESHOLD = int(os.environ.get("WATCHDOG_FAILURE_THRESHOLD", "5"))
 
 CHECK_INTERVAL_S = int(os.environ.get("WATCHDOG_INTERVAL", "30"))
 
+# Print the Flow tab's state every Nth watchdog cycle. Two cycles is a minute,
+# which is fine against a close that waits two.
+TAB_LOG_EVERY = int(os.environ.get("WATCHDOG_TAB_LOG_EVERY", "2"))
+_tab_log_tick = 0
+
 # Backstop so a persistently broken Chrome doesn't get restarted forever.
 MAX_RESTARTS_PER_HOUR = int(os.environ.get("WATCHDOG_MAX_RESTARTS", "4"))
 
@@ -214,6 +219,49 @@ async def _check_extension(controller) -> bool:
     return True
 
 
+async def _log_tab_state() -> None:
+    """Print whether the Flow tab is open, and why, into the container log.
+
+    The tab is the largest CPU cost in this service — the GPU process alone
+    takes 283% with it open and 11% without — and the extension decides on its
+    own when to close it, on two counters that live in a service worker.
+
+    None of that reached anywhere a person can read. The worker's console is a
+    devtools window nobody can open on a headless container, `docker logs`
+    carries Chrome's stderr rather than the extension's, and the deployment is
+    Dokploy, where there is no shell to curl /flow/diagnostics from. So a tab
+    that should have closed and did not looks exactly like a tab in use, from
+    the only surface anyone actually has.
+
+    Best effort in every direction: a watchdog that fell over because a
+    diagnostic timed out would cost far more than the line it prints.
+    """
+    global _tab_log_tick
+    _tab_log_tick += 1
+    if _tab_log_tick % TAB_LOG_EVERY:
+        return
+
+    client = get_flow_client()
+    if not client.connected:
+        return
+
+    payload = await client.get_diagnostics()
+    diag = payload.get("result") or {}
+    if not diag:
+        return
+
+    tabs = diag.get("flow_tabs")
+    logger.info(
+        "Flow tab: open=%s total=%s users=%s idle=%ss/%ss state=%s",
+        len(tabs) if isinstance(tabs, list) else "?",
+        diag.get("total_tabs"),
+        diag.get("flow_tab_users"),
+        diag.get("flow_tab_idle_age_s"),
+        diag.get("flow_tab_idle_close_after_s"),
+        diag.get("state"),
+    )
+
+
 async def run(controller, interval: int = CHECK_INTERVAL_S):
     """Watchdog loop. Started alongside the worker in main.lifespan."""
     logger.info(
@@ -223,6 +271,13 @@ async def run(controller, interval: int = CHECK_INTERVAL_S):
     while True:
         try:
             await asyncio.sleep(interval)
+
+            # Before the checks below, not after: they each `continue` on a
+            # fault, and a fault is exactly when knowing the tab state matters.
+            try:
+                await _log_tab_state()
+            except Exception as e:  # noqa: BLE001 - diagnostics must never throw
+                logger.debug("Flow tab state unavailable: %s", e)
 
             # Order matters: a sign-in wall is checked first because it also
             # presents as a run of failures, and its remedy is the opposite of
