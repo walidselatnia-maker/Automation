@@ -778,26 +778,69 @@ const isDeadProjectPage = (url) => (url || '').includes('/404');
  * after it failed with NO_FLOW_KEY. A link that is on the page is a project
  * this account can open.
  */
+/**
+ * Wait for a project link to exist on the page, rather than asking once.
+ *
+ * Asking once was right when Chrome had been up for hours and the Flow tab was
+ * long since loaded. Chrome now starts for a job and the first request arrives
+ * about a minute later, and at that point one of two things is usually still
+ * true: the content script has not been injected yet, so sendMessage rejects,
+ * or it has and the project list -- which renders its links from data it is
+ * still fetching -- has none to find. Both answer null, and the old code took
+ * null as "this account has no projects", warned, and went on to a captcha that
+ * cannot solve from the list.
+ *
+ * That is the CAPTCHA_FAILED that opened every cold run: it cost one whole
+ * pipeline retry per article and then succeeded, because by the second attempt
+ * the page had finished loading.
+ *
+ * Polling rather than a load event because neither failure is a load: the tab
+ * can be `complete` with the list still empty.
+ */
+const PROJECT_LINK_WAIT_MS = 20000;
+const PROJECT_LINK_POLL_MS = 1000;
+
+async function findProjectUrl(tabId) {
+  const deadline = Date.now() + PROJECT_LINK_WAIT_MS;
+  let attempts = 0;
+
+  while (Date.now() < deadline) {
+    attempts++;
+    const found = await chrome.tabs
+      .sendMessage(tabId, { type: 'FIND_PROJECT_URL' })
+      .catch(() => null);
+
+    if (found?.url) {
+      if (attempts > 1) {
+        console.log(`[FlowAgent] Project link appeared after ${attempts} attempt(s)`);
+      }
+      return found.url;
+    }
+    await sleep(PROJECT_LINK_POLL_MS);
+  }
+
+  return null;
+}
+
 async function ensureFlowTabOnProject() {
   const tab = (await queryFlowTabs())[0];
   if (!tab) return;
   if ((tab.url || '').includes('/project/')) return;
 
-  const found = await chrome.tabs
-    .sendMessage(tab.id, { type: 'FIND_PROJECT_URL' })
-    .catch(() => null);
+  const url = await findProjectUrl(tab.id);
 
-  if (!found?.url) {
+  if (!url) {
     console.warn(
-      '[FlowAgent] No project link on the Flow page — captcha will not solve ' +
-        'from the project list. Is the account signed in with at least one project?',
+      '[FlowAgent] No project link on the Flow page after ' +
+        `${PROJECT_LINK_WAIT_MS / 1000}s — captcha will not solve from the ` +
+        'project list. Is the account signed in with at least one project?',
     );
     return;
   }
 
-  console.log('[FlowAgent] Moving to a project page for the captcha: ' + found.url);
+  console.log('[FlowAgent] Moving to a project page for the captcha: ' + url);
   const settled = waitForTabLoad(tab.id, 20000);
-  await chrome.tabs.update(tab.id, { url: found.url });
+  await chrome.tabs.update(tab.id, { url });
   await settled.catch((e) =>
     console.warn('[FlowAgent] Project page did not finish loading:', e.message),
   );
