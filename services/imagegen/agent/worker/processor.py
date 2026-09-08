@@ -24,6 +24,7 @@ from agent.config import (
     POLL_INTERVAL,
     STALE_PROCESSING_TIMEOUT,
     TOKEN_MAX_AGE_BEFORE_BATCH,
+    VIDEO_FORCE_I2V,
     VIDEO_MAX_POLLS,
     VIDEO_POLL_INTERVAL,
 )
@@ -40,6 +41,7 @@ from agent.worker._parsing import (
     extract_video_media_id,
     extract_video_url,
     is_error,
+    rejected_the_request,
     video_failed,
 )
 
@@ -233,14 +235,56 @@ class WorkerController:
         logger.info("job %s uploaded %d reference image(s)", job_id[:8], len(media_ids))
 
         # -- Stage 2: submit. ------------------------------------------------
-        submitted = await client.generate_video_from_references(
-            reference_media_ids=media_ids,
-            prompt=job["prompt"],
-            project_id=project_id,
-            aspect_ratio=VIDEO_ASPECT_RATIOS.get(
-                job["orientation"], VIDEO_ASPECT_RATIOS["VERTICAL"]
-            ),
+        #
+        # Reference-to-video first, because it is the only one of the two that
+        # reads all the images, and a reel built from four photographs is the
+        # point of the feature.
+        #
+        # It is also going away. Flow's own migration accepts three video models
+        # on the endpoint it is moving to and every one of them is i2v; Flow
+        # Kit's r2v method on that path refuses outright, saying its payload was
+        # never captured off the new UI. Here it began answering INVALID_ARGUMENT
+        # on a submit that had worked days earlier.
+        #
+        # So r2v is attempted and its refusal is not fatal: rather than failing
+        # the reel, fall through to a video built from the first image. That is
+        # a worse video than the one asked for and a great deal better than
+        # none, and it is what Flow Kit does in the same corner.
+        aspect_ratio = VIDEO_ASPECT_RATIOS.get(
+            job["orientation"], VIDEO_ASPECT_RATIOS["VERTICAL"]
         )
+
+        submitted = None
+        if not VIDEO_FORCE_I2V:
+            submitted = await client.generate_video_from_references(
+                reference_media_ids=media_ids,
+                prompt=job["prompt"],
+                project_id=project_id,
+                aspect_ratio=aspect_ratio,
+            )
+
+        if submitted is None or (is_error(submitted) and rejected_the_request(submitted)):
+            if submitted is None:
+                logger.info(
+                    "job %s: VIDEO_FORCE_I2V is set — generating from the first "
+                    "of %d image(s)", job_id[:8], len(media_ids),
+                )
+            else:
+                logger.warning(
+                    "job %s: reference video was refused (%s) — falling back to "
+                    "the first of %d image(s)",
+                    job_id[:8], error_text(submitted)[:200], len(media_ids),
+                )
+            submitted = await client.generate_video_from_image(
+                start_image_media_id=media_ids[0],
+                prompt=job["prompt"],
+                project_id=project_id,
+                # No scenes here. The captured payload carries a unique id in
+                # this slot, and the job id is the one thing that is already
+                # unique per video.
+                scene_id=job_id,
+                aspect_ratio=aspect_ratio,
+            )
 
         if is_error(submitted):
             await self._handle_failure(job, error_text(submitted))

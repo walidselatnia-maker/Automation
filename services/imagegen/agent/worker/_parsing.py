@@ -44,6 +44,42 @@ def error_text(result: dict) -> str:
     return f"HTTP {status}" if status else str(result)[:300]
 
 
+def rejected_the_request(result: dict) -> bool:
+    """True when Google refused the body itself, rather than the moment.
+
+    The distinction decides whether retrying is worth anything. A 429, a 503, a
+    rejected captcha or a dropped browser are all properties of when the request
+    was sent, and the same body sent again a minute later works. A 400 is a
+    property of the body: the same request will be refused for as long as it is
+    the same request.
+
+    This is what tells the r2v fallback apart from the retry policy. Reference
+    video began answering
+
+        {'code': 400, 'message': 'Request contains an invalid argument.',
+         'status': 'INVALID_ARGUMENT'}
+
+    on a submit that had worked, and no number of retries changes that -- but
+    falling back on a transient failure would quietly downgrade every reel to a
+    single image over a blip, so only this shape does it.
+    """
+    status = result.get("status")
+    if isinstance(status, int) and 400 <= status < 500 and status not in (408, 429):
+        return True
+
+    error = result.get("error")
+    data = result.get("data")
+    if isinstance(data, dict) and data.get("error"):
+        error = data["error"]
+
+    if isinstance(error, dict):
+        if error.get("code") == 400:
+            return True
+        return str(error.get("status", "")).upper() == "INVALID_ARGUMENT"
+
+    return "INVALID_ARGUMENT" in str(error or "").upper()
+
+
 def extract_media_id(result: dict) -> str | None:
     """The image's mediaId.
 

@@ -63,6 +63,21 @@ VIDEO_MODELS = _MODELS["video_models"]
 VIDEO_PAYGATE_TIER = os.environ.get("VIDEO_PAYGATE_TIER", "PAYGATE_TIER_ONE").strip()
 VIDEO_MODEL_KEY = os.environ.get("VIDEO_MODEL_KEY", "").strip()
 
+# The same override for the i2v fallback, deliberately separate: these are
+# different model families, and one variable forcing both would send an r2v key
+# to the start-image endpoint, rejected with the same unexplained
+# INVALID_ARGUMENT the fallback exists to get around.
+I2V_MODEL_KEY = os.environ.get("VIDEO_I2V_MODEL_KEY", "").strip()
+
+# Skip reference-to-video entirely and generate from the first image.
+#
+# r2v is being retired. Flow Kit's model list for the endpoint Google is
+# migrating to accepts three video models and every one is i2v, and its own r2v
+# method refuses outright -- "its payload was never captured off the new UI".
+# Once r2v stops working here for good this turns one wasted submit per reel
+# into none, without a redeploy.
+VIDEO_FORCE_I2V = os.environ.get("VIDEO_FORCE_I2V", "") not in ("", "0", "false", "False")
+
 # Video generation is minutes, not the 30-90 seconds an image takes, so it gets
 # its own budget rather than inheriting numbers chosen for images.
 VIDEO_POLL_INTERVAL = int(os.environ.get("VIDEO_POLL_INTERVAL", "15"))
@@ -72,6 +87,7 @@ VIDEO_MAX_POLLS = int(os.environ.get("VIDEO_MAX_POLLS", "80"))
 # Frozen: these paths and their query shape are what the Flow UI calls.
 ENDPOINTS = {
     "generate_images": "/v1/projects/{project_id}/flowMedia:batchGenerateImages",
+    "generate_video": "/v1/video:batchAsyncGenerateVideoStartImage",
     "generate_video_references": "/v1/video:batchAsyncGenerateVideoReferenceImages",
     "check_video_status": "/v1/video:batchCheckAsyncVideoGenerationStatus",
     "upload_image": "/v1/flow/uploadImage",

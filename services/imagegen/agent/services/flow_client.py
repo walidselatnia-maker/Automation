@@ -15,6 +15,7 @@ from typing import Optional
 from agent.config import (
     GOOGLE_FLOW_API, GOOGLE_API_KEY, ENDPOINTS,
     IMAGE_MODELS, VIDEO_MODELS, VIDEO_MODEL_KEY, VIDEO_PAYGATE_TIER,
+    I2V_MODEL_KEY,
 )
 from agent.services.headers import random_headers
 
@@ -514,6 +515,76 @@ class FlowClient:
         }
 
         url = self._build_url("generate_video_references")
+        return await self._send("api_request", {
+            "url": url,
+            "method": "POST",
+            "headers": random_headers(),
+            "body": body,
+            "captchaAction": "VIDEO_GENERATION",
+        }, timeout=60)  # Submit only -- polling is separate.
+
+    async def generate_video_from_image(
+        self,
+        start_image_media_id: str,
+        prompt: str,
+        project_id: str,
+        scene_id: str,
+        aspect_ratio: str = "VIDEO_ASPECT_RATIO_PORTRAIT",
+        model_key: str = "",
+    ) -> dict:
+        """Generate a video from one image (i2v).
+
+        The fallback for when reference-to-video is refused. Same frozen-surface
+        rule as the r2v call above, and this body is Flow Kit's own captured i2v
+        payload: `startImage` in place of `referenceImages`, a different endpoint,
+        and `metadata` carrying a scene id rather than being empty. The r2v
+        capture has an empty metadata object and this one does not -- that
+        difference is in the captures, so it is kept.
+
+        Why this exists at all: r2v is on its way out. Flow Kit's own model list
+        for the endpoint Google is migrating to accepts three video models and
+        every one of them is i2v, and its r2v method refuses outright with "its
+        payload was never captured off the new UI". i2v is the path that will
+        still be there.
+
+        `scene_id` has no scenes behind it here -- the job id is passed, because
+        the captured payload carries a unique id in that slot and inventing an
+        empty one is a change to a shape that is rejected without explanation.
+        """
+        key = (
+            model_key
+            or I2V_MODEL_KEY
+            or VIDEO_MODELS.get(VIDEO_PAYGATE_TIER, {})
+            .get("frame_2_video", {})
+            .get(aspect_ratio, "")
+        )
+
+        if not key:
+            return {"error": (
+                f"No i2v model for tier={VIDEO_PAYGATE_TIER} "
+                f"ratio={aspect_ratio}. Set VIDEO_I2V_MODEL_KEY."
+            )}
+
+        if not start_image_media_id:
+            return {"error": "No start image to generate a video from"}
+
+        request = {
+            "aspectRatio": aspect_ratio,
+            "seed": int(time.time()) % 10000,
+            "textInput": {"structuredPrompt": {"parts": [{"text": prompt}]}},
+            "videoModelKey": key,
+            "startImage": {"mediaId": start_image_media_id},
+            "metadata": {"sceneId": scene_id},
+        }
+
+        body = {
+            "mediaGenerationContext": {"batchId": f"{uuid.uuid4()}"},
+            "clientContext": self._client_context(project_id, VIDEO_PAYGATE_TIER),
+            "requests": [request],
+            "useV2ModelConfig": True,
+        }
+
+        url = self._build_url("generate_video")
         return await self._send("api_request", {
             "url": url,
             "method": "POST",
