@@ -93,9 +93,45 @@ class WorkerController:
     def __init__(self) -> None:
         self._shutdown = asyncio.Event()
         self._running: set[str] = set()
+        self._paused_reason: str | None = None
 
     def request_shutdown(self) -> None:
         self._shutdown.set()
+
+    # ─── Pausing, which the watchdog does ───────────────────
+    #
+    # These were called and never existed. The watchdog asks for a pause in four
+    # places -- a Google sign-in wall, the circuit breaker, an extension that
+    # never installed, a Chrome that will not come back -- and every one of them
+    # raised AttributeError instead of pausing anything:
+    #
+    #   AttributeError: 'WorkerController' object has no attribute 'pause'
+    #
+    # The tests did not catch it because test_watchdog.py drives a FakeController
+    # that has the method. So the fake defined the interface and nothing checked
+    # the real class against it.
+    #
+    # What it cost: the breaker never stopped anything, so a run of failures kept
+    # submitting -- each one spending a captcha and, for video, credits. Worse,
+    # the raise happens inside _check_circuit_breaker, which runs before
+    # _check_extension, so a tripped breaker also took Chrome-wedge detection
+    # down with it. The watchdog was not degraded, it was off.
+
+    @property
+    def paused(self) -> bool:
+        return self._paused_reason is not None
+
+    def pause(self, reason: str) -> None:
+        if self._paused_reason == reason:
+            return  # Already paused for this; the watchdog re-asserts every cycle.
+        self._paused_reason = reason
+        logger.warning("worker paused: %s — no new jobs will be claimed", reason)
+
+    def resume(self) -> None:
+        if self._paused_reason is None:
+            return
+        logger.info("worker resumed (was paused: %s)", self._paused_reason)
+        self._paused_reason = None
 
     async def drain(self) -> None:
         """Wait for in-flight jobs, so a redeploy does not abandon one mid-call."""
@@ -117,10 +153,15 @@ class WorkerController:
                 # when something asked for it -- so a queue whose Chrome is
                 # stopped would sit there forever if this read self._running.
                 counts = await jobs.count_by_status()
-                await chrome.reconcile(bool(counts.get("PENDING")))
+                # A paused worker will not claim these, so they are not work
+                # waiting -- and treating them as such would hold a browser up
+                # at 170% for a queue nothing is allowed to touch, for as long
+                # as whatever the watchdog paused for goes unattended.
+                waiting = bool(counts.get("PENDING")) and not self.paused
+                await chrome.reconcile(waiting)
 
                 free = MAX_CONCURRENT_REQUESTS - len(self._running)
-                if free > 0 and get_flow_client().connected:
+                if free > 0 and not self.paused and get_flow_client().connected:
                     claimed = await jobs.claim_pending(free)
                     # Refresh, then generate — in that order, every time.
                     # Skipped only while other jobs are still in flight, since
