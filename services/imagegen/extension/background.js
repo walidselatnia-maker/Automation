@@ -491,7 +491,9 @@ function connectToAgent() {
     try {
       const msg = JSON.parse(data);
 
-      if (msg.method === 'api_request') {
+      if (msg.method === 'batch_rpc') {
+        await handleBatchRpc(msg);
+      } else if (msg.method === 'api_request') {
         await handleApiRequest(msg);
       } else if (msg.method === 'trpc_request') {
         await handleTrpcRequest(msg);
@@ -1252,6 +1254,179 @@ async function handleTrpcRequest(msg) {
   } finally {
     setState('idle');
   }
+}
+
+// ─── batchexecute, the transport Flow moved to ──────────────
+//
+// Everything below this comment is a second way of reaching Flow, sitting
+// beside the api_request path rather than replacing it. Images still go the old
+// way and still work; video does not, and this is why.
+//
+// The old way is a fetch from this service worker to aisandbox-pa.googleapis.com
+// carrying a bearer token sniffed off the page. Video began answering that with
+// INVALID_ARGUMENT -- Flow refusing the request itself -- and the reason is
+// visible in Flow Kit's own client: it no longer sends video that way at all.
+// Flow moved to a batchexecute endpoint on flow.google.com in September 2026,
+// and the calls it takes can only be signed by a page that is already signed in.
+//
+// So this does not send anything from here. It runs the request *inside* the
+// Flow tab, which is the only context that has the three values the endpoint
+// checks, all of them read off WIZ_global_data at call time:
+//
+//   SNlM0e   the `at` token, posted in the body
+//   FdrFJe   f.sid
+//   cfb2h    bl
+//
+// The captcha is minted moments before the request leaves and substituted into
+// the payload here, because it is single-use: a replayed one comes back
+// PUBLIC_ERROR_UNUSUAL_ACTIVITY. The agent builds the payload with a
+// __CAPTCHA__ marker in the slot and this fills it in.
+//
+// Ported from the upstream Flow Kit extension, which is the reference for this
+// whole service -- not invented here.
+
+const CAPTCHA_SLOT = '__CAPTCHA__';
+
+// The project listing runs to tens of megabytes. Anything larger than this is
+// truncated inside the tab rather than pushed through the WebSocket bridge.
+const MAX_RPC_TEXT = 2_000_000;
+
+/** Chrome discards backgrounded tabs; executeScript throws on a dead one. */
+async function reviveTabIfNeeded(tab) {
+  if (!tab?.discarded) return tab;
+  try {
+    await chrome.tabs.reload(tab.id);
+    await sleep(2500);
+    return await chrome.tabs.get(tab.id);
+  } catch {
+    return null;
+  }
+}
+
+async function runBatchRpc(cmd) {
+  const tabs = await queryFlowTabs();
+  let candidate = tabs.find((t) => !t.discarded) || tabs[0];
+
+  if (!candidate) {
+    // No Flow tab. Open one and let the app boot -- WIZ_global_data is not on
+    // the page immediately, and without it `at` comes back empty.
+    try {
+      await chrome.tabs.create({ url: FLOW_HOME, active: false });
+      await sleep(5000);
+      const fresh = await queryFlowTabs();
+      candidate = fresh.find((t) => !t.discarded) || fresh[0];
+    } catch (e) {
+      return { error: e?.message || 'NO_FLOW_TAB' };
+    }
+    if (!candidate) return { error: 'NO_FLOW_TAB' };
+  }
+
+  const tab = await reviveTabIfNeeded(candidate);
+  if (!tab) return { error: 'FLOW_TAB_DISCARDED' };
+
+  let freq = cmd.freq;
+  if (cmd.captchaAction) {
+    const solved = await solveCaptcha(cmd.id, cmd.captchaAction);
+    if (!solved?.token) return { error: `CAPTCHA_FAILED: ${solved?.error || 'no token'}` };
+    freq = freq.split(CAPTCHA_SLOT).join(solved.token);
+  }
+
+  const [injected] = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    world: 'MAIN',
+    args: [cmd.rpcid, freq, MAX_RPC_TEXT, cmd.match || null],
+    func: async (rpcid, freqStr, maxText, match) => {
+      const wiz = globalThis.WIZ_global_data || {};
+      const at = wiz.SNlM0e;
+      const sid = wiz.FdrFJe;
+      const bl = wiz.cfb2h;
+      if (!at) return { error: 'NO_AT_TOKEN' };
+
+      const reqid = Math.floor(Math.random() * 900000) + 100000;
+      const url =
+        `/_/AiSandboxAngularFrontend/data/batchexecute?rpcids=${encodeURIComponent(rpcid)}` +
+        `&f.sid=${encodeURIComponent(sid || '')}&bl=${encodeURIComponent(bl || '')}` +
+        `&hl=en-AU&_reqid=${reqid}&rt=c`;
+
+      const resp = await fetch(url, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded;charset=UTF-8',
+          'x-same-domain': '1',
+        },
+        body: new URLSearchParams({ 'f.req': freqStr, at }),
+      });
+
+      const text = await resp.text();
+      if (match) {
+        const found = text.indexOf(match);
+        return {
+          status: resp.status,
+          matched: found !== -1,
+          text: found === -1 ? '' : text.slice(found, found + 800),
+        };
+      }
+      return { status: resp.status, text: text.slice(0, maxText) };
+    },
+  });
+
+  return injected?.result || { error: 'NO_INJECTION_RESULT' };
+}
+
+async function handleBatchRpc(msg) {
+  const { id, params } = msg;
+  const { rpcid, freq, captchaAction, match } = params || {};
+
+  if (!rpcid || !freq) {
+    sendToAgent({ id, status: 400, error: 'INVALID_BATCH_RPC' });
+    return;
+  }
+
+  // The same hold the api_request path takes: a batch call needs the Flow tab
+  // for the whole of its run, and the idle close must not take it away midway.
+  holdFlowTab();
+  setState('running');
+
+  const hasCaptcha = !!captchaAction;
+  if (hasCaptcha) metrics.requestCount++;
+  // Polls and lookups run constantly; only the generates earn a row in the log.
+  const visible = hasCaptcha;
+  if (visible) {
+    addRequestLog({
+      id, type: `RPC:${rpcid}`, time: new Date().toISOString(),
+      status: 'processing', error: null, outputUrl: null, url: rpcid,
+      payloadSummary: String(freq).slice(0, 200),
+    });
+  }
+
+  try {
+    const out = await runBatchRpc({ id, rpcid, freq, captchaAction, match });
+    if (out.error) {
+      if (hasCaptcha) { metrics.failedCount++; metrics.lastError = out.error; }
+      if (visible) updateRequestLog(id, { status: 'failed', error: out.error });
+      sendToAgent({ id, status: 502, error: out.error });
+    } else {
+      if (hasCaptcha) { metrics.successCount++; metrics.lastError = null; }
+      if (visible) {
+        updateRequestLog(id, {
+          status: 'success', httpStatus: out.status,
+          responseSummary: (out.text || '').slice(0, 300),
+        });
+      }
+      sendToAgent({ id, status: out.status, data: out.text });
+    }
+  } catch (e) {
+    const err = e?.message || 'BATCH_RPC_FAILED';
+    if (hasCaptcha) { metrics.failedCount++; metrics.lastError = err; }
+    if (visible) updateRequestLog(id, { status: 'failed', error: err });
+    sendToAgent({ id, status: 500, error: err });
+  } finally {
+    releaseFlowTab();
+  }
+
+  chrome.storage.local.set({ metrics });
+  setState('idle');
 }
 
 async function handleApiRequest(msg) {

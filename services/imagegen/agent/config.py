@@ -78,6 +78,14 @@ I2V_MODEL_KEY = os.environ.get("VIDEO_I2V_MODEL_KEY", "").strip()
 # into none, without a redeploy.
 VIDEO_FORCE_I2V = os.environ.get("VIDEO_FORCE_I2V", "") not in ("", "0", "false", "False")
 
+# Send video over Flow's batchexecute transport instead of the REST API.
+#
+# On by default because REST video answers INVALID_ARGUMENT and will not
+# come back: Flow Kit stopped sending video that way entirely when Flow
+# moved in September 2026. Set to 0 to fall back to the old path, which is
+# still what images use and still works for them.
+VIDEO_USE_BATCH = os.environ.get("VIDEO_USE_BATCH", "1") == "1"
+
 # Video generation is minutes, not the 30-90 seconds an image takes, so it gets
 # its own budget rather than inheriting numbers chosen for images.
 VIDEO_POLL_INTERVAL = int(os.environ.get("VIDEO_POLL_INTERVAL", "15"))

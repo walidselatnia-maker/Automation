@@ -25,6 +25,7 @@ from agent.config import (
     STALE_PROCESSING_TIMEOUT,
     TOKEN_MAX_AGE_BEFORE_BATCH,
     VIDEO_MAX_POLLS,
+    VIDEO_USE_BATCH,
     VIDEO_POLL_INTERVAL,
 )
 from agent import chrome, video_models
@@ -263,6 +264,14 @@ class WorkerController:
             await jobs.fail(job_id, "A video needs at least one reference image")
             return
 
+        # The transport Flow actually uses for video now. The REST path below is
+        # kept -- it is what images use and what video used until Google moved --
+        # but video over REST answers INVALID_ARGUMENT, so this goes first.
+        if VIDEO_USE_BATCH:
+            if await self._run_video_batch(job, reference_urls, project_id):
+                return
+            logger.warning("job %s: batch path declined — trying REST", job_id[:8])
+
         # -- Stage 1: give Google the reference images. ----------------------
         media_ids: list[str] = []
         for url in reference_urls:
@@ -320,6 +329,132 @@ class WorkerController:
             f"service can read, so nothing polled for the result. The generation may "
             f"still have run and the credits are spent. Reply carried: {shape}.\n\n"
             f"{json.dumps(submitted, default=str)[:6000]}",
+        )
+
+    async def _fetch_reference(self, url: str):
+        """The image bytes and their type. {"error": ...} if it cannot be had.
+
+        The download half of _upload_reference, on its own, because the batch
+        path uploads through a different call and the two transports do not hand
+        out interchangeable media ids. _upload_reference is left untouched: it is
+        what images still use, and images still work.
+        """
+        try:
+            async with httpx.AsyncClient(
+                timeout=REFERENCE_DOWNLOAD_TIMEOUT, follow_redirects=True
+            ) as http:
+                response = await http.get(url)
+                response.raise_for_status()
+                data = response.content
+        except Exception as exc:
+            return {"error": f"Could not fetch reference image {url}: {exc}"}
+
+        if not data:
+            return {"error": f"Reference image {url} was empty"}
+        if len(data) > MAX_REFERENCE_BYTES:
+            return {"error": f"Reference image {url} is {len(data)} bytes, over the limit"}
+
+        mime = response.headers.get("content-type", "image/jpeg").split(";")[0]
+        return {"bytes": data, "mime": mime}
+
+    async def _run_video_batch(self, job, reference_urls, project_id) -> bool:
+        """The whole video, over the transport Flow actually uses now.
+
+        REST video answers INVALID_ARGUMENT and will not come back: Flow Kit's
+        client stopped sending video that way entirely when Flow moved to
+        batchexecute. Every step here runs inside the signed-in Flow tab.
+
+        Only the first image is used. Reference-to-video has no payload on this
+        path -- Flow Kit says its own was never captured off the new UI -- so a
+        reel is built from one photograph until that changes.
+
+        Returns True if the job was settled here, either finished or failed for
+        a reason the old path cannot improve on.
+        """
+        job_id = job["id"]
+        client = get_flow_client()
+        aspect = VIDEO_ASPECT_RATIOS.get(job["orientation"], VIDEO_ASPECT_RATIOS["VERTICAL"])
+
+        fetched = await self._fetch_reference(reference_urls[0])
+        if "error" in fetched:
+            await self._handle_failure(job, fetched["error"])
+            return True
+
+        uploaded = await client.upload_image_batch(
+            image_base64=base64.b64encode(fetched["bytes"]).decode("ascii"),
+            project_id=project_id,
+            mime_type=fetched["mime"],
+            file_name=reference_urls[0].rsplit("/", 1)[-1][:100] or "reference.jpg",
+        )
+        if uploaded.get("error"):
+            await self._handle_failure(job, f"Uploading the reference failed: {uploaded['error']}")
+            return True
+
+        if len(reference_urls) > 1:
+            logger.warning(
+                "job %s: built from 1 of %d image(s) — reference-to-video has no "
+                "payload on this transport yet",
+                job_id[:8], len(reference_urls),
+            )
+
+        submitted = await client.generate_video_batch(
+            start_image_media_id=uploaded["media_id"],
+            prompt=job["prompt"],
+            project_id=project_id,
+            aspect_ratio=aspect,
+        )
+        if submitted.get("error"):
+            await self._handle_failure(job, f"Video submit failed: {submitted['error']}")
+            return True
+
+        operation_id = submitted["operation_id"]
+        listing_project = submitted.get("project_id") or project_id
+        await jobs.set_operation(job_id, {"operationId": operation_id})
+        logger.info("job %s submitted on the batch path, operation %s",
+                    job_id[:8], operation_id[:8])
+
+        await self._await_video_batch(job, operation_id, listing_project)
+        return True
+
+    async def _await_video_batch(self, job, operation_id: str, project_id: str) -> None:
+        """Poll the operation, then read the finished video's URL."""
+        job_id = job["id"]
+        client = get_flow_client()
+
+        for attempt in range(1, VIDEO_MAX_POLLS + 1):
+            await asyncio.sleep(VIDEO_POLL_INTERVAL)
+
+            state = await client.check_operation_batch(operation_id)
+            if state.get("error"):
+                logger.warning("job %s poll %d: %s", job_id[:8], attempt, state["error"])
+                continue
+            if not state.get("done"):
+                continue
+
+            # Done. The operation record does not carry the media id -- the third
+            # uuid in it is the scene -- so it is read out of the project listing.
+            found = await client.find_operation_media_batch(operation_id, project_id)
+            if found.get("error") or not found.get("media_id"):
+                logger.warning("job %s: operation done but no media id yet (%s)",
+                               job_id[:8], found.get("error") or "not in listing")
+                continue
+
+            urls = await client.get_media_urls_batch(found["media_id"])
+            if urls.get("error"):
+                logger.warning("job %s: %s", job_id[:8], urls["error"])
+                continue
+            if not urls.get("video_url"):
+                continue
+
+            await jobs.complete(job_id, found["media_id"], urls["video_url"])
+            logger.info("job %s COMPLETED", job_id[:8])
+            return
+
+        waited = VIDEO_MAX_POLLS * VIDEO_POLL_INTERVAL
+        await self._handle_failure(
+            job,
+            f"Video did not finish within {waited}s ({VIDEO_MAX_POLLS} polls). "
+            "Raise VIDEO_MAX_POLLS if generation is legitimately slower.",
         )
 
     async def _submit_video(self, client, job, media_ids, project_id, aspect_ratio):

@@ -17,6 +17,7 @@ from agent.config import (
     IMAGE_MODELS, VIDEO_MODELS, VIDEO_MODEL_KEY, VIDEO_PAYGATE_TIER,
     I2V_MODEL_KEY,
 )
+from agent.services import flow_batch as fb
 from agent.services.headers import random_headers
 
 logger = logging.getLogger(__name__)
@@ -602,6 +603,126 @@ class FlowClient:
             "headers": random_headers(),
             "body": {"operations": operations},
         }, timeout=30)
+
+    # ─── batchexecute, the transport Flow moved to ──────────
+    #
+    # A second way of reaching Flow, beside the REST calls above rather than in
+    # place of them. Images still go the old way and still work. Video does not:
+    # it began answering INVALID_ARGUMENT, and Flow Kit's own client shows why --
+    # it no longer sends video over REST at all. Flow moved to a batchexecute
+    # endpoint on flow.google.com in September 2026, and those calls can only be
+    # signed by a page that is already signed in.
+    #
+    # So nothing here touches the network. Each method builds a request envelope
+    # and hands it to the extension, which runs it inside the Flow tab; the
+    # envelope format and the readers are agent/services/flow_batch.py, vendored
+    # from Flow Kit unchanged.
+
+    async def batch_rpc(self, rpcid: str, freq: str, captcha_action: str = None,
+                        match: str = None, timeout: float = 180) -> dict:
+        """Run one batchexecute RPC in the Flow tab and return the raw text."""
+        return await self._send("batch_rpc", {
+            "rpcid": rpcid,
+            "freq": freq,
+            "captchaAction": captcha_action,
+            "match": match,
+        }, timeout=timeout)
+
+    async def _batch_payload(self, rpcid: str, freq: str, captcha_action: str = None,
+                             timeout: float = 180):
+        """The decoded payload of one RPC, or an {"error": ...} dict."""
+        result = await self.batch_rpc(rpcid, freq, captcha_action, timeout=timeout)
+        if result.get("error"):
+            return {"error": result["error"]}
+
+        status = result.get("status")
+        if isinstance(status, int) and status >= 400:
+            return {"error": f"batchexecute answered HTTP {status}"}
+
+        try:
+            return {"payload": fb.first_payload(result.get("data") or "", rpcid)}
+        except Exception as e:
+            return {"error": f"{type(e).__name__}: {e}"}
+
+    async def upload_image_batch(self, image_base64: str, project_id: str,
+                                 mime_type: str = "image/jpeg",
+                                 file_name: str = "reference.jpg") -> dict:
+        """Put an image into the project on the batch path.
+
+        The media ids the two transports hand out are not interchangeable, so a
+        video generated this way has to reference an image uploaded this way.
+        """
+        freq = fb.upload_request(image_base64, project_id, mime_type, file_name)
+        out = await self._batch_payload(fb.RPC_UPLOAD_IMAGE, freq, timeout=180)
+        if "error" in out:
+            return out
+        try:
+            return {"media_id": fb.read_uploaded_media_id(out["payload"])}
+        except Exception as e:
+            return {"error": f"upload gave no media id: {type(e).__name__}: {e}"}
+
+    async def generate_video_batch(self, start_image_media_id: str, prompt: str,
+                                   project_id: str,
+                                   aspect_ratio: str = "VIDEO_ASPECT_RATIO_PORTRAIT",
+                                   model_key: str = "") -> dict:
+        """Submit a video on the batch path. Returns {"operation_id": ...}."""
+        freq = fb.video_request(
+            prompt, project_id, start_image_media_id,
+            aspect=aspect_ratio,
+            model=fb.resolve_video_model(model_key or None),
+        )
+        out = await self._batch_payload(
+            fb.RPC_GEN_VIDEO, freq, fb.CAPTCHA_VIDEO, timeout=180)
+        if "error" in out:
+            return out
+        try:
+            operation = fb.read_operation(out["payload"])
+        except Exception as e:
+            return {"error": f"submit gave no operation: {type(e).__name__}: {e}"}
+        return {
+            "operation_id": operation.operation_id,
+            "project_id": operation.project_id or project_id,
+        }
+
+    async def check_operation_batch(self, operation_id: str) -> dict:
+        """Poll one operation. {"done": bool, "error": str|None}."""
+        out = await self._batch_payload(
+            fb.RPC_OPERATION, fb.operation_request(operation_id), timeout=60)
+        if "error" in out:
+            return out
+        try:
+            operation = fb.read_operation(out["payload"])
+        except Exception as e:
+            return {"error": f"poll unreadable: {type(e).__name__}: {e}"}
+        # `complained` is deliberately not treated as failure: Flow Kit measured
+        # an operation reporting "Media not found." and still delivering a clip.
+        return {"done": operation.done, "complaint": operation.error}
+
+    async def find_operation_media_batch(self, operation_id: str, project_id: str) -> dict:
+        """The media id an operation produced, read out of the project listing.
+
+        `match` keeps the listing inside the tab: it is tens of megabytes and
+        grows with every generation, and only the one entry is ever wanted.
+        """
+        result = await self.batch_rpc(
+            fb.RPC_PROJECT_MEDIA, fb.project_media_request(project_id),
+            match=operation_id, timeout=120,
+        )
+        if result.get("error"):
+            return {"error": result["error"]}
+
+        text = result.get("data") or ""
+        media_id = fb.find_media_id_in_text(text, operation_id)
+        return {"media_id": media_id} if media_id else {"media_id": None}
+
+    async def get_media_urls_batch(self, media_id: str) -> dict:
+        """The signed URLs for a finished media id."""
+        out = await self._batch_payload(
+            fb.RPC_MEDIA, fb.media_request(media_id), timeout=60)
+        if "error" in out:
+            return out
+        urls = fb.read_media_urls(out["payload"], media_id)
+        return {"video_url": urls.video, "image_url": urls.image}
 
     async def get_credits(self) -> dict:
         """Get user credits and tier."""
