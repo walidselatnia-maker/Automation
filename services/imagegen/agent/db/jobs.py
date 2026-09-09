@@ -156,18 +156,29 @@ async def count_by_status() -> dict[str, int]:
     return {r["status"]: r["n"] for r in rows}
 
 
-async def recent_finished(limit: int = 10) -> list[dict]:
+async def recent_finished(limit: int = 10, within_seconds: int = 0) -> list[dict]:
     """Most recently finished jobs, newest first.
 
     The watchdog reads these to spot a Google sign-in wall: a run of failures
     whose messages name an auth problem means Chrome is sitting on a login
     page, and restarting it would only loop.
+
+    `within_seconds` bounds how far back that reaches, and the watchdog's
+    circuit breaker needs it. This table outlives the container, so without a
+    bound a run of failures is permanent evidence: five failed jobs would trip
+    the breaker thirty seconds after every start, for ever, long after whatever
+    caused them was fixed. 0 keeps the old behaviour for callers that want the
+    whole history.
     """
     db = await get_db()
-    async with db.execute(
-        """SELECT * FROM job WHERE status IN ('COMPLETED', 'FAILED')
-            ORDER BY updated_at DESC LIMIT ?""",
-        (limit,),
-    ) as cursor:
+    sql = """SELECT * FROM job WHERE status IN ('COMPLETED', 'FAILED')"""
+    params: list = []
+    if within_seconds > 0:
+        sql += " AND updated_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ?)"
+        params.append(f"-{int(within_seconds)} seconds")
+    sql += " ORDER BY updated_at DESC LIMIT ?"
+    params.append(limit)
+
+    async with db.execute(sql, tuple(params)) as cursor:
         rows = await cursor.fetchall()
     return [dict(r) for r in rows]

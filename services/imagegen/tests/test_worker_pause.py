@@ -34,7 +34,7 @@ def fresh_state():
 
 
 def failures(monkeypatch, count):
-    async def recent(limit=10):
+    async def recent(limit=10, within_seconds=0):
         return [{"status": "FAILED", "error_message": "boom"}] * count
 
     monkeypatch.setattr(watchdog, "_recent_failures", recent)
@@ -52,7 +52,7 @@ def test_the_circuit_breaker_pauses_the_real_controller(monkeypatch):
 
 
 def test_the_session_wall_pauses_the_real_controller(monkeypatch):
-    async def recent(limit=10):
+    async def recent(limit=10, within_seconds=0):
         return [{"status": "FAILED", "error_message": "SESSION_EXPIRED"}]
 
     monkeypatch.setattr(watchdog, "_recent_failures", recent)
@@ -111,3 +111,52 @@ def test_every_call_the_watchdog_makes_exists_on_the_real_controller():
             f"watchdog.py calls controller.{name}(), which WorkerController "
             f"does not implement"
         )
+
+
+def test_the_breaker_only_looks_at_recent_failures(monkeypatch):
+    """The job table outlives the container; the breaker's evidence must not.
+
+    Unbounded, five old failures are permanent proof: the breaker trips thirty
+    seconds after every start, pauses the worker, and a paused worker reports no
+    work waiting -- so Chrome never starts and nothing is ever sent again.
+    """
+    seen = {}
+
+    async def recent(limit=10, within_seconds=0):
+        seen["within_seconds"] = within_seconds
+        return []
+
+    monkeypatch.setattr(watchdog, "_recent_failures", recent)
+    asyncio.run(watchdog._check_circuit_breaker(WorkerController()))
+
+    assert seen["within_seconds"] == watchdog.CIRCUIT_WINDOW_S
+
+
+def test_the_breaker_lets_go_once_the_failures_age_out(monkeypatch):
+    """Nothing else clears needs_human, so the breaker has to clear its own."""
+    failures(monkeypatch, watchdog.FAILURE_THRESHOLD)
+    controller = WorkerController()
+    assert asyncio.run(watchdog._check_circuit_breaker(controller)) is True
+    assert controller.paused is True
+
+    failures(monkeypatch, 0)  # they fell out of the window
+    assert asyncio.run(watchdog._check_circuit_breaker(controller)) is False
+
+    assert controller.paused is False
+    assert watchdog.state.needs_human is False
+    assert watchdog.state.healthy is True
+
+
+def test_it_does_not_lift_a_pause_it_did_not_make(monkeypatch):
+    # A sign-in wall needs a person. The breaker going quiet must not say
+    # otherwise.
+    controller = WorkerController()
+    controller.pause("session expired")
+    watchdog.state.needs_human = True
+    watchdog.state.paused_by = None
+
+    failures(monkeypatch, 0)
+    asyncio.run(watchdog._check_circuit_breaker(controller))
+
+    assert controller.paused is True
+    assert watchdog.state.needs_human is True
