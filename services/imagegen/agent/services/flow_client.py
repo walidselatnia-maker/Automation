@@ -696,7 +696,11 @@ class FlowClient:
             return {"error": f"poll unreadable: {type(e).__name__}: {e}"}
         # `complained` is deliberately not treated as failure: Flow Kit measured
         # an operation reporting "Media not found." and still delivering a clip.
-        return {"done": operation.done, "complaint": operation.error}
+        return {
+            "done": operation.done,
+            "status": operation.status,
+            "complaint": operation.error,
+        }
 
     async def find_operation_media_batch(self, operation_id: str, project_id: str) -> dict:
         """The media id an operation produced, read out of the project listing.

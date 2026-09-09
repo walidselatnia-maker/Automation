@@ -1326,6 +1326,13 @@ async function runBatchRpc(cmd) {
 
   let freq = cmd.freq;
   if (cmd.captchaAction) {
+    // grecaptcha is loaded on a project page and not on the project list --
+    // measured in the page, both ways. The REST path has always done this before
+    // asking for a token; the batch path was written without it and every
+    // captcha it asked for failed. Both transports need it for the same reason:
+    // the captcha is minted by the page, so the page has to be one that has it.
+    await ensureFlowTabOnProject();
+
     const solved = await solveCaptcha(cmd.id, cmd.captchaAction);
     if (!solved?.token) return { error: `CAPTCHA_FAILED: ${solved?.error || 'no token'}` };
     freq = freq.split(CAPTCHA_SLOT).join(solved.token);
@@ -1374,6 +1381,25 @@ async function runBatchRpc(cmd) {
   return injected?.result || { error: 'NO_INJECTION_RESULT' };
 }
 
+// One captcha at a time, whatever the worker sends.
+//
+// The worker runs MAX_CONCURRENT_REQUESTS jobs in parallel, so two video
+// submits arrive together -- and both want the same single Flow tab: one
+// navigates it to a project page while the other is mid-solve, and the token
+// the second gets belongs to a page that is no longer there. That is a run of
+// CAPTCHA_FAILED with nothing wrong in either request.
+//
+// Serialised here rather than by lowering concurrency, because the contended
+// thing is the tab and it lives here. Requests without a captcha -- polls,
+// listing lookups -- do not touch it and are not held up behind this.
+let _captchaTurn = Promise.resolve();
+
+function takeCaptchaTurn(run) {
+  const mine = _captchaTurn.then(run, run);
+  _captchaTurn = mine.then(() => {}, () => {});
+  return mine;
+}
+
 async function handleBatchRpc(msg) {
   const { id, params } = msg;
   const { rpcid, freq, captchaAction, match } = params || {};
@@ -1401,7 +1427,10 @@ async function handleBatchRpc(msg) {
   }
 
   try {
-    const out = await runBatchRpc({ id, rpcid, freq, captchaAction, match });
+    const cmd = { id, rpcid, freq, captchaAction, match };
+    const out = captchaAction
+      ? await takeCaptchaTurn(() => runBatchRpc(cmd))
+      : await runBatchRpc(cmd);
     if (out.error) {
       if (hasCaptcha) { metrics.failedCount++; metrics.lastError = out.error; }
       if (visible) updateRequestLog(id, { status: 'failed', error: out.error });

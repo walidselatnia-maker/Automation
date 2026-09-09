@@ -421,6 +421,8 @@ class WorkerController:
         job_id = job["id"]
         client = get_flow_client()
 
+        seen_status = None
+
         for attempt in range(1, VIDEO_MAX_POLLS + 1):
             await asyncio.sleep(VIDEO_POLL_INTERVAL)
 
@@ -428,8 +430,23 @@ class WorkerController:
             if state.get("error"):
                 logger.warning("job %s poll %d: %s", job_id[:8], attempt, state["error"])
                 continue
+
+            # Once per change, not once per poll: eighty polls of "still
+            # pending" is noise, and a video that never leaves its first status
+            # is the thing worth seeing.
+            if state.get("status") != seen_status:
+                seen_status = state.get("status")
+                logger.info(
+                    "job %s poll %d: operation is %s%s",
+                    job_id[:8], attempt, seen_status or "?",
+                    f" ({state['complaint']})" if state.get("complaint") else "",
+                )
+
             if not state.get("done"):
                 continue
+
+            logger.info("job %s: operation finished — looking up the media",
+                        job_id[:8])
 
             # Done. The operation record does not carry the media id -- the third
             # uuid in it is the scene -- so it is read out of the project listing.
