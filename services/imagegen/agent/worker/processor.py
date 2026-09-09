@@ -24,11 +24,10 @@ from agent.config import (
     POLL_INTERVAL,
     STALE_PROCESSING_TIMEOUT,
     TOKEN_MAX_AGE_BEFORE_BATCH,
-    VIDEO_FORCE_I2V,
     VIDEO_MAX_POLLS,
     VIDEO_POLL_INTERVAL,
 )
-from agent import chrome
+from agent import chrome, video_models
 from agent.db import jobs
 from agent.services.flow_client import get_flow_client
 from agent.worker._parsing import (
@@ -276,59 +275,15 @@ class WorkerController:
         logger.info("job %s uploaded %d reference image(s)", job_id[:8], len(media_ids))
 
         # -- Stage 2: submit. ------------------------------------------------
-        #
-        # Reference-to-video first, because it is the only one of the two that
-        # reads all the images, and a reel built from four photographs is the
-        # point of the feature.
-        #
-        # It is also going away. Flow's own migration accepts three video models
-        # on the endpoint it is moving to and every one of them is i2v; Flow
-        # Kit's r2v method on that path refuses outright, saying its payload was
-        # never captured off the new UI. Here it began answering INVALID_ARGUMENT
-        # on a submit that had worked days earlier.
-        #
-        # So r2v is attempted and its refusal is not fatal: rather than failing
-        # the reel, fall through to a video built from the first image. That is
-        # a worse video than the one asked for and a great deal better than
-        # none, and it is what Flow Kit does in the same corner.
         aspect_ratio = VIDEO_ASPECT_RATIOS.get(
             job["orientation"], VIDEO_ASPECT_RATIOS["VERTICAL"]
         )
-
-        submitted = None
-        if not VIDEO_FORCE_I2V:
-            submitted = await client.generate_video_from_references(
-                reference_media_ids=media_ids,
-                prompt=job["prompt"],
-                project_id=project_id,
-                aspect_ratio=aspect_ratio,
-            )
-
-        if submitted is None or (is_error(submitted) and rejected_the_request(submitted)):
-            if submitted is None:
-                logger.info(
-                    "job %s: VIDEO_FORCE_I2V is set — generating from the first "
-                    "of %d image(s)", job_id[:8], len(media_ids),
-                )
-            else:
-                logger.warning(
-                    "job %s: reference video was refused (%s) — falling back to "
-                    "the first of %d image(s)",
-                    job_id[:8], error_text(submitted)[:200], len(media_ids),
-                )
-            submitted = await client.generate_video_from_image(
-                start_image_media_id=media_ids[0],
-                prompt=job["prompt"],
-                project_id=project_id,
-                # No scenes here. The captured payload carries a unique id in
-                # this slot, and the job id is the one thing that is already
-                # unique per video.
-                scene_id=job_id,
-                aspect_ratio=aspect_ratio,
-            )
+        submitted, refusals = await self._submit_video(
+            client, job, media_ids, project_id, aspect_ratio
+        )
 
         if is_error(submitted):
-            await self._handle_failure(job, error_text(submitted))
+            await self._handle_failure(job, self._submit_error(submitted, refusals))
             return
 
         operation = extract_operation(submitted)
@@ -365,6 +320,100 @@ class WorkerController:
             f"service can read, so nothing polled for the result. The generation may "
             f"still have run and the credits are spent. Reply carried: {shape}.\n\n"
             f"{json.dumps(submitted, default=str)[:6000]}",
+        )
+
+    async def _submit_video(self, client, job, media_ids, project_id, aspect_ratio):
+        """Submit the video, working out which model name Flow still accepts.
+
+        `videoModelKey` is the one field in this body that is a bare string
+        Google retires on its own schedule, and every reel here started failing
+        with INVALID_ARGUMENT -- Flow refusing the request rather than the
+        images. Naming the replacement in a setting only works while the guess
+        is right and has to be made again by hand each time Google moves, so the
+        names are a list and this walks it.
+
+        Reference video is tried before image video, because reading all four
+        photographs is the point of a reel. Its refusal is not fatal: a video
+        built from the first image is worse than the one asked for and a great
+        deal better than none, which is also what Flow Kit does here.
+
+        Only a refusal advances the list. A rate limit, a dropped browser or a
+        rejected captcha are about when the request was sent, and walking past
+        them would spend a reel's quality -- and a captcha per step -- on
+        something the ordinary retry clears.
+
+        Returns the last response and every refusal along the way, so a reel
+        that exhausts the list can say what it tried rather than repeating one
+        opaque error.
+        """
+        job_id = job["id"]
+        refusals: list[str] = []
+        submitted: dict = {}
+
+        for kind, model in video_models.plan(aspect_ratio):
+            if kind == "r2v":
+                submitted = await client.generate_video_from_references(
+                    reference_media_ids=media_ids,
+                    prompt=job["prompt"],
+                    project_id=project_id,
+                    aspect_ratio=aspect_ratio,
+                    model_key=model,
+                )
+            else:
+                submitted = await client.generate_video_from_image(
+                    start_image_media_id=media_ids[0],
+                    prompt=job["prompt"],
+                    project_id=project_id,
+                    # No scenes here. The captured payload carries a unique id
+                    # in this slot, and the job id is already unique per video.
+                    scene_id=job_id,
+                    aspect_ratio=aspect_ratio,
+                    model_key=model,
+                )
+
+            if not is_error(submitted):
+                if kind == "i2v" and len(media_ids) > 1:
+                    logger.warning(
+                        "job %s: built from 1 of %d image(s) — reference video is "
+                        "refused, so the other %d were not read",
+                        job_id[:8], len(media_ids), len(media_ids) - 1,
+                    )
+                video_models.remember(aspect_ratio, kind, model)
+                return submitted, refusals
+
+            if not rejected_the_request(submitted):
+                # Transient. Stop here and let the retry policy have it, rather
+                # than burning the rest of the list on a bad minute.
+                return submitted, refusals
+
+            refusals.append(f"{kind}/{model}: {error_text(submitted)[:160]}")
+            logger.warning(
+                "job %s: Flow refused %s (%s) — trying the next model",
+                job_id[:8], model, kind,
+            )
+            # A remembered name that starts being refused has been retired too.
+            video_models.forget(aspect_ratio)
+
+        return submitted, refusals
+
+    @staticmethod
+    def _submit_error(submitted: dict, refusals: list[str]) -> str:
+        """One message naming everything that was refused.
+
+        A reel that has exhausted the list is the answer to a bigger question
+        than "this one failed": every model name this service knows was refused,
+        which says the old endpoint is closed to this account for video rather
+        than that one name went stale. That deserves to be legible in the
+        failure rather than inferred from repeats.
+        """
+        if len(refusals) <= 1:
+            return error_text(submitted)
+
+        tried = "\n".join(f"  - {line}" for line in refusals)
+        return (
+            f"Flow refused every video model this service knows ({len(refusals)} "
+            f"tried). That is not one stale name — it means this account can no "
+            f"longer generate video through this endpoint at all.\n\n{tried}"
         )
 
     async def _upload_reference(self, client, url: str, project_id: str):
