@@ -112,3 +112,49 @@ def test_landscape_and_portrait_are_remembered_separately():
     video_models.remember(PORTRAIT, "i2v", "veo_3_1_i2v_lite")
 
     assert video_models.recall("VIDEO_ASPECT_RATIO_LANDSCAPE") is None
+
+
+# ─── The batch path's three ─────────────────────────────────
+
+def test_the_access_denial_is_recognised():
+    # The exact answer the deployed container recorded.
+    assert video_models.access_denied(
+        "RpcError: eb1hJf failed: [7, None, [['type.googleapis.com/google.rpc.ErrorInfo', "
+        "['PUBLIC_ERROR_MODEL_ACCESS_DENIED']]]]"
+    ) is True
+
+
+def test_other_errors_are_not_access_denials():
+    # A captcha failure or a dropped browser is not a reason to try another
+    # model, and each step of the walk is a captcha.
+    assert video_models.access_denied("CAPTCHA_FAILED: no token") is False
+    assert video_models.access_denied("Extension not connected") is False
+    assert video_models.access_denied("") is False
+
+
+def test_the_batch_walk_covers_every_model_the_endpoint_accepts():
+    plan = video_models.batch_plan(PORTRAIT)
+
+    assert set(plan) == set(video_models.BATCH_CANDIDATES)
+    assert len(plan) == len(set(plan))
+
+
+def test_a_remembered_batch_model_is_tried_alone():
+    video_models.remember_batch(PORTRAIT, "veo_3_1_i2v_lite")
+
+    assert video_models.batch_plan(PORTRAIT) == ["veo_3_1_i2v_lite"]
+
+
+def test_forgetting_a_batch_model_resumes_the_walk():
+    video_models.remember_batch(PORTRAIT, "veo_3_1_i2v_lite")
+    video_models.forget_batch(PORTRAIT)
+
+    assert len(video_models.batch_plan(PORTRAIT)) == len(video_models.BATCH_CANDIDATES)
+
+
+def test_batch_and_rest_memories_do_not_collide():
+    # The two sets of names do not overlap, and a REST name remembered for an
+    # aspect must not be handed to the batch endpoint as if it were one of its.
+    video_models.remember(PORTRAIT, "r2v", "veo_3_1_r2v_fast_portrait")
+
+    assert "veo_3_1_r2v_fast_portrait" not in video_models.batch_plan(PORTRAIT)

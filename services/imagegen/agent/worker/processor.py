@@ -397,14 +397,41 @@ class WorkerController:
                 job_id[:8], len(reference_urls),
             )
 
-        submitted = await client.generate_video_batch(
-            start_image_media_id=uploaded["media_id"],
-            prompt=job["prompt"],
-            project_id=project_id,
-            aspect_ratio=aspect,
-        )
+        # Which of the three models this account may use is the account's
+        # business, and Google says so per model: PUBLIC_ERROR_MODEL_ACCESS_DENIED
+        # means "understood, captcha fine, not for you". So walk them, and keep
+        # the first one that is. Anything else is not a model problem and stops
+        # the walk -- each step is a captcha.
+        submitted = {}
+        denied: list[str] = []
+        for model in video_models.batch_plan(aspect):
+            submitted = await client.generate_video_batch(
+                start_image_media_id=uploaded["media_id"],
+                prompt=job["prompt"],
+                project_id=project_id,
+                aspect_ratio=aspect,
+                model_key=model,
+            )
+            if not submitted.get("error"):
+                video_models.remember_batch(aspect, model)
+                break
+            if not video_models.access_denied(submitted["error"]):
+                break
+            denied.append(model)
+            logger.warning("job %s: account may not use %s — trying the next model",
+                           job_id[:8], model)
+            video_models.forget_batch(aspect)
+
         if submitted.get("error"):
-            await self._handle_failure(job, f"Video submit failed: {submitted['error']}")
+            detail = submitted["error"]
+            if denied and len(denied) == len(video_models.BATCH_CANDIDATES):
+                detail = (
+                    f"This Google account is not allowed to use any of the video "
+                    f"models Flow offers ({', '.join(denied)}). That is a plan or "
+                    f"quota limit on the account, not something this service can "
+                    f"route around.\n\n{detail}"
+                )
+            await self._handle_failure(job, f"Video submit failed: {detail}")
             return True
 
         operation_id = submitted["operation_id"]
