@@ -126,6 +126,27 @@ async def requeue(job_id: str, error: str) -> None:
     await db.commit()
 
 
+async def touch(job_id: str) -> None:
+    """Say a PROCESSING job is still being worked on.
+
+    reset_stale reads updated_at as a pulse: a PROCESSING job that has not been
+    touched for the cutoff is taken for one whose process died, and put back in
+    the queue. That is right for an image, which is done in ninety seconds. A
+    video is polled for up to twenty minutes, and at ten it was being returned
+    to the queue mid-generation, claimed again, and submitted again -- a second
+    video, paid for, ten minutes after the first, every ten minutes.
+
+    So a poll loop touches its job each round. A job whose process really has
+    died stops being touched, and the reset still catches it.
+    """
+    db = await get_db()
+    await db.execute(
+        f"UPDATE job SET updated_at = {_NOW} WHERE id = ? AND status = 'PROCESSING'",
+        (job_id,),
+    )
+    await db.commit()
+
+
 async def reset_stale(cutoff_seconds: int) -> int:
     """Return jobs stuck in PROCESSING to the queue.
 

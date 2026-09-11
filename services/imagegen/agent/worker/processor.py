@@ -452,6 +452,7 @@ class WorkerController:
 
         for attempt in range(1, VIDEO_MAX_POLLS + 1):
             await asyncio.sleep(VIDEO_POLL_INTERVAL)
+            await jobs.touch(job_id)  # still alive -- do not hand this back to the queue
 
             state = await client.check_operation_batch(operation_id)
             if state.get("error"):
@@ -640,6 +641,7 @@ class WorkerController:
 
         for attempt in range(1, VIDEO_MAX_POLLS + 1):
             await asyncio.sleep(VIDEO_POLL_INTERVAL)
+            await jobs.touch(job_id)  # still alive -- do not hand this back to the queue
 
             # A shutdown mid-generation leaves the job PROCESSING with its
             # operation stored, so reset_stale returns it to the queue and the
@@ -686,6 +688,7 @@ class WorkerController:
 
         for attempt in range(1, VIDEO_MAX_POLLS + 1):
             await asyncio.sleep(VIDEO_POLL_INTERVAL)
+            await jobs.touch(job_id)  # still alive -- do not hand this back to the queue
 
             # As in _await_video: the handle is stored, so a shutdown here
             # resumes on the next attempt rather than paying for a second video.
