@@ -448,7 +448,7 @@ class WorkerController:
         job_id = job["id"]
         client = get_flow_client()
 
-        seen_status = None
+        seen_status = object()  # so the very first poll is always logged
 
         for attempt in range(1, VIDEO_MAX_POLLS + 1):
             await asyncio.sleep(VIDEO_POLL_INTERVAL)
@@ -469,6 +469,9 @@ class WorkerController:
                     job_id[:8], attempt, seen_status or "?",
                     f" ({state['complaint']})" if state.get("complaint") else "",
                 )
+                if state.get("raw"):
+                    logger.warning("job %s poll %d: no status in the answer: %s",
+                                   job_id[:8], attempt, state["raw"])
 
             if not state.get("done"):
                 continue
