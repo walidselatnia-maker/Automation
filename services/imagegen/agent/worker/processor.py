@@ -424,6 +424,15 @@ class WorkerController:
 
         if submitted.get("error"):
             detail = submitted["error"]
+            if video_models.out_of_credits(detail):
+                # Not a hiccup: the account's video credits are spent. A retry
+                # is another upload and another captcha for the same answer.
+                message = ("This Google account has no video credits left on Flow. "
+                           "Nothing was generated. Wait for the credits to reset "
+                           "or add more, then run the reel again.")
+                logger.error("job %s FAILED: %s", job_id[:8], message)
+                await jobs.fail(job_id, message)
+                return True
             if denied and len(denied) == len(video_models.BATCH_CANDIDATES):
                 detail = (
                     f"This Google account is not allowed to use any of the video "

@@ -158,3 +158,19 @@ def test_batch_and_rest_memories_do_not_collide():
     video_models.remember(PORTRAIT, "r2v", "veo_3_1_r2v_fast_portrait")
 
     assert "veo_3_1_r2v_fast_portrait" not in video_models.batch_plan(PORTRAIT)
+
+
+def test_running_out_of_credits_is_recognised():
+    # Recorded off the deployed container's Flow Kit panel: HTTP 200, and
+    # inside it code 8 with this name. Nothing was generated.
+    assert video_models.out_of_credits(
+        "RpcError: eb1hJf failed: [8, None, [['type.googleapis.com/google.rpc.ErrorInfo', "
+        "['PUBLIC_ERROR_USER_QUOTA_REACHED']]]]"
+    ) is True
+
+
+def test_a_model_denial_is_not_running_out_of_credits():
+    # The two want opposite responses: a denial moves to the next model, an
+    # empty balance stops the job.
+    assert video_models.out_of_credits("PUBLIC_ERROR_MODEL_ACCESS_DENIED") is False
+    assert video_models.out_of_credits("") is False

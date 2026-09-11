@@ -201,3 +201,13 @@ def forget_batch(aspect_ratio: str) -> None:
 def access_denied(error: str) -> bool:
     """Google's answer when the account may not use the model it named."""
     return "MODEL_ACCESS_DENIED" in str(error or "").upper()
+
+
+def out_of_credits(error: str) -> bool:
+    """Google's answer when the account has no video credits left.
+
+    Seen on the deployed container as code 8 with
+    PUBLIC_ERROR_USER_QUOTA_REACHED. Nothing was generated and nothing was
+    charged; retrying only spends captchas until the credits reset.
+    """
+    return "USER_QUOTA_REACHED" in str(error or "").upper()
