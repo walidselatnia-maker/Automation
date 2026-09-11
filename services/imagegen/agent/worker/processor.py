@@ -81,6 +81,11 @@ MAX_REFERENCE_BYTES = 12 * 1024 * 1024
 # API_COOLDOWN — by which point the reload has produced a token. Without it a
 # whole queue died on attempt one of five every time the hour rolled over, and
 # the only cure anyone had was refreshing the tab by hand.
+#: How often the project listing is read while the operation poll says
+#: nothing. The listing is the heavy call (it is the whole project), so not on
+#: every 15-second poll -- once a minute is enough for a clip that takes two.
+LISTING_EVERY_N_POLLS = 4
+
 RETRYABLE = ("quota", "rate_limit", "exhausted", "resource_exhausted", "429",
              "no_flow_key", "not connected", "timeout", "503",
              "recaptcha", "captcha_timeout",
@@ -453,11 +458,23 @@ class WorkerController:
         return True
 
     async def _await_video_batch(self, job, operation_id: str, project_id: str) -> None:
-        """Poll the operation, then read the finished video's URL."""
+        """Poll the operation, then read the finished video's URL.
+
+        Measured on the deployed container: for this account the operation poll
+        never carries a status at all -- every answer is
+
+            [opId, None, None, None, None, [..., [4, "Media not found."]]]
+
+        while the finished video is sitting in the project. So the poll cannot
+        be the only done-signal. When it says nothing, the project listing is
+        checked instead, once a minute, and the video is taken from there.
+        """
         job_id = job["id"]
         client = get_flow_client()
 
         seen_status = object()  # so the very first poll is always logged
+        watching_listing = False
+        listing_misses = 0
 
         for attempt in range(1, VIDEO_MAX_POLLS + 1):
             await asyncio.sleep(VIDEO_POLL_INTERVAL)
@@ -482,18 +499,29 @@ class WorkerController:
                     logger.warning("job %s poll %d: no status in the answer: %s",
                                    job_id[:8], attempt, state["raw"])
 
-            if not state.get("done"):
-                continue
+            if state.get("done"):
+                logger.info("job %s: operation finished — looking up the media",
+                            job_id[:8])
+            elif state.get("status"):
+                continue  # Google says it is still working; believe it
+            else:
+                # No status at all. Nothing more will come from this poll, so
+                # the listing is where a finished video shows up.
+                if not watching_listing:
+                    watching_listing = True
+                    logger.info("job %s: the poll carries no status — watching the "
+                                "project listing for the video instead", job_id[:8])
+                if attempt % LISTING_EVERY_N_POLLS:
+                    continue
 
-            logger.info("job %s: operation finished — looking up the media",
-                        job_id[:8])
-
-            # Done. The operation record does not carry the media id -- the third
+            # The operation record does not carry the media id -- the third
             # uuid in it is the scene -- so it is read out of the project listing.
             found = await client.find_operation_media_batch(operation_id, project_id)
             if found.get("error") or not found.get("media_id"):
-                logger.warning("job %s: operation done but no media id yet (%s)",
-                               job_id[:8], found.get("error") or "not in listing")
+                listing_misses += 1
+                if state.get("done") or listing_misses == 1:
+                    logger.warning("job %s: no media for the operation in the project "
+                                   "yet (%s)", job_id[:8], found.get("error") or "not in listing")
                 continue
 
             urls = await client.get_media_urls_batch(found["media_id"])
@@ -501,7 +529,7 @@ class WorkerController:
                 logger.warning("job %s: %s", job_id[:8], urls["error"])
                 continue
             if not urls.get("video_url"):
-                continue
+                continue  # in the project, still rendering
 
             await jobs.complete(job_id, found["media_id"], urls["video_url"])
             logger.info("job %s COMPLETED", job_id[:8])
