@@ -68,6 +68,11 @@ function broadcastRequestLog() {
 
 // ─── Startup ────────────────────────────────────────────────
 
+// Also at the top level, not only in init(): a service worker revived by an
+// event fires neither onInstalled nor onStartup, and the panel behaviour is
+// worth asserting on every load. Idempotent, so repeating it costs nothing.
+chrome.sidePanel?.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
+
 chrome.runtime.onInstalled.addListener(init);
 chrome.runtime.onStartup.addListener(init);
 chrome.alarms.onAlarm.addListener(async (alarm) => {
@@ -136,6 +141,15 @@ function ensureHydrated() {
 ensureHydrated();
 
 async function init() {
+  // The toolbar icon opens the side panel. The popup it used to open is a
+  // small window that closes the moment focus leaves it; the panel stays
+  // beside the Flow tab, which is where someone watching a run wants it.
+  // default_popup is gone from the manifest for the same reason -- a popup
+  // there takes the click before this setting is consulted.
+  chrome.sidePanel
+    ?.setPanelBehavior({ openPanelOnActionClick: true })
+    .catch(() => {});
+
   await ensureHydrated();
   connectToAgent();
   chrome.alarms.create('keepAlive', { periodInMinutes: 0.4 });
