@@ -16,6 +16,7 @@ from agent.config import (
     GOOGLE_FLOW_API, GOOGLE_API_KEY, ENDPOINTS,
     IMAGE_MODELS,
 )
+from agent.services import flow_batch as fb
 from agent.services.headers import random_headers
 
 logger = logging.getLogger(__name__)
@@ -457,6 +458,97 @@ class FlowClient:
             "body": body,
             "captchaAction": "IMAGE_GENERATION",
         })
+
+    # ─── batchexecute, the transport Flow moved to ──────────────
+    #
+    # A second way of reaching Flow, beside the REST one rather than in place of
+    # it. REST carries a bearer token sniffed off the page to
+    # aisandbox-pa.googleapis.com; Flow moved to a batchexecute endpoint on
+    # flow.google.com in September 2026, the page stopped talking to
+    # aisandbox-pa, and the sniffed token stopped being good there:
+    #
+    #   401 UNAUTHENTICATED: Request had invalid authentication credentials.
+    #
+    # Nothing here sends anything. The agent builds an envelope and the extension
+    # runs it inside the Flow tab, where the three values the endpoint checks
+    # live -- SNlM0e as the `at` token, FdrFJe as f.sid, cfb2h as bl -- all read
+    # off WIZ_global_data at call time. The captcha is minted moments before the
+    # request leaves and substituted into the payload there.
+    #
+    # The envelope format and the readers are agent/services/flow_batch.py,
+    # vendored from Flow Kit unchanged.
+
+    async def batch_rpc(self, rpcid: str, freq: str, captcha_action: str = None,
+                        match: str = None, timeout: float = 180) -> dict:
+        """Run one batchexecute RPC in the Flow tab and return the raw text."""
+        return await self._send("batch_rpc", {
+            "rpcid": rpcid,
+            "freq": freq,
+            "captchaAction": captcha_action,
+            "match": match,
+        }, timeout=timeout)
+
+    async def _batch_payload(self, rpcid: str, freq: str, captcha_action: str = None,
+                             timeout: float = 180):
+        """The decoded payload of one RPC, or an {"error": ...} dict."""
+        result = await self.batch_rpc(rpcid, freq, captcha_action, timeout=timeout)
+        if result.get("error"):
+            return {"error": result["error"]}
+
+        status = result.get("status")
+        if isinstance(status, int) and status >= 400:
+            return {"error": f"batchexecute answered HTTP {status}"}
+
+        try:
+            return {"payload": fb.first_payload(result.get("data") or "", rpcid)}
+        except Exception as e:
+            return {"error": f"{type(e).__name__}: {e}"}
+
+    async def generate_images_batch(self, prompt: str, project_id: str,
+                                    aspect_ratio: str = "IMAGE_ASPECT_RATIO_PORTRAIT",
+                                    image_model_name: str | None = None) -> dict:
+        """Generate one image on the batch path.
+
+        Answers in the REST shape on purpose. The worker reads
+        data.media[0].image.generatedImage.fifeUrl and media[0].name, and
+        _parsing.py has tests pinning exactly that, so the batch answer is folded
+        into the shape the worker already knows rather than teaching it a second
+        one. Images come back inline on this call -- no operation to poll --
+        which is what makes the two shapes line up at all.
+
+        The media id is read off the CDN url and may not be a UUID; the worker's
+        extractor UUID-checks it and will store null if not. The url is the thing
+        the platform actually consumes, and that survives regardless.
+        """
+        freq = fb.image_request(
+            prompt, project_id, count=1,
+            aspect=aspect_ratio,
+            model=fb.resolve_image_model(image_model_name),
+        )
+        out = await self._batch_payload(
+            fb.RPC_GEN_IMAGE, freq, fb.CAPTCHA_IMAGE, timeout=180)
+        if "error" in out:
+            return out
+        try:
+            images = fb.read_images(out["payload"])
+        except Exception as e:
+            return {"error": f"image response unreadable: {type(e).__name__}: {e}"}
+        if not images:
+            return {"error": f"No image url in batch response: {repr(out['payload'])[:300]}"}
+
+        first = images[0]
+        return {
+            "status": 200,
+            "data": {
+                "media": [{
+                    "name": first.media_id,
+                    "image": {"generatedImage": {
+                        "mediaId": first.media_id,
+                        "fifeUrl": first.url,
+                    }},
+                }],
+            },
+        }
 
     async def get_credits(self) -> dict:
         """Get user credits and tier."""

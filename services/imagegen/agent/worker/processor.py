@@ -14,6 +14,7 @@ import logging
 from agent.config import (
     API_COOLDOWN,
     FLOW_PROJECT_ID,
+    IMAGE_USE_BATCH,
     MAX_CONCURRENT_REQUESTS,
     MAX_RETRIES,
     POLL_INTERVAL,
@@ -132,7 +133,13 @@ class WorkerController:
     async def _run(self, job: dict) -> None:
         job_id = job["id"]
         try:
-            result = await get_flow_client().generate_images(
+            client = get_flow_client()
+            # The batch path signs itself inside the Flow tab; REST carries a
+            # bearer token sniffed off the page, which Google stopped honouring
+            # when the page stopped talking to aisandbox-pa. Both answer in the
+            # same shape, so nothing below this line knows which one ran.
+            generate = client.generate_images_batch if IMAGE_USE_BATCH else client.generate_images
+            result = await generate(
                 prompt=job["prompt"],
                 # The job's own project. FLOW_PROJECT_ID is only the fallback
                 # for a caller that sent none, applied when the job was queued.
