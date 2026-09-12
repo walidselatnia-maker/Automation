@@ -101,6 +101,12 @@ def test_output_url_is_empty_when_the_response_carries_none():
 def fresh_db(tmp_path, monkeypatch):
     monkeypatch.setattr(schema, "DB_PATH", tmp_path / "worker.db")
     monkeypatch.setattr(schema, "_db_connection", None)
+    # These test what the worker does with a result -- retry, record, complete --
+    # and stub the transport to hand one over. They were written against the REST
+    # seam and still say what they said. The batch seam has its own tests in
+    # test_image_batch.py, and both answer in the same shape, so nothing the
+    # worker does differs between them.
+    monkeypatch.setattr(processor, "IMAGE_USE_BATCH", False)
     asyncio.run(schema.init_db())
     yield
     asyncio.run(schema.close_db())

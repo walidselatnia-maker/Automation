@@ -82,9 +82,23 @@ VIDEO_FORCE_I2V = os.environ.get("VIDEO_FORCE_I2V", "") not in ("", "0", "false"
 #
 # On by default because REST video answers INVALID_ARGUMENT and will not
 # come back: Flow Kit stopped sending video that way entirely when Flow
-# moved in September 2026. Set to 0 to fall back to the old path, which is
-# still what images use and still works for them.
+# moved in September 2026. Set to 0 to fall back to the old path.
 VIDEO_USE_BATCH = os.environ.get("VIDEO_USE_BATCH", "1") == "1"
+
+# Same for images. When video moved, images were left on REST because REST
+# images still worked. Three days later they stopped:
+#
+#   {'code': 401, 'message': 'Request had invalid authentication credentials.
+#    Expected OAuth 2 access token, login cookie or other valid authentication
+#    credential.', 'status': 'UNAUTHENTICATED'}
+#
+# That is the bearer token itself being refused, not the request -- the token
+# sniffed off the page is no longer good for aisandbox-pa, because the page no
+# longer talks to aisandbox-pa. Same retirement, one endpoint at a time. The
+# batch path signs itself inside the tab and needs no sniffed token at all.
+#
+# Set to 0 to fall back to REST, for the day Google turns it back on.
+IMAGE_USE_BATCH = os.environ.get("IMAGE_USE_BATCH", "1") == "1"
 
 # Video generation is minutes, not the 30-90 seconds an image takes, so it gets
 # its own budget rather than inheriting numbers chosen for images.

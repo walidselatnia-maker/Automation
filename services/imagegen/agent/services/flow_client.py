@@ -661,6 +661,52 @@ class FlowClient:
         except Exception as e:
             return {"error": f"upload gave no media id: {type(e).__name__}: {e}"}
 
+    async def generate_images_batch(self, prompt: str, project_id: str,
+                                    aspect_ratio: str = "IMAGE_ASPECT_RATIO_PORTRAIT",
+                                    image_model_name: str | None = None) -> dict:
+        """Generate one image on the batch path.
+
+        Answers in the REST shape on purpose. The worker reads
+        data.media[0].image.generatedImage.fifeUrl and media[0].name, and
+        _parsing.py has tests pinning exactly that, so the batch answer is folded
+        into the shape the worker already knows rather than teaching it a second
+        one. Images come back inline on this call -- no operation to poll, unlike
+        video -- which is what makes the two shapes line up at all.
+
+        The media id is read off the CDN url and may not be a UUID; the worker's
+        extractor UUID-checks it and will store null if not. The url is the thing
+        the platform actually consumes, and that survives regardless.
+        """
+        freq = fb.image_request(
+            prompt, project_id, count=1,
+            aspect=aspect_ratio,
+            model=fb.resolve_image_model(image_model_name),
+        )
+        out = await self._batch_payload(
+            fb.RPC_GEN_IMAGE, freq, fb.CAPTCHA_IMAGE, timeout=180)
+        if "error" in out:
+            return out
+        try:
+            images = fb.read_images(out["payload"])
+        except Exception as e:
+            return {"error": f"image response unreadable: {type(e).__name__}: {e}"}
+        if not images:
+            return {"error": f"No image url in batch response: {repr(out['payload'])[:300]}"}
+
+        first = images[0]
+        return {
+            "status": 200,
+            "data": {
+                "media": [{
+                    "name": first.media_id,
+                    "image": {"generatedImage": {
+                        "mediaId": first.media_id,
+                        "fifeUrl": first.url,
+                    }},
+                }],
+            },
+        }
+
     async def generate_video_batch(self, start_image_media_id: str, prompt: str,
                                    project_id: str,
                                    aspect_ratio: str = "VIDEO_ASPECT_RATIO_PORTRAIT",
