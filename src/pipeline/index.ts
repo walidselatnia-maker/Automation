@@ -26,7 +26,7 @@ import {
   setRunTitle,
   getLinksForKeyword,
 } from '../db/repos.js';
-import { findDuplicate } from '../core/similar-title.js';
+import { findDuplicate, type DuplicateMatch } from '../core/similar-title.js';
 
 const log = createLogger('pipeline');
 
@@ -91,15 +91,16 @@ export async function executePipeline(ctx: PipelineContext): Promise<PipelineOut
     // its title and a run that fails at the post still says what it wrote.
     if (title) setRunTitle(ctx.runId, title);
 
-    warnOnNearDuplicate(ctx, title);
+    const duplicate = warnOnNearDuplicate(ctx, title);
 
     // -- The gate before anything reaches a live site. ---------------------
-    const hold = holdReason(ctx);
+    const hold = holdReason(ctx, duplicate);
     if (hold) {
       markRunHeld(ctx.runId, hold, title);
       log.info(
-        `run ${ctx.runId}: stopping before publish (${hold}) — ` +
-          'resume it to publish, every completed step is reused',
+        `run ${ctx.runId}: stopping before publish (${hold}` +
+          (duplicate && isSameTitle(duplicate) ? ', identical title already on the site' : '') +
+          ') — resume it to publish, every completed step is reused',
       );
       return { status: 'held', hold, postUrl: undefined };
     }
@@ -175,13 +176,39 @@ export { PipelineContext };
  * resuming the run, which reuses every completed step, so releasing an article
  * costs one HTTP post rather than a second pipeline.
  */
-function holdReason(ctx: PipelineContext): 'awaiting' | 'dry' | null {
+/**
+ * Not a near-duplicate: the same title.
+ *
+ * The similarity is Jaccard over the words that name the dish, so 1.0 means
+ * the two titles differ in nothing but punctuation and filler. That is no
+ * longer a heuristic that might be wrong about two dishes; it is one dish,
+ * twice.
+ */
+export const isSameTitle = (match: DuplicateMatch): boolean => match.similarity >= 1;
+
+function holdReason(
+  ctx: PipelineContext,
+  duplicate: DuplicateMatch | null,
+): 'awaiting' | 'dry' | null {
   // Approving is a resume, and the site's setting has not changed by then —
   // so without this the article is held again and approval publishes nothing.
   if (ctx.approved) return null;
 
   if (ctx.mode === 'dry') return 'dry';
   if (ctx.site.auto_publish === 0) return 'awaiting';
+
+  // An identical title stops here, whatever the site's publishing setting.
+  //
+  // Three runs of one keyword went through in half an hour while the panel
+  // was unreachable, each one warned that the title was already on the site
+  // at 100%, and each one published. Four copies of "Creamy Garlic Chicken
+  // Thighs" on the front page. The warning below is right that a similarity
+  // score must not bin finished work on its own -- so this does not bin it.
+  // It holds it, on the same page a site with auto-publish off already uses,
+  // with the existing article linked beside Approve and Discard. The work is
+  // kept; a person decides; the default is that it does not go out twice.
+  if (duplicate && isSameTitle(duplicate)) return 'awaiting';
+
   return null;
 }
 
@@ -194,22 +221,25 @@ function holdReason(ctx: PipelineContext): 'awaiting' | 'dry' | null {
  * not something that should be able to bin finished work on its own.
  *
  * It goes into the run's step log and, on a held run, onto the page where the
- * article is read before release.
+ * article is read before release. The match is returned so that one case --
+ * an identical title, which is not a heuristic -- can hold the run instead.
  */
-function warnOnNearDuplicate(ctx: PipelineContext, title: string): void {
-  if (!title) return;
+function warnOnNearDuplicate(ctx: PipelineContext, title: string): DuplicateMatch | null {
+  if (!title) return null;
 
   try {
     const match = findDuplicate(title, publishedTitles(ctx.site.id));
-    if (!match) return;
+    if (!match) return null;
 
     log.warn(
       `run ${ctx.runId}: "${title}" looks like "${match.title}" already on ` +
         `${ctx.site.domain} (${Math.round(match.similarity * 100)}% overlap)` +
         (match.url ? ` — ${match.url}` : ''),
     );
+    return match;
   } catch (err) {
     // A duplicate check must never be the reason a finished article is lost.
     log.warn(`could not check for a duplicate title: ${errorMessage(err)}`);
+    return null;
   }
 }

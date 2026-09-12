@@ -589,15 +589,21 @@ function approvalBar(
       <strong>
         ${run.hold === 'dry'
           ? 'Dry run — nothing was published'
-          : 'Written and waiting for your approval'}
+          : duplicate && duplicate.similarity >= 1
+            ? 'Held — this title is already on the site'
+            : 'Written and waiting for your approval'}
       </strong>
       <div class="small" style="margin-top:6px">
         ${run.hold === 'dry'
           ? html`This ran the whole pipeline against ${run.title ? 'the keyword' : 'a keyword'} and
               stopped before posting. The images were generated and uploaded; only the article
               itself was not published. Publish it anyway if you like what you see.`
-          : html`This site has automatic publishing turned off, so every article stops here.
-              Approving publishes it and continues to Pinterest exactly as a normal run would.`}
+          : duplicate && duplicate.similarity >= 1
+            ? html`An article with this exact title is already published here, so this one
+                stopped before posting rather than putting a second copy on the site. Approve
+                only if you mean to have both; otherwise discard it.`
+            : html`This site has automatic publishing turned off, so every article stops here.
+                Approving publishes it and continues to Pinterest exactly as a normal run would.`}
       </div>
 
       ${duplicate

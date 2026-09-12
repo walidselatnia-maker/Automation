@@ -8,6 +8,7 @@ import {
   getSite,
   insertKeyword,
   listSteps,
+  markRunPublished,
   setLink,
   upsertSite,
   getLinksForKeyword,
@@ -301,6 +302,61 @@ describe('pipeline end to end', () => {
     expect(getLinksForKeyword(keywordId)[0]?.status).toBe('done');
     // No site is still 'go', so the keyword closes globally too.
     expect(getKeyword(keywordId)?.status).toBe('done');
+  });
+
+  // -- The duplicate gate ---------------------------------------------------
+  //
+  // Three runs of one keyword went through in half an hour while the panel
+  // was unreachable. Each warned that the title was already on the site at
+  // 100%, and each published. Four copies of one article on the front page.
+
+  it('holds a run whose title is already on the site, instead of publishing it twice', async () => {
+    const world = buildWorld();
+    vi.stubGlobal('fetch', world.fetchStub);
+
+    // The same article, already live on this site from an earlier run.
+    const earlier = createRun(keywordId, siteId);
+    markRunPublished(earlier, 'recipe-0', 'https://testsite.com/r/test-chicken', 'Test Chicken');
+
+    const runId = createRun(keywordId, siteId);
+    const outcome = await executePipeline(makeContext(runId));
+
+    expect(outcome.status).toBe('held');
+    expect(outcome.hold).toBe('awaiting');
+    // The article was written and the images were generated -- kept, not
+    // binned. Only the post itself did not happen.
+    expect(world.calls.some((u) => u.includes('/recipes') && !u.includes('categories'))).toBe(false);
+    expect(getRun(runId)?.hold).toBe('awaiting');
+  });
+
+  it('still publishes a near-duplicate, with a warning, as it always did', async () => {
+    // "Easy Baked Chicken" vs "Test Chicken" share a word but are not the same
+    // title. The similarity score is a heuristic; it warns and does not gate.
+    const world = buildWorld();
+    vi.stubGlobal('fetch', world.fetchStub);
+
+    const earlier = createRun(keywordId, siteId);
+    markRunPublished(earlier, 'recipe-0', 'https://testsite.com/r/other', 'Chicken Test Dinner');
+
+    const outcome = await executePipeline(makeContext(createRun(keywordId, siteId)));
+
+    expect(outcome.status).toBe('published');
+  });
+
+  it('publishes an identical title once a person has approved it', async () => {
+    // Approve is a resume with `approved` set. The hold must not re-apply on
+    // the way back through, or approving publishes nothing.
+    vi.stubGlobal('fetch', buildWorld().fetchStub);
+
+    const earlier = createRun(keywordId, siteId);
+    markRunPublished(earlier, 'recipe-0', 'https://testsite.com/r/test-chicken', 'Test Chicken');
+
+    const runId = createRun(keywordId, siteId);
+    const ctx = makeContext(runId);
+    ctx.approved = true;
+    const outcome = await executePipeline(ctx);
+
+    expect(outcome.status).toBe('published');
   });
 
   it('generates four article images plus the Pinterest graphic', async () => {
