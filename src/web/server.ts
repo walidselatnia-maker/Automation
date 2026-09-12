@@ -166,7 +166,8 @@ import {
 import { createLogger, errorMessage } from '../lib/logger.js';
 import { FacebookClient } from '../integrations/facebook.js';
 import { defaultDeps, publishReel, startGeneration } from '../reels/engine.js';
-import { loadTemplate } from '../pipeline/prompts.js';
+import { loadPrompt, loadTemplate } from '../pipeline/prompts.js';
+import { chat } from '../llm/client.js';
 import { normaliseDomain } from '../lib/domain.js';
 
 const log = createLogger('web');
@@ -210,10 +211,67 @@ function buildReelPrompt(candidate: ReelCandidate): string {
   });
 }
 
-/** A caption to start from. Edited in the composer, like the prompt. */
-function buildReelCaption(candidate: ReelCandidate): string {
+/** The caption with the one thing it must never carry removed. */
+function withoutLinks(caption: string): string {
+  // Belt to the prompt's braces. The model is told not to link; if it does
+  // anyway, the link comes out here rather than going on the post. The article
+  // url is posted as the first comment and only there.
+  return caption
+    .replace(/https?:\/\/\S+/gi, '')
+    .replace(/\bwww\.\S+/gi, '')
+    .split('\n')
+    .map((line) => line.replace(/[ \t]+$/, ''))
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+/**
+ * A caption to start from. Edited in the composer, like the prompt.
+ *
+ * Written by the model, not assembled: the old default was the title with the
+ * article url under it, which Facebook shows as a bare link on a post nobody
+ * has a reason to stop for. The shape wanted is a hook that stops the scroll,
+ * a few lines about the dish, hashtags -- and no link anywhere in it. The link
+ * goes in the first comment, where it does not drag the post's reach down and
+ * still gets tapped.
+ *
+ * Never fatal. A model that is down or slow costs the composer its suggestion,
+ * not the page: the plain title goes in the box and the person types.
+ */
+async function buildReelCaption(
+  candidate: ReelCandidate,
+  settings: Settings,
+  encryptionKey: Buffer,
+): Promise<string> {
   const title = candidate.title || candidate.spy_title;
-  return candidate.post_url ? `${title}\n\n${candidate.post_url}` : title;
+  try {
+    const { system, user } = loadPrompt('reel-caption', {
+      seo: { title },
+      spy: {
+        group: candidate.seed_keyword,
+        description: candidate.spy_description,
+        annotation: candidate.annotation,
+      },
+    });
+    const messages = system.trim()
+      ? [
+          { role: 'system' as const, content: system },
+          { role: 'user' as const, content: user },
+        ]
+      : [{ role: 'user' as const, content: user }];
+
+    const result = await chat(
+      { model: modelFor('reel-caption'), messages, format: null },
+      encryptionKey,
+      settings.get('llm_base_url'),
+    );
+    const caption = withoutLinks(result.content);
+    return caption || title;
+  } catch (err) {
+    log.warn(`reel caption for run ${candidate.run_id} not generated: ${errorMessage(err)}`);
+    return title;
+  }
 }
 
 type Flash = { kind: 'ok' | 'error' | 'warn'; message: string } | null;
@@ -1047,7 +1105,7 @@ export function buildServer(
         candidate,
         images,
         prompt: buildReelPrompt(candidate),
-        caption: buildReelCaption(candidate),
+        caption: await buildReelCaption(candidate, settings, encryptionKey),
         route: resolveFbPage(candidate.site_id, candidate.seed_keyword),
       }),
       readFlash(request.query),

@@ -2215,6 +2215,8 @@ export interface ReelCandidate {
   site_domain: string;
   seed_keyword: string;
   spy_title: string;
+  spy_description: string;
+  annotation: string;
   title: string;
   post_url: string | null;
   published_at: string | null;
@@ -2232,7 +2234,8 @@ export interface ReelCandidate {
 export const reelCandidates = (limit = 50): ReelCandidate[] =>
   all<ReelCandidate>(
     `SELECT r.id AS run_id, r.site_id, r.keyword_id, s.domain AS site_domain,
-            k.seed_keyword, k.spy_title, r.title, r.post_url, r.published_at,
+            k.seed_keyword, k.spy_title, k.spy_description, k.annotation,
+            r.title, r.post_url, r.published_at,
             st.output_json AS images_json
        FROM runs r
        JOIN sites s     ON s.id = r.site_id

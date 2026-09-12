@@ -234,3 +234,71 @@ describe('publishing a reel', () => {
     expect(check.error).toMatch(/Invalid OAuth token/);
   });
 });
+
+/**
+ * The article link goes in the first comment, never the caption. A link in
+ * the description is what Facebook's ranking reads as an exit and what makes
+ * a post look like an ad; a comment carries it fine and still gets tapped.
+ */
+describe('commenting the link on a reel', () => {
+  beforeEach(() => setLogLevel('error'));
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('posts the message to the video as the page', async () => {
+    const graph = fakeGraph();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL, init?: RequestInit) => {
+        const url = input.toString();
+        if (url.endsWith('/VID1/comments')) {
+          graph.calls.push({
+            url,
+            method: init?.method ?? 'GET',
+            headers: (init?.headers ?? {}) as Record<string, string>,
+            body: init?.body,
+          });
+          return new Response(JSON.stringify({ id: 'VID1_C1' }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return graph.fetch(input, init);
+      }),
+    );
+
+    const result = await client().commentOnReel({
+      pageId: '12345',
+      videoId: 'VID1',
+      message: 'https://example.com/recipes/stew',
+    });
+
+    expect(result.commentId).toBe('VID1_C1');
+    const comment = graph.calls.find((c) => c.url.endsWith('/VID1/comments'))!;
+    expect(comment.method).toBe('POST');
+    const body = JSON.parse(String(comment.body)) as { message: string; access_token: string };
+    expect(body.message).toBe('https://example.com/recipes/stew');
+    // As the page, with the page token -- not the system user token.
+    expect(body.access_token).toBe('PAGE_TOKEN');
+  });
+
+  it('surfaces a missing permission as an error rather than a silent absence', async () => {
+    const graph = fakeGraph();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL, init?: RequestInit) => {
+        const url = input.toString();
+        if (url.endsWith('/comments')) {
+          return new Response(
+            JSON.stringify({ error: { message: '(#200) Requires pages_manage_engagement' } }),
+            { status: 400, headers: { 'Content-Type': 'application/json' } },
+          );
+        }
+        return graph.fetch(input, init);
+      }),
+    );
+
+    await expect(
+      client().commentOnReel({ pageId: '12345', videoId: 'VID1', message: 'x' }),
+    ).rejects.toThrow(FacebookError);
+  });
+});

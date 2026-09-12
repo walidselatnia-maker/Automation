@@ -53,7 +53,8 @@ export const STEP_CONTEXTS: Record<string, Record<string, unknown>> = {
   },
   'pick-board': { seo: SEO, boardsJson: '{}' },
   'repair-json': { postError: 'e', articleJson: '{}' },
-  'reel-caption': { seo: SEO, spy: SPY, url: 'https://example.com/a-recipe' },
+  // No url on purpose: the link goes in the first comment, never the caption.
+  'reel-caption': { seo: SEO, spy: SPY },
 };
 
 for (const part of ['part-1', 'part-2', 'part-3']) {

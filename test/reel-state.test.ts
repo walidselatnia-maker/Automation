@@ -47,6 +47,7 @@ function fakeDeps(overrides: Partial<ReelDeps> = {}): ReelDeps {
     } as unknown as ReelDeps['images'],
     facebook: {
       publishReel: vi.fn(async () => ({ videoId: 'VID1', permalink: 'https://fb/VID1' })),
+      commentOnReel: vi.fn(async () => ({ commentId: 'C1' })),
     } as unknown as ReelDeps['facebook'],
     telegram: { sendMessage: vi.fn(async () => true) } as unknown as ReelDeps['telegram'],
     download: vi.fn(async () => Buffer.from('mp4')),
@@ -212,6 +213,51 @@ describe('a reel moving through its states', () => {
     await publishReel(getReel(reelId) as ReelView, deps);
 
     expect(getReel(reelId)!.status).toBe('published');
+  });
+
+  it('posts the article link as the first comment, not in the caption', async () => {
+    // A link in the description is what Facebook's ranking reads as an exit
+    // and what makes a post look like an ad. The comment carries it fine.
+    const { reelId } = seed({ autoPublish: false });
+    updateReel(reelId, { status: 'ready', videoUrl: 'https://cdn/video.mp4' });
+
+    const deps = fakeDeps();
+    const commentOnReel = vi.fn(async () => ({ commentId: 'C1' }));
+    deps.facebook.commentOnReel = commentOnReel;
+    await publishReel(getReel(reelId) as ReelView, deps);
+
+    expect(commentOnReel).toHaveBeenCalledOnce();
+    expect(commentOnReel).toHaveBeenCalledWith({
+      pageId: '999',
+      videoId: 'VID1',
+      message: 'https://bitespoon.com/stew',
+    });
+    // Published with the caption as written -- the link was never added to it.
+    const [[publishCall]] = (deps.facebook.publishReel as ReturnType<typeof vi.fn>).mock.calls;
+    expect((publishCall as { description: string }).description).toBe('Stew');
+  });
+
+  it('keeps a reel published when only the link comment fails', async () => {
+    // The reel is live on the page whether or not the comment lands. Marking
+    // it failed would have the scheduler post the video a second time to fix
+    // a missing comment.
+    const { reelId } = seed({ autoPublish: false });
+    updateReel(reelId, { status: 'ready', videoUrl: 'https://cdn/video.mp4' });
+
+    const deps = fakeDeps();
+    deps.facebook.commentOnReel = vi.fn(async () => {
+      throw new Error('(#200) Requires pages_manage_engagement');
+    });
+    await publishReel(getReel(reelId) as ReelView, deps);
+
+    expect(getReel(reelId)!.status).toBe('published');
+    expect(getReel(reelId)!.fb_video_id).toBe('VID1');
+    // ...and the person is told what to add by hand.
+    const sent = (deps.telegram.sendMessage as ReturnType<typeof vi.fn>).mock.calls
+      .map((c) => String(c[0]))
+      .join(' ');
+    expect(sent).toContain('link comment did not post');
+    expect(sent).toContain('https://bitespoon.com/stew');
   });
 
   it('records a publishing failure against the reel and the page', async () => {

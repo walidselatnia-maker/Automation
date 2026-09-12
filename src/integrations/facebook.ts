@@ -189,6 +189,38 @@ export class FacebookClient {
     };
   }
 
+  /**
+   * Leave a comment on a published reel, as the Page.
+   *
+   * This is where the article link goes. Not the caption: a link in the
+   * description is the thing Facebook's ranking reads as an exit and shows
+   * to fewer people, and it is also what makes a post look like an ad. The
+   * first comment carries it fine and still gets tapped.
+   *
+   * Needs pages_manage_engagement on the token, which a token minted for
+   * publishing alone may lack. That surfaces as a Graph error here rather
+   * than a silent absence, so the caller can say so.
+   */
+  async commentOnReel(input: {
+    pageId: string;
+    videoId: string;
+    message: string;
+  }): Promise<{ commentId: string }> {
+    const token = await this.pageToken(input.pageId);
+
+    const response = await fetch(`${GRAPH}/${input.videoId}/comments`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: input.message, access_token: token }),
+      signal: AbortSignal.timeout(60_000),
+    });
+
+    const body = await this.read<{ id?: string }>(response, 'Commenting on the reel');
+    if (!body.id) throw new FacebookError('Facebook did not return a comment id');
+
+    return { commentId: body.id };
+  }
+
   private async startUpload(
     pageId: string,
     pageToken: string,

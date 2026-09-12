@@ -205,10 +205,33 @@ export async function publishReel(reel: ReelView, deps: ReelDeps): Promise<void>
 
   log.info(`reel ${reel.id} published to ${page.name || page.page_id}: ${published.permalink}`);
 
+  // The article link goes in the first comment, and only there. Recorded as
+  // published before this runs, on purpose: the reel is live on the page
+  // whether or not the comment lands, and a failure here must read as "the
+  // link is missing" -- something a person can fix in ten seconds -- rather
+  // than as a failed publish that the scheduler then tries to post again.
+  let linkNote = '';
+  if (reel.post_url) {
+    try {
+      await deps.facebook.commentOnReel({
+        pageId: page.page_id,
+        videoId: published.videoId,
+        message: reel.post_url,
+      });
+      log.info(`reel ${reel.id}: article link posted as the first comment`);
+    } catch (err) {
+      const why = errorMessage(err);
+      log.warn(`reel ${reel.id}: published, but the link comment failed: ${why}`);
+      linkNote =
+        `\n\n<b>The link comment did not post.</b> Add it by hand:\n${escapeHtml(reel.post_url)}\n` +
+        `<i>${escapeHtml(why)}</i>`;
+    }
+  }
+
   await notify(
     deps,
     `<b>Reel published</b>\n${escapeHtml(reel.run_title ?? '')}\n\n` +
-      `Page: ${escapeHtml(page.name || page.page_id)}\n${published.permalink}`,
+      `Page: ${escapeHtml(page.name || page.page_id)}\n${published.permalink}${linkNote}`,
   );
 }
 
