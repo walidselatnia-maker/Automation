@@ -227,17 +227,31 @@ function withoutLinks(caption: string): string {
 }
 
 /**
- * A caption to start from. Edited in the composer, like the prompt.
+ * What the caption box shows the instant the composer opens.
  *
- * Written by the model, not assembled: the old default was the title with the
+ * The title and nothing else. The url that used to sit under it is gone on
+ * purpose -- the link goes in the first comment, never the caption -- and the
+ * model's version arrives a moment later, fetched by the page, if the model is
+ * up. The page never waits for it: it did once, the LLM pool was down, and the
+ * composer sat past Cloudflare's hundred seconds and answered 524.
+ */
+function placeholderCaption(candidate: ReelCandidate): string {
+  return candidate.title || candidate.spy_title;
+}
+
+/**
+ * A caption written by the model. Fetched by the composer after it has
+ * rendered, never awaited by a page.
+ *
+ * Written rather than assembled: the old default was the title with the
  * article url under it, which Facebook shows as a bare link on a post nobody
  * has a reason to stop for. The shape wanted is a hook that stops the scroll,
  * a few lines about the dish, hashtags -- and no link anywhere in it. The link
  * goes in the first comment, where it does not drag the post's reach down and
  * still gets tapped.
  *
- * Never fatal. A model that is down or slow costs the composer its suggestion,
- * not the page: the plain title goes in the box and the person types.
+ * Never fatal. A model that is down or slow costs the suggestion, not the
+ * page: the title stays in the box and the person types.
  */
 async function buildReelCaption(
   candidate: ReelCandidate,
@@ -1105,11 +1119,31 @@ export function buildServer(
         candidate,
         images,
         prompt: buildReelPrompt(candidate),
-        caption: await buildReelCaption(candidate, settings, encryptionKey),
+        caption: placeholderCaption(candidate),
         route: resolveFbPage(candidate.site_id, candidate.seed_keyword),
       }),
       readFlash(request.query),
     );
+  });
+
+  /**
+   * The model's caption, for the composer to fill in once it has rendered.
+   *
+   * Its own request, not part of the page: the model takes anywhere from two
+   * seconds to twenty and is sometimes down, and a page that waits on it sits
+   * past Cloudflare's hundred seconds and answers 524 -- which is how this was
+   * found. The composer opens with the title and swaps this in if it arrives.
+   */
+  app.get('/reels/new/:runId/caption', async (request, reply) => {
+    const runId = asNumber((request.params as { runId: string }).runId, 0);
+    const candidate = reelCandidates(500).find((c) => c.run_id === runId);
+    if (!candidate) return reply.status(404).send({ caption: null });
+
+    const caption = await buildReelCaption(candidate, settings, encryptionKey);
+    // The placeholder is the fallback; sending it back would replace the
+    // person's own edits with nothing new.
+    const generated = caption !== placeholderCaption(candidate);
+    return reply.send({ caption: generated ? caption : null });
   });
 
   app.post('/reels/new/:runId', async (request, reply) => {

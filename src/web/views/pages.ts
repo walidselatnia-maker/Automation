@@ -2896,8 +2896,9 @@ export function reelComposerPage(data: ReelComposerData): Html {
 
             <div class="field">
               <label for="reel-caption">Caption</label>
-              <textarea id="reel-caption" name="caption" rows="6">${data.caption}</textarea>
-              <p class="help">Posted with the reel. You can still edit it before publishing.</p>
+              <textarea id="reel-caption" name="caption" rows="6"
+                        data-caption-url="/reels/new/${data.candidate.run_id}/caption">${data.caption}</textarea>
+              <p class="help" id="reel-caption-help">Writing a caption… the title is there meanwhile. The link goes in the first comment, not here.</p>
             </div>
           </div>
         </div>
@@ -2909,8 +2910,47 @@ export function reelComposerPage(data: ReelComposerData): Html {
         <span class="muted small">Takes a few minutes. It appears under In progress.</span>
       </div>
     </form>
+    ${raw(REEL_CAPTION_SCRIPT)}
   `;
 }
+
+/**
+ * Fill the caption in once the model has written it.
+ *
+ * Fetched after the page is up rather than rendered into it: the model takes
+ * anywhere from two seconds to twenty and is sometimes down, and a page that
+ * waited on it sat past Cloudflare's hundred seconds and answered 524. Only the
+ * untouched box is replaced -- anyone who has started typing keeps what they
+ * wrote.
+ */
+const REEL_CAPTION_SCRIPT = `<script>
+(function () {
+  var box = document.getElementById('reel-caption');
+  var help = document.getElementById('reel-caption-help');
+  if (!box || !box.dataset.captionUrl) return;
+
+  var initial = box.value;
+  var done = function (text) {
+    if (help) help.textContent = text;
+  };
+
+  fetch(box.dataset.captionUrl, { credentials: 'same-origin' })
+    .then(function (r) { return r.ok ? r.json() : { caption: null }; })
+    .then(function (body) {
+      if (body && body.caption && box.value === initial) {
+        box.value = body.caption;
+        done('Written by the model. Edit it as you like. The link goes in the first comment, not here.');
+      } else if (body && body.caption) {
+        done('A caption was written, but you had already started typing, so yours was kept.');
+      } else {
+        done('The model did not answer, so the title is there to start from. The link goes in the first comment, not here.');
+      }
+    })
+    .catch(function () {
+      done('The model did not answer, so the title is there to start from. The link goes in the first comment, not here.');
+    });
+})();
+</script>`;
 
 /* =========================================================================
  * Settings -> Facebook
