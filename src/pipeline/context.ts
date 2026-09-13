@@ -126,6 +126,7 @@ export class PipelineContext {
       pollIntervalMs: init.settings.getNumber('image_poll_interval_seconds') * 1000,
       maxAttempts: init.settings.getNumber('image_poll_max_attempts'),
       projectId: this.projectId.projectId,
+      imageModel: init.settings.get('image_model'),
     });
 
     // A pool rather than a client: when one account's queue fills, the run

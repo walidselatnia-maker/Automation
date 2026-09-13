@@ -13,7 +13,7 @@ from urllib.parse import parse_qs, urlparse
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from agent import chrome
+from agent import chrome, image_models
 from agent.auth import require_api_key
 from agent.config import FLOW_PROJECT_ID
 from agent.db import jobs
@@ -49,6 +49,12 @@ class GenerateRequest(BaseModel):
     # this container could only ever be right for one of them. FLOW_PROJECT_ID
     # here is the fallback for a caller that sends none.
     project_id: Optional[str] = Field(default=None, max_length=200)
+
+    # Which image model, as chosen on the platform's Settings page. 'auto' is
+    # Pro first and the others as fallbacks; a model key is that model alone.
+    # Anything else is treated as 'auto' rather than refused: the page only
+    # offers the keys, and a stale caller should still generate.
+    image_model: Optional[str] = Field(default=None, max_length=40)
 
 
 class GenerateResponse(BaseModel):
@@ -106,8 +112,12 @@ async def generate(body: GenerateRequest) -> GenerateResponse:
             "now. Open the Browser page to check the Google session.",
         )
 
-    job = await jobs.create(body.prompt, body.orientation, project_id)
-    logger.info("queued job %s for project %s", job["id"][:8], project_id)
+    choice = (body.image_model or "").strip()
+    if choice not in {image_models.AUTO, *(m["key"] for m in image_models.MODELS)}:
+        choice = image_models.AUTO
+
+    job = await jobs.create(body.prompt, body.orientation, project_id, choice)
+    logger.info("queued job %s for project %s (%s)", job["id"][:8], project_id, choice)
     return GenerateResponse(job_id=job["id"], status=job["status"])
 
 

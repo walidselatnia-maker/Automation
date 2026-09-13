@@ -15,13 +15,15 @@ logger = logging.getLogger(__name__)
 _NOW = "strftime('%Y-%m-%dT%H:%M:%SZ', 'now')"
 
 
-async def create(prompt: str, orientation: str = "VERTICAL", project_id: str = "") -> dict:
+async def create(prompt: str, orientation: str = "VERTICAL", project_id: str = "",
+                 image_model: str = "auto") -> dict:
     """Queue a generation. Returns the new row."""
     job_id = str(uuid.uuid4())
     db = await get_db()
     await db.execute(
-        "INSERT INTO job (id, prompt, orientation, project_id) VALUES (?, ?, ?, ?)",
-        (job_id, prompt, orientation, project_id),
+        "INSERT INTO job (id, prompt, orientation, project_id, image_model) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (job_id, prompt, orientation, project_id, image_model or "auto"),
     )
     await db.commit()
     return await get(job_id)

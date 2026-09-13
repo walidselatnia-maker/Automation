@@ -161,13 +161,25 @@ class WorkerController:
                 # was not a model; it is dropped and never sent again. The two
                 # known names are not dropped for that: INVALID_ARGUMENT on a
                 # name Google definitely knows means something else is wrong.
+                #
+                # Every answer Google gives a model is recorded, and the Settings
+                # page shows it. That is how a name read off a page gets
+                # verified: in Automatic mode the walk never reaches it, because
+                # Nano Banana 2 is unlimited, so a person picks it there and runs
+                # one article.
                 await image_models.ensure_discovered(client)
+                choice = job.get("image_model") or image_models.AUTO
+                models = image_models.plan(choice)
+                if not models:
+                    await self._handle_failure(job, image_models.why_empty(choice))
+                    return
                 result = {"error": "no image model configured"}
-                for model in image_models.plan():
+                for model in models:
                     result = await client.generate_images_batch(**request, image_model_name=model)
-                    if not is_error(result):
+                    err = None if not is_error(result) else error_text(result)
+                    image_models.record(model, err)
+                    if err is None:
                         break
-                    err = error_text(result)
                     if image_models.is_refusal(err):
                         logger.warning("job %s: %s refused (%s) — trying the next model",
                                        job_id[:8], model, err[:120])
@@ -176,7 +188,6 @@ class WorkerController:
                     if not image_models.is_known(model) and image_models.is_bad_name(err):
                         logger.warning("job %s: %s is not a model Flow knows (%s) — dropped",
                                        job_id[:8], model, err[:120])
-                        image_models.rejected(model)
                         continue
                     break
 

@@ -33,6 +33,10 @@ CREATE TABLE IF NOT EXISTS job (
     -- project, so a value baked into the environment could only ever be
     -- right for one of them.
     project_id    TEXT NOT NULL DEFAULT '',
+
+    -- Which image model, as chosen on the platform's Settings page: one of
+    -- the model keys, or 'auto' for Pro first and the others as fallbacks.
+    image_model   TEXT NOT NULL DEFAULT 'auto',
     status        TEXT NOT NULL DEFAULT 'PENDING'
                   CHECK(status IN ('PENDING','PROCESSING','COMPLETED','FAILED')),
     media_id      TEXT,
@@ -76,6 +80,7 @@ async def get_db() -> aiosqlite.Connection:
 # data and it cannot fail on a second run.
 ADDED_COLUMNS = [
     ("job", "project_id", "TEXT NOT NULL DEFAULT ''"),
+    ("job", "image_model", "TEXT NOT NULL DEFAULT 'auto'"),
 ]
 
 
