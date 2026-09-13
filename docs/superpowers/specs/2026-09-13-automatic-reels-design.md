@@ -28,13 +28,13 @@ An article published for niche *X* becomes a reel on the Facebook page assigned 
 - keep `enabled`, `last_used_at`, `last_error`
 - pages are inserted only by a token sync; the "add page" form is removed
 
-**`fb_page_routes`** — dropped. **`fb_system_token`** setting — removed from `SETTING_SPECS`.
+**`fb_page_routes`** — left in place, unused (migrations never drop tables); its code and UI are removed. **`fb_system_token`** setting — removed from `SETTING_SPECS`.
 
 **Migration `010-fb-tokens`**
 1. create `fb_tokens`; add columns to `fb_pages`.
 2. if a stored `fb_system_token` exists, insert it as token "Imported" and attach every existing page to it (page rows stay; a sync later fills `name` where empty).
 3. for each route with `seed_keyword != ''`: set that page's `niche` if the page has none yet and no other page already has that niche. Ambiguous cases are left NULL and logged.
-4. drop `fb_page_routes`.
+4. leave `fb_page_routes` where it is; nothing reads it after this.
 
 `reels` unchanged.
 

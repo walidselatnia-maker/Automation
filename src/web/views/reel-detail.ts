@@ -77,7 +77,7 @@ export function reelDetailPage(reel: ReelView): Html {
         'Page',
         reel.page_name || reel.page_external_id
           ? html`${reel.page_name || reel.page_external_id}`
-          : html`<span class="muted">No page routed — it will wait here.</span>`,
+          : html`<span class="muted">No page has this niche — it will wait here.</span>`,
       )}
       ${fact('Caption', reel.caption ? html`<pre>${reel.caption}</pre>` : null)}
       ${fact(

@@ -9,7 +9,8 @@ const log = createLogger('facebook');
  * token it has no 60-day clock and survives a password change, because it
  * belongs to the business rather than to a person — which is what makes
  * unattended publishing possible without a refresh job nobody remembers to
- * check. One token covers every page.
+ * check. One client per token; a page publishes with the token it was found
+ * under, so pages from several apps sit side by side.
  *
  * Page tokens are minted per publish rather than stored. They are derivable
  * from the system token in one call, and deriving them means a page that gains
@@ -76,7 +77,7 @@ export class FacebookClient {
   private assertConfigured(): void {
     if (!this.configured) {
       throw new FacebookError(
-        'No Facebook system user token. Add one under Settings → Facebook.',
+        'This page has no Facebook token. Add one under Settings → Facebook.',
       );
     }
   }
