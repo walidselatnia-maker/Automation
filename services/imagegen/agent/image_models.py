@@ -52,15 +52,15 @@ RETRY_AFTER_S = 1800
 # Names that look like Flow's model enums and nothing else. Not a guarantee --
 # the source is minified JavaScript -- but a floor: it rules out the obvious.
 _MIN_LEN, _MAX_LEN = 4, 40
-_NOT_A_MODEL = ("ASPECT", "RATIO", "ERROR", "STATUS", "TYPE_", "_TYPE", "UNSPECIFIED",
-                "PORTRAIT", "LANDSCAPE", "SQUARE", "PENDING", "FAILED", "SUCCE",
-                "IMAGE_", "VIDEO_", "MEDIA_", "GENERATION", "PUBLIC_", "QUOTA")
+_NOT_A_MODEL = ("ASPECT", "RATIO", "ERROR", "STATUS", "UNSPECIFIED", "PORTRAIT",
+                "LANDSCAPE", "SQUARE", "PENDING", "FAILED", "SUCCE", "PUBLIC_", "QUOTA")
 
 UNTRIED, ACCEPTED, REFUSED, REJECTED = "untried", "accepted", "refused", "rejected"
 
 _skip_until: dict[str, float] = {}
 _outcome: dict[str, dict] = {}       # wire -> {"outcome", "at", "error"}
 _discovery_done = False
+_discovery: dict = {}                # what the scan saw, for the Settings page
 _discovery_lock = asyncio.Lock()
 
 
@@ -184,7 +184,11 @@ def take_discovered(near: dict) -> list[str]:
     if not sets:
         return []
     common = set.intersection(*sets)
-    return [n for n in order if n in common and _plausible(n)]
+    names = [n for n in order if n in common and _plausible(n)]
+    # Several candidates: the one that says so goes first. The picker verifies
+    # whichever is chosen; this only decides which is offered by default.
+    names.sort(key=lambda n: (0 if "LITE" in n else 1, order.index(n)))
+    return names
 
 
 async def ensure_discovered(client) -> None:
@@ -195,16 +199,27 @@ async def ensure_discovered(client) -> None:
     async with _discovery_lock:
         if _discovery_done:
             return
+        global _discovery
         try:
             answer = await client.discover_image_models(list(KNOWN))
         except Exception as e:  # noqa: BLE001 - discovery must never throw
             logger.info("image model discovery did not run: %s", e)
+            _discovery = {"error": str(e), "at": _now()}
             return
         if answer.get("error"):
             logger.info("image model discovery: %s", answer["error"])
+            _discovery = {"error": answer["error"], "at": _now()}
             return
 
-        found = take_discovered(answer.get("near") or {})
+        near = answer.get("near") or {}
+        found = take_discovered(near)
+        _discovery = {
+            "at": _now(),
+            "candidates": found,
+            "near": {k: v[:40] for k, v in near.items()},
+            **(answer.get("debug") or {}),
+        }
+        logger.info("image model scan: %s", {k: v for k, v in _discovery.items() if k != "near"})
         _discovery_done = True
         if found:
             _lite()["wire"] = found[0]
@@ -218,6 +233,11 @@ async def ensure_discovered(client) -> None:
 
 def discovery_done() -> bool:
     return _discovery_done
+
+
+def discovery_report() -> dict:
+    """What the last scan looked at and found, for the Settings page."""
+    return dict(_discovery)
 
 
 # ─── For the Settings page ──────────────────────────────────
@@ -242,8 +262,9 @@ def catalogue() -> list[dict]:
 
 def forget_all() -> None:
     """For tests."""
-    global _discovery_done
+    global _discovery_done, _discovery
     _skip_until.clear()
     _outcome.clear()
     _lite()["wire"] = None
     _discovery_done = False
+    _discovery = {}

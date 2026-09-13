@@ -1408,14 +1408,22 @@ function takeCaptchaTurn(run) {
  * Flow offers three image models and the vendored client knows the wire names
  * of two. The third is not guessed: the page's JavaScript has to carry every
  * name it can put on the wire, so it is read from there. Every UPPER_SNAKE
- * string literal found within a few hundred characters of each known name is
- * returned, grouped by which known name it was near; the agent keeps only the
- * ones near all of them, which is what sharing an enum looks like in minified
- * source, and drops the rest.
+ * token found within a stretch of each known name is returned, grouped by
+ * which known name it was near; the agent keeps only the ones near all of
+ * them, which is what sharing an enum looks like in minified source.
  *
- * Runs inside the tab so the page's own scripts can be fetched as the page
- * fetched them. Best effort throughout: a script that will not fetch is
- * skipped, and an empty answer leaves the agent on the two names it has.
+ * Tokens, not quoted strings. The first version matched "GEM_PIX_2" in quotes
+ * and found nothing, because a minified enum is {GEM_PIX_2:0,NARWHAL:1} and
+ * a switch is case"GEM_PIX_2": -- the quotes are not reliably there.
+ *
+ * The page lists its scripts; this worker fetches them. Not the page: the
+ * bundles live on gstatic, and a fetch from the page is a cross-origin request
+ * gstatic does not answer with CORS headers, so every one of them was skipped
+ * and the scan read only the inline scripts. The worker has host permission
+ * for gstatic and fetches without CORS.
+ *
+ * Everything it saw comes back under `debug`, so a scan that finds nothing
+ * says what it looked at instead of leaving the answer to be guessed at.
  */
 async function discoverImageModels({ known = [] }) {
   if (!known.length) return { near: {} };
@@ -1436,60 +1444,82 @@ async function discoverImageModels({ known = [] }) {
   tab = await reviveTabIfNeeded(tab);
   if (!tab) return { error: 'FLOW_TAB_DISCARDED' };
 
+  // 1. What the page has: inline script text, and the URLs of the rest.
+  let listing;
   try {
     const [injected] = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       world: 'MAIN',
-      args: [known],
-      func: async (anchors) => {
-        const WINDOW = 600;         // characters either side of a known name
-        const MAX_SCRIPT = 12_000_000;
-        const DEADLINE = Date.now() + 30_000;
-
-        const sources = [];
+      func: () => {
+        const inline = [];
+        const urls = [];
         for (const s of Array.from(document.scripts)) {
-          if (Date.now() > DEADLINE) break;
-          if (!s.src) {
-            sources.push(s.textContent || '');
-            continue;
-          }
-          try {
-            const r = await fetch(s.src, { credentials: 'omit' });
-            if (!r.ok) continue;
-            const len = Number(r.headers.get('content-length') || 0);
-            if (len > MAX_SCRIPT) continue;
-            sources.push(await r.text());
-          } catch {
-            // Cross-origin without CORS, or gone. Not this script, then.
-          }
+          if (s.src) urls.push(s.src);
+          else if (s.textContent) inline.push(s.textContent);
         }
-
-        const near = {};
-        for (const anchor of anchors) {
-          const found = [];
-          const seen = new Set();
-          for (const text of sources) {
-            let at = text.indexOf(anchor);
-            while (at !== -1) {
-              const slice = text.slice(Math.max(0, at - WINDOW), at + anchor.length + WINDOW);
-              for (const m of slice.matchAll(/["']([A-Z][A-Z0-9_]{3,40})["']/g)) {
-                if (!seen.has(m[1])) {
-                  seen.add(m[1]);
-                  found.push(m[1]);
-                }
-              }
-              at = text.indexOf(anchor, at + anchor.length);
-            }
-          }
-          near[anchor] = found;
-        }
-        return { near, scripts: sources.length };
+        return { inline, urls, href: location.href };
       },
     });
-    return injected?.result || { error: 'NO_INJECTION_RESULT' };
+    listing = injected?.result;
   } catch (e) {
-    return { error: e?.message || 'DISCOVERY_FAILED' };
+    return { error: 'LISTING_FAILED: ' + (e?.message || e) };
   }
+  if (!listing) return { error: 'NO_LISTING' };
+
+  // 2. Fetch the external ones from here, where cross-origin is allowed.
+  const MAX_SCRIPT = 16_000_000;
+  const DEADLINE = Date.now() + 40_000;
+  const sources = [...listing.inline];
+  const fetched = [];
+  const failed = [];
+  for (const url of listing.urls) {
+    if (Date.now() > DEADLINE) { failed.push(url + ' (deadline)'); continue; }
+    try {
+      const r = await fetch(url);
+      if (!r.ok) { failed.push(`${url} (HTTP ${r.status})`); continue; }
+      const text = await r.text();
+      if (text.length > MAX_SCRIPT) { failed.push(`${url} (${text.length} bytes)`); continue; }
+      sources.push(text);
+      fetched.push(`${url} (${text.length})`);
+    } catch (e) {
+      failed.push(`${url} (${e?.message || e})`);
+    }
+  }
+
+  // 3. Every UPPER_SNAKE token within reach of each known name.
+  const WINDOW = 1500;
+  const TOKEN = /\b([A-Z][A-Z0-9_]{3,40})\b/g;
+  const near = {};
+  const hits = {};
+  for (const anchor of known) {
+    const found = [];
+    const seen = new Set();
+    let count = 0;
+    for (const text of sources) {
+      let at = text.indexOf(anchor);
+      while (at !== -1) {
+        count++;
+        const slice = text.slice(Math.max(0, at - WINDOW), at + anchor.length + WINDOW);
+        for (const m of slice.matchAll(TOKEN)) {
+          if (!seen.has(m[1])) { seen.add(m[1]); found.push(m[1]); }
+        }
+        at = text.indexOf(anchor, at + anchor.length);
+      }
+    }
+    near[anchor] = found;
+    hits[anchor] = count;
+  }
+
+  return {
+    near,
+    debug: {
+      page: listing.href,
+      inline_scripts: listing.inline.length,
+      fetched,
+      failed,
+      anchor_hits: hits,
+    },
+  };
 }
 
 async function handleBatchRpc(msg) {

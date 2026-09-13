@@ -1556,7 +1556,20 @@ export interface ImageModelCatalogue {
     error: string | null;
   }[];
   discovered: boolean;
+  /** What the last scan of the Flow page looked at and found. */
+  scan?: {
+    at?: string;
+    error?: string;
+    page?: string;
+    inline_scripts?: number;
+    fetched?: string[];
+    failed?: string[];
+    anchor_hits?: Record<string, number>;
+    candidates?: string[];
+    near?: Record<string, string[]>;
+  };
 }
+
 
 /** The three image models Flow offers, in fallback order. Keys match the image service. */
 const IMAGE_MODEL_CHOICES = [
@@ -1639,10 +1652,55 @@ function imageModelPicker(current: string, catalogue: ImageModelCatalogue | null
           : html`<p class="small muted" style="margin-top:6px">
               The third name is read off the Flow page on the first image job after a
               deploy; nothing has run yet.
-            </p>`}`
+            </p>`}
+        ${scanReport(catalogue.scan)}`
       : html`<p class="small muted" style="margin-top:6px">
           The image service did not answer, so no verdicts to show. The choice still saves.
         </p>`}
+  `;
+}
+
+/**
+ * What the scan of the Flow page saw, for when the third model is "not found".
+ *
+ * A scan that finds nothing has to say what it looked at, or the next step is
+ * guessing: were the bundles fetched at all, did the known names even appear,
+ * what sat near them. This is that, folded up unless someone opens it.
+ */
+function scanReport(scan: ImageModelCatalogue['scan']): Html {
+  if (!scan || (!scan.at && !scan.error)) return raw('');
+  const hits = Object.entries(scan.anchor_hits ?? {});
+  const near = Object.entries(scan.near ?? {});
+  return html`
+    <details class="small" style="margin-top:8px">
+      <summary class="muted">What the scan of the Flow page saw${scan.at ? html` (${scan.at})` : raw('')}</summary>
+      <div style="margin-top:6px">
+        ${scan.error ? html`<div class="badge error">${scan.error}</div>` : raw('')}
+        ${scan.page ? html`<div>Page: <span class="mono">${scan.page}</span></div>` : raw('')}
+        <div>
+          Inline scripts: ${String(scan.inline_scripts ?? 0)} ·
+          fetched: ${String(scan.fetched?.length ?? 0)} ·
+          could not fetch: ${String(scan.failed?.length ?? 0)}
+        </div>
+        ${hits.length
+          ? html`<div>Known names found in the source:
+              ${hits.map(([name, n]) => html`<span class="mono">${name}</span>&times;${String(n)} `)}
+            </div>`
+          : raw('')}
+        ${scan.candidates?.length
+          ? html`<div>Candidates near every known name:
+              <span class="mono">${scan.candidates.join(', ')}</span></div>`
+          : html`<div>No token sat near every known name.</div>`}
+        ${near.map(
+          ([name, tokens]) => html`<div style="margin-top:4px">Near <span class="mono">${name}</span>:
+            <span class="mono muted">${tokens.length ? tokens.join(' ') : '—'}</span></div>`,
+        )}
+        ${scan.failed?.length
+          ? html`<div style="margin-top:4px">Could not fetch:
+              <div class="mono muted">${scan.failed.map((f) => html`${f}<br />`)}</div></div>`
+          : raw('')}
+      </div>
+    </details>
   `;
 }
 
