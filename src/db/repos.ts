@@ -1887,21 +1887,42 @@ export const setAutoPublish = (id: number, auto: boolean): void => {
   );
 };
 
-/* -- Facebook pages, routes and reels ------------------------------------- */
+/* -- Facebook tokens, pages and reels ------------------------------------- */
+
+/**
+ * A token this platform publishes with. One per Facebook app: the pages a
+ * token can manage are the pages that app was given, so more apps means more
+ * tokens, and every page hangs off the token it was found under.
+ *
+ * Encrypted with the platform key exactly as a secret setting is.
+ */
+export interface FbTokenRow {
+  id: number;
+  name: string;
+  token_encrypted: string;
+  last_synced_at: string | null;
+  last_error: string | null;
+  created_at: string;
+}
+
+export interface FbTokenView extends FbTokenRow {
+  page_count: number;
+}
 
 /**
  * A Facebook Page this platform may publish Reels to.
  *
- * Registered by hand rather than synced from Graph: the system user token can
- * see every page in the business, and only some of them are pages this should
- * ever post to. No credential is stored here -- the page token is minted from
- * the system user token at publish time, so a page that loses permission stops
- * working immediately rather than at the next manual re-entry.
+ * Rows are written only by a token sync; nobody types a page id. The three
+ * things a person sets -- niche, auto_publish, enabled -- are theirs, and a
+ * sync never touches them. No credential is stored on the page: its token is
+ * minted from the token it came from at publish time.
  */
 export interface FbPageRow {
   id: number;
   page_id: string;
   name: string;
+  token_id: number | null;
+  niche: string | null;
   auto_publish: number;
   enabled: number;
   last_used_at: string | null;
@@ -1909,12 +1930,62 @@ export interface FbPageRow {
   created_at: string;
 }
 
-/** Every distinct keyword group, for the route picker's suggestions. */
+/** Every distinct keyword group, for the niche picker. */
 export const keywordGroups = (): string[] =>
   all<{ seed_keyword: string }>(
     `SELECT DISTINCT seed_keyword FROM keywords
       WHERE seed_keyword != '' ORDER BY seed_keyword COLLATE NOCASE`,
   ).map((r) => r.seed_keyword);
+
+/* -- Tokens --------------------------------------------------------------- */
+
+export const listFbTokens = (): FbTokenView[] =>
+  all<FbTokenView>(
+    `SELECT t.*, (SELECT COUNT(*) FROM fb_pages p WHERE p.token_id = t.id) AS page_count
+       FROM fb_tokens t ORDER BY t.id`,
+  );
+
+export function insertFbToken(name: string, token: string, key: Buffer): number {
+  const secret = token.trim();
+  if (!secret) throw new Error('Paste the token.');
+
+  run(
+    'INSERT INTO fb_tokens (name, token_encrypted) VALUES (?, ?)',
+    name.trim() || `Token ${listFbTokens().length + 1}`,
+    encrypt(secret, key),
+  );
+  return get<{ id: number }>('SELECT last_insert_rowid() AS id')?.id ?? 0;
+}
+
+/** The token itself. Empty when there is none, or it was encrypted under another key. */
+export function fbTokenSecret(id: number, key: Buffer): string {
+  const row = get<FbTokenRow>('SELECT * FROM fb_tokens WHERE id = ?', id);
+  if (!row) return '';
+  try {
+    return decrypt(row.token_encrypted, key);
+  } catch {
+    // Same reasoning as siteSecrets: an unreadable credential should fail at
+    // call time as an auth error, not while rendering a page.
+    return '';
+  }
+}
+
+export const deleteFbToken = (id: number): void => {
+  // Pages cascade in a fresh database; an upgraded one gained token_id by
+  // ALTER TABLE, where SQLite does not enforce the reference. So both.
+  run('DELETE FROM fb_pages WHERE token_id = ?', id);
+  run('DELETE FROM fb_tokens WHERE id = ?', id);
+};
+
+export function markFbTokenSynced(id: number, error: string | null): void {
+  run(
+    "UPDATE fb_tokens SET last_synced_at = datetime('now'), last_error = ? WHERE id = ?",
+    error ? error.slice(0, 500) : null,
+    id,
+  );
+}
+
+/* -- Pages ---------------------------------------------------------------- */
 
 export const listFbPages = (): FbPageRow[] =>
   all<FbPageRow>('SELECT * FROM fb_pages ORDER BY name, page_id');
@@ -1922,38 +1993,104 @@ export const listFbPages = (): FbPageRow[] =>
 export const getFbPage = (id: number): FbPageRow | undefined =>
   get<FbPageRow>('SELECT * FROM fb_pages WHERE id = ?', id);
 
-export function upsertFbPage(
-  input: { pageId: string; name: string; autoPublish: boolean; enabled: boolean },
-  id?: number,
-): number {
+/**
+ * Insert a page, or rename one already here.
+ *
+ * Never touches niche, auto_publish or enabled: a sync that reset them would
+ * start posting to a page somebody had turned off. A new page arrives with
+ * auto-publish on, because the point of the platform is not to be asked.
+ */
+export function upsertFbPage(input: {
+  pageId: string;
+  name: string;
+  tokenId: number | null;
+}): number {
   const pageId = input.pageId.trim();
   if (!pageId) throw new Error('A page needs its Facebook page id.');
 
-  if (id) {
+  run(
+    `INSERT INTO fb_pages (page_id, name, token_id, auto_publish, enabled) VALUES (?, ?, ?, 1, 1)
+     ON CONFLICT (page_id) DO UPDATE SET name = excluded.name, token_id = excluded.token_id`,
+    pageId,
+    input.name.trim(),
+    input.tokenId,
+  );
+  return get<{ id: number }>('SELECT id FROM fb_pages WHERE page_id = ?', pageId)?.id ?? 0;
+}
+
+/**
+ * Make the pages under a token match what Graph just listed for it.
+ *
+ * A page Graph no longer returns is disabled, not deleted: its niche and its
+ * history stay, and if the token regains it the next sync re-enables nothing
+ * -- the person does, having seen why it stopped.
+ */
+export function syncFbPages(
+  tokenId: number,
+  pages: { id: string; name: string }[],
+): { added: number; renamed: number; dropped: number } {
+  const known = new Map(
+    all<FbPageRow>('SELECT * FROM fb_pages WHERE token_id = ?', tokenId).map((p) => [p.page_id, p]),
+  );
+  const seen = new Set<string>();
+  let added = 0;
+  let renamed = 0;
+
+  for (const page of pages) {
+    seen.add(page.id);
+    const existing =
+      known.get(page.id) ?? get<FbPageRow>('SELECT * FROM fb_pages WHERE page_id = ?', page.id);
+    upsertFbPage({ pageId: page.id, name: page.name, tokenId });
+    if (!existing) added++;
+    else if (existing.name !== page.name) renamed++;
+  }
+
+  let dropped = 0;
+  for (const [pageId, row] of known) {
+    if (seen.has(pageId) || row.enabled !== 1) continue;
     run(
-      'UPDATE fb_pages SET page_id = ?, name = ?, auto_publish = ?, enabled = ? WHERE id = ?',
-      pageId,
-      input.name.trim(),
-      input.autoPublish ? 1 : 0,
-      input.enabled ? 1 : 0,
-      id,
+      "UPDATE fb_pages SET enabled = 0, last_error = 'No longer under this token' WHERE id = ?",
+      row.id,
     );
-    return id;
+    dropped++;
+  }
+
+  return { added, renamed, dropped };
+}
+
+/**
+ * What a person sets on a page. A blank niche is a page not posted to.
+ *
+ * One niche goes to one page, so a niche another enabled page holds is
+ * refused with that page's name -- silently moving it would take a page's
+ * reels away from it without anyone deciding to.
+ */
+export function setFbPageOptions(
+  id: number,
+  options: { niche: string | null; autoPublish: boolean; enabled: boolean },
+): void {
+  const niche = (options.niche ?? '').trim() || null;
+
+  if (niche && options.enabled) {
+    const holder = get<FbPageRow>(
+      'SELECT * FROM fb_pages WHERE id != ? AND enabled = 1 AND niche = ? COLLATE NOCASE',
+      id,
+      niche,
+    );
+    if (holder) {
+      throw new Error(
+        `“${niche}” is already on ${holder.name || holder.page_id}. One niche goes to one page.`,
+      );
+    }
   }
 
   run(
-    `INSERT INTO fb_pages (page_id, name, auto_publish, enabled) VALUES (?, ?, ?, ?)
-     ON CONFLICT (page_id) DO UPDATE SET
-       name = excluded.name,
-       auto_publish = excluded.auto_publish,
-       enabled = excluded.enabled`,
-    pageId,
-    input.name.trim(),
-    input.autoPublish ? 1 : 0,
-    input.enabled ? 1 : 0,
+    'UPDATE fb_pages SET niche = ?, auto_publish = ?, enabled = ? WHERE id = ?',
+    niche,
+    options.autoPublish ? 1 : 0,
+    options.enabled ? 1 : 0,
+    id,
   );
-
-  return get<{ id: number }>('SELECT id FROM fb_pages WHERE page_id = ?', pageId)?.id ?? 0;
 }
 
 export const deleteFbPage = (id: number): void => {
@@ -1975,120 +2112,22 @@ export function markFbPageFailed(id: number, error: string): void {
   );
 }
 
-export interface FbRouteRow {
-  id: number;
-  site_id: number | null;
-  seed_keyword: string;
-  fb_page_id: number;
-  created_at: string;
-}
-
-/** Routes with the page and site names attached, for the settings table. */
-export interface FbRouteView extends FbRouteRow {
-  page_name: string;
-  page_external_id: string;
-  site_domain: string | null;
-}
-
-export const listFbRoutes = (): FbRouteView[] =>
-  all<FbRouteView>(
-    `SELECT r.*, p.name AS page_name, p.page_id AS page_external_id, s.domain AS site_domain
-       FROM fb_page_routes r
-       JOIN fb_pages p ON p.id = r.fb_page_id
-       LEFT JOIN sites s ON s.id = r.site_id
-      ORDER BY r.seed_keyword COLLATE NOCASE, s.domain`,
+/**
+ * The page a reel for this niche goes to.
+ *
+ * The site does not come into it: a niche's audience is the same wherever
+ * the article was published. No page means no reel, and the run says so.
+ */
+export const pageForNiche = (seedKeyword: string): FbPageRow | undefined =>
+  get<FbPageRow>(
+    'SELECT * FROM fb_pages WHERE enabled = 1 AND niche = ? COLLATE NOCASE',
+    seedKeyword.trim(),
   );
 
-export function upsertFbRoute(input: {
-  siteId: number | null;
-  seedKeyword: string;
-  fbPageId: number;
-}): void {
-  // '' is not missing input, it is the every-niche route: one page for
-  // everything a site publishes. Without it, a site with thirty niches needs
-  // thirty routes to say one thing, and the first niche someone forgets is a
-  // reel that generates and then waits forever.
-  const seed = input.seedKeyword.trim();
-
-  // COALESCE matches the unique index: NULL never equals NULL, so a plain
-  // `site_id = ?` would never find an existing fallback route to update and
-  // the insert would be rejected by the index instead.
-  run(
-    `INSERT INTO fb_page_routes (site_id, seed_keyword, fb_page_id) VALUES (?, ?, ?)
-     ON CONFLICT (COALESCE(site_id, 0), seed_keyword COLLATE NOCASE)
-       DO UPDATE SET fb_page_id = excluded.fb_page_id`,
-    input.siteId,
-    seed,
-    input.fbPageId,
-  );
-}
-
-export const deleteFbRoute = (id: number): void => {
-  run('DELETE FROM fb_page_routes WHERE id = ?', id);
-};
-
-/** Why a reel is going where it is going, for the composer to show. */
-/**
- * The seed_keyword of a route that matches whatever the run's niche is.
- *
- * An empty string rather than NULL: the column is NOT NULL and the unique
- * index is built on it, and NULL never equals NULL, so a NULL wildcard would
- * be un-updatable and duplicable in exactly the way the site_id COALESCE
- * above exists to prevent.
- */
-export const EVERY_NICHE = '';
-
-export interface ResolvedFbPage {
-  page: FbPageRow;
-  /** 'site' when a route named this site, 'fallback' when it did not. */
-  via: 'site' | 'fallback';
-}
-
-/**
- * Which page a reel for this site and niche publishes to.
- *
- * The specific route wins over the shared one: a niche normally posts to the
- * same page everywhere, and a site that needs its own page for that niche says
- * so with a route of its own. No match returns undefined, and the caller holds
- * the reel -- guessing a page means posting a recipe to the wrong audience,
- * which is worse than waiting.
- */
-export function resolveFbPage(
-  siteId: number,
-  seedKeyword: string,
-): ResolvedFbPage | undefined {
-  // Most specific wins, and a route naming this site beats one that does not
-  // even when the looser route names the niche exactly. A page chosen for this
-  // site is a deliberate statement about this site's audience; a shared route
-  // is what to do when nobody made one.
-  const bySite = (seed: string): FbPageRow | undefined =>
-    get<FbPageRow>(
-      `SELECT p.* FROM fb_page_routes r
-         JOIN fb_pages p ON p.id = r.fb_page_id
-        WHERE r.site_id = ? AND r.seed_keyword = ? COLLATE NOCASE AND p.enabled = 1`,
-      siteId,
-      seed,
-    );
-
-  const shared = (seed: string): FbPageRow | undefined =>
-    get<FbPageRow>(
-      `SELECT p.* FROM fb_page_routes r
-         JOIN fb_pages p ON p.id = r.fb_page_id
-        WHERE r.site_id IS NULL AND r.seed_keyword = ? COLLATE NOCASE AND p.enabled = 1`,
-      seed,
-    );
-
-  const siteAndNiche = bySite(seedKeyword);
-  if (siteAndNiche) return { page: siteAndNiche, via: 'site' };
-
-  const siteAnyNiche = bySite(EVERY_NICHE);
-  if (siteAnyNiche) return { page: siteAnyNiche, via: 'site' };
-
-  const sharedNiche = shared(seedKeyword);
-  if (sharedNiche) return { page: sharedNiche, via: 'fallback' };
-
-  const sharedAny = shared(EVERY_NICHE);
-  return sharedAny ? { page: sharedAny, via: 'fallback' } : undefined;
+/** The token this page was found under. Empty when the page has none. */
+export function fbPageToken(pageRowId: number, key: Buffer): string {
+  const page = getFbPage(pageRowId);
+  return page?.token_id ? fbTokenSecret(page.token_id, key) : '';
 }
 
 export type ReelStatus =
