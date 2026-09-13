@@ -207,6 +207,35 @@ def test_the_catalogue_says_when_lite_has_no_name_yet(monkeypatch):
 
 # ─── Discovery ──────────────────────────────────────────────
 
+def test_the_scan_is_read_off_the_bridge_envelope(monkeypatch):
+    """The bridge answers {id, result: {...}}. The scan is the result.
+
+    Read off the envelope, discovery found nothing forever and the Settings
+    page showed a scan with every field missing -- inline 0, fetched 0, no
+    page, no counts -- which is exactly what an unread reply looks like.
+    """
+    asked: list[str] = []
+
+    class FakeClient:
+        connected = True
+
+        async def discover_image_models(self, known):
+            return {"id": "req-1", "result": {**PAGE_WITH_LITE, "debug": {"fetched": ["a.js (100)"]}}}
+
+        async def generate_images_batch(self, image_model_name=None, **kwargs):
+            asked.append(image_model_name)
+            return OK if image_model_name == "NARWHAL_LITE_X" else DENIED
+
+    monkeypatch.setattr(processor, "get_flow_client", lambda: FakeClient())
+    job = asyncio.run(jobs.create("soup"))
+    job["attempts"] = 1
+    asyncio.run(processor.WorkerController()._run(job))
+
+    assert image_models.catalogue()[2]["wire"] == "NARWHAL_LITE_X"
+    assert image_models.discovery_report()["fetched"] == ["a.js (100)"]
+    assert asked[-1] == "NARWHAL_LITE_X"
+
+
 def test_only_a_name_near_every_known_one_is_taken():
     assert image_models.take_discovered(PAGE_WITH_LITE["near"]) == ["NARWHAL_LITE_X"]
 

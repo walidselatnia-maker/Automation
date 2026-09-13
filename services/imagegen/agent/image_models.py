@@ -206,6 +206,13 @@ async def ensure_discovered(client) -> None:
             logger.info("image model discovery did not run: %s", e)
             _discovery = {"error": str(e), "at": _now()}
             return
+        # The bridge wraps every reply as {id, result: {...}}; the scan's answer
+        # is the result. Read off the envelope instead, this found nothing
+        # forever and reported nothing about why -- the deployed page showed a
+        # scan with every field missing, which is what an unread reply looks
+        # like. A transport-level error sits on the envelope; the scan's own
+        # sits inside. Both are looked at.
+        answer = answer.get("result") or answer
         if answer.get("error"):
             logger.info("image model discovery: %s", answer["error"])
             _discovery = {"error": answer["error"], "at": _now()}
