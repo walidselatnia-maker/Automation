@@ -29,7 +29,7 @@ from agent.config import (
     VIDEO_USE_BATCH,
     VIDEO_POLL_INTERVAL,
 )
-from agent import chrome, video_models
+from agent import chrome, image_models, video_models
 from agent.db import jobs
 from agent.services.flow_client import get_flow_client
 from agent.worker._parsing import (
@@ -232,14 +232,32 @@ class WorkerController:
         # token sniffed off the page, which Google stopped honouring three days
         # after it stopped honouring the same thing for video. Both answer in the
         # same shape, so nothing below this line knows which one ran.
-        generate = client.generate_images_batch if IMAGE_USE_BATCH else client.generate_images
-        result = await generate(
+        request = dict(
             prompt=job["prompt"],
             # The job's own project. FLOW_PROJECT_ID is only the fallback for a
             # caller that sent none, applied when the job was queued.
             project_id=job["project_id"] or FLOW_PROJECT_ID,
             aspect_ratio=ASPECT_RATIOS.get(job["orientation"], ASPECT_RATIOS["VERTICAL"]),
         )
+
+        if not IMAGE_USE_BATCH:
+            result = await client.generate_images(**request)
+        else:
+            # Pro, then 2, then Lite: walk the list and keep the first model
+            # Google does not refuse by name. Anything that is not a refusal --
+            # a captcha that did not solve, a transport that dropped -- is not
+            # about the model, and moving down the list would spend another
+            # captcha on the same problem, so it stops the walk.
+            result = {"error": "no image model configured"}
+            for model in image_models.plan():
+                result = await client.generate_images_batch(**request, image_model_name=model)
+                if not is_error(result):
+                    break
+                if not image_models.is_refusal(error_text(result)):
+                    break
+                logger.warning("job %s: %s refused (%s) — trying the next model",
+                               job_id[:8], model, error_text(result)[:120])
+                image_models.refused(model)
 
         if is_error(result):
             await self._handle_failure(job, error_text(result))
