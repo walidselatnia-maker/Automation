@@ -504,6 +504,16 @@ class FlowClient:
         except Exception as e:
             return {"error": f"{type(e).__name__}: {e}"}
 
+    async def discover_image_models(self, known: list[str]) -> dict:
+        """The model names the Flow page's own source carries.
+
+        Answers {"near": {known_name: [names found close to it, ...]}} or
+        {"error": ...}. The extension does the reading, inside the tab; this is
+        only the question. Short timeout: it is asked once and nothing waits on
+        it that could not proceed without it.
+        """
+        return await self._send("discover_image_models", {"known": known}, timeout=45)
+
     async def generate_images_batch(self, prompt: str, project_id: str,
                                     aspect_ratio: str = "IMAGE_ASPECT_RATIO_PORTRAIT",
                                     image_model_name: str | None = None) -> dict:
