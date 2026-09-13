@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -6,12 +7,12 @@ import { DatabaseSync } from 'node:sqlite';
 import { closeDatabase, openDatabase } from '../src/db/index.js';
 import {
   getLinkShare,
+  insertFbToken,
   insertKeyword,
-  listFbRoutes,
-  resolveFbPage,
+  pageForNiche,
+  setFbPageOptions,
   setLink,
   upsertFbPage,
-  upsertFbRoute,
 } from '../src/db/repos.js';
 
 /**
@@ -23,6 +24,8 @@ import {
  * These tests build a database the way an earlier deploy left it, then open it
  * with the current code.
  */
+
+const KEY = randomBytes(32);
 
 let directory: string | null = null;
 
@@ -150,25 +153,18 @@ describe('opening a database from an earlier deploy', () => {
     expect(tables).toContain('reels');
   });
 
-  it('routes a niche on a migrated database, not only a fresh one', () => {
-    // The tables existing is not the same as them working: the unique index
-    // over COALESCE(site_id, 0) is the part that a plain CREATE TABLE would
-    // leave out, and without it two fallback routes both insert.
+  it('finds the page for a niche on a migrated database, not only a fresh one', () => {
+    // The tables existing is not the same as them working: the niche column
+    // and its partial unique index arrive by migration 010, and without them
+    // the lookup below fails on a column the code is certain is there.
     const path = databaseFromOldSchema();
     openDatabase(path);
 
-    const page = upsertFbPage({
-      pageId: '111',
-      name: 'Slow Cooker',
-      autoPublish: false,
-      enabled: true,
-    });
+    const token = insertFbToken('A', 'tok', KEY);
+    const page = upsertFbPage({ pageId: '111', name: 'Slow Cooker', tokenId: token });
+    setFbPageOptions(page, { niche: 'slow cooker', autoPublish: false, enabled: true });
 
-    upsertFbRoute({ siteId: null, seedKeyword: 'slow cooker', fbPageId: page });
-    upsertFbRoute({ siteId: null, seedKeyword: 'slow cooker', fbPageId: page });
-
-    expect(listFbRoutes()).toHaveLength(1);
-    expect(resolveFbPage(1, 'slow cooker')?.page.page_id).toBe('111');
+    expect(pageForNiche('Slow Cooker')?.page_id).toBe('111');
   });
 
   it('applies the reels migration exactly once', () => {
