@@ -111,6 +111,14 @@ export const generateArticle: Step<ArticleInput, Record<string, unknown>> = {
  */
 const MAX_POST_ATTEMPTS = 3;
 
+/**
+ * The wait between attempts doubles from this. An object rather than a
+ * constant so a test can set it to zero: the real waits are two and four
+ * seconds, which is right for a site that is momentarily busy and wrong for a
+ * test that has to finish in five.
+ */
+export const postRetry = { baseMs: 1000 };
+
 export const postArticle: Step<Record<string, unknown>, PostedRecipe> = {
   name: 'post-article',
   title: 'Publish article to site',
@@ -146,7 +154,7 @@ export const postArticle: Step<Record<string, unknown>, PostedRecipe> = {
           }
         }
 
-        await new Promise((r) => setTimeout(r, Math.pow(2, attempt) * 1000));
+        await new Promise((r) => setTimeout(r, Math.pow(2, attempt) * postRetry.baseMs));
       }
     }
 
