@@ -38,6 +38,14 @@ export interface ImageClientOptions {
    * value in Settings never reached it at all.
    */
   projectId?: string;
+  /**
+   * Which image model, as chosen in Settings: a model key, or 'auto'.
+   *
+   * Sent with every request so the choice on the page is the choice the
+   * service makes. Omitted when it is 'auto' or unset, which the service
+   * treats the same way.
+   */
+  imageModel?: string;
 }
 
 export class ImageGenerationError extends Error {
@@ -74,6 +82,9 @@ export class ImageClient {
         // Omitted rather than sent empty, so the service falls back to its own
         // configured project instead of being told to use nothing.
         ...(this.options.projectId ? { project_id: this.options.projectId } : {}),
+        ...(this.options.imageModel && this.options.imageModel !== 'auto'
+          ? { image_model: this.options.imageModel }
+          : {}),
       }),
       signal: AbortSignal.timeout(60_000),
     });

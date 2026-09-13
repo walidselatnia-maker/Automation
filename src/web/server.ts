@@ -34,6 +34,7 @@ import {
   reelComposerPage,
   reelsPage,
   type ReelImages,
+  type ImageModelCatalogue,
 } from './views/pages.js';
 import type { KeywordFilterView, SiteMark } from './views/pages.js';
 import { importKeywordsCsv, importSitesCsv } from './import.js';
@@ -2187,6 +2188,8 @@ export function buildServer(
     }
   };
 
+  let imageModelCatalogue: ImageModelCatalogue | null = null;
+
   const refreshImageServiceHealth = async (): Promise<void> => {
     const base = settings.get('image_base_url').replace(/\/+$/, '');
     if (!base) return;
@@ -2206,6 +2209,21 @@ export function buildServer(
       imageServiceProblem = status.connected
         ? null
         : 'The image service browser is not signed in to Google. Open Browser to sign in.';
+
+      // The model catalogue rides on the same poll, so the Settings page reads
+      // it from memory and never waits on the image service to render. It did
+      // once, for the caption, and the page sat behind a dead service until
+      // Cloudflare gave up. Best effort: a poll that cannot fetch it keeps the
+      // last one it had.
+      try {
+        const models = await fetch(`${base}/flow/image-models`, {
+          headers: { 'X-API-Key': settings.get('image_api_key') },
+          signal: AbortSignal.timeout(5_000),
+        });
+        if (models.ok) imageModelCatalogue = (await models.json()) as ImageModelCatalogue;
+      } catch {
+        // Keep whatever was cached.
+      }
     } catch {
       imageServiceProblem =
         'Image service unreachable — no images can be generated until it is back.';
@@ -2255,7 +2273,7 @@ export function buildServer(
       reply,
       'Settings',
       '/settings',
-      settingsPage(SETTING_SPECS, values, problemsFor(settings)),
+      settingsPage(SETTING_SPECS, values, problemsFor(settings), imageModelCatalogue),
       readFlash(request.query),
     );
   });

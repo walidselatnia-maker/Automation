@@ -159,6 +159,18 @@ export const SETTING_SPECS: SettingSpec[] = [
       'travels to Google as clientContext.projectId on every generation.',
   },
   {
+    // Rendered by the images group's footer rather than as a plain input, so
+    // the page can show what Google last said to each model beside the choice.
+    // Still a setting: the form submits it under this key and the save handler
+    // stores it like any other.
+    key: 'image_model',
+    label: 'Image model',
+    group: 'images',
+    secret: false,
+    hidden: true,
+    default: 'auto',
+  },
+  {
     key: 'image_poll_interval_seconds',
     label: 'Image poll interval (seconds)',
     group: 'images',

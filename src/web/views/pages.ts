@@ -1557,10 +1557,113 @@ export function keywordAddPage(): Html {
  * Settings
  * ====================================================================== */
 
+/** What the image service knows about its models, for the picker. */
+export interface ImageModelCatalogue {
+  models: {
+    key: string;
+    label: string;
+    wire: string | null;
+    discovered: boolean;
+    outcome: 'untried' | 'accepted' | 'refused' | 'rejected' | 'unknown';
+    at: string | null;
+    error: string | null;
+  }[];
+  discovered: boolean;
+}
+
+/** The three image models Flow offers, in fallback order. Keys match the image service. */
+const IMAGE_MODEL_CHOICES = [
+  { key: 'NANO_BANANA_PRO', label: 'Nano Banana Pro' },
+  { key: 'NANO_BANANA_2', label: 'Nano Banana 2' },
+  { key: 'NANO_BANANA_2_LITE', label: 'Nano Banana 2 Lite' },
+];
+
+/**
+ * The image model picker, with what Google last said to each beside it.
+ *
+ * Two of the three names are known. The third is read off the Flow page by
+ * the image service, and a name read off a page is a candidate until Google
+ * accepts it -- which Automatic mode never checks, because Nano Banana 2 is
+ * unlimited and the walk never reaches a third name. So the verdicts are
+ * shown here: pick the third one, run an article, and this line says whether
+ * it worked. That is the verification, and it costs one image.
+ */
+function imageModelPicker(current: string, catalogue: ImageModelCatalogue | null): Html {
+  const verdict = (m: ImageModelCatalogue['models'][number]): Html => {
+    if (!m.wire) return html`<span class="badge">not found on the Flow page yet</span>`;
+    switch (m.outcome) {
+      case 'accepted':
+        return html`<span class="badge ok">verified</span> <span class="muted small">${m.at ?? ''}</span>`;
+      case 'refused':
+        return html`<span class="badge warn">refused by Google</span> <span class="muted small">${m.error ?? ''}</span>`;
+      case 'rejected':
+        return html`<span class="badge error">not a model Flow knows</span>`;
+      default:
+        return html`<span class="badge">untried</span>`;
+    }
+  };
+
+  // The three are a fixed set the platform knows; the service only adds what
+  // each is called on the wire and what Google said to it. So the picker is
+  // always complete, whether or not the service has answered yet.
+  const known = new Map((catalogue?.models ?? []).map((m) => [m.key, m]));
+  const options = [
+    { value: 'auto', label: 'Automatic — Pro first, then the others as fallbacks', disabled: false },
+    ...IMAGE_MODEL_CHOICES.map((c) => {
+      const m = known.get(c.key);
+      const wire = m?.wire ?? null;
+      return {
+        value: c.key,
+        label: wire ? `${c.label} (${wire})` : m && !wire ? `${c.label} — not found yet` : c.label,
+        disabled: Boolean(m) && !wire,
+      };
+    }),
+  ];
+
+  return html`
+    <div class="field">
+      <label for="image_model">Image model</label>
+      <select id="image_model" name="image_model">
+        ${options.map(
+          (o) => html`<option value="${o.value}" ${o.value === current ? raw('selected') : raw('')}
+                        ${o.disabled ? raw('disabled') : raw('')}>${o.label}</option>`,
+        )}
+      </select>
+      <div class="help">
+        Automatic asks for Nano Banana Pro and falls back when Google refuses it. Pick one to
+        use it alone — that is how the third model gets verified: choose it, run one article,
+        and its line below says what Google answered.
+      </div>
+    </div>
+    ${catalogue
+      ? html`<table class="small" style="margin-top:8px">
+          <tbody>
+            ${catalogue.models.map(
+              (m) => html`<tr>
+                <td>${m.label}</td>
+                <td class="mono muted">${m.wire ?? '—'}${m.discovered ? ' (read off the page)' : ''}</td>
+                <td>${verdict(m)}</td>
+              </tr>`,
+            )}
+          </tbody>
+        </table>
+        ${catalogue.discovered
+          ? raw('')
+          : html`<p class="small muted" style="margin-top:6px">
+              The third name is read off the Flow page on the first image job after a
+              deploy; nothing has run yet.
+            </p>`}`
+      : html`<p class="small muted" style="margin-top:6px">
+          The image service did not answer, so no verdicts to show. The choice still saves.
+        </p>`}
+  `;
+}
+
 export function settingsPage(
   specs: SettingSpec[],
   values: Map<string, string>,
   problems: string[],
+  imageModels: ImageModelCatalogue | null = null,
 ): Html {
   const groups: {
     key: SettingSpec['group'];
@@ -1573,7 +1676,11 @@ export function settingsPage(
     { key: 'schedule', title: 'Schedule' },
     { key: 'retry', title: 'Retries' },
     { key: 'llm', title: 'LLM' },
-    { key: 'images', title: 'Image generation' },
+    {
+      key: 'images',
+      title: 'Image generation',
+      footer: imageModelPicker(values.get('image_model') ?? 'auto', imageModels),
+    },
     { key: 'buffer', title: 'Buffer' },
     {
       key: 'facebook',

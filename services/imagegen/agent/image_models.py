@@ -1,42 +1,50 @@
 """Which image model to ask Flow for, and what to do when it says no.
 
-Flow offers three: Nano Banana Pro, Nano Banana 2, and Nano Banana 2 Lite. Pro
-is wanted; the other two are what to fall back to, in that order, when Pro is
-refused. Refused means Google answered the model by name -- the account may not
-use it (MODEL_ACCESS_DENIED) or has no credits for it (USER_QUOTA_REACHED) --
-not that the captcha failed or the transport dropped, which are not about the
-model and do not move down the list.
-
-Nothing is remembered on disk. A remembered fallback would be kept forever,
-and forever is the wrong answer for a model that is merely preferred: one
-transient refusal of Pro would leave every later image on Nano Banana 2. So a
-refused model is skipped for a while and then tried again. In memory, so a
-restart tries Pro first too. The skip is what keeps this cheap -- every attempt
-is a captcha.
+Flow offers three: Nano Banana Pro, Nano Banana 2, and Nano Banana 2 Lite.
+The platform's Settings page picks one, or picks Automatic, which is Pro
+first and the others as fallbacks in that order when Pro is refused. Refused
+means Google answered the model by name -- the account may not use it
+(MODEL_ACCESS_DENIED) or has no credits for it (USER_QUOTA_REACHED) -- not that
+the captcha failed or the transport dropped, which are not about the model and
+do not move down the list.
 
 Only two of the three wire names are known: GEM_PIX_2 is Pro and NARWHAL is 2.
-Lite's is not in the vendored client. It is not guessed and it is not asked
-for: the extension reads it off the Flow page, whose bundle has to carry every
-name it can put on the wire. What comes back is whatever UPPER_SNAKE string
-sits near BOTH known names in that source -- near both, because that is what
-being in the same list looks like, and near one alone is just an aspect ratio
-or an error code that happened to be close by.
+Lite's is read off the Flow page by the extension: the page's bundle has to
+carry every name it can put on the wire, and what comes back is whatever
+UPPER_SNAKE string sits near BOTH known names in that source -- near both,
+because that is what being in the same list looks like.
 
-A discovered name is only ever tried after both known ones were refused, and
-if Flow answers it with INVALID_ARGUMENT it was not a model after all and is
-never tried again. So a wrong guess costs one captcha, once, and only on a job
-that was already down to its last resort.
+A name read off a page is a candidate until Google accepts it. Nothing else
+can verify it, and in Automatic mode nothing would: Nano Banana 2 is
+unlimited, so the walk never reaches a third name. So the outcome of every
+attempt is recorded per model -- accepted, refused, or rejected as not a model
+at all -- and the Settings page shows it. Choosing Lite there and running one
+article is the verification, and the field says so afterwards.
+
+A refused model is skipped for a while and then tried again, in memory. A
+remembered fallback kept forever is the wrong answer for a model that is
+merely preferred: one transient refusal of Pro would leave every later image
+on 2. The skip is what keeps the walk cheap -- every attempt is a captcha.
 """
 import asyncio
 import logging
 import time
-
-from agent.services import flow_batch as fb
+from datetime import datetime, timezone
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# Pro, then 2. Google's names, in Flow's order of preference for this service.
-KNOWN: tuple[str, ...] = ("GEM_PIX_2", "NARWHAL")
+AUTO = "auto"
+
+# In fallback order. `wire` is Google's name for it; Lite's is filled in by
+# discovery and is None until then.
+MODELS: list[dict] = [
+    {"key": "NANO_BANANA_PRO", "label": "Nano Banana Pro", "wire": "GEM_PIX_2"},
+    {"key": "NANO_BANANA_2", "label": "Nano Banana 2", "wire": "NARWHAL"},
+    {"key": "NANO_BANANA_2_LITE", "label": "Nano Banana 2 Lite", "wire": None},
+]
+
+KNOWN: tuple[str, ...] = tuple(m["wire"] for m in MODELS if m["wire"])
 
 # How long a refused model stays skipped before it is tried again.
 RETRY_AFTER_S = 1800
@@ -48,49 +56,101 @@ _NOT_A_MODEL = ("ASPECT", "RATIO", "ERROR", "STATUS", "TYPE_", "_TYPE", "UNSPECI
                 "PORTRAIT", "LANDSCAPE", "SQUARE", "PENDING", "FAILED", "SUCCE",
                 "IMAGE_", "VIDEO_", "MEDIA_", "GENERATION", "PUBLIC_", "QUOTA")
 
+UNTRIED, ACCEPTED, REFUSED, REJECTED = "untried", "accepted", "refused", "rejected"
+
 _skip_until: dict[str, float] = {}
-_discovered: list[str] = []
-_rejected: set[str] = set()
+_outcome: dict[str, dict] = {}       # wire -> {"outcome", "at", "error"}
 _discovery_done = False
 _discovery_lock = asyncio.Lock()
 
 
-def plan() -> list[str]:
-    """Models to try, in order: the known two, then whatever the page said.
+def _now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    Refused ones are left out. If that leaves nothing, the whole list comes
-    back: a plan with nothing in it generates nothing, and the refusals may be
-    stale.
+
+def _lite() -> dict:
+    return MODELS[-1]
+
+
+def _by_key(key: str) -> Optional[dict]:
+    for m in MODELS:
+        if m["key"] == key:
+            return m
+    return None
+
+
+def label_of(wire: str) -> str:
+    for m in MODELS:
+        if m["wire"] == wire:
+            return m["label"]
+    return wire
+
+
+# ─── Choosing ───────────────────────────────────────────────
+
+def plan(choice: Optional[str] = AUTO) -> list[str]:
+    """Wire names to try, in order, for this choice.
+
+    Automatic is every model that has a name and was not rejected, refused ones
+    left out; if that leaves nothing the whole list comes back, because a plan
+    with nothing in it generates nothing and the refusals may be stale.
+
+    A named choice is that model alone. It is not skipped for a recent refusal
+    -- the person picked it, and the point may be to see what it says now --
+    and it is empty if the model has no name yet, which the worker reports.
     """
+    choice = (choice or AUTO).strip()
+    if choice != AUTO:
+        picked = _by_key(choice)
+        if not picked or not picked["wire"]:
+            return []
+        return [picked["wire"]]
+
     now = time.monotonic()
-    order = list(KNOWN) + [m for m in _discovered if m not in _rejected]
-    open_ = [m for m in order if _skip_until.get(m, 0) <= now]
+    order = [m["wire"] for m in MODELS
+             if m["wire"] and _outcome.get(m["wire"], {}).get("outcome") != REJECTED]
+    open_ = [w for w in order if _skip_until.get(w, 0) <= now]
     return open_ or order
 
 
-def is_known(model: str) -> bool:
-    return model in KNOWN
+def why_empty(choice: str) -> str:
+    """The reason plan(choice) had nothing in it, for the job's error."""
+    picked = _by_key((choice or "").strip())
+    if not picked:
+        return f"'{choice}' is not an image model this service knows."
+    return (f"{picked['label']} has not been found on the Flow page yet, so there is "
+            f"no name to send Google. Pick another model, or Automatic.")
 
 
-def refused(model: str) -> None:
-    """Skip this model for a while. The next plan() starts one further down."""
-    _skip_until[model] = time.monotonic() + RETRY_AFTER_S
-    logger.warning("image model %s refused — skipping it for %ds", model, RETRY_AFTER_S)
+def is_known(wire: str) -> bool:
+    return wire in KNOWN
 
 
-def rejected(model: str) -> None:
-    """Flow did not recognise the name. It was not a model; never send it again."""
-    _rejected.add(model)
-    logger.warning("image model %s is not a name Flow accepts — dropped for good", model)
+# ─── What Google said ───────────────────────────────────────
+
+def record(wire: str, error: Optional[str]) -> None:
+    """Keep the last outcome per model, which is what the Settings page shows."""
+    if not error:
+        outcome = ACCEPTED
+    elif is_refusal(error):
+        outcome = REFUSED
+    elif is_bad_name(error) and not is_known(wire):
+        outcome = REJECTED
+    else:
+        return  # a captcha or transport fault says nothing about the model
+    _outcome[wire] = {"outcome": outcome, "at": _now(), "error": (error or "")[:200]}
+    if outcome == ACCEPTED:
+        logger.info("image model %s (%s): accepted by Google", label_of(wire), wire)
+
+
+def refused(wire: str) -> None:
+    """Skip this model for a while. The next automatic plan starts further down."""
+    _skip_until[wire] = time.monotonic() + RETRY_AFTER_S
+    logger.warning("image model %s refused — skipping it for %ds", wire, RETRY_AFTER_S)
 
 
 def is_refusal(error: str) -> bool:
-    """Google answering the model by name: may not use it, or no credits for it.
-
-    Only these move down the list. A captcha failure or a dropped transport is
-    not about the model, and trying the next one would spend another captcha
-    on the same problem.
-    """
+    """Google answering the model by name: may not use it, or no credits for it."""
     text = str(error or "").upper()
     return "MODEL_ACCESS_DENIED" in text or "USER_QUOTA_REACHED" in text
 
@@ -101,6 +161,8 @@ def is_bad_name(error: str) -> bool:
     return "INVALID_ARGUMENT" in str(error or "").upper()
 
 
+# ─── Discovery ──────────────────────────────────────────────
+
 def _plausible(name: str) -> bool:
     if not (_MIN_LEN <= len(name) <= _MAX_LEN):
         return False
@@ -110,11 +172,7 @@ def _plausible(name: str) -> bool:
 
 
 def take_discovered(near: dict) -> list[str]:
-    """Keep the names that sat near every known one, in the order found.
-
-    `near` maps each known name to the strings found close to it in the page
-    source. Being close to all of them is what sharing a list looks like.
-    """
+    """The names that sat near every known one, in the order found."""
     sets = []
     order: list[str] = []
     for known in KNOWN:
@@ -130,12 +188,8 @@ def take_discovered(near: dict) -> list[str]:
 
 
 async def ensure_discovered(client) -> None:
-    """Ask the page once per process. Best effort in every direction.
-
-    Nothing here can fail a job: a page that does not answer leaves the plan
-    at the two known names, which is exactly what it was before this existed.
-    """
-    global _discovery_done, _discovered
+    """Ask the page once per process. Best effort in every direction."""
+    global _discovery_done
     if _discovery_done:
         return
     async with _discovery_lock:
@@ -151,20 +205,45 @@ async def ensure_discovered(client) -> None:
             return
 
         found = take_discovered(answer.get("near") or {})
-        _discovered = found
         _discovery_done = True
         if found:
-            logger.info("image models read off the Flow page, after %s: %s",
-                        ", ".join(KNOWN), ", ".join(found))
+            _lite()["wire"] = found[0]
+            logger.info("image model read off the Flow page for %s: %s%s",
+                        _lite()["label"], found[0],
+                        f" (also saw {', '.join(found[1:])})" if len(found) > 1 else "")
         else:
-            logger.info("no further image model names on the Flow page; "
-                        "the list is %s", " then ".join(KNOWN))
+            logger.info("no name for %s on the Flow page; the list is %s",
+                        _lite()["label"], " then ".join(KNOWN))
+
+
+def discovery_done() -> bool:
+    return _discovery_done
+
+
+# ─── For the Settings page ──────────────────────────────────
+
+def catalogue() -> list[dict]:
+    """Every model, what it is called on the wire, and what Google last said."""
+    out = []
+    for m in MODELS:
+        wire = m["wire"]
+        last = _outcome.get(wire, {}) if wire else {}
+        out.append({
+            "key": m["key"],
+            "label": m["label"],
+            "wire": wire,
+            "discovered": wire is not None and wire not in KNOWN,
+            "outcome": last.get("outcome", UNTRIED) if wire else "unknown",
+            "at": last.get("at"),
+            "error": last.get("error"),
+        })
+    return out
 
 
 def forget_all() -> None:
     """For tests."""
-    global _discovery_done, _discovered
+    global _discovery_done
     _skip_until.clear()
-    _rejected.clear()
-    _discovered = []
+    _outcome.clear()
+    _lite()["wire"] = None
     _discovery_done = False

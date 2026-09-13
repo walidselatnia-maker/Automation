@@ -14,7 +14,7 @@ import os
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from agent import chrome
+from agent import chrome, image_models
 from agent.auth import require_api_key
 from agent.config import FLOW_PROJECT_ID
 from agent.db import jobs
@@ -67,6 +67,23 @@ async def chrome_stop() -> dict:
     chrome.release_manual_hold()
     await chrome.ensure_stopped("asked for by hand")
     return chrome.state()
+
+
+@router.get("/image-models")
+async def image_model_catalogue() -> dict:
+    """Every image model, its wire name, and what Google last said to it.
+
+    For the platform's Settings page. Two names are known; the third is read
+    off the Flow page on the first image job, and a name read off a page is a
+    candidate until Google accepts it. Nothing verifies it in Automatic mode --
+    Nano Banana 2 is unlimited, so a third name is never reached -- which is why
+    the outcome of every attempt is kept here: choosing that model on the page
+    and running one article is the verification, and this is where it shows.
+    """
+    return {
+        "models": image_models.catalogue(),
+        "discovered": image_models.discovery_done(),
+    }
 
 
 @router.get("/diagnostics")

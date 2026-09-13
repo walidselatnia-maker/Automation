@@ -34,6 +34,10 @@ CREATE TABLE IF NOT EXISTS job (
     -- right for one of them.
     project_id    TEXT NOT NULL DEFAULT '',
 
+    -- Which image model, as chosen on the platform's Settings page: one of
+    -- the model keys, or 'auto' for Pro first and the others as fallbacks.
+    image_model   TEXT NOT NULL DEFAULT 'auto',
+
     -- 'image' or 'video'. Defaulted so every row written before video existed
     -- reads back correctly, and so the image path needs no changes at all.
     kind          TEXT NOT NULL DEFAULT 'image'
@@ -93,6 +97,7 @@ ADDED_COLUMNS = [
     ("job", "kind", "TEXT NOT NULL DEFAULT 'image'"),
     ("job", "reference_urls", "TEXT NOT NULL DEFAULT '[]'"),
     ("job", "operation_json", "TEXT"),
+    ("job", "image_model", "TEXT NOT NULL DEFAULT 'auto'"),
 ]
 
 

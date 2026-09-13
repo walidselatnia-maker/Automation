@@ -137,6 +137,36 @@ describe('web UI after the layout changes', () => {
       }
     });
 
+    it('offers the image model as a picker, and saves the pick', async () => {
+      // Hidden from the generic renderer -- it is drawn by the images group's
+      // footer so each model's verdict from Google can sit beside it -- but
+      // still a setting: the select submits under its key and the save stores
+      // it. Picking the third model and running an article is how a name read
+      // off the Flow page gets verified, so the pick has to round-trip.
+      const before = await get('/settings');
+      expect(before.body).toContain('name="image_model"');
+      expect(before.body).toContain('value="auto"');
+      expect(before.body).toContain('value="NANO_BANANA_PRO"');
+      expect(before.body).toContain('value="NANO_BANANA_2_LITE"');
+
+      // Saving an images-group setting checks the image service is reachable.
+      // There is none here; answer at once rather than waiting out a timeout.
+      const realFetch = globalThis.fetch;
+      globalThis.fetch = (async () => {
+        throw new Error('no image service in tests');
+      }) as unknown as typeof fetch;
+      try {
+        await post('/settings', { image_model: 'NANO_BANANA_2' });
+      } finally {
+        globalThis.fetch = realFetch;
+      }
+
+      const { Settings } = await import('../src/settings.js');
+      expect(new Settings(KEY).get('image_model')).toBe('NANO_BANANA_2');
+      const after = await get('/settings');
+      expect(after.body).toMatch(/value="NANO_BANANA_2"\s+selected/);
+    });
+
     it('still resolves the hidden values', async () => {
       const { Settings } = await import('../src/settings.js');
       const settings = new Settings(KEY);
