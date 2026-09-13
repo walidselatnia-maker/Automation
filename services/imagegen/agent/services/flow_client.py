@@ -520,10 +520,15 @@ class FlowClient:
         extractor UUID-checks it and will store null if not. The url is the thing
         the platform actually consumes, and that survives regardless.
         """
+        # The name goes through as given. resolve_image_model() coerces anything
+        # it does not recognise to the default, which would turn a fallback the
+        # worker chose on purpose back into Pro without saying so. The worker
+        # owns the list and the order; this sends what it is handed.
         freq = fb.image_request(
             prompt, project_id, count=1,
             aspect=aspect_ratio,
-            model=fb.resolve_image_model(image_model_name),
+            model=fb.IMAGE_MODEL_BY_NICKNAME.get(image_model_name or "", image_model_name)
+            or fb.IMAGE_MODEL,
         )
         out = await self._batch_payload(
             fb.RPC_GEN_IMAGE, freq, fb.CAPTCHA_IMAGE, timeout=180)
