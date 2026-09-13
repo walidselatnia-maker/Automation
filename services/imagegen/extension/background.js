@@ -507,6 +507,8 @@ function connectToAgent() {
 
       if (msg.method === 'batch_rpc') {
         await handleBatchRpc(msg);
+      } else if (msg.method === 'discover_image_models') {
+        sendToAgent({ id: msg.id, result: await discoverImageModels(msg.params || {}) });
       } else if (msg.method === 'api_request') {
         await handleApiRequest(msg);
       } else if (msg.method === 'trpc_request') {
@@ -1412,6 +1414,96 @@ function takeCaptchaTurn(run) {
   const mine = _captchaTurn.then(run, run);
   _captchaTurn = mine.then(() => {}, () => {});
   return mine;
+}
+
+/**
+ * Read the image model names off the Flow page's own source.
+ *
+ * Flow offers three image models and the vendored client knows the wire names
+ * of two. The third is not guessed: the page's JavaScript has to carry every
+ * name it can put on the wire, so it is read from there. Every UPPER_SNAKE
+ * string literal found within a few hundred characters of each known name is
+ * returned, grouped by which known name it was near; the agent keeps only the
+ * ones near all of them, which is what sharing an enum looks like in minified
+ * source, and drops the rest.
+ *
+ * Runs inside the tab so the page's own scripts can be fetched as the page
+ * fetched them. Best effort throughout: a script that will not fetch is
+ * skipped, and an empty answer leaves the agent on the two names it has.
+ */
+async function discoverImageModels({ known = [] }) {
+  if (!known.length) return { near: {} };
+
+  let tabs = await queryFlowTabs();
+  let tab = tabs.find((t) => !t.discarded) || tabs[0];
+  if (!tab) {
+    try {
+      await chrome.tabs.create({ url: FLOW_HOME, active: false });
+      await sleep(5000);
+      tabs = await queryFlowTabs();
+      tab = tabs.find((t) => !t.discarded) || tabs[0];
+    } catch (e) {
+      return { error: e?.message || 'NO_FLOW_TAB' };
+    }
+    if (!tab) return { error: 'NO_FLOW_TAB' };
+  }
+  tab = await reviveTabIfNeeded(tab);
+  if (!tab) return { error: 'FLOW_TAB_DISCARDED' };
+
+  try {
+    const [injected] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      world: 'MAIN',
+      args: [known],
+      func: async (anchors) => {
+        const WINDOW = 600;         // characters either side of a known name
+        const MAX_SCRIPT = 12_000_000;
+        const DEADLINE = Date.now() + 30_000;
+
+        const sources = [];
+        for (const s of Array.from(document.scripts)) {
+          if (Date.now() > DEADLINE) break;
+          if (!s.src) {
+            sources.push(s.textContent || '');
+            continue;
+          }
+          try {
+            const r = await fetch(s.src, { credentials: 'omit' });
+            if (!r.ok) continue;
+            const len = Number(r.headers.get('content-length') || 0);
+            if (len > MAX_SCRIPT) continue;
+            sources.push(await r.text());
+          } catch {
+            // Cross-origin without CORS, or gone. Not this script, then.
+          }
+        }
+
+        const near = {};
+        for (const anchor of anchors) {
+          const found = [];
+          const seen = new Set();
+          for (const text of sources) {
+            let at = text.indexOf(anchor);
+            while (at !== -1) {
+              const slice = text.slice(Math.max(0, at - WINDOW), at + anchor.length + WINDOW);
+              for (const m of slice.matchAll(/["']([A-Z][A-Z0-9_]{3,40})["']/g)) {
+                if (!seen.has(m[1])) {
+                  seen.add(m[1]);
+                  found.push(m[1]);
+                }
+              }
+              at = text.indexOf(anchor, at + anchor.length);
+            }
+          }
+          near[anchor] = found;
+        }
+        return { near, scripts: sources.length };
+      },
+    });
+    return injected?.result || { error: 'NO_INJECTION_RESULT' };
+  } catch (e) {
+    return { error: e?.message || 'DISCOVERY_FAILED' };
+  }
 }
 
 async function handleBatchRpc(msg) {

@@ -248,16 +248,30 @@ class WorkerController:
             # a captcha that did not solve, a transport that dropped -- is not
             # about the model, and moving down the list would spend another
             # captcha on the same problem, so it stops the walk.
+            #
+            # The third name is read off the Flow page the first time this runs.
+            # A name read off a page and refused as INVALID_ARGUMENT was not a
+            # model; it is dropped and never sent again. The two known names are
+            # not dropped for that: INVALID_ARGUMENT on a name Google definitely
+            # knows means something else is wrong.
+            await image_models.ensure_discovered(client)
             result = {"error": "no image model configured"}
             for model in image_models.plan():
                 result = await client.generate_images_batch(**request, image_model_name=model)
                 if not is_error(result):
                     break
-                if not image_models.is_refusal(error_text(result)):
-                    break
-                logger.warning("job %s: %s refused (%s) — trying the next model",
-                               job_id[:8], model, error_text(result)[:120])
-                image_models.refused(model)
+                err = error_text(result)
+                if image_models.is_refusal(err):
+                    logger.warning("job %s: %s refused (%s) — trying the next model",
+                                   job_id[:8], model, err[:120])
+                    image_models.refused(model)
+                    continue
+                if not image_models.is_known(model) and image_models.is_bad_name(err):
+                    logger.warning("job %s: %s is not a model Flow knows (%s) — dropped",
+                                   job_id[:8], model, err[:120])
+                    image_models.rejected(model)
+                    continue
+                break
 
         if is_error(result):
             await self._handle_failure(job, error_text(result))
