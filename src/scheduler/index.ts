@@ -670,7 +670,7 @@ export class Scheduler {
    */
   private async tickReels(): Promise<void> {
     try {
-      const reels = await tickReels(this.settings, defaultDeps(this.settings));
+      const reels = await tickReels(this.settings, defaultDeps(this.settings, this.encryptionKey));
       if (reels.advanced > 0 || reels.failed > 0) {
         log.info(`reels: ${reels.advanced} advanced, ${reels.failed} failed`);
       }

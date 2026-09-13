@@ -5,8 +5,10 @@ import {
   createReel,
   createRun,
   getReel,
+  insertFbToken,
   insertKeyword,
   markRunPublished,
+  setFbPageOptions,
   updateReel,
   upsertFbPage,
   upsertSite,
@@ -33,8 +35,17 @@ function settingsWith(enabled: boolean): Settings {
   return settings;
 }
 
-function fakeDeps(overrides: Partial<ReelDeps> = {}): ReelDeps {
+/** The deps, plus the one Facebook client every page resolves to, for assertions. */
+type FakeDeps = ReelDeps & { facebook: { publishReel: ReturnType<typeof vi.fn>; commentOnReel: ReturnType<typeof vi.fn> } };
+
+function fakeDeps(overrides: Partial<ReelDeps> = {}): FakeDeps {
+  const facebook = {
+    publishReel: vi.fn(async () => ({ videoId: 'VID1', permalink: 'https://fb/VID1' })),
+    commentOnReel: vi.fn(async () => ({ commentId: 'C1' })),
+  };
   return {
+    facebook,
+    facebookFor: vi.fn(() => facebook),
     images: {
       poll: vi.fn(async () => ({
         job_id: 'J1',
@@ -45,10 +56,6 @@ function fakeDeps(overrides: Partial<ReelDeps> = {}): ReelDeps {
       })),
       submitVideo: vi.fn(async () => 'J1'),
     } as unknown as ReelDeps['images'],
-    facebook: {
-      publishReel: vi.fn(async () => ({ videoId: 'VID1', permalink: 'https://fb/VID1' })),
-      commentOnReel: vi.fn(async () => ({ commentId: 'C1' })),
-    } as unknown as ReelDeps['facebook'],
     telegram: { sendMessage: vi.fn(async () => true) } as unknown as ReelDeps['telegram'],
     download: vi.fn(async () => Buffer.from('mp4')),
     ...overrides,
@@ -76,12 +83,9 @@ function seed(options: { autoPublish: boolean; withPage?: boolean }): {
   const runId = createRun(keywordId, siteId);
   markRunPublished(runId, 'p1', 'https://bitespoon.com/stew', 'Stew');
 
-  const pageId = upsertFbPage({
-    pageId: '999',
-    name: 'Slow Cooker Suppers',
-    autoPublish: options.autoPublish,
-    enabled: true,
-  });
+  const tokenId = insertFbToken('A', 'tok', KEY);
+  const pageId = upsertFbPage({ pageId: '999', name: 'Slow Cooker Suppers', tokenId });
+  setFbPageOptions(pageId, { niche: 'slow cooker', autoPublish: options.autoPublish, enabled: true });
 
   const reelId = createReel({
     runId,
@@ -179,6 +183,16 @@ describe('a reel moving through its states', () => {
     const reel = getReel(reelId)!;
     expect(reel.status).toBe('published');
     expect(reel.fb_video_id).toBe('VID1');
+  });
+
+  it('publishes with the token the page was found under', async () => {
+    const { reelId, pageId } = seed({ autoPublish: true });
+    updateReel(reelId, { status: 'ready', videoUrl: 'https://cdn/video.mp4' });
+
+    const deps = fakeDeps();
+    await tickReels(settingsWith(true), deps);
+
+    expect(deps.facebookFor).toHaveBeenCalledWith(pageId);
   });
 
   it('holds a ready reel when its page waits for a person', async () => {

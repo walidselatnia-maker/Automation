@@ -1197,7 +1197,7 @@ export function buildServer(
     if (!reel) return redirect(reply, '/reels');
 
     try {
-      await startGeneration(reel, settings, defaultDeps(settings));
+      await startGeneration(reel, settings, defaultDeps(settings, encryptionKey).images);
     } catch (err) {
       updateReel(reelId, { status: 'failed', error: errorMessage(err) });
       return redirect(reply, '/reels', { kind: 'error', message: errorMessage(err) });
@@ -1230,7 +1230,7 @@ export function buildServer(
     if (!reel) return reply.callNotFound();
 
     try {
-      await publishReel(reel, defaultDeps(settings));
+      await publishReel(reel, defaultDeps(settings, encryptionKey));
     } catch (err) {
       updateReel(id, { status: 'failed', error: errorMessage(err) });
       return redirect(reply, '/reels', { kind: 'error', message: errorMessage(err) });
@@ -1251,7 +1251,7 @@ export function buildServer(
       if (reel.video_url) {
         updateReel(id, { status: 'ready', error: null });
       } else {
-        await startGeneration(reel, settings, defaultDeps(settings));
+        await startGeneration(reel, settings, defaultDeps(settings, encryptionKey).images);
       }
     } catch (err) {
       updateReel(id, { status: 'failed', error: errorMessage(err) });

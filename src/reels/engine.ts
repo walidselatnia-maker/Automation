@@ -6,6 +6,7 @@ import { resolveProjectId } from '../core/project-id.js';
 import type { Settings } from '../settings.js';
 import {
   activeReels,
+  fbPageToken,
   getFbPage,
   getSite,
   markFbPageFailed,
@@ -40,13 +41,17 @@ export interface ReelTickResult {
 /** Everything the engine is allowed to reach, so it can be tested with fakes. */
 export interface ReelDeps {
   images: ImageClient;
-  facebook: FacebookClient;
+  /**
+   * A client for the token this page was found under. Pages from different
+   * apps sit side by side, and each publishes with its own token.
+   */
+  facebookFor(pageRowId: number): Pick<FacebookClient, 'publishReel' | 'commentOnReel'>;
   telegram: TelegramClient;
   /** Download a finished video. Separate so tests need no network. */
   download(url: string): Promise<Buffer>;
 }
 
-export function defaultDeps(settings: Settings): ReelDeps {
+export function defaultDeps(settings: Settings, key: Buffer): ReelDeps {
   return {
     images: new ImageClient({
       baseUrl: settings.get('image_base_url'),
@@ -54,7 +59,8 @@ export function defaultDeps(settings: Settings): ReelDeps {
       pollIntervalMs: settings.getNumber('image_poll_interval_seconds') * 1000,
       maxAttempts: settings.getNumber('image_poll_max_attempts'),
     }),
-    facebook: new FacebookClient({ systemUserToken: settings.get('fb_system_token') }),
+    facebookFor: (pageRowId) =>
+      new FacebookClient({ systemUserToken: fbPageToken(pageRowId, key) }),
     telegram: new TelegramClient(
       settings.get('telegram_bot_token'),
       settings.get('telegram_chat_id'),
@@ -188,9 +194,10 @@ export async function publishReel(reel: ReelView, deps: ReelDeps): Promise<void>
 
   updateReel(reel.id, { status: 'publishing', error: null });
 
+  const facebook = deps.facebookFor(page.id);
   const video = await deps.download(reel.video_url);
 
-  const published = await deps.facebook.publishReel({
+  const published = await facebook.publishReel({
     pageId: page.page_id,
     video,
     description: reel.caption,
@@ -213,7 +220,7 @@ export async function publishReel(reel: ReelView, deps: ReelDeps): Promise<void>
   let linkNote = '';
   if (reel.post_url) {
     try {
-      await deps.facebook.commentOnReel({
+      await facebook.commentOnReel({
         pageId: page.page_id,
         videoId: published.videoId,
         message: reel.post_url,
@@ -244,7 +251,7 @@ export async function publishReel(reel: ReelView, deps: ReelDeps): Promise<void>
 export async function startGeneration(
   reel: ReelView,
   settings: Settings,
-  deps: ReelDeps,
+  images: Pick<ImageClient, 'submitVideo'>,
 ): Promise<void> {
   const references = JSON.parse(reel.reference_json) as string[];
   if (references.length === 0) {
@@ -258,7 +265,7 @@ export async function startGeneration(
     site?.domain ?? '',
   );
 
-  const jobId = await deps.images.submitVideo({
+  const jobId = await images.submitVideo({
     prompt: reel.prompt,
     referenceUrls: references,
     projectId: project.projectId,
