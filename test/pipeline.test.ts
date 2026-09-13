@@ -11,11 +11,13 @@ import {
   setLink,
   upsertSite,
   getLinksForKeyword,
+  getCompletedStep,
 } from '../src/db/repos.js';
 import { upsertEndpoint } from '../src/llm/pool.js';
 import { Settings } from '../src/settings.js';
 import { configurePrompts } from '../src/pipeline/prompts.js';
-import { executePipeline } from '../src/pipeline/index.js';
+import { executePipeline, isPayloadRejection } from '../src/pipeline/index.js';
+import { postRetry } from '../src/pipeline/steps/article.js';
 import { PipelineContext } from '../src/pipeline/context.js';
 import { setLogLevel } from '../src/lib/logger.js';
 
@@ -54,6 +56,10 @@ interface WorldOptions {
   failImageJobs?: boolean;
   imagePendingPolls?: number;
   failPostOnce?: boolean;
+  /** Reject this many article posts with the site's real validation body, then accept. */
+  rejectPayloadTimes?: number;
+  /** Answer every article post with this status and a plain body (a 401, say). */
+  postStatus?: number;
   failEndpoint?: string;
   /** Replace one prompt's reply, to stand in for a model behaving badly. */
   llmOverrides?: Record<string, string>;
@@ -64,6 +70,7 @@ function buildWorld(options: WorldOptions = {}) {
   const generateBodies: Record<string, unknown>[] = [];
   let pollCount = 0;
   let postAttempts = 0;
+  const promptCalls: Record<string, number> = {};
 
   const json = (body: unknown, status = 200): Response =>
     new Response(JSON.stringify(body), {
@@ -97,7 +104,9 @@ function buildWorld(options: WorldOptions = {}) {
         : text.includes('MARKER-part-3') ? 'part-3'
         : text.includes('MARKER-pin-description') ? 'pin-description'
         : text.includes('MARKER-pick-board') ? 'pick-board'
+        : text.includes('MARKER-repair-json') ? 'repair-json'
         : 'unknown';
+      promptCalls[which] = (promptCalls[which] ?? 0) + 1;
 
       const reply = options.llmOverrides?.[which] ?? LLM_REPLIES[which] ?? '{}';
       return json({ message: { content: reply } });
@@ -158,6 +167,27 @@ function buildWorld(options: WorldOptions = {}) {
         if (options.failPostOnce && postAttempts === 1) {
           return new Response('Invalid JSON: unexpected token', { status: 400 });
         }
+        if (options.postStatus) {
+          return new Response('Unauthorized', { status: options.postStatus });
+        }
+        if (options.rejectPayloadTimes && postAttempts <= options.rejectPayloadTimes) {
+          // The real thing, as longlivo.com sent it.
+          return json(
+            {
+              error: 'Recipe payload validation failed',
+              count: 1,
+              errors: [{
+                field: 'recipeInfo.servings',
+                message: '"recipeInfo.servings" does not look like a yield/serving value.',
+                received: 'string("4 medium pizzas")',
+                expected: 'e.g. "24 clusters", "Serves 4", "8 slices"',
+                hint: 'Use a short yield phrase, not a long sentence.',
+              }],
+              hint: 'Fix the listed field issues and retry the request.',
+            },
+            400,
+          );
+        }
         return json({ id: 'recipe-1', title: 'Test Chicken', href: '/r/test-chicken' });
       }
       return json({ id: 'recipe-1', title: 'Test Chicken', href: '/r/test-chicken' });
@@ -188,7 +218,7 @@ function buildWorld(options: WorldOptions = {}) {
     return new Response('not found', { status: 404 });
   });
 
-  return { fetchStub, calls, generateBodies, postAttempts: () => postAttempts };
+  return { fetchStub, calls, generateBodies, postAttempts: () => postAttempts, promptCalls };
 }
 
 /** Write prompt files whose text identifies which prompt was invoked. */
@@ -260,6 +290,12 @@ describe('pipeline end to end', () => {
     setLink(keywordId, siteId, 'go');
   });
 
+  beforeEach(() => {
+    // The post step's real backoff is two then four seconds; nothing here is
+    // testing the wait.
+    postRetry.baseMs = 0;
+  });
+
   afterEach(() => {
     closeDatabase();
     vi.restoreAllMocks();
@@ -301,6 +337,66 @@ describe('pipeline end to end', () => {
     expect(getLinksForKeyword(keywordId)[0]?.status).toBe('done');
     // No site is still 'go', so the keyword closes globally too.
     expect(getKeyword(keywordId)?.status).toBe('done');
+  });
+
+  // -- When the site will not take the article -------------------------------
+  //
+  // longlivo.com answered a post with HTTP 400 and a validation body naming
+  // recipeInfo.servings: "4 medium pizzas" is not a yield phrase. The repair
+  // prompt at the time forbade changing values, so three attempts sent the
+  // same document, and a resume reused the stored article and sent it again.
+
+  it('rewrites the article when the site rejects it and repair does not help', async () => {
+    // Every post of the first article is refused; the rewrite is accepted.
+    const world = buildWorld({ rejectPayloadTimes: 3 });
+    vi.stubGlobal('fetch', world.fetchStub);
+
+    const outcome = await executePipeline(makeContext(createRun(keywordId, siteId)));
+
+    expect(outcome.status).toBe('published');
+    // Repair was asked after the first two refusals, as before...
+    expect(world.promptCalls['repair-json']).toBe(2);
+    // ...and when that was not enough, the article was written a second time.
+    expect(world.promptCalls['part-1']).toBe(2);
+    expect(world.postAttempts()).toBe(4);
+  });
+
+  it('leaves no article checkpoint when the rewrite is refused too, so a resume writes a third', async () => {
+    const world = buildWorld({ rejectPayloadTimes: 99 });
+    vi.stubGlobal('fetch', world.fetchStub);
+
+    const runId = createRun(keywordId, siteId);
+    const outcome = await executePipeline(makeContext(runId));
+
+    expect(outcome.status).toBe('failed');
+    expect(outcome.failedStep).toBe('post-article');
+    // Two articles were written, and neither is stored as good: resuming this
+    // run must not hand the second one back as "already completed".
+    expect(world.promptCalls['part-1']).toBe(2);
+    expect(getCompletedStep(runId, 'generate-article')).toBeUndefined();
+  });
+
+  it('does not rewrite the article for a bad token', async () => {
+    // A 401 is about us, not the document. A different article fails the same
+    // way, and writing one would spend the model on nothing.
+    const world = buildWorld({ postStatus: 401 });
+    vi.stubGlobal('fetch', world.fetchStub);
+
+    const outcome = await executePipeline(makeContext(createRun(keywordId, siteId)));
+
+    expect(outcome.status).toBe('failed');
+    expect(world.promptCalls['part-1']).toBe(1);
+  });
+
+  it('tells a payload rejection apart from every other way a post fails', () => {
+    const refused = 'Publishing to longlivo.com failed after 3 attempts. Last error: ' +
+      'POST /api/recipe rejected by longlivo.com: HTTP 400 — {"error":"Recipe payload validation failed"}';
+    expect(isPayloadRejection(refused)).toBe(true);
+    expect(isPayloadRejection('POST /api/recipe rejected by x.com: HTTP 422 — unprocessable')).toBe(true);
+
+    expect(isPayloadRejection('POST /api/recipe rejected by x.com: HTTP 401 — Unauthorized')).toBe(false);
+    expect(isPayloadRejection('POST /api/recipe rejected by x.com: HTTP 503 — down')).toBe(false);
+    expect(isPayloadRejection('fetch failed: ETIMEDOUT')).toBe(false);
   });
 
   it('generates four article images plus the Pinterest graphic', async () => {

@@ -19,6 +19,7 @@ import { createLogger, errorMessage } from '../lib/logger.js';
 import {
   markRunFailed,
   markRunHeld,
+  invalidateStep,
   markRunPublished,
   publishedTitles,
   setKeywordStatus,
@@ -104,7 +105,7 @@ export async function executePipeline(ctx: PipelineContext): Promise<PipelineOut
       return { status: 'held', hold, postUrl: undefined };
     }
 
-    const posted = await runStep(ctx, postArticle, article);
+    const posted = await postOrRewrite(ctx, article, { seo, recipe, images });
 
     // -- Published. Everything after this point is distribution. -----------
     const postUrl = `https://${host}${String(posted.href ?? '')}`;
@@ -165,6 +166,77 @@ function markPairDone(ctx: PipelineContext): void {
 }
 
 export { PipelineContext };
+
+/**
+ * The site's API refusing the document itself, as opposed to refusing us.
+ *
+ * A 400 or 422 with the site's wording is a complaint about what was sent:
+ * a field the model filled in a way the site's validation does not accept.
+ * A 401 or 403 is about the token, a 5xx is about the site, and a timeout is
+ * about the network -- none of which a different article would change.
+ */
+export function isPayloadRejection(error: string): boolean {
+  return /rejected by [^:]+: HTTP (400|422)(?!\d)/.test(error);
+}
+
+/**
+ * Publish, and if the site will not take the article, write it again.
+ *
+ * The post step already asks the model to repair the document against the
+ * site's complaint and tries three times. When that is not enough -- the
+ * model kept the value the site objects to, or fixed one thing and broke
+ * another -- the article itself is the problem, and every later attempt at
+ * posting it is the same attempt. Resuming the run reused the stored article
+ * and walked into the same wall, and nothing a person could do from the page
+ * changed that.
+ *
+ * So the article is written once more, from the same recipe and images, and
+ * posted. The first checkpoint is retired before that, or the resume logic
+ * would hand back the rejected document as "already completed". If the
+ * rewrite is refused as well, the checkpoint is retired again on the way out,
+ * so a person who resumes gets a third article rather than the second one
+ * re-sent.
+ *
+ * Only a payload rejection earns a rewrite. A bad token or a site that is
+ * down fails the same way for any article, and rewriting one would spend the
+ * model on a problem it cannot touch.
+ */
+async function postOrRewrite(
+  ctx: PipelineContext,
+  article: Record<string, unknown>,
+  inputs: Parameters<typeof generateArticle.run>[1],
+) {
+  try {
+    return await runStep(ctx, postArticle, article);
+  } catch (err) {
+    const reason = errorMessage(err);
+    if (!isPayloadRejection(reason)) throw err;
+
+    log.warn(
+      `run ${ctx.runId}: ${ctx.site.domain} rejected the article and repair did not fix it — ` +
+        'writing it again from scratch',
+    );
+    invalidateStep(ctx.runId, generateArticle.name, `Rejected by the site; rewritten. ${reason}`);
+    invalidateStep(ctx.runId, postArticle.name, reason);
+
+    const rewritten = await runStep(ctx, generateArticle, inputs);
+    const title = articleTitle(rewritten);
+    if (title) setRunTitle(ctx.runId, title);
+
+    try {
+      return await runStep(ctx, postArticle, rewritten);
+    } catch (again) {
+      // Leave no 'ok' article behind: a resume must write a third one rather
+      // than re-post the second.
+      invalidateStep(
+        ctx.runId,
+        generateArticle.name,
+        `Rejected by the site twice; a resume writes it again. ${errorMessage(again)}`,
+      );
+      throw again;
+    }
+  }
+}
 
 /**
  * Whether this run stops before publishing, and why.

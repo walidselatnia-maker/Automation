@@ -866,6 +866,22 @@ export interface StepRow {
 export const listSteps = (runId: number): StepRow[] =>
   all<StepRow>('SELECT * FROM run_steps WHERE run_id = ? ORDER BY id', runId);
 
+/**
+ * Retire a completed step's checkpoint, so the next run of it does the work again.
+ *
+ * Marked failed with the reason rather than deleted: the row still says what
+ * happened and what it cost, and the usage table still adds up. A resume reads
+ * only 'ok' checkpoints, so this is enough to make it redo the step.
+ */
+export const invalidateStep = (runId: number, step: string, reason: string): void => {
+  run(
+    "UPDATE run_steps SET status = 'failed', error = ? WHERE run_id = ? AND step = ? AND status = 'ok'",
+    reason,
+    runId,
+    step,
+  );
+};
+
 export const getCompletedStep = (runId: number, step: string): StepRow | undefined =>
   get<StepRow>(
     "SELECT * FROM run_steps WHERE run_id = ? AND step = ? AND status = 'ok'",
