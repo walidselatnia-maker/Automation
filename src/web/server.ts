@@ -167,7 +167,8 @@ import {
 import { createLogger, errorMessage } from '../lib/logger.js';
 import { FacebookClient } from '../integrations/facebook.js';
 import { defaultDeps, publishReel, startGeneration } from '../reels/engine.js';
-import { loadPrompt, loadTemplate } from '../pipeline/prompts.js';
+import { loadPrompt } from '../pipeline/prompts.js';
+import { buildReelPrompt, withoutLinks } from '../reels/compose.js';
 import { chat } from '../llm/client.js';
 import { normaliseDomain } from '../lib/domain.js';
 
@@ -196,35 +197,6 @@ function readReelImages(candidate: ReelCandidate): ReelImages | null {
   } catch {
     return null;
   }
-}
-
-/**
- * The video prompt a reel starts with.
- *
- * A template rather than a model call: the operator edits it in the composer
- * before anything is generated, and asking an LLM to write a prompt that a
- * person is about to rewrite spends a call to save a paragraph.
- */
-function buildReelPrompt(candidate: ReelCandidate): string {
-  return loadTemplate('reel-video.template.txt', {
-    seo: { title: candidate.title || candidate.spy_title, category: candidate.seed_keyword },
-    spy: { title: candidate.spy_title, group: candidate.seed_keyword },
-  });
-}
-
-/** The caption with the one thing it must never carry removed. */
-function withoutLinks(caption: string): string {
-  // Belt to the prompt's braces. The model is told not to link; if it does
-  // anyway, the link comes out here rather than going on the post. The article
-  // url is posted as the first comment and only there.
-  return caption
-    .replace(/https?:\/\/\S+/gi, '')
-    .replace(/\bwww\.\S+/gi, '')
-    .split('\n')
-    .map((line) => line.replace(/[ \t]+$/, ''))
-    .join('\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
 }
 
 /**

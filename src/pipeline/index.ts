@@ -9,6 +9,7 @@ import {
 } from './steps/content.js';
 import { generateArticleImages, generatePinImage } from './steps/images.js';
 import { generateArticle, postArticle } from './steps/article.js';
+import { createReelStep } from './steps/reel.js';
 import {
   generatePinDescription,
   notify,
@@ -45,6 +46,7 @@ export const PIPELINE_STEPS = [
   resolveBufferTarget,
   publishToBuffer,
   notify,
+  createReelStep,
 ].map((s) => ({ name: s.name, title: s.title }));
 
 export interface PipelineOutcome {
@@ -128,6 +130,9 @@ export async function executePipeline(ctx: PipelineContext): Promise<PipelineOut
     }
 
     await runStep(ctx, notify, { seo, posted, pinImageUrl: pinImage.url });
+
+    // Last, and never the reason a run fails: the article is out by now.
+    await runStep(ctx, createReelStep, { seo, posted, images, title });
 
     log.info(`run ${ctx.runId}: complete — ${postUrl}`);
     return { status: 'published', postId: String(posted.id), postUrl };
