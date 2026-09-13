@@ -14,10 +14,9 @@ import {
 import { BUFFER_ACCOUNT_LIMIT, hasSecret, type BufferAccount } from '../../db/repos.js';
 import type {
   FbPageRow,
-  FbRouteView,
+  FbTokenView,
   ReelCandidate,
   ReelView,
-  ResolvedFbPage,
 } from '../../db/repos.js';
 import type {
   DecisionRow,
@@ -1742,19 +1741,13 @@ export function settingsPage(
     {
       key: 'facebook',
       title: 'Facebook',
-      // Beside the token field, not on another page: the token is the one
-      // setting here nobody can produce from memory, and a field whose help
-      // text names a screen you have to go and find is a field people leave
-      // empty.
+      // The tokens and pages live on their own page: they are tables, not
+      // fields, and the switch here is the only thing about Facebook that
+      // belongs in a settings form.
       footer: html`
         <div class="row wrap field-links">
-          <a class="button primary" href="/settings/facebook">Pages &amp; routes</a>
+          <a class="button primary" href="/settings/facebook">Tokens &amp; pages</a>
         </div>
-        <p class="small muted">
-          That page links straight to Business Settings and lists the steps. A token
-          made in the Graph API Explorer instead will expire in sixty days and stop
-          publishing without warning.
-        </p>
       `,
     },
     { key: 'telegram', title: 'Telegram' },
@@ -2836,7 +2829,7 @@ function reelTile(reel: ReelView): Html {
         <div class="help">
           ${reel.page_name
             ? html`To <strong>${reel.page_name}</strong>`
-            : html`<a href="/settings/facebook">No page set &mdash; add a route</a>`}
+            : html`<a href="/settings/facebook">No page for this niche &mdash; assign one</a>`}
         </div>
 
         ${reel.error
@@ -2906,20 +2899,20 @@ export function reelsPage(data: ReelsPageData): Html {
       <div>
         <h1>Reels</h1>
         <p class="subtitle">
-          Turn an article you have already published into a Facebook Reel, using the
-          images it was built from.
+          Every published article whose niche has a page becomes a reel here. Make one by
+          hand from any article below.
         </p>
       </div>
       <div class="row wrap">
-        <a class="button" href="/settings/facebook">Pages &amp; routes</a>
+        <a class="button" href="/settings/facebook">Facebook pages</a>
       </div>
     </div>
 
     ${!data.configured
       ? html`<div class="flash warn">
           <strong>Facebook is not set up yet.</strong>
-          Add a system user token and at least one page under
-          <a href="/settings/facebook">Settings &rarr; Facebook</a> before making a reel.
+          Add a token and give a page a niche under
+          <a href="/settings/facebook">Settings &rarr; Facebook</a>; reels are made automatically from then on.
         </div>`
       : !data.enabled
         ? html`<div class="flash warn">
@@ -2978,7 +2971,7 @@ export interface ReelComposerData {
   images: ReelImages;
   prompt: string;
   caption: string;
-  route: ResolvedFbPage | undefined;
+  page: FbPageRow | undefined;
 }
 
 /**
@@ -3036,24 +3029,21 @@ export function reelComposerPage(data: ReelComposerData): Html {
         <div>
           <div class="card">
             <h2>Where it goes</h2>
-            ${data.route
+            ${data.page
               ? html`
                   <p>
-                    <strong>${data.route.page.name || data.route.page.page_id}</strong>
+                    <strong>${data.page.name || data.page.page_id}</strong>
                   </p>
                   <p class="help">
-                    ${data.route.via === 'site'
-                      ? html`Routed for ${data.candidate.site_domain} &middot;
-                          ${data.candidate.seed_keyword}.`
-                      : html`The shared page for ${data.candidate.seed_keyword}.`}
-                    ${data.route.page.auto_publish === 1
+                    The page for ${data.candidate.seed_keyword}.
+                    ${data.page.auto_publish === 1
                       ? raw('It publishes automatically once the video is ready.')
                       : raw('It will be held for you to review.')}
                   </p>`
               : html`<div class="flash warn">
-                  No page is routed for <strong>${data.candidate.seed_keyword}</strong> on
-                  ${data.candidate.site_domain}. The reel will be generated and then wait.
-                  <a href="/settings/facebook">Add a route</a> to send it somewhere.
+                  No page has the niche <strong>${data.candidate.seed_keyword}</strong>. The
+                  reel will be generated and then wait.
+                  <a href="/settings/facebook">Assign one</a> to send it somewhere.
                 </div>`}
           </div>
 
@@ -3127,125 +3117,75 @@ const REEL_CAPTION_SCRIPT = `<script>
  * ====================================================================== */
 
 export interface FacebookSettingsData {
+  enabled: boolean;
+  tokens: FbTokenView[];
   pages: FbPageRow[];
-  routes: FbRouteView[];
-  sites: SiteRow[];
   groups: string[];
-  tokenSet: boolean;
-  check: { ok: boolean; pages?: number; error?: string } | null;
 }
 
+/**
+ * Two tables and nothing else.
+ *
+ * Tokens bring pages; a page takes a niche. The routing table this replaced
+ * asked three questions per row -- which site, which niche, which page --
+ * with a wildcard for two of them, and a person setting up one page for one
+ * niche had to work out which of the four combinations they meant. Now the
+ * page row asks one question, and the answer is in the row.
+ */
 export function facebookSettingsPage(data: FacebookSettingsData): Html {
+  const tokenName = new Map(data.tokens.map((t) => [t.id, t.name]));
+
   return html`
     <h1>Facebook</h1>
     <p class="subtitle">
-      Pages this platform may publish Reels to, and which niche goes to which page.
+      Add a token, pick a niche for each page it brings, and every article in that niche
+      becomes a reel on that page.
     </p>
 
+    ${data.enabled
+      ? raw('')
+      : html`<div class="flash warn">
+          Reels are switched off. Turn on <em>Publish reels to Facebook</em> under
+          <a href="/settings">Settings</a> when the pages below are ready.
+        </div>`}
+
     <div class="card">
-      <div class="spread">
-        <div>
-          <h2>Access</h2>
-          <p class="help">
-            Publishing uses a Business Manager <strong>system user</strong> token. It has no
-            expiry, and page tokens are derived from it for each post &mdash; so a page you
-            add later needs no new credential.
-          </p>
-        </div>
-        <div class="row wrap">
-          <a class="button" target="_blank" rel="noopener"
-             href="https://business.facebook.com/settings/system-users">
-            Business Settings &rarr;
-          </a>
-        </div>
-      </div>
-
-      <p class="row wrap">
-        <span class="small">Token</span>
-        ${data.tokenSet
-          ? html`${statusBadge('ok')}<span class="small">stored</span>`
-          : html`${statusBadge('failed')}<span class="small">
-              not set &mdash; <a href="/settings">add it under Settings</a></span>`}
-      </p>
-
-      ${data.check
-        ? data.check.ok
-          ? html`<div class="flash ok">
-              The token works and can see ${data.check.pages} page(s).
-            </div>`
-          : html`<div class="flash error">${data.check.error}</div>`
-        : raw('')}
-
-      <!-- Collapsed: it is five steps you follow once, and it should not sit
-           permanently on top of the two tables that get used every week. -->
-      <details>
-        <summary>How to generate the token</summary>
-        <ol class="help">
-          <li>Open Business Settings above and pick your business.</li>
-          <li><strong>Add</strong> a system user &mdash; give it the Admin role.</li>
-          <li>
-            <strong>Add assets</strong> &rarr; Pages &rarr; select every page you will post
-            to, and switch on <em>Manage Page</em> for each.
-          </li>
-          <li>
-            <strong>Generate new token</strong>, choose your app, and tick
-            <code>pages_manage_posts</code>, <code>pages_read_engagement</code> and
-            <code>pages_show_list</code>.
-          </li>
-          <li>Copy it into <a href="/settings">Settings</a>, then verify below.</li>
-        </ol>
-        <p class="help">
-          A token made in the Graph API Explorer instead will expire in sixty days and stop
-          publishing without warning.
-        </p>
-      </details>
-
-      <div class="save-bar mt-4">
-        <form method="post" action="/settings/facebook/verify">
-          <button type="submit">Verify the token</button>
-        </form>
-        <form method="post" action="/settings/facebook/pages/import">
-          <button type="submit" ${data.tokenSet ? raw('') : raw('disabled')}>
-            Import pages from the token
-          </button>
-        </form>
-      </div>
+      <h2>Tokens</h2>
       <p class="help">
-        Importing reads every page the token can see and adds the ones missing below,
-        so their ids do not have to be copied by hand. Pages already listed keep their
-        own settings; only the name is refreshed.
+        One per app. The platform reads every page the token can manage; you never type a
+        page id. A token from Business Settings &rarr; System Users does not expire.
+        Removing a token removes its pages.
       </p>
-    </div>
 
-    <div class="card">
-      <h2>Pages</h2>
-      ${data.pages.length === 0
-        ? emptyState('No pages registered yet.')
+      ${data.tokens.length === 0
+        ? emptyState('No token yet. Add one below and its pages appear.')
         : html`<div class="table-wrap">
             <table>
               <thead>
-                <tr><th>Name</th><th>Page id</th><th>Publishing</th><th>Last used</th><th></th></tr>
+                <tr><th>Name</th><th>Pages</th><th>Last checked</th><th></th></tr>
               </thead>
               <tbody>
-                ${data.pages.map(
-                  (page) => html`<tr>
-                    <td>${page.name || '(unnamed)'}</td>
-                    <td class="mono small nowrap">${page.page_id}</td>
-                    <td class="nowrap">
-                      <span class="row">
-                        ${page.auto_publish === 1
-                          ? html`${statusBadge('ok')}<span class="small">automatic</span>`
-                          : html`${statusBadge('pending')}<span class="small">hold for review</span>`}
-                      </span>
+                ${data.tokens.map(
+                  (t) => html`<tr>
+                    <td>
+                      ${t.name}
+                      ${t.last_error
+                        ? html`<div class="small error">${t.last_error}</div>`
+                        : raw('')}
                     </td>
-                    <td class="muted small nowrap">
-                      ${page.last_used_at ? timeAgo(page.last_used_at) : raw('&mdash;')}
-                      ${page.last_error ? html`<div>${page.last_error}</div>` : raw('')}
+                    <td>${t.page_count}</td>
+                    <td class="small muted nowrap">
+                      ${t.last_synced_at ? timeAgo(t.last_synced_at) : 'never'}
                     </td>
                     <td class="nowrap">
-                      <form method="post" action="/settings/facebook/pages/${page.id}/delete"
-                            onsubmit="return confirm('Remove this page?')">
-                        <button class="danger" type="submit">Remove</button>
+                      <form method="post" action="/settings/facebook/tokens/${t.id}/refresh"
+                            style="display:inline">
+                        <button type="submit" class="small">Refresh</button>
+                      </form>
+                      <form method="post" action="/settings/facebook/tokens/${t.id}/delete"
+                            style="display:inline"
+                            onsubmit="return confirm('Remove this token and its ${t.page_count} page(s)?')">
+                        <button type="submit" class="small danger">Remove</button>
                       </form>
                     </td>
                   </tr>`,
@@ -3254,95 +3194,91 @@ export function facebookSettingsPage(data: FacebookSettingsData): Html {
             </table>
           </div>`}
 
-      <form method="post" action="/settings/facebook/pages">
-        <div class="field-row">
+      <form method="post" action="/settings/facebook/tokens" class="stack" style="margin-top:1rem">
+        <div class="grid two">
           <div class="field">
-            <label for="fb-page-id">Page id</label>
-            <input id="fb-page-id" name="pageId" required placeholder="1234567890">
+            <label for="fb-token-name">Name</label>
+            <input id="fb-token-name" name="name" placeholder="App 1" />
           </div>
           <div class="field">
-            <label for="fb-page-name">Name</label>
-            <input id="fb-page-name" name="name" placeholder="Slow Cooker Suppers">
+            <label for="fb-token">Token</label>
+            <input id="fb-token" name="token" type="password" required autocomplete="off" />
           </div>
         </div>
-        <div class="field">
-          <label class="inline-check">
-            <input type="checkbox" name="autoPublish" value="1">
-            Publish reels to this page automatically
-          </label>
-        </div>
-        <button type="submit">Add page</button>
+        <div><button type="submit" class="primary">Add token</button></div>
       </form>
     </div>
 
     <div class="card">
-      <h2>Routes</h2>
+      <h2>Pages</h2>
       <p class="help">
-        A route sends one niche, on one site, to one page. Either half can be left as
-        <em>every</em>: one route of every niche on one site sends that whole site to a
-        page, which is usually what you want when a site has its own page. The most
-        specific route wins, and a route naming the site beats one that does not.
+        One niche per page. A page with no niche is left alone. With auto-publish off, a
+        reel waits on the <a href="/reels">Reels</a> page for you to publish it.
       </p>
 
-      ${data.routes.length === 0
-        ? emptyState('No routes yet. A reel with no route is generated and then waits.')
+      ${data.pages.length === 0
+        ? emptyState('No pages. They arrive with a token.')
         : html`<div class="table-wrap">
             <table>
-              <thead><tr><th>Niche</th><th>Site</th><th>Page</th><th></th></tr></thead>
+              <thead>
+                <tr>
+                  <th>Page</th><th>Niche</th><th>Auto-publish</th><th>Enabled</th>
+                  <th>Last</th><th></th>
+                </tr>
+              </thead>
               <tbody>
-                ${data.routes.map(
-                  (route) => html`<tr>
+                ${data.pages.map((p) => {
+                  const formId = `fb-page-${p.id}`;
+                  return html`<tr>
                     <td>
-                      ${route.seed_keyword === ''
-                        ? html`<span class="muted">every niche</span>`
-                        : html`${route.seed_keyword}`}
+                      ${p.name || p.page_id}
+                      <div class="small muted">
+                        ${p.page_id}
+                        ${p.token_id && tokenName.get(p.token_id)
+                          ? html`&middot; ${tokenName.get(p.token_id)}`
+                          : raw('')}
+                      </div>
+                    </td>
+                    <td>
+                      <select name="niche" form="${formId}">
+                        <option value="">not used</option>
+                        ${data.groups.map(
+                          (g) => html`<option value="${g}"
+                            ${p.niche && g.toLowerCase() === p.niche.toLowerCase()
+                              ? raw('selected')
+                              : raw('')}>${g}</option>`,
+                        )}
+                      </select>
+                      ${p.niche && !data.groups.some((g) => g.toLowerCase() === p.niche!.toLowerCase())
+                        ? html`<div class="small error">
+                            Set to &ldquo;${p.niche}&rdquo;, which no keyword has any more.
+                          </div>`
+                        : raw('')}
+                    </td>
+                    <td>
+                      <input type="checkbox" name="autoPublish" form="${formId}"
+                             ${p.auto_publish === 1 ? raw('checked') : raw('')} />
+                    </td>
+                    <td>
+                      <input type="checkbox" name="enabled" form="${formId}"
+                             ${p.enabled === 1 ? raw('checked') : raw('')} />
                     </td>
                     <td class="small">
-                      ${route.site_domain ?? html`<span class="muted">every site</span>`}
+                      ${p.last_used_at
+                        ? html`<span class="muted nowrap">${timeAgo(p.last_used_at)}</span>`
+                        : html`<span class="muted">&mdash;</span>`}
+                      ${p.last_error ? html`<div class="error">${p.last_error}</div>` : raw('')}
                     </td>
-                    <td class="small">${route.page_name || route.page_external_id}</td>
                     <td class="nowrap">
-                      <form method="post" action="/settings/facebook/routes/${route.id}/delete">
-                        <button class="danger" type="submit">Remove</button>
+                      <form method="post" action="/settings/facebook/pages/${p.id}" id="${formId}">
+                        <button type="submit" class="small">Save</button>
                       </form>
                     </td>
-                  </tr>`,
-                )}
+                  </tr>`;
+                })}
               </tbody>
             </table>
           </div>`}
-
-      ${data.pages.length === 0
-        ? html`<p class="help">Add a page above before routing a niche to it.</p>`
-        : html`<form method="post" action="/settings/facebook/routes">
-            <div class="field-row">
-              <div class="field">
-                <label for="fb-route-niche">Niche</label>
-                <select id="fb-route-niche" name="seedKeyword">
-                  <option value="">Every niche</option>
-                  ${data.groups.map((g) => html`<option value="${g}">${g}</option>`)}
-                </select>
-              </div>
-              <div class="field">
-                <label for="fb-route-site">Site</label>
-                <select id="fb-route-site" name="siteId">
-                  <option value="">Every site</option>
-                  ${data.sites.map(
-                    (site) => html`<option value="${site.id}">${site.domain}</option>`,
-                  )}
-                </select>
-              </div>
-              <div class="field">
-                <label for="fb-route-page">Page</label>
-                <select id="fb-route-page" name="fbPageId" required>
-                  ${data.pages.map(
-                    (page) => html`<option value="${page.id}">${page.name || page.page_id}</option>`,
-                  )}
-                </select>
-              </div>
-            </div>
-            <button type="submit">Add route</button>
-          </form>`}
     </div>
   `;
 }

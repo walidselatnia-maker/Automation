@@ -105,19 +105,19 @@ import {
   setLinkShareImages,
   upsertSite,
   createReel,
-  deleteFbPage,
-  deleteFbRoute,
+  deleteFbToken,
   deleteReel,
+  getFbPage,
   getReel,
+  insertFbToken,
   keywordGroups,
   listFbPages,
-  listFbRoutes,
+  listFbTokens,
   listReels,
+  pageForNiche,
   reelCandidates,
-  resolveFbPage,
+  setFbPageOptions,
   updateReel,
-  upsertFbPage,
-  upsertFbRoute,
   type ReelCandidate,
 } from '../db/repos.js';
 import { get } from '../db/index.js';
@@ -165,7 +165,8 @@ import {
   tick,
 } from '../scheduler/index.js';
 import { createLogger, errorMessage } from '../lib/logger.js';
-import { FacebookClient } from '../integrations/facebook.js';
+import { TelegramClient } from '../integrations/telegram.js';
+import { syncToken, type SyncResult } from '../reels/tokens.js';
 import { defaultDeps, publishReel, startGeneration } from '../reels/engine.js';
 import { loadPrompt } from '../pipeline/prompts.js';
 import { buildReelPrompt, withoutLinks } from '../reels/compose.js';
@@ -1063,7 +1064,7 @@ export function buildServer(
       reelsPage({
         candidates,
         reels: listReels(),
-        configured: settings.get('fb_system_token') !== '' && listFbPages().length > 0,
+        configured: listFbTokens().length > 0 && listFbPages().some((p) => p.niche !== null),
         enabled: settings.getBool('fb_enabled'),
         pages: listFbPages().length,
       }),
@@ -1093,7 +1094,7 @@ export function buildServer(
         images,
         prompt: buildReelPrompt(candidate),
         caption: placeholderCaption(candidate),
-        route: resolveFbPage(candidate.site_id, candidate.seed_keyword),
+        page: pageForNiche(candidate.seed_keyword),
       }),
       readFlash(request.query),
     );
@@ -1153,13 +1154,13 @@ export function buildServer(
       .filter((path): path is string => Boolean(path))
       .map((path) => `https://${host}${path}`);
 
-    const route = resolveFbPage(candidate.site_id, candidate.seed_keyword);
+    const target = pageForNiche(candidate.seed_keyword);
 
     const reelId = createReel({
       runId,
       siteId: candidate.site_id,
       keywordId: candidate.keyword_id,
-      fbPageId: route?.page.id ?? null,
+      fbPageId: target?.id ?? null,
       prompt: (body.prompt ?? '').trim() || buildReelPrompt(candidate),
       caption: (body.caption ?? '').trim(),
       references,
@@ -1240,190 +1241,127 @@ export function buildServer(
 
   /* -- Settings -> Facebook ---------------------------------------------- */
 
-  app.get('/settings/facebook', async (request, reply) =>
+  /* -- Settings -> Facebook ------------------------------------------------ */
+
+  const facebookPage = (reply: FastifyReply, flash: Flash) =>
     page(
       reply,
       'Facebook',
       '/settings',
       facebookSettingsPage({
+        enabled: settings.getBool('fb_enabled'),
+        tokens: listFbTokens(),
         pages: listFbPages(),
-        routes: listFbRoutes(),
-        sites: listSites(),
         groups: keywordGroups(),
-        tokenSet: settings.get('fb_system_token') !== '',
-        check: null,
       }),
-      readFlash(request.query),
-    ),
+      flash,
+    );
+
+  // Rendered from the database alone. Graph is asked only when a token is
+  // added or refreshed; a page that waited on it would sit past Cloudflare's
+  // hundred seconds whenever Facebook was slow.
+  app.get('/settings/facebook', async (request, reply) =>
+    facebookPage(reply, readFlash(request.query)),
   );
 
-  app.post('/settings/facebook/verify', async (_request, reply) => {
-    const client = new FacebookClient({ systemUserToken: settings.get('fb_system_token') });
-    const check = await client.healthCheck();
-
-    return page(
-      reply,
-      'Facebook',
-      '/settings',
-      facebookSettingsPage({
-        pages: listFbPages(),
-        routes: listFbRoutes(),
-        sites: listSites(),
-        groups: keywordGroups(),
-        tokenSet: settings.get('fb_system_token') !== '',
-        check,
-      }),
-      null,
-    );
-  });
-
-  /**
-   * Read the pages off the token instead of having them typed in.
-   *
-   * The client could already do this -- listPages() asks the Graph API for
-   * every page the system user can see, and returns exactly the id and name
-   * this table stores -- but the only caller was the token check. So the ids
-   * were being copied by hand from Facebook into a form, which is a page id
-   * transcription error waiting to happen across thirty-odd pages.
-   *
-   * A page already here keeps its own auto_publish and enabled: upsertFbPage
-   * overwrites both from its input, and an import that quietly re-enabled a
-   * page someone had deliberately turned off would publish to it. Only the
-   * name is refreshed. New pages arrive disabled for auto-publish, because
-   * discovering a page is not the same as deciding to post to it unattended.
-   *
-   * This finds the pages inside the Business Manager the token belongs to. A
-   * page administered by someone outside it will not appear here, and that is
-   * the case Buffer exists to cover -- not something a longer page limit fixes.
-   */
-  app.post('/settings/facebook/pages/import', async (_request, reply) => {
-    const client = new FacebookClient({ systemUserToken: settings.get('fb_system_token') });
-
-    let discovered;
-    try {
-      discovered = await client.listPages();
-    } catch (err) {
-      return redirect(reply, '/settings/facebook', {
-        kind: 'error',
-        message: `Could not read the pages from the token: ${errorMessage(err)}`,
-      });
-    }
-
-    if (discovered.length === 0) {
-      return redirect(reply, '/settings/facebook', {
+  const describeSync = (name: string, result: SyncResult): Flash => {
+    if (!result.ok) return { kind: 'error', message: `${name}: ${result.error}` };
+    if (result.total === 0) {
+      return {
         kind: 'warn',
         message:
-          'The token is valid but sees no pages. The system user needs to be given ' +
-          'access to them in Business Manager.',
-      });
+          `${name}: the token works but manages no pages. Give the system user access ` +
+          'to the pages in Business Settings, then refresh.',
+      };
+    }
+    return {
+      kind: 'ok',
+      message:
+        `${name}: ${result.total} page(s) — ${result.added} new, ${result.renamed} renamed, ` +
+        `${result.dropped} no longer there.`,
+    };
+  };
+
+  /** A token that stopped working is worth a message; a page render is not. */
+  const tellTelegram = async (message: string): Promise<void> => {
+    if (!settings.getBool('telegram_enabled')) return;
+    try {
+      await new TelegramClient(
+        settings.get('telegram_bot_token'),
+        settings.get('telegram_chat_id'),
+      ).sendMessage(message);
+    } catch (err) {
+      log.warn(`could not send a Telegram message: ${errorMessage(err)}`);
+    }
+  };
+
+  app.post('/settings/facebook/tokens', async (request, reply) => {
+    const body = request.body as { name?: string; token?: string };
+
+    let id: number;
+    try {
+      id = insertFbToken(body.name ?? '', body.token ?? '', encryptionKey);
+    } catch (err) {
+      return redirect(reply, '/settings/facebook', { kind: 'error', message: errorMessage(err) });
     }
 
-    const known = new Map(listFbPages().map((row) => [row.page_id, row]));
-    let added = 0;
-    let renamed = 0;
-
-    for (const page of discovered) {
-      const existing = known.get(page.id);
-      if (!existing) {
-        upsertFbPage({ pageId: page.id, name: page.name, autoPublish: false, enabled: true });
-        added++;
-        continue;
-      }
-
-      if (existing.name === page.name) continue;
-      upsertFbPage(
-        {
-          pageId: page.id,
-          name: page.name,
-          autoPublish: existing.auto_publish === 1,
-          enabled: existing.enabled === 1,
-        },
-        existing.id,
-      );
-      renamed++;
+    const name = listFbTokens().find((t) => t.id === id)?.name ?? 'Token';
+    const result = await syncToken(id, encryptionKey);
+    if (!result.ok) {
+      await tellTelegram(`<b>Facebook token failed</b>\n${name}\n${result.error}`);
     }
+    return redirect(reply, '/settings/facebook', describeSync(name, result));
+  });
 
-    const parts = [`${discovered.length} page(s) on the token`];
-    if (added) parts.push(`${added} added`);
-    if (renamed) parts.push(`${renamed} renamed`);
-    if (!added && !renamed) parts.push('nothing to change');
+  app.post('/settings/facebook/tokens/:id/refresh', async (request, reply) => {
+    const id = asNumber((request.params as { id: string }).id, 0);
+    const token = listFbTokens().find((t) => t.id === id);
+    if (!token) return reply.callNotFound();
 
+    const result = await syncToken(id, encryptionKey);
+    if (!result.ok) {
+      await tellTelegram(`<b>Facebook token failed</b>\n${token.name}\n${result.error}`);
+    }
+    return redirect(reply, '/settings/facebook', describeSync(token.name, result));
+  });
+
+  app.post('/settings/facebook/tokens/:id/delete', async (request, reply) => {
+    deleteFbToken(asNumber((request.params as { id: string }).id, 0));
     return redirect(reply, '/settings/facebook', {
       kind: 'ok',
-      message: `${parts.join(' — ')}. New pages arrive with auto-publish off.`,
+      message: 'Token and its pages removed.',
     });
   });
 
-  app.post('/settings/facebook/pages', async (request, reply) => {
-    const body = request.body as {
-      pageId?: string;
-      name?: string;
-      autoPublish?: string;
-    };
+  app.post('/settings/facebook/pages/:id', async (request, reply) => {
+    const id = asNumber((request.params as { id: string }).id, 0);
+    if (!getFbPage(id)) return reply.callNotFound();
 
-    try {
-      upsertFbPage({
-        pageId: body.pageId ?? '',
-        name: body.name ?? '',
-        autoPublish: body.autoPublish === '1',
-        enabled: true,
-      });
-    } catch (err) {
+    const body = request.body as { niche?: string; autoPublish?: string; enabled?: string };
+    const niche = (body.niche ?? '').trim();
+
+    // A niche no keyword has is a page that never fires, and it looks
+    // identical to a working one in the table. The field is a select, so
+    // this only catches a hand-made request -- and a keyword group renamed
+    // since the page was last saved.
+    if (niche !== '' && !keywordGroups().some((g) => g.toLowerCase() === niche.toLowerCase())) {
       return redirect(reply, '/settings/facebook', {
         kind: 'error',
-        message: errorMessage(err),
+        message: `No keyword has the niche “${niche}”, so nothing would ever go to this page.`,
       });
+    }
+
+    try {
+      setFbPageOptions(id, {
+        niche,
+        autoPublish: body.autoPublish === 'on',
+        enabled: body.enabled === 'on',
+      });
+    } catch (err) {
+      return redirect(reply, '/settings/facebook', { kind: 'error', message: errorMessage(err) });
     }
 
     return redirect(reply, '/settings/facebook', { kind: 'ok', message: 'Page saved.' });
-  });
-
-  app.post('/settings/facebook/pages/:id/delete', async (request, reply) => {
-    deleteFbPage(asNumber((request.params as { id: string }).id, 0));
-    return redirect(reply, '/settings/facebook', { kind: 'ok', message: 'Page removed.' });
-  });
-
-  app.post('/settings/facebook/routes', async (request, reply) => {
-    const body = request.body as {
-      siteId?: string;
-      seedKeyword?: string;
-      fbPageId?: string;
-    };
-
-    // A niche that matches no keyword is a route that can never fire, and it
-    // looks identical to a working one in the table. The form is a select now,
-    // so this only catches a hand-made request -- but this was the actual bug:
-    // the field was free text beside a datalist, a niche typed slightly wrong
-    // was accepted without a word, and the reel then reported no route at all.
-    const seedKeyword = (body.seedKeyword ?? '').trim();
-    if (seedKeyword !== '' && !keywordGroups().some((g) => g.toLowerCase() === seedKeyword.toLowerCase())) {
-      return redirect(reply, '/settings/facebook', {
-        kind: 'error',
-        message:
-          `No keyword has the niche “${seedKeyword}”, so a route for it would never ` +
-          'match. Pick one from the list, or choose Every niche.',
-      });
-    }
-
-    try {
-      upsertFbRoute({
-        siteId: body.siteId ? asNumber(body.siteId, 0) : null,
-        seedKeyword,
-        fbPageId: asNumber(body.fbPageId, 0),
-      });
-    } catch (err) {
-      return redirect(reply, '/settings/facebook', {
-        kind: 'error',
-        message: errorMessage(err),
-      });
-    }
-
-    return redirect(reply, '/settings/facebook', { kind: 'ok', message: 'Route saved.' });
-  });
-
-  app.post('/settings/facebook/routes/:id/delete', async (request, reply) => {
-    deleteFbRoute(asNumber((request.params as { id: string }).id, 0));
-    return redirect(reply, '/settings/facebook', { kind: 'ok', message: 'Route removed.' });
   });
 
   app.get('/keywords', async (request, reply) => {

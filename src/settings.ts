@@ -223,18 +223,7 @@ export const SETTING_SPECS: SettingSpec[] = [
     group: 'facebook',
     secret: false,
     default: 'false',
-  },
-  {
-    key: 'fb_system_token',
-    label: 'System user access token',
-    group: 'facebook',
-    secret: true,
-    default: '',
-    type: 'password',
-    help:
-      'From Business Settings → Users → System Users. Unlike a personal token ' +
-      'this one does not expire, and one token covers every page. It needs ' +
-      'pages_manage_posts, pages_read_engagement and pages_show_list.',
+    help: 'When on, every published article whose niche has a page becomes a reel on that page.',
   },
   {
     key: 'flow_video_model_key',
