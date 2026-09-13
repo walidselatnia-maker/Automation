@@ -282,6 +282,86 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`CREATE INDEX IF NOT EXISTS idx_reels_run ON reels (run_id);`);
     },
   },
+  {
+    id: '010-fb-tokens',
+    description: 'Tokens as rows, one niche per page; routes retired',
+    up(db) {
+      // A token per app. The single fb_system_token setting could reach only
+      // the pages one app was allowed to see, so a second app meant a second
+      // deployment. Encrypted with the platform key exactly as a secret
+      // setting is, which is what lets the stored setting move over as-is.
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS fb_tokens (
+          id              INTEGER PRIMARY KEY AUTOINCREMENT,
+          name            TEXT    NOT NULL DEFAULT '',
+          token_encrypted TEXT    NOT NULL,
+          last_synced_at  TEXT,
+          last_error      TEXT,
+          created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+        );
+      `);
+      addColumn(db, 'fb_pages', 'token_id', 'INTEGER REFERENCES fb_tokens (id) ON DELETE CASCADE');
+      // The niche a page carries. One page, one niche; the site the article
+      // was published on does not come into it. NULL is a page the platform
+      // can see but does not post to.
+      addColumn(db, 'fb_pages', 'niche', 'TEXT');
+      db.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_fb_pages_niche
+          ON fb_pages (niche COLLATE NOCASE) WHERE niche IS NOT NULL AND enabled = 1;
+      `);
+
+      if (hasTable(db, 'settings')) {
+        const stored = db
+          .prepare("SELECT value FROM settings WHERE key = 'fb_system_token' AND value != ''")
+          .get() as { value: string } | undefined;
+        const tokens = db.prepare('SELECT COUNT(*) AS n FROM fb_tokens').get() as { n: number };
+        if (stored && tokens.n === 0) {
+          db.prepare("INSERT INTO fb_tokens (name, token_encrypted) VALUES ('Imported', ?)").run(
+            stored.value,
+          );
+          db.prepare(
+            'UPDATE fb_pages SET token_id = (SELECT MAX(id) FROM fb_tokens) WHERE token_id IS NULL',
+          ).run();
+          log.info('moved the Facebook system token into fb_tokens');
+        }
+      }
+
+      if (!hasTable(db, 'fb_page_routes')) return;
+
+      // A route naming a niche and exactly one page, where that page was
+      // routed nothing else, becomes the page's niche. Two pages for one
+      // niche, or two niches on one page, is a question for a person: left
+      // blank, and said so in the log. The table itself stays -- this runner
+      // never drops one -- but nothing reads it after this.
+      const routes = db
+        .prepare("SELECT seed_keyword, fb_page_id FROM fb_page_routes WHERE seed_keyword != ''")
+        .all() as { seed_keyword: string; fb_page_id: number }[];
+      const pagesByNiche = new Map<string, Set<number>>();
+      const nichesByPage = new Map<number, Set<string>>();
+      for (const r of routes) {
+        const niche = r.seed_keyword.trim().toLowerCase();
+        if (!pagesByNiche.has(niche)) pagesByNiche.set(niche, new Set());
+        pagesByNiche.get(niche)!.add(r.fb_page_id);
+        if (!nichesByPage.has(r.fb_page_id)) nichesByPage.set(r.fb_page_id, new Set());
+        nichesByPage.get(r.fb_page_id)!.add(niche);
+      }
+
+      const assign = db.prepare('UPDATE fb_pages SET niche = ? WHERE id = ? AND niche IS NULL');
+      for (const [niche, pages] of pagesByNiche) {
+        if (pages.size !== 1) {
+          log.warn(`niche "${niche}" was routed to ${pages.size} pages; left for you to assign`);
+          continue;
+        }
+        const [pageId] = pages;
+        if (nichesByPage.get(pageId!)!.size !== 1) {
+          log.warn(`page ${pageId} was routed several niches; left for you to assign`);
+          continue;
+        }
+        const original = routes.find((r) => r.fb_page_id === pageId)!.seed_keyword.trim();
+        assign.run(original, pageId!);
+      }
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */
