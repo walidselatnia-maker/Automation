@@ -83,6 +83,7 @@ async def image_model_catalogue() -> dict:
     return {
         "models": image_models.catalogue(),
         "discovered": image_models.discovery_done(),
+        "scan": image_models.discovery_report(),
     }
 
 
