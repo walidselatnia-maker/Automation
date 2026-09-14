@@ -248,6 +248,31 @@ def test_a_bad_request_is_still_not_worth_retrying():
         assert not any(marker in error.lower() for marker in processor.RETRYABLE)
 
 
+# --- Reloading only as a recovery ------------------------------------------
+# The Flow tab used to be reloaded before every job. That was for the bearer
+# token, which the REST path needed fresh and which the batch path does not
+# use at all -- the page signs its own requests. What the reload still did was
+# make every image look like: fresh page, captcha within seconds, request.
+# Four times an article. So on the batch path the reload is what a retry gets,
+# because a retry means Google refused the session as it was, and nothing
+# else.
+
+def test_a_first_attempt_on_the_batch_path_does_not_reload(monkeypatch):
+    monkeypatch.setattr(processor, "IMAGE_USE_BATCH", True)
+    # claim_pending has already counted the attempt, so 1 is the first try.
+    assert processor.WorkerController().reload_before([{"attempts": 1}]) is False
+
+
+def test_a_retry_on_the_batch_path_reloads_first(monkeypatch):
+    monkeypatch.setattr(processor, "IMAGE_USE_BATCH", True)
+    assert processor.WorkerController().reload_before([{"attempts": 1}, {"attempts": 2}]) is True
+
+
+def test_the_rest_path_still_reloads_every_time(monkeypatch):
+    monkeypatch.setattr(processor, "IMAGE_USE_BATCH", False)
+    assert processor.WorkerController().reload_before([{"attempts": 1}]) is True
+
+
 # --- Refreshing before a batch -------------------------------------------
 
 class _FakeFlowClient:

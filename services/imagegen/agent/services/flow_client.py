@@ -479,19 +479,28 @@ class FlowClient:
     # vendored from Flow Kit unchanged.
 
     async def batch_rpc(self, rpcid: str, freq: str, captcha_action: str = None,
-                        match: str = None, timeout: float = 180) -> dict:
-        """Run one batchexecute RPC in the Flow tab and return the raw text."""
+                        match: str = None, timeout: float = 180,
+                        project_id: str = "") -> dict:
+        """Run one batchexecute RPC in the Flow tab and return the raw text.
+
+        `project_id` is where the tab should be while it runs. The captcha is
+        minted on a project page, and naming the project lets the extension
+        open the tab there directly instead of on the home page and then
+        hunting for a link to any project.
+        """
         return await self._send("batch_rpc", {
             "rpcid": rpcid,
             "freq": freq,
             "captchaAction": captcha_action,
             "match": match,
+            "projectId": project_id or None,
         }, timeout=timeout)
 
     async def _batch_payload(self, rpcid: str, freq: str, captcha_action: str = None,
-                             timeout: float = 180):
+                             timeout: float = 180, project_id: str = ""):
         """The decoded payload of one RPC, or an {"error": ...} dict."""
-        result = await self.batch_rpc(rpcid, freq, captcha_action, timeout=timeout)
+        result = await self.batch_rpc(rpcid, freq, captcha_action, timeout=timeout,
+                                      project_id=project_id)
         if result.get("error"):
             return {"error": result["error"]}
 
@@ -541,7 +550,7 @@ class FlowClient:
             or fb.IMAGE_MODEL,
         )
         out = await self._batch_payload(
-            fb.RPC_GEN_IMAGE, freq, fb.CAPTCHA_IMAGE, timeout=180)
+            fb.RPC_GEN_IMAGE, freq, fb.CAPTCHA_IMAGE, timeout=180, project_id=project_id)
         if "error" in out:
             return out
         try:

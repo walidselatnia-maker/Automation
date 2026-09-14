@@ -93,3 +93,38 @@ def test_the_routes_need_no_api_key(packed):
     # the exposure is that the CRX is the same extension code already in the
     # image, and the port has no route in from outside the Docker network.
     assert build(packed).get("/ext/update.xml").status_code == 200
+
+
+# --- Where Chrome lands when it starts ------------------------------------
+# Chrome is started for a queued job. It used to open the Flow home page and
+# the extension then went looking for a project link to move to -- two page
+# loads and a navigation before any work. The extension now asks this route
+# on startup and goes straight to the queued job's project.
+
+def test_chrome_lands_on_the_queued_jobs_project(packed, monkeypatch):
+    from agent.api import ext_host
+
+    async def next_project():
+        return "abc-123"
+
+    # build() reloads the module, so the patch goes on afterwards.
+    client = build(packed)
+    monkeypatch.setattr(ext_host, "next_project_id", next_project)
+    monkeypatch.setattr(ext_host, "FLOW_PROJECT_ID", "")
+    body = client.get("/ext/landing").json()
+    assert body == {"url": "https://flow.google.com/project/abc-123"}
+
+
+def test_chrome_lands_on_home_when_nothing_is_queued(packed, monkeypatch):
+    # Someone starting Chrome from the Browser page to sign in gets the page
+    # they expect, exactly as before.
+    from agent.api import ext_host
+
+    async def next_project():
+        return ""
+
+    client = build(packed)
+    monkeypatch.setattr(ext_host, "next_project_id", next_project)
+    monkeypatch.setattr(ext_host, "FLOW_PROJECT_ID", "")
+    body = client.get("/ext/landing").json()
+    assert body == {"url": "https://flow.google.com/"}

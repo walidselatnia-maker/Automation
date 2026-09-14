@@ -18,6 +18,9 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, PlainTextResponse
 
+from agent.config import FLOW_PROJECT_ID
+from agent.db.jobs import next_project_id
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/ext", tags=["ext"])
@@ -50,3 +53,23 @@ async def crx():
         media_type="application/x-chrome-extension",
         filename="flowkit.crx",
     )
+
+
+FLOW_HOME = "https://flow.google.com/"
+
+
+@router.get("/landing")
+async def landing() -> dict:
+    """Where a freshly started Chrome should open.
+
+    Chrome is started because a job is queued, and the extension asks this on
+    startup. Answering with that job's project page means the first page
+    Google sees is the one the work needs -- one load, no visit to the home
+    page and no navigation from it. With nothing queued (someone opened the
+    Browser page to sign in) it is the home page, as it always was.
+
+    Unauthenticated for the same reason as the CRX route: the caller is the
+    Chrome beside us, which cannot carry the key.
+    """
+    project = await next_project_id() or FLOW_PROJECT_ID
+    return {"url": f"{FLOW_HOME}project/{project}" if project else FLOW_HOME}

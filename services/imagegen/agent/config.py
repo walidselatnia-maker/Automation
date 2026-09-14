@@ -37,10 +37,15 @@ API_COOLDOWN = int(os.environ.get("API_COOLDOWN", "10"))
 MAX_CONCURRENT_REQUESTS = int(os.environ.get("MAX_CONCURRENT_REQUESTS", "2"))
 STALE_PROCESSING_TIMEOUT = int(os.environ.get("STALE_PROCESSING_TIMEOUT", "600"))
 
-# Reload the Flow tab before generation starts, every time. 0 means no age
-# check: the refresh is a step of the sequence, not a thing that happens when
-# some timer says the token looks old. Set a number of seconds only if you
-# want the reload skipped for a token captured that recently.
+# How old a captured bearer may be before the Flow tab is reloaded for a
+# fresh one. 0 means always reload when a reload is due.
+#
+# When one is due depends on the transport. The REST path carries that bearer
+# and reloads before every batch. The batch path carries none -- the page
+# signs its own requests -- so it reloads only before a retry, as the remedy
+# for a session Google refused; a routine reload there made every image look
+# like a fresh page, a captcha seconds later and a request, four times an
+# article. See WorkerController.reload_before.
 TOKEN_MAX_AGE_BEFORE_BATCH = int(os.environ.get("TOKEN_MAX_AGE_BEFORE_BATCH", "0"))
 
 # Send images over Flow's batchexecute transport instead of the REST API.

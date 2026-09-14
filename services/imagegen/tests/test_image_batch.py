@@ -72,6 +72,16 @@ def test_an_image_goes_out_as_a_batch_rpc_not_a_rest_call():
     assert "url" not in sent
 
 
+def test_the_image_submit_names_its_project_so_the_tab_can_land_on_it():
+    # The extension opens the Flow tab on this project's page directly, rather
+    # than on the home page and then hunting for a project link.
+    client, sent = client_with(image_reply())
+
+    asyncio.run(client.generate_images_batch("soup", "PROJ-1"))
+
+    assert sent["projectId"] == "PROJ-1"
+
+
 def test_the_image_submit_asks_for_the_image_captcha():
     client, sent = client_with(image_reply())
 

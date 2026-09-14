@@ -135,8 +135,40 @@ function ensureHydrated() {
 // Runs on every service-worker revival, not only on install/startup.
 ensureHydrated();
 
+// Chrome starts on about:blank and is pointed at the right page from here,
+// because the right page depends on why it was started. For a queued job that
+// is the job's project -- the agent says which -- so the first page Google
+// sees is the one the work needs, rather than the home page followed by a
+// navigation away from it. With nothing queued it is the home page, which is
+// what someone opening the Browser page to sign in expects.
+const AGENT_LANDING_URL = 'http://127.0.0.1:8100/ext/landing';
+
+async function landWhereTheWorkIs() {
+  let url = FLOW_HOME;
+  try {
+    const resp = await fetch(AGENT_LANDING_URL);
+    if (resp.ok) url = (await resp.json())?.url || FLOW_HOME;
+  } catch (e) {
+    console.warn('[FlowAgent] Could not ask the agent where to land:', e?.message);
+  }
+
+  // Only a tab that is nowhere yet. A Flow tab already on a project is left
+  // alone -- this runs on install and startup, never on a page mid-use.
+  const tabs = await chrome.tabs.query({});
+  const blank = tabs.find((t) => !t.url || t.url === 'about:blank' || t.url === 'chrome://newtab/');
+  const home = tabs.find((t) => isFlowUrl(t.url) && !(t.url || '').includes('/project/'));
+  const tab = blank || home;
+  if (!tab) return;
+  if ((tab.url || '') === url) return;
+
+  console.log('[FlowAgent] Landing on ' + url);
+  recordTabEvent('landed', 'startup', { url });
+  await chrome.tabs.update(tab.id, { url }).catch(() => {});
+}
+
 async function init() {
   await ensureHydrated();
+  await landWhereTheWorkIs();
   connectToAgent();
   chrome.alarms.create('keepAlive', { periodInMinutes: 0.4 });
   // One minute is the floor Chrome enforces for a repeating alarm; the idle
@@ -826,9 +858,48 @@ async function findProjectUrl(tabId) {
   return null;
 }
 
-async function ensureFlowTabOnProject() {
+const projectUrl = (projectId) => `${FLOW_HOME}project/${projectId}`;
+
+/**
+ * Go to the job's own project when it names one.
+ *
+ * Directly, by id, rather than via a link on the home page: that is one page
+ * load instead of two and a navigation, and the tab then sits where the work
+ * is. The trap this once fell into is still there -- an id the account cannot
+ * open lands on Flow's 404, which issues no requests and has no reCAPTCHA --
+ * so a 404 is not the end: the tab goes back to the list and the link hunt
+ * below takes over, exactly as it did before ids were trusted at all.
+ *
+ * Returns true when the tab is on the named project.
+ */
+async function goToProject(tab, projectId) {
+  const target = projectUrl(projectId);
+  if ((tab.url || '').startsWith(target)) return true;
+
+  console.log(`[FlowAgent] Moving to the job's project page: ${target}`);
+  const settled = waitForTabLoad(tab.id, 20000);
+  await chrome.tabs.update(tab.id, { url: target });
+  await settled.catch((e) =>
+    console.warn('[FlowAgent] Project page did not finish loading:', e.message),
+  );
+
+  const after = await chrome.tabs.get(tab.id).catch(() => null);
+  if (after && !isDeadProjectPage(after.url)) return true;
+
+  console.warn(
+    `[FlowAgent] Project ${projectId} is not one this account can open (Flow 404); ` +
+      'returning to the project list to find one that is',
+  );
+  const back = waitForTabLoad(tab.id, 20000);
+  await chrome.tabs.update(tab.id, { url: FLOW_HOME });
+  await back.catch(() => {});
+  return false;
+}
+
+async function ensureFlowTabOnProject(projectId = null) {
   const tab = (await queryFlowTabs())[0];
   if (!tab) return;
+  if (projectId && (await goToProject(tab, projectId))) return;
   if ((tab.url || '').includes('/project/')) return;
 
   const url = await findProjectUrl(tab.id);
@@ -1310,11 +1381,17 @@ async function runBatchRpc(cmd) {
   let candidate = tabs.find((t) => !t.discarded) || tabs[0];
 
   if (!candidate) {
-    // No Flow tab. Open one and let the app boot -- WIZ_global_data is not on
-    // the page immediately, and without it `at` comes back empty.
+    // No Flow tab. Open one -- on the job's project when it names one, so the
+    // first page Google sees is the one the work needs -- and let the app
+    // boot: WIZ_global_data is not on the page immediately, and without it
+    // `at` comes back empty.
     try {
-      await chrome.tabs.create({ url: FLOW_HOME, active: false });
-      await sleep(5000);
+      const created = await chrome.tabs.create({
+        url: cmd.projectId ? projectUrl(cmd.projectId) : FLOW_HOME,
+        active: false,
+      });
+      await waitForTabLoad(created.id, 20000).catch(() => {});
+      await sleep(1500);
       const fresh = await queryFlowTabs();
       candidate = fresh.find((t) => !t.discarded) || fresh[0];
     } catch (e) {
@@ -1333,7 +1410,7 @@ async function runBatchRpc(cmd) {
     // asking for a token; the batch path was written without it and every
     // captcha it asked for failed. Both transports need it for the same reason:
     // the captcha is minted by the page, so the page has to be one that has it.
-    await ensureFlowTabOnProject();
+    await ensureFlowTabOnProject(cmd.projectId);
 
     const solved = await solveCaptcha(cmd.id, cmd.captchaAction);
     if (!solved?.token) return { error: `CAPTCHA_FAILED: ${solved?.error || 'no token'}` };
@@ -1545,7 +1622,7 @@ async function discoverImageModels({ known = [] }) {
 
 async function handleBatchRpc(msg) {
   const { id, params } = msg;
-  const { rpcid, freq, captchaAction, match } = params || {};
+  const { rpcid, freq, captchaAction, match, projectId } = params || {};
 
   if (!rpcid || !freq) {
     sendToAgent({ id, status: 400, error: 'INVALID_BATCH_RPC' });
@@ -1570,7 +1647,7 @@ async function handleBatchRpc(msg) {
   }
 
   try {
-    const cmd = { id, rpcid, freq, captchaAction, match };
+    const cmd = { id, rpcid, freq, captchaAction, match, projectId: projectId || null };
     const out = captchaAction
       ? await takeCaptchaTurn(() => runBatchRpc(cmd))
       : await runBatchRpc(cmd);
