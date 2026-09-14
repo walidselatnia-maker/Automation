@@ -104,6 +104,33 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 // same promise before reading flowKey closes the race where a request arrives
 // mid-hydration.
 
+// The account segment Flow puts in its URLs: '' or 'u/N/'.
+//
+// https://flow.google.com/project/<id> belongs to the profile's default Google
+// account; https://flow.google.com/u/4/project/<id> to its fifth. Which one
+// depends on how many accounts are signed in to this Chrome, so it differs
+// per installation and cannot be configured once. It is learned from any Flow
+// URL the tab lands on and kept in storage, so a project URL built here goes
+// to the account that owns the project rather than to account 0.
+let flowPathPrefix = '';
+
+function rememberFlowPrefix(url) {
+  const m = /^https:\/\/flow\.google\.com\/(u\/\d+\/)?(project\/)?/.exec(url || '');
+  if (!m) return;
+  const seen = m[1] || '';
+  // A bare /project/ URL is authoritative for 'no prefix'; a bare home URL is
+  // not, since Google may still be about to redirect it to /u/N/.
+  if (!seen && !m[2]) return;
+  if (seen === flowPathPrefix) return;
+  flowPathPrefix = seen;
+  chrome.storage.local.set({ flowPathPrefix });
+  console.log(`[FlowAgent] Flow account path is now '${seen || '(default account)'}'`);
+}
+
+chrome.tabs.onUpdated.addListener((_tabId, change) => {
+  if (change.url) rememberFlowPrefix(change.url);
+});
+
 let _hydration = null;
 let _hydratedAt = null;
 const _workerStartedAt = Date.now();
@@ -111,8 +138,10 @@ const _workerStartedAt = Date.now();
 async function reloadFromStorage() {
   const data = await chrome.storage.local.get([
     'flowKey', 'metrics', 'callbackSecret', 'accounts', 'currentAuthUser', 'autoRotate',
+    'flowPathPrefix',
   ]);
   if (data.flowKey) flowKey = data.flowKey;
+  if (typeof data.flowPathPrefix === 'string') flowPathPrefix = data.flowPathPrefix;
   if (data.metrics) Object.assign(metrics, data.metrics);
   if (data.callbackSecret) callbackSecret = data.callbackSecret;
   if (data.accounts) accounts = data.accounts;
@@ -151,6 +180,9 @@ async function landWhereTheWorkIs() {
   } catch (e) {
     console.warn('[FlowAgent] Could not ask the agent where to land:', e?.message);
   }
+  // The agent knows the project, not the account; the account segment is ours.
+  const project = /^https:\/\/flow\.google\.com\/project\/(.+)$/.exec(url);
+  if (project) url = projectUrl(project[1]);
 
   // Only a tab that is nowhere yet. A Flow tab already on a project is left
   // alone -- this runs on install and startup, never on a page mid-use.
@@ -858,7 +890,8 @@ async function findProjectUrl(tabId) {
   return null;
 }
 
-const projectUrl = (projectId) => `${FLOW_HOME}project/${projectId}`;
+const projectUrl = (projectId) => `${FLOW_HOME}${flowPathPrefix}project/${projectId}`;
+const isOnProject = (url, projectId) => (url || '').includes(`/project/${projectId}`);
 
 /**
  * Go to the job's own project when it names one.
@@ -873,8 +906,9 @@ const projectUrl = (projectId) => `${FLOW_HOME}project/${projectId}`;
  * Returns true when the tab is on the named project.
  */
 async function goToProject(tab, projectId) {
+  rememberFlowPrefix(tab.url);
+  if (isOnProject(tab.url, projectId)) return true;
   const target = projectUrl(projectId);
-  if ((tab.url || '').startsWith(target)) return true;
 
   console.log(`[FlowAgent] Moving to the job's project page: ${target}`);
   const settled = waitForTabLoad(tab.id, 20000);
@@ -884,6 +918,7 @@ async function goToProject(tab, projectId) {
   );
 
   const after = await chrome.tabs.get(tab.id).catch(() => null);
+  if (after) rememberFlowPrefix(after.url);
   if (after && !isDeadProjectPage(after.url)) return true;
 
   console.warn(
