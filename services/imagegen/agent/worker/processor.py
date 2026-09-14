@@ -51,10 +51,16 @@ ASPECT_RATIOS = {
 # API_COOLDOWN — by which point the reload has produced a token. Without it a
 # whole queue died on attempt one of five every time the hour rolled over, and
 # the only cure anyone had was refreshing the tab by hand.
+# "injection" covers the request being cut off inside the Flow tab before
+# Google answered -- the extension injects the fetch into the page, and a page
+# still coming back from the reload we asked for, or navigating under it,
+# throws it away. That is a timeout by another name and was failing jobs on
+# attempt one of five; the next attempt lands on a tab that has settled.
 RETRYABLE = ("quota", "rate_limit", "exhausted", "resource_exhausted", "429",
              "no_flow_key", "not connected", "timeout", "503",
              "recaptcha", "captcha_timeout",
-             "http 401", "api_401", "unauthenticated", "invalid authentication")
+             "http 401", "api_401", "unauthenticated", "invalid authentication",
+             "no_injection_result", "injection_failed")
 
 
 class WorkerController:

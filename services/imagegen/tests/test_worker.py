@@ -223,6 +223,24 @@ def test_an_expired_token_is_worth_another_attempt(error):
     assert any(marker in error.lower() for marker in processor.RETRYABLE)
 
 
+# --- The request never reaching Google -----------------------------------
+# The extension runs a generation inside the Flow tab, and that fetch can be
+# cut off before Google answers: the tab is still coming back from the reload
+# the worker asked for, or navigates under it. That is a transport failure of
+# the same kind as a timeout, and it used to fail the job on attempt one of
+# five -- which is how a run died at the third image of four.
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        "NO_INJECTION_RESULT",
+        "INJECTION_FAILED: TypeError: Failed to fetch (https://labs.google/fx/tools/flow/project/x)",
+    ],
+)
+def test_a_request_cut_off_inside_the_tab_is_worth_another_attempt(error):
+    assert any(marker in error.lower() for marker in processor.RETRYABLE)
+
+
 def test_a_bad_request_is_still_not_worth_retrying():
     # The guard against widening RETRYABLE into "retry everything": a 400 fails
     # identically on every attempt and retrying it only burns quota faster.

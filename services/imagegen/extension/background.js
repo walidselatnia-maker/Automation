@@ -1357,30 +1357,51 @@ async function runBatchRpc(cmd) {
         `&f.sid=${encodeURIComponent(sid || '')}&bl=${encodeURIComponent(bl || '')}` +
         `&hl=en-AU&_reqid=${reqid}&rt=c`;
 
-      const resp = await fetch(url, {
-        method: 'POST',
-        credentials: 'include',
-        headers: {
-          'content-type': 'application/x-www-form-urlencoded;charset=UTF-8',
-          'x-same-domain': '1',
-        },
-        body: new URLSearchParams({ 'f.req': freqStr, at }),
-      });
+      // Caught here, in the page, because a rejection from an injected
+      // function does not travel: executeScript answers with no result and
+      // the error is gone. That was every "NO_INJECTION_RESULT" -- a fetch
+      // cut off by the page navigating or reloading under it, reported as
+      // nothing at all. The message names what happened and where the tab
+      // was, which is what it takes to tell those apart.
+      try {
+        const resp = await fetch(url, {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            'content-type': 'application/x-www-form-urlencoded;charset=UTF-8',
+            'x-same-domain': '1',
+          },
+          body: new URLSearchParams({ 'f.req': freqStr, at }),
+        });
 
-      const text = await resp.text();
-      if (match) {
-        const found = text.indexOf(match);
+        const text = await resp.text();
+        if (match) {
+          const found = text.indexOf(match);
+          return {
+            status: resp.status,
+            matched: found !== -1,
+            text: found === -1 ? '' : text.slice(found, found + 800),
+          };
+        }
+        return { status: resp.status, text: text.slice(0, maxText) };
+      } catch (e) {
         return {
-          status: resp.status,
-          matched: found !== -1,
-          text: found === -1 ? '' : text.slice(found, found + 800),
+          error: `INJECTION_FAILED: ${e?.name || 'Error'}: ${e?.message || String(e)} ` +
+            `(${location.href})`,
         };
       }
-      return { status: resp.status, text: text.slice(0, maxText) };
     },
   });
 
-  return injected?.result || { error: 'NO_INJECTION_RESULT' };
+  if (injected?.result) return injected.result;
+
+  // Nothing came back and the function above did not catch it: the frame
+  // itself went away mid-call (a discard, a close), or a newer Chrome put the
+  // reason on the injection result. Say which, rather than the bare code.
+  const detail = injected?.error?.message || injected?.error || 'the tab returned nothing';
+  const where = await chrome.tabs.get(tab.id).then((t) => t?.url).catch(() => 'tab gone');
+  console.warn('[FlowAgent] batch RPC returned no result:', detail, where);
+  return { error: `NO_INJECTION_RESULT: ${detail} (${where})` };
 }
 
 // One captcha at a time, whatever the worker sends.

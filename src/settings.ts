@@ -163,6 +163,19 @@ export const SETTING_SPECS: SettingSpec[] = [
     default: 'auto',
   },
   {
+    key: 'image_gap_seconds',
+    label: 'Pause between images (seconds)',
+    group: 'images',
+    secret: false,
+    default: '30',
+    type: 'number',
+    help:
+      'How long to wait after one image finishes before asking for the next. ' +
+      'The image service reloads its browser tab before every generation, and ' +
+      'four requests fired back to back at it is what produced runs failing at ' +
+      'the third or fourth image. 0 sends them as fast as they come back.',
+  },
+  {
     key: 'image_poll_interval_seconds',
     label: 'Image poll interval (seconds)',
     group: 'images',

@@ -14,11 +14,28 @@ import {
   upsertSite,
   type SharedImageUrls,
 } from '../src/db/repos.js';
-import { generateArticleImages } from '../src/pipeline/steps/images.js';
+import {
+  ARTICLE_IMAGE_STEPS,
+  generateArticleImages,
+  type ArticleImageUploads,
+} from '../src/pipeline/steps/images.js';
 import type { PipelineContext } from '../src/pipeline/context.js';
 import type { ImagePromptSet } from '../src/pipeline/steps/content.js';
 
 const KEY = randomBytes(32);
+
+/**
+ * Drive the image steps the way the pipeline does: one step per image, then
+ * the collector. Straight through the steps' `run`, without the engine, so
+ * there is no database and no checkpoint in the way of what is being tested.
+ */
+async function runImages(ctx: PipelineContext, prompts: ImagePromptSet) {
+  const uploads = {} as ArticleImageUploads;
+  for (const step of ARTICLE_IMAGE_STEPS) {
+    uploads[step.slot] = await step.run(ctx, prompts[step.slot]);
+  }
+  return generateArticleImages.run(ctx, uploads);
+}
 
 const seedSite = (domain: string): number =>
   upsertSite(
@@ -105,7 +122,7 @@ describe('shared article image storage', () => {
       seed_keyword: 'beef stew',
     };
 
-    await generateArticleImages.run(ctx, PROMPTS);
+    await runImages(ctx, PROMPTS);
 
     expect(rec.generated).toHaveLength(4);
     expect(rec.downloaded).toHaveLength(0);
@@ -229,6 +246,8 @@ function fakeContext(
     shareImages?: boolean;
     cached?: SharedImageUrls;
     downloadFails?: boolean;
+    /** One cached url that no longer answers, while the rest still do. */
+    deadUrl?: string;
   } = {},
 ): { ctx: PipelineContext; rec: Recorder } {
   const rec: Recorder = {
@@ -239,6 +258,9 @@ function fakeContext(
     imagesCounted: 0,
   };
   let counter = 0;
+  // The store forgets on clear, as the real one does: the steps after a dead
+  // link have to see no cache, and the collector has to see something to save.
+  let cache = options.cached;
 
   const ctx = {
     // The engine reads this back per step for the usage figures. Counted here
@@ -247,15 +269,23 @@ function fakeContext(
     countImages: (n: number) => {
       rec.imagesCounted += n;
     },
+    // No pause between generations here; the gap has its own tests.
+    imageGapMs: 0,
+    lastImageGeneratedAt: null,
+    now: () => 0,
+    pause: async () => {},
     keyword: { id: 1, seed_keyword: 'chicken' },
     site: { id: 7, domain: 'bitespoon.com' },
     projectId: { projectId: 'proj-1', source: 'site' as const },
     shareImages: options.shareImages ?? false,
     sharedImages: {
-      get: () => options.cached,
+      get: () => cache,
       save: (keywordId: number, siteId: number, urls: SharedImageUrls) =>
         rec.saved.push({ keywordId, siteId, urls }),
-      clear: (keywordId: number) => rec.cleared.push(keywordId),
+      clear: (keywordId: number) => {
+        cache = undefined;
+        rec.cleared.push(keywordId);
+      },
     },
     images: {
       generate: async (prompt: string) => {
@@ -264,6 +294,7 @@ function fakeContext(
       },
       download: async (url: string) => {
         if (options.downloadFails) throw new Error('HTTP 404');
+        if (options.deadUrl === url) throw new Error('HTTP 404');
         rec.downloaded.push(url);
         return { data: Buffer.from('img'), contentType: 'image/webp' };
       },
@@ -295,7 +326,7 @@ describe('generateArticleImages sharing behaviour', () => {
   it('generates all four when sharing is off', async () => {
     const { ctx, rec } = fakeContext({ shareImages: false });
 
-    await generateArticleImages.run(ctx, PROMPTS);
+    await runImages(ctx, PROMPTS);
 
     expect(rec.generated).toHaveLength(4);
     expect(rec.downloaded).toHaveLength(0);
@@ -304,7 +335,7 @@ describe('generateArticleImages sharing behaviour', () => {
   it('records nothing when sharing is off, so it does not seed other sites', async () => {
     const { ctx, rec } = fakeContext({ shareImages: false });
 
-    await generateArticleImages.run(ctx, PROMPTS);
+    await runImages(ctx, PROMPTS);
 
     expect(rec.saved).toHaveLength(0);
   });
@@ -312,7 +343,7 @@ describe('generateArticleImages sharing behaviour', () => {
   it('ignores a warm cache when sharing is off for this link', async () => {
     const { ctx, rec } = fakeContext({ shareImages: false, cached: CACHED });
 
-    await generateArticleImages.run(ctx, PROMPTS);
+    await runImages(ctx, PROMPTS);
 
     expect(rec.generated).toHaveLength(4);
     expect(rec.downloaded).toHaveLength(0);
@@ -321,7 +352,7 @@ describe('generateArticleImages sharing behaviour', () => {
   it('records the four absolute urls when sharing is on and the cache is empty', async () => {
     const { ctx, rec } = fakeContext({ shareImages: true });
 
-    await generateArticleImages.run(ctx, PROMPTS);
+    await runImages(ctx, PROMPTS);
 
     expect(rec.generated).toHaveLength(4);
     expect(rec.saved).toHaveLength(1);
@@ -340,7 +371,7 @@ describe('generateArticleImages sharing behaviour', () => {
   it('downloads instead of generating when the cache is warm', async () => {
     const { ctx, rec } = fakeContext({ shareImages: true, cached: CACHED });
 
-    const result = await generateArticleImages.run(ctx, PROMPTS);
+    const result = await runImages(ctx, PROMPTS);
 
     expect(rec.generated).toHaveLength(0);
     expect(rec.downloaded).toEqual(Object.values(CACHED));
@@ -351,7 +382,7 @@ describe('generateArticleImages sharing behaviour', () => {
   it('returns this site own paths, never the source site urls', async () => {
     const { ctx } = fakeContext({ shareImages: true, cached: CACHED });
 
-    const result = await generateArticleImages.run(ctx, PROMPTS);
+    const result = await runImages(ctx, PROMPTS);
 
     for (const path of Object.values(result)) {
       expect(path.startsWith('/uploads/recipes/')).toBe(true);
@@ -365,7 +396,7 @@ describe('generateArticleImages sharing behaviour', () => {
       downloadFails: true,
     });
 
-    const result = await generateArticleImages.run(ctx, PROMPTS);
+    const result = await runImages(ctx, PROMPTS);
 
     expect(rec.cleared).toEqual([1]);
     expect(rec.generated).toHaveLength(4);
@@ -379,9 +410,28 @@ describe('generateArticleImages sharing behaviour', () => {
       downloadFails: true,
     });
 
-    await generateArticleImages.run(ctx, PROMPTS);
+    await runImages(ctx, PROMPTS);
 
     expect(rec.saved).toHaveLength(1);
     expect(rec.saved[0]!.urls.feature).toBe('https://bitespoon.com/uploads/recipes/1.webp');
+  });
+
+  it('regenerates only the image whose cached url is dead, and keeps the copies', async () => {
+    const { ctx, rec } = fakeContext({
+      shareImages: true,
+      cached: CACHED,
+      deadUrl: CACHED.textureMacro,
+    });
+
+    await runImages(ctx, PROMPTS);
+
+    // The first two copied before the dead link was found; the third is
+    // generated; and with the row gone, the fourth is generated too.
+    expect(rec.downloaded).toEqual([CACHED.feature, CACHED.topShot]);
+    expect(rec.generated).toEqual([PROMPTS.textureMacro, PROMPTS.beforeAfter]);
+    expect(rec.cleared).toEqual([1]);
+    // What this site now holds -- copied and generated alike -- is the set
+    // the next site copies.
+    expect(rec.saved).toHaveLength(1);
   });
 });
