@@ -371,7 +371,10 @@ export function buildServer(
     reply.type('text/html; charset=utf-8').send(
       layout({
         title,
-        active,
+        // The real path, so the rail picks the section and the tab picks the
+        // page. `active` is what the route thinks it is, and every settings
+        // page says '/settings'; the URL knows better.
+        active: reply.request.url.split('?')[0] || active,
         body,
         flash,
         automationOn: settings.getBool('automation_enabled'),

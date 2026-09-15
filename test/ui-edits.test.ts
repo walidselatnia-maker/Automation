@@ -95,16 +95,28 @@ describe('web UI after the layout changes', () => {
       expect(response.body).toContain('target="_blank"');
     });
 
-    it('no longer lists prompts, decisions or the browser in the rail', async () => {
+    it('lists the five sections in the rail, and nothing else', async () => {
+      // Pages are not in the rail: they are tabs inside their section. A rail
+      // that listed pages by table -- Sites, Keywords, Runs, Events -- left a
+      // new person not knowing where to start.
       const response = await get('/');
       const rail = response.body.slice(
         response.body.indexOf('<nav>'),
         response.body.indexOf('</nav>'),
       );
-      expect(rail).not.toContain('/settings/prompts');
-      expect(rail).not.toContain('/decisions');
-      expect(rail).not.toContain('/browser');
-      expect(rail).toContain('/keywords');
+      const links = [...rail.matchAll(/href="([^"]+)"/g)].map((m) => m[1]);
+      expect(links).toEqual(['/', '/runs', '/sites', '/decisions', '/settings']);
+    });
+
+    it('shows a section's pages as tabs, with the current one marked', async () => {
+      const response = await get('/settings/prompts');
+      const tabs = response.body.slice(
+        response.body.indexOf('<nav class="subnav"'),
+        response.body.indexOf('</nav>', response.body.indexOf('<nav class="subnav"')),
+      );
+      expect(tabs).toContain('href="/settings/keys"');
+      expect(tabs).toMatch(/href="\/settings\/prompts" class="active"/);
+      expect(tabs).not.toContain('href="/sites"');
     });
 
     it('sends the old decisions URL to the dashboard section', async () => {
