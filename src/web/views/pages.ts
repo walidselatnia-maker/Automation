@@ -313,7 +313,10 @@ export function runsPage(runs: RunListRow[], page: number, total: number): Html 
   const pages = Math.max(1, Math.ceil(total / 50));
   return html`
     <h1>Articles</h1>
-    <p class="subtitle">${total} run(s) recorded.</p>
+    <p class="subtitle">
+      ${total} article(s) so far. Open one to see every step, what it cost, and
+      why it failed if it did.
+    </p>
     <div class="card table-wrap">
       ${runs.length === 0 ? emptyState('No runs yet.') : runTable(runs)}
     </div>
@@ -643,8 +646,9 @@ export function sitesPage(
   return html`
     <h1>Sites</h1>
     <p class="subtitle">
-      Daily counts and last-publish times are computed from the run history, not stored, so
-      they can never drift out of step with reality.
+      Every website you publish to. Each one has its own daily target, gap between
+      posts, and tokens. "Can run now?" says whether the platform would pick it at
+      this moment, and why not if it would not.
     </p>
 
     ${sites.length === 0
@@ -1062,24 +1066,28 @@ function siteForm(site: SiteRow | null): Html {
           'api_token',
           'Site API token',
           site?.api_token_encrypted ?? '',
-          'Bearer token for the /api/recipe, /api/upload and /api/categories endpoints on this domain.',
+          "The token that lets the platform post articles and upload images to this website. From the site's own admin.",
         )}
         ${secretField(
           'buffer_token',
           'Buffer API token',
           site?.buffer_token_encrypted ?? '',
-          'The Buffer account belonging to this site. Its channel is resolved automatically.',
+          "The Buffer account that schedules this site's Pinterest pins. The Pinterest channel is found automatically.",
         )}
       </div>
       <div class="field-row">
         <div class="field">
           <label>Pinterest username</label>
           <input type="text" name="pin_username" value="${site?.pin_username ?? ''}" />
-          <div class="help">Used to pick the right Buffer channel when there is more than one.</div>
+          <div class="help">Only needed if the Buffer account has more than one Pinterest profile: names which one.</div>
         </div>
         <div class="field">
-          <label>Project ID</label>
+          <label>Google Flow project</label>
           <input type="text" name="project_id" value="${site?.project_id ?? ''}" />
+          <div class="help">
+            The Flow project this site's images go into: the long code after /project/
+            in the address bar. Leave blank to use the shared one from Settings.
+          </div>
         </div>
       </div>
 
@@ -1602,16 +1610,21 @@ export function settingsPage(
     /** Rendered inside the card after the fields: links or a picker. */
     footer?: Html;
   }[] = [
-    { key: 'general', title: 'General' },
-    { key: 'schedule', title: 'Schedule' },
-    { key: 'retry', title: 'Retries' },
-    { key: 'llm', title: 'LLM' },
+    { key: 'general', title: 'General', blurb: 'The main switch.' },
+    {
+      key: 'schedule',
+      title: 'Schedule',
+      blurb: 'How often the platform checks for work, and how long one article may take.',
+    },
+    { key: 'retry', title: 'Retries', blurb: 'What happens when an article fails.' },
+    { key: 'llm', title: 'Article writer', blurb: 'The AI service that writes the articles.' },
     {
       key: 'images',
       title: 'Image generation',
+      blurb: 'Images are generated in Google Flow through the browser under Setup → Browser.',
       footer: imageModelPicker(values.get('image_model') ?? 'auto', imageModels),
     },
-    { key: 'buffer', title: 'Buffer' },
+    { key: 'buffer', title: 'Pinterest (Buffer)', blurb: 'A pin for every article, scheduled through Buffer.' },
     {
       key: 'facebook',
       title: 'Facebook',
@@ -1624,14 +1637,13 @@ export function settingsPage(
         </div>
       `,
     },
-    { key: 'telegram', title: 'Telegram' },
+    { key: 'telegram', title: 'Telegram', blurb: 'Messages to your phone when something needs you.' },
   ];
 
   return html`
     <h1>General</h1>
     <p class="subtitle">
-      Everything the platform needs, in one form. Nothing here is edited by hand
-      on the server.
+      How the platform behaves. Every change applies as soon as you save.
     </p>
 
     ${problems.length
@@ -1650,6 +1662,7 @@ export function settingsPage(
         if (fields.length === 0) return raw('');
         return html`
           <h2>${group.title}</h2>
+          ${group.blurb ? html`<p class="subtitle">${group.blurb}</p>` : raw('')}
           <div class="card">
             ${fields.map((spec) => settingField(spec, values.get(spec.key) ?? ''))}
             ${group.footer ?? raw('')}
@@ -1671,11 +1684,9 @@ export function keysPage(endpoints: Endpoint[], baseUrl: string): Html {
   return html`
     <h1>LLM API keys</h1>
     <p class="subtitle">
-      Every key here talks to the same provider — <span class="mono">${baseUrl}</span>,
-      set under Settings &rarr; LLM. Keys exist to spread that provider's rate
-      limit, not to pick models. Requests go to the least recently used healthy
-      key; on a 429 the same request is retried on the next one, so a throttled
-      key never breaks a run.
+      The API keys the article writer uses, all from <span class="mono">${baseUrl}</span>.
+      More keys means more articles per hour: when one key hits its limit, the
+      next one is used. Keys do not choose the model &mdash; that is under Prompts.
     </p>
 
     <div class="card table-wrap">
@@ -1766,12 +1777,12 @@ export function keysPage(endpoints: Endpoint[], baseUrl: string): Html {
             <div class="field">
               <label>Restrict to models</label>
               <input type="text" name="models" placeholder="leave blank for all models" />
-              <div class="help">Comma separated. Normally blank &mdash; any key can serve any model.</div>
+              <div class="help">Leave blank. Only if this key may not be used for some models.</div>
             </div>
             <div class="field">
               <label>Override base URL</label>
               <input type="text" name="base_url" placeholder="leave blank to use the shared URL" />
-              <div class="help">Only for mixing in a self-hosted instance.</div>
+              <div class="help">Leave blank unless this key belongs to a different provider.</div>
             </div>
           </div>
         </details>
@@ -1859,7 +1870,10 @@ function settingField(spec: SettingSpec, value: string): Html {
 export function eventsPage(events: EventRow[]): Html {
   return html`
     <h1>Events</h1>
-    <p class="subtitle">Technical errors and scheduler activity.</p>
+    <p class="subtitle">
+      A log of technical problems and what the scheduler did. If an article failed
+      and its page did not say enough, the reason is usually here.
+    </p>
     <div class="card table-wrap">
       ${events.length === 0
         ? emptyState('Nothing logged yet.')
@@ -1920,16 +1934,14 @@ export function promptsPage(
   return html`
     <h1>Prompts</h1>
     <p class="subtitle">
-      These are the product. Article quality lives here, not in the code that
-      sends them. Every edit is stored in the database, so it survives a
-      redeploy &mdash; the shipped text stays underneath as the version you can
-      always revert to, and the last ${PROMPT_VERSIONS_KEPT} saves of each are
+      The instructions the AI follows at each step. Editing them changes how
+      articles are written. Every edit is saved and the original is always there
+      to go back to; the last ${PROMPT_VERSIONS_KEPT} saves of each are
       kept so you can go back to this morning rather than all the way.
     </p>
     <p class="subtitle">
-      The model each prompt is sent to is set here too. It has nothing to do
-      with API keys: any key can serve any model, keys spread a rate limit, and
-      this decides quality.
+      Each prompt is sent to one AI model, chosen here. A bigger model writes
+      better and costs more; API keys have nothing to do with this choice.
     </p>
 
     ${editedCount > 0
@@ -2184,10 +2196,9 @@ export function dataPage(counts: DataCounts, retentionDays: number): Html {
       <div>
         <h1>History &amp; storage</h1>
         <p class="subtitle">
-          What has piled up since the platform started, and how to take it away.
-          None of this is used to decide what publishes next, so clearing it is
-          safe &mdash; but it is the only record of what happened, so export
-          first.
+          How much history is stored, and how to export or clear it. Clearing
+          never changes what gets published next &mdash; but it is the only record
+          of what happened, so export first.
         </p>
       </div>
       <a class="button" href="/settings">Back to settings</a>

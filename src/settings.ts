@@ -55,7 +55,10 @@ export const SETTING_SPECS: SettingSpec[] = [
     group: 'general',
     secret: false,
     default: 'false',
-    help: 'Master switch. When off, the scheduler never starts a run.',
+    help:
+      'The main switch. On: the platform publishes by itself, following each ' +
+      'site\'s daily target and gap between posts. Off: nothing starts on its own. ' +
+      'You can still run one article by hand from Home.',
   },
 
   // -- Schedule ------------------------------------------------------------
@@ -66,7 +69,10 @@ export const SETTING_SPECS: SettingSpec[] = [
     secret: false,
     default: '15',
     type: 'number',
-    help: 'How often to look for a publishable keyword and site pair.',
+    help:
+      'How often the platform looks for something to publish. 1 to 5 minutes is ' +
+      'fine. A site never posts more often than its own gap between posts, ' +
+      'whatever you put here.',
   },
   {
     key: 'retention_days',
@@ -75,6 +81,9 @@ export const SETTING_SPECS: SettingSpec[] = [
     secret: false,
     default: '30',
     type: 'number',
+    help:
+      'How long to keep the decision and event history before old entries are ' +
+      'deleted. This never affects what gets published.',
   },
 
   // -- Retries -------------------------------------------------------------
@@ -85,9 +94,10 @@ export const SETTING_SPECS: SettingSpec[] = [
     secret: false,
     default: 'true',
     help:
-      'Only failures that look transient — a rate limit, a timeout, the image ' +
-      'service restarting. A wrong token or a rejected article is left for you, ' +
-      'because retrying it produces the identical error.',
+      'When a run fails because of a temporary problem (a busy service, a ' +
+      'timeout, image generation restarting), try again by itself. Problems that ' +
+      'would fail the same way again, like a wrong token or an article the site ' +
+      'refuses, are left for you.',
   },
   {
     key: 'auto_retry_max',
@@ -96,7 +106,9 @@ export const SETTING_SPECS: SettingSpec[] = [
     secret: false,
     default: '1',
     type: 'number',
-    help: 'After this many, the run waits for you. Each attempt reuses every completed step.',
+    help:
+      'How many automatic tries before the run stops and waits for you. Each try ' +
+      'continues from where it failed; finished steps are not repeated.',
   },
   {
     key: 'auto_retry_delay_minutes',
@@ -105,7 +117,9 @@ export const SETTING_SPECS: SettingSpec[] = [
     secret: false,
     default: '15',
     type: 'number',
-    help: 'Doubled on each further attempt, so a service that is properly down is left alone.',
+    help:
+      'How long to wait before the first retry. Each further retry waits twice as ' +
+      'long.',
   },
 
   {
@@ -116,11 +130,9 @@ export const SETTING_SPECS: SettingSpec[] = [
     default: '3',
     type: 'number',
     help:
-      'Counts only failures that would happen identically next time, and only ' +
-      'since that pair last produced an article — a rate limit or the image ' +
-      'service restarting does not count, because the pair is not what went ' +
-      'wrong. At the limit the pair waits for you on the keyword page rather ' +
-      'than taking the site’s slot again. 0 turns it off.',
+      'If the same keyword keeps failing on the same site, stop offering it after ' +
+      'this many failures and flag it on the keyword page for you. Temporary ' +
+      'problems do not count. 0 never holds anything back.',
   },
 
   // -- LLM -----------------------------------------------------------------
@@ -154,9 +166,9 @@ export const SETTING_SPECS: SettingSpec[] = [
     secret: false,
     default: process.env.FLOW_PROJECT_ID ?? '',
     help:
-      'A real project id from the Google Flow UI, used by any site that has no ' +
-      'project of its own. The ID on a site wins; this is the fallback. It ' +
-      'travels to Google as clientContext.projectId on every generation.',
+      'The Google Flow project that images are generated into, for any site that ' +
+      'has no project of its own. Copy it from the address bar of the project in ' +
+      'Flow: the long code after /project/.',
   },
   {
     // Rendered by the images group's footer rather than as a plain input, so
@@ -178,10 +190,9 @@ export const SETTING_SPECS: SettingSpec[] = [
     default: '30',
     type: 'number',
     help:
-      'How long to wait after one image finishes before asking for the next. ' +
-      'The image service reloads its browser tab before every generation, and ' +
-      'four requests fired back to back at it is what produced runs failing at ' +
-      'the third or fourth image. 0 sends them as fast as they come back.',
+      'A short pause between one image and the next. Several images back to back ' +
+      'can make Google treat the session as automated. 30 seconds is a safe ' +
+      'default; raise it if runs keep failing at the third or fourth image.',
   },
   {
     key: 'image_poll_interval_seconds',
@@ -211,10 +222,10 @@ export const SETTING_SPECS: SettingSpec[] = [
     default: '8',
     type: 'number',
     help:
-      'A step that returns nothing for this long is treated as hung: the run fails ' +
-      'with a clear reason and the lock is released, rather than sitting there. ' +
-      'Deliberately under the run timeout, so the failure names the step that hung ' +
-      'rather than the run that contained it.',
+      'If one step (writing the article, generating an image, posting) makes no ' +
+      'progress for this long, the run is stopped and marked failed so it does ' +
+      'not block everything else. 8 minutes is enough for the slowest normal ' +
+      'step.',
   },
   {
     key: 'run_timeout_minutes',
@@ -224,9 +235,8 @@ export const SETTING_SPECS: SettingSpec[] = [
     default: '10',
     type: 'number',
     help:
-      'The backstop for a run that keeps moving but never finishes. Counted from ' +
-      'the first step, and it stops the run wherever it is. Ten because runs on ' +
-      'this platform take four to six minutes; raise it if that changes.',
+      'The longest a whole run may take before it is stopped. Normal runs take 4 ' +
+      'to 6 minutes.',
   },
 
   // -- Buffer --------------------------------------------------------------
@@ -236,7 +246,9 @@ export const SETTING_SPECS: SettingSpec[] = [
     group: 'facebook',
     secret: false,
     default: 'false',
-    help: 'When on, every published article whose niche has a page becomes a reel on that page.',
+    help:
+      'On: every published article becomes a reel on the Facebook page assigned ' +
+      'to its niche (Channels → Facebook). Off: nothing is posted to Facebook.',
   },
   {
     key: 'flow_video_model_key',
@@ -245,9 +257,8 @@ export const SETTING_SPECS: SettingSpec[] = [
     secret: false,
     default: '',
     help:
-      'Leave empty to use the Veo model the image service ships with. Set it ' +
-      'to override — the Flow UI uses model names that are not published ' +
-      'anywhere, so the value has to be read off a real request in DevTools.',
+      'Leave empty. Only needed if Google renames its video model and reels stop ' +
+      'generating; then paste the new name here.',
   },
   {
     key: 'buffer_enabled',
@@ -255,6 +266,9 @@ export const SETTING_SPECS: SettingSpec[] = [
     group: 'buffer',
     secret: false,
     default: 'true',
+    help:
+      'On: after each article, a Pinterest pin is scheduled through the site\'s ' +
+      'Buffer account. Off: articles are published without a pin.',
   },
   {
     key: 'buffer_hold_hours',
@@ -264,9 +278,9 @@ export const SETTING_SPECS: SettingSpec[] = [
     default: '12',
     type: 'number',
     help:
-      'A site with no account left to try is paused for this long rather than ' +
-      'failing. When the pause lifts, the same article resumes and posts its pin ' +
-      'before the site takes on anything new.',
+      'If every Buffer account on a site is full for the day, wait this long ' +
+      'before trying that site again. The article stays published; only the pin ' +
+      'waits.',
   },
 
   // -- Telegram ------------------------------------------------------------
@@ -277,6 +291,8 @@ export const SETTING_SPECS: SettingSpec[] = [
     secret: true,
     default: '',
     type: 'password',
+    help:
+      'Create a bot with @BotFather in Telegram and paste the token it gives you.',
   },
   {
     key: 'telegram_chat_id',
@@ -284,6 +300,9 @@ export const SETTING_SPECS: SettingSpec[] = [
     group: 'telegram',
     secret: false,
     default: '',
+    help:
+      'The chat or group that receives the messages. Add the bot to it, send it a ' +
+      'message, then ask @userinfobot for the id.',
   },
   {
     key: 'telegram_enabled',
@@ -292,9 +311,9 @@ export const SETTING_SPECS: SettingSpec[] = [
     secret: false,
     default: 'false',
     help:
-      'Sent when something changes state and needs you: the queue running out, ' +
-      'a site failing repeatedly, image generation down, articles waiting for ' +
-      'approval. Each is sent once, and again when it recovers.',
+      'Get a message when something needs you: keywords running out, a site ' +
+      'failing repeatedly, image generation down, an article waiting for ' +
+      'approval. One message when it starts, one when it is fixed.',
   },
 ];
 
