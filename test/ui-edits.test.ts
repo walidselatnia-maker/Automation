@@ -108,7 +108,7 @@ describe('web UI after the layout changes', () => {
       expect(links).toEqual(['/', '/runs', '/sites', '/decisions', '/settings']);
     });
 
-    it('shows a section's pages as tabs, with the current one marked', async () => {
+    it("shows a section's pages as tabs, with the current one marked", async () => {
       const response = await get('/settings/prompts');
       const tabs = response.body.slice(
         response.body.indexOf('<nav class="subnav"'),
