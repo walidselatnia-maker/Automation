@@ -39,6 +39,8 @@ export const LLM_REPLIES: Record<string, string> = {
 
 export interface WorldOptions {
   failImageJobs?: boolean;
+  /** Let this many generations succeed, then fail every one after. */
+  failImageAfter?: number;
   imagePendingPolls?: number;
   failPostOnce?: boolean;
   /** Reject this many article posts with the site's real validation body, then accept. */
@@ -114,7 +116,10 @@ export function buildWorld(options: WorldOptions = {}) {
     }
 
     if (url.includes('/v1/jobs/')) {
-      if (options.failImageJobs) {
+      const failing =
+        options.failImageJobs ||
+        (options.failImageAfter !== undefined && generateBodies.length > options.failImageAfter);
+      if (failing) {
         return json({ job_id: 'job-123', status: 'FAILED', error: 'GPU unavailable' });
       }
       pollCount++;

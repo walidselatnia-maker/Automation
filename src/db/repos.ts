@@ -1833,6 +1833,11 @@ export const ARTICLE_IMAGES_PER_RUN = 4;
  *
  * The tell for a generating run is `images > 0` where that was measured, or
  * being the site the image set is recorded against where it was not.
+ *
+ * Runs made since the four images became four steps carry the count on those
+ * steps (`generate-image-*`) rather than on `generate-images`, which is now
+ * the collector and always reads 0. Both places are checked, so a run from
+ * either era is read correctly.
  */
 export const keywordImageCounts = (keywordId: number): KeywordImageCounts => {
   const row = get<{
@@ -1844,13 +1849,19 @@ export const keywordImageCounts = (keywordId: number): KeywordImageCounts => {
     `SELECT
        COALESCE(SUM(CASE
          WHEN s.step = 'generate-images' AND s.status = 'ok'
-          AND (s.images > 0 OR r.site_id = (
+          AND (s.images > 0 OR EXISTS (
+                SELECT 1 FROM run_steps i
+                WHERE i.run_id = s.run_id AND i.step LIKE 'generate-image-%' AND i.images > 0)
+               OR r.site_id = (
                 SELECT source_site_id FROM keyword_images WHERE keyword_id = ?))
          THEN 1 ELSE 0 END), 0)                                        AS generated,
 
        COALESCE(SUM(CASE
          WHEN s.step = 'generate-images' AND s.status = 'ok'
           AND s.images = 0
+          AND NOT EXISTS (
+                SELECT 1 FROM run_steps i
+                WHERE i.run_id = s.run_id AND i.step LIKE 'generate-image-%' AND i.images > 0)
           AND (r.site_id IS NULL OR r.site_id IS NOT (
                 SELECT source_site_id FROM keyword_images WHERE keyword_id = ?))
          THEN 1 ELSE 0 END), 0)                                        AS copied,

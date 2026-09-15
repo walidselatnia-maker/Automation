@@ -7,7 +7,12 @@ import {
   SpyRejectedError,
   validateSpy,
 } from './steps/content.js';
-import { generateArticleImages, generatePinImage } from './steps/images.js';
+import {
+  ARTICLE_IMAGE_STEPS,
+  generateArticleImages,
+  generatePinImage,
+  type ArticleImageUploads,
+} from './steps/images.js';
 import { generateArticle, postArticle } from './steps/article.js';
 import { createReelStep } from './steps/reel.js';
 import {
@@ -38,6 +43,7 @@ export const PIPELINE_STEPS = [
   validateSpy,
   generateRecipe,
   generateImagePrompts,
+  ...ARTICLE_IMAGE_STEPS,
   generateArticleImages,
   generateArticle,
   postArticle,
@@ -85,7 +91,12 @@ export async function executePipeline(ctx: PipelineContext): Promise<PipelineOut
     const seo = await runStep(ctx, validateSpy, categories);
     const recipe = await runStep(ctx, generateRecipe, seo);
     const imagePrompts = await runStep(ctx, generateImagePrompts, { seo, recipe });
-    const images = await runStep(ctx, generateArticleImages, imagePrompts);
+    // One step per image, so a resume owes only the ones that are missing.
+    const uploads = {} as ArticleImageUploads;
+    for (const step of ARTICLE_IMAGE_STEPS) {
+      uploads[step.slot] = await runStep(ctx, step, imagePrompts[step.slot]);
+    }
+    const images = await runStep(ctx, generateArticleImages, uploads);
 
     const article = await runStep(ctx, generateArticle, { seo, recipe, images });
     const title = articleTitle(article);

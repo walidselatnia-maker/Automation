@@ -98,9 +98,11 @@ Scheduler (every N minutes)
    │     Filter 2  keyword is 'go' AND linked 'go' to an eligible site
    │     → one task, or nothing, plus a reason for every decision
    │
-   └─ pipeline (12 checkpointed steps)
+   └─ pipeline (16 checkpointed steps — one per article image, so a
+      failure at the third image resumes at the third image)
          fetch-categories → validate-spy → generate-recipe
-         → generate-image-prompts → generate-images → generate-article
+         → generate-image-prompts → generate-image-{feature,top-shot,texture-macro,before-after}
+         → generate-images → generate-article
          → post-article → generate-pin-image → generate-pin-description
          → resolve-buffer-target → publish-to-buffer → notify
 ```

@@ -70,6 +70,10 @@ function checkpointUpTo(runId: number, article: Record<string, unknown>): void {
     ['validate-spy', { title: 'Chicken Soup', slug: 'chicken-soup' }],
     ['generate-recipe', { raw: 'a recipe' }],
     ['generate-image-prompts', { feature: 'a', topShot: 'b', textureMacro: 'c', beforeAfter: 'd' }],
+    ['generate-image-feature', { path: '/1.webp', absolute: 'https://x/1.webp' }],
+    ['generate-image-top-shot', { path: '/2.webp', absolute: 'https://x/2.webp' }],
+    ['generate-image-texture-macro', { path: '/3.webp', absolute: 'https://x/3.webp' }],
+    ['generate-image-before-after', { path: '/4.webp', absolute: 'https://x/4.webp' }],
     [
       'generate-images',
       { feature: '/1.webp', topShot: '/2.webp', textureMacro: '/3.webp', beforeAfter: '/4.webp' },

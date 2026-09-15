@@ -17,6 +17,7 @@ import {
   beginStep,
   finishStep,
   getCompletedStep,
+  keywordImageCounts,
 } from '../src/db/repos.js';
 import { localDateKey, selectTask } from '../src/core/selector.js';
 import { randomBytes } from 'node:crypto';
@@ -223,6 +224,48 @@ describe('database integration', () => {
   });
 
   // -- Checkpointing --------------------------------------------------------
+  describe('what a keyword cost at the image service', () => {
+    const finishOk = (runId: number, step: string, images: number) => {
+      beginStep(runId, step);
+      finishStep(runId, step, { status: 'ok', output: {}, images });
+    };
+
+    it('reads a generating run from the per-image steps, and a copying run from their absence', () => {
+      const a = seedSite('a.com');
+      const b = seedSite('b.com');
+      const keywordId = insertKeyword({ seed_keyword: 'k' });
+
+      // The site that generated: four image steps, one image each, then the
+      // collector, which reaches Google for nothing.
+      const generating = createRun(keywordId, a);
+      for (const slot of ['feature', 'top-shot', 'texture-macro', 'before-after']) {
+        finishOk(generating, `generate-image-${slot}`, 1);
+      }
+      finishOk(generating, 'generate-images', 0);
+
+      // The site that copied: the same steps, none of which generated.
+      const copying = createRun(keywordId, b);
+      for (const slot of ['feature', 'top-shot', 'texture-macro', 'before-after']) {
+        finishOk(copying, `generate-image-${slot}`, 0);
+      }
+      finishOk(copying, 'generate-images', 0);
+
+      const counts = keywordImageCounts(keywordId);
+      expect(counts.generatedRuns).toBe(1);
+      expect(counts.copiedRuns).toBe(1);
+    });
+
+    it('still reads a run from before the split, where the count sat on generate-images', () => {
+      const a = seedSite('a.com');
+      const keywordId = insertKeyword({ seed_keyword: 'k' });
+      const old = createRun(keywordId, a);
+      finishOk(old, 'generate-images', 4);
+
+      expect(keywordImageCounts(keywordId).generatedRuns).toBe(1);
+      expect(keywordImageCounts(keywordId).copiedRuns).toBe(0);
+    });
+  });
+
   describe('run step checkpoints', () => {
     it('stores output so a completed step can be skipped on resume', () => {
       const siteId = seedSite('a.com');

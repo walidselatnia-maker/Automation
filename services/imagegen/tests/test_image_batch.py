@@ -50,6 +50,16 @@ def test_an_image_goes_out_as_a_batch_rpc_not_a_rest_call():
     assert "url" not in sent
 
 
+def test_the_image_submit_names_its_project_so_the_tab_can_land_on_it():
+    # The extension opens the Flow tab on this project's page directly, rather
+    # than on the home page and then hunting for a project link.
+    client, sent = client_with(image_reply())
+
+    asyncio.run(client.generate_images_batch("soup", "PROJ-1"))
+
+    assert sent["projectId"] == "PROJ-1"
+
+
 def test_the_image_submit_asks_for_the_image_captcha():
     client, sent = client_with(image_reply())
 
@@ -91,3 +101,13 @@ def test_an_answer_with_no_image_in_it_is_an_error_not_a_blank_success():
 
     assert is_error(result)
     assert "No image url" in result["error"]
+
+
+def test_the_rest_path_is_still_there_behind_the_flag():
+    """IMAGE_USE_BATCH=0 has to mean something on the day Google turns REST back on."""
+    client, sent = client_with({"status": 200, "data": {"media": []}})
+
+    asyncio.run(client.generate_images("soup", "PROJ-1"))
+
+    assert sent["ws_method"] == "api_request"
+    assert "aisandbox-pa.googleapis.com" in sent["url"]

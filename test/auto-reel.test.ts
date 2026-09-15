@@ -49,6 +49,7 @@ describe('the create-reel step', () => {
     settings.set('image_api_key', 'image-key');
     settings.set('image_base_url', 'https://imggen.test');
     settings.set('image_poll_interval_seconds', '0');
+    settings.set('image_gap_seconds', '0');
     settings.set('image_poll_max_attempts', '5');
     settings.set('buffer_enabled', 'false');
     settings.set('telegram_enabled', 'false');

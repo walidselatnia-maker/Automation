@@ -1582,6 +1582,7 @@ export interface ImageModelCatalogue {
   };
 }
 
+
 /** The three image models Flow offers, in fallback order. Keys match the image service. */
 const IMAGE_MODEL_CHOICES = [
   { key: 'NANO_BANANA_PRO', label: 'Nano Banana Pro' },
@@ -1725,7 +1726,7 @@ export function settingsPage(
     key: SettingSpec['group'];
     title: string;
     blurb?: string;
-    /** Links that belong with these fields rather than at the top of the page. */
+    /** Rendered inside the card after the fields: links or a picker. */
     footer?: Html;
   }[] = [
     { key: 'general', title: 'General' },

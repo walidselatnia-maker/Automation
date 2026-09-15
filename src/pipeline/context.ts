@@ -81,6 +81,20 @@ export class PipelineContext {
 
   readonly siteApi: SiteApiClient;
   readonly images: ImageClient;
+
+  /**
+   * The pause between one image generation and the next, in milliseconds.
+   *
+   * Kept on the run rather than inside ImageClient because the client only
+   * sees one request at a time; the thing being spaced is the sequence of
+   * them across steps, and the pin graphic minutes later is part of it.
+   * `lastImageGeneratedAt` is when the previous one came back, so the wait is
+   * only what remains of the gap -- time spent writing the article counts.
+   */
+  readonly imageGapMs: number;
+  lastImageGeneratedAt: number | null = null;
+  now: () => number = () => Date.now();
+  pause: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms));
   readonly buffer: BufferPool;
   readonly telegram: TelegramClient;
 
@@ -119,6 +133,8 @@ export class PipelineContext {
       init.settings.get('flow_project_id'),
       init.site.domain,
     );
+
+    this.imageGapMs = Math.max(0, init.settings.getNumber('image_gap_seconds')) * 1000;
 
     this.images = new ImageClient({
       baseUrl: init.settings.get('image_base_url'),

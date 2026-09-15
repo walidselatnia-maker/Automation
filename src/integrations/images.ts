@@ -167,6 +167,7 @@ export class ImageClient {
    */
   async waitForCompletion(jobId: string): Promise<string> {
     const { maxAttempts, pollIntervalMs } = this.options;
+    let lastNote: string | null = null;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       const job = await this.poll(jobId);
@@ -190,8 +191,15 @@ export class ImageClient {
         );
       }
 
-      if (job.error) {
-        throw new ImageGenerationError(`Image job ${jobId} reported: ${job.error}`, jobId);
+      // A job that is still queued or running with an error written on it is
+      // a job the service is retrying: it went back to PENDING with the last
+      // failure noted. That used to end the wait here, which cancelled the
+      // retry from the outside -- the job went on to succeed in a queue nobody
+      // was watching, and the run failed on the note. The note is worth a log
+      // line and a mention if the wait runs out; the status decides.
+      if (job.error && job.error !== lastNote) {
+        lastNote = job.error;
+        log.warn(`Job ${jobId} is being retried by the image service after: ${job.error}`);
       }
 
       if (attempt < maxAttempts) {
@@ -202,7 +210,8 @@ export class ImageClient {
     const waited = Math.round((maxAttempts * pollIntervalMs) / 1000);
     throw new ImageGenerationError(
       `Image job ${jobId} did not complete within ${waited}s (${maxAttempts} attempts). ` +
-        'Raise the limit in Settings → Images if generation is legitimately slow.',
+        'Raise the limit in Settings → Images if generation is legitimately slow.' +
+        (lastNote ? ` The last attempt the service made hit: ${lastNote}` : ''),
       jobId,
     );
   }

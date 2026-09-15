@@ -25,6 +25,9 @@ def client_with(reply):
 
     async def fake_send(method, params, timeout=300):
         sent["method"] = method
+        # Its own key as well: the REST params carry a "method": "POST" of
+        # their own, which overwrites the transport method recorded above.
+        sent["ws_method"] = method
         sent.update(params)
         return reply
 

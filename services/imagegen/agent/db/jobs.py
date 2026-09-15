@@ -172,6 +172,20 @@ async def reset_stale(cutoff_seconds: int) -> int:
     return len(rows)
 
 
+async def next_project_id() -> str:
+    """The project of the job the worker will claim next, or '' if none waits.
+
+    Read by the extension when Chrome starts, so the first page it loads is
+    the one the work needs.
+    """
+    db = await get_db()
+    async with db.execute(
+        "SELECT project_id FROM job WHERE status = 'PENDING' ORDER BY created_at LIMIT 1"
+    ) as cursor:
+        row = await cursor.fetchone()
+    return (row[0] if row and row[0] else "") or ""
+
+
 async def count_by_status() -> dict[str, int]:
     db = await get_db()
     async with db.execute("SELECT status, COUNT(*) AS n FROM job GROUP BY status") as cursor:

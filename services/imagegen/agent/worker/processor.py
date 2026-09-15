@@ -90,7 +90,11 @@ LISTING_EVERY_N_POLLS = 4
 RETRYABLE = ("quota", "rate_limit", "exhausted", "resource_exhausted", "429",
              "no_flow_key", "not connected", "timeout", "503",
              "recaptcha", "captcha_timeout",
-             "http 401", "api_401", "unauthenticated", "invalid authentication")
+             "http 401", "api_401", "unauthenticated", "invalid authentication",
+             # The request cut off inside the Flow tab before Google answered:
+             # a page still coming back from a reload, or navigating under the
+             # injected fetch. A timeout by another name.
+             "no_injection_result", "injection_failed")
 
 
 class WorkerController:
@@ -169,10 +173,9 @@ class WorkerController:
                 free = MAX_CONCURRENT_REQUESTS - len(self._running)
                 if free > 0 and not self.paused and get_flow_client().connected:
                     claimed = await jobs.claim_pending(free)
-                    # Refresh, then generate — in that order, every time.
-                    # Skipped only while other jobs are still in flight, since
+                    # Skipped while other jobs are still in flight, since
                     # reloading the tab takes their requests down with it.
-                    if claimed and not self._running:
+                    if claimed and not self._running and self.reload_before(claimed):
                         await self._ensure_token(len(claimed))
                     for job in claimed:
                         self._running.add(job["id"])
@@ -189,6 +192,26 @@ class WorkerController:
                 pass
 
         logger.info("worker stopping")
+
+    @staticmethod
+    def reload_before(claimed: list[dict]) -> bool:
+        """Whether the Flow tab is reloaded before these jobs go out.
+
+        The REST path needs it every time: the bearer it carries is sniffed
+        off the page and only a reload renews it. The batch path carries no
+        bearer -- the page signs each request itself -- so there the reload
+        did nothing for the request and something to the account: every image
+        arrived as a fresh page load, a captcha seconds later, and a request,
+        four times an article. That is what a bot looks like to reCAPTCHA.
+
+        So on the batch path a reload is a recovery, not a routine. A job on
+        its second or later attempt is one Google refused as the session was,
+        and a fresh session is the known remedy. claim_pending has already
+        counted the attempt by the time this sees the row, so 1 is a first try.
+        """
+        if not IMAGE_USE_BATCH:
+            return True
+        return any(int(job.get("attempts") or 0) > 1 for job in claimed)
 
     async def _ensure_token(self, job_count: int) -> None:
         """Age out the bearer before a batch goes near it.

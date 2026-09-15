@@ -606,19 +606,36 @@ export class Scheduler {
   private reelTimer: NodeJS.Timeout | null = null;
   private running = false;
   private reelsRunning = false;
+  private stopped = false;
+  private announcedMinutes = 0;
+  private lastCheckEndedAt = 0;
 
   constructor(
     private readonly settings: Settings,
     private readonly encryptionKey: Buffer,
+    /** The work of one check. Replaceable so the cadence can be tested alone. */
+    private readonly work: () => Promise<unknown> = async () => {
+      // Before anything else: a lock held by a run that no longer exists is
+      // not a run in progress, and leaving it would block every tick after it.
+      reapStalledRun(this.settings);
+
+      const result = await tick(this.settings, this.encryptionKey);
+      if (result.outcome !== 'disabled' && result.outcome !== 'busy') {
+        log.debug(`tick: ${result.outcome}`);
+      }
+
+      // Reels are not advanced here any more; they have their own timer above.
+      // Doing it here as well would run two reel ticks against each other.
+
+      this.maybePrune();
+    },
   ) {}
 
   start(): void {
-    const minutes = Math.max(1, this.settings.getNumber('tick_minutes'));
-    log.info(`scheduler started, checking every ${minutes} minute(s)`);
-
-    this.timer = setInterval(() => void this.safeTick(), minutes * 60_000);
+    this.stopped = false;
+    log.info(`scheduler started, checking every ${this.minutes()} minute(s)`);
     // Give the web server a moment to come up before the first check.
-    setTimeout(() => void this.safeTick(), 10_000);
+    this.timer = setTimeout(() => void this.safeTick(), 10_000);
 
     // Reels on their own clock. Not inside safeTick: that runs on the article
     // cadence and holds the article lock, and a reel waiting on Google should
@@ -637,28 +654,60 @@ export class Scheduler {
     }
   }
 
+  /**
+   * "Check every (minutes)", as it is now.
+   *
+   * Read before every wait rather than once at boot: this was a setInterval
+   * built from the value at start-up, so saving a new number on the Settings
+   * page changed nothing until the container restarted. A site set to post
+   * every 5 minutes kept posting every 15, because nobody was looking in
+   * between, and the page gave no sign that the number it showed was not the
+   * one in force.
+   */
+  private minutes(): number {
+    return Math.max(1, this.settings.getNumber('tick_minutes'));
+  }
+
+  /**
+   * Wake at most a minute from now and see whether a check is due.
+   *
+   * Not one sleep for the whole period: a period armed at 15 minutes would
+   * sit out the remaining fourteen after someone saved 1, which is the same
+   * "nothing happened" the restart-only reading gave. Waking every minute
+   * costs nothing and means a saved number is in force within a minute.
+   */
+  private scheduleNext(): void {
+    if (this.stopped) return;
+    const minutes = this.minutes();
+    if (minutes !== this.announcedMinutes) {
+      if (this.announcedMinutes) log.info(`scheduler now checking every ${minutes} minute(s)`);
+      this.announcedMinutes = minutes;
+    }
+    const due = this.lastCheckEndedAt + minutes * 60_000;
+    const wait = Math.max(0, Math.min(60_000, due - Date.now()));
+    this.timer = setTimeout(() => {
+      if (Date.now() >= this.lastCheckEndedAt + this.minutes() * 60_000) {
+        void this.safeTick();
+      } else {
+        this.scheduleNext();
+      }
+    }, wait);
+  }
+
   private async safeTick(): Promise<void> {
     if (this.running) return;
     this.running = true;
 
     try {
-      // Before anything else: a lock held by a run that no longer exists is
-      // not a run in progress, and leaving it would block every tick after it.
-      reapStalledRun(this.settings);
-
-      const result = await tick(this.settings, this.encryptionKey);
-      if (result.outcome !== 'disabled' && result.outcome !== 'busy') {
-        log.debug(`tick: ${result.outcome}`);
-      }
-
-      // Reels are not advanced here any more; they have their own timer above.
-      // Doing it here as well would run two reel ticks against each other.
-
-      this.maybePrune();
+      await this.work();
     } catch (err) {
       log.error('scheduler tick threw', errorMessage(err));
     } finally {
       this.running = false;
+      // Timed from the end of one check to the start of the next, so a long
+      // run and the wait never overlap into a second run.
+      this.lastCheckEndedAt = Date.now();
+      this.scheduleNext();
     }
   }
 
@@ -692,7 +741,8 @@ export class Scheduler {
   }
 
   stop(): void {
-    if (this.timer) clearInterval(this.timer);
+    this.stopped = true;
+    if (this.timer) clearTimeout(this.timer);
     if (this.reelTimer) clearInterval(this.reelTimer);
     this.timer = null;
     this.reelTimer = null;

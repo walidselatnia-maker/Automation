@@ -223,11 +223,54 @@ def test_an_expired_token_is_worth_another_attempt(error):
     assert any(marker in error.lower() for marker in processor.RETRYABLE)
 
 
+# --- The request never reaching Google -----------------------------------
+# The extension runs a generation inside the Flow tab, and that fetch can be
+# cut off before Google answers: the tab is still coming back from the reload
+# the worker asked for, or navigates under it. That is a transport failure of
+# the same kind as a timeout, and it used to fail the job on attempt one of
+# five -- which is how a run died at the third image of four.
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        "NO_INJECTION_RESULT",
+        "INJECTION_FAILED: TypeError: Failed to fetch (https://labs.google/fx/tools/flow/project/x)",
+    ],
+)
+def test_a_request_cut_off_inside_the_tab_is_worth_another_attempt(error):
+    assert any(marker in error.lower() for marker in processor.RETRYABLE)
+
+
 def test_a_bad_request_is_still_not_worth_retrying():
     # The guard against widening RETRYABLE into "retry everything": a 400 fails
     # identically on every attempt and retrying it only burns quota faster.
     for error in ("HTTP 400", "No image url in response: {}"):
         assert not any(marker in error.lower() for marker in processor.RETRYABLE)
+
+
+# --- Reloading only as a recovery ------------------------------------------
+# The Flow tab used to be reloaded before every job. That was for the bearer
+# token, which the REST path needed fresh and which the batch path does not
+# use at all -- the page signs its own requests. What the reload still did was
+# make every image look like: fresh page, captcha within seconds, request.
+# Four times an article. So on the batch path the reload is what a retry gets,
+# because a retry means Google refused the session as it was, and nothing
+# else.
+
+def test_a_first_attempt_on_the_batch_path_does_not_reload(monkeypatch):
+    monkeypatch.setattr(processor, "IMAGE_USE_BATCH", True)
+    # claim_pending has already counted the attempt, so 1 is the first try.
+    assert processor.WorkerController().reload_before([{"attempts": 1}]) is False
+
+
+def test_a_retry_on_the_batch_path_reloads_first(monkeypatch):
+    monkeypatch.setattr(processor, "IMAGE_USE_BATCH", True)
+    assert processor.WorkerController().reload_before([{"attempts": 1}, {"attempts": 2}]) is True
+
+
+def test_the_rest_path_still_reloads_every_time(monkeypatch):
+    monkeypatch.setattr(processor, "IMAGE_USE_BATCH", False)
+    assert processor.WorkerController().reload_before([{"attempts": 1}]) is True
 
 
 # --- Refreshing before a batch -------------------------------------------

@@ -46,6 +46,7 @@ describe('pipeline end to end', () => {
     settings.set('image_api_key', 'image-key');
     settings.set('image_base_url', 'https://imggen.test');
     settings.set('image_poll_interval_seconds', '0');
+    settings.set('image_gap_seconds', '0');
     settings.set('image_poll_max_attempts', '5');
     settings.set('buffer_enabled', 'true');
     settings.set('telegram_enabled', 'false');
@@ -263,9 +264,45 @@ describe('pipeline end to end', () => {
     const outcome = await executePipeline(makeContext(runId));
 
     expect(outcome.status).toBe('failed');
-    expect(outcome.failedStep).toBe('generate-images');
+    expect(outcome.failedStep).toBe('generate-image-feature');
     expect(outcome.error).toContain('GPU unavailable');
     expect(getRun(runId)?.status).toBe('failed');
+  });
+
+  // -- Each image is its own checkpoint -------------------------------------
+  // The four article images used to be one step, so a failure at the third
+  // threw away the first two: a resume regenerated all four, and the images
+  // and the wait were paid twice. Now the run says which image it is on, and
+  // a resume asks Google only for the ones it does not have.
+  it('names the image that failed and keeps the ones before it', async () => {
+    vi.stubGlobal('fetch', buildWorld({ failImageAfter: 2 }).fetchStub);
+
+    const runId = createRun(keywordId, siteId);
+    const outcome = await executePipeline(makeContext(runId));
+
+    expect(outcome.status).toBe('failed');
+    expect(outcome.failedStep).toBe('generate-image-texture-macro');
+
+    const byName = Object.fromEntries(listSteps(runId).map((s) => [s.step, s.status]));
+    expect(byName['generate-image-feature']).toBe('ok');
+    expect(byName['generate-image-top-shot']).toBe('ok');
+    expect(byName['generate-image-texture-macro']).toBe('failed');
+    expect(byName['generate-image-before-after']).toBeUndefined();
+  });
+
+  it('resumes by generating only the images that are missing', async () => {
+    vi.stubGlobal('fetch', buildWorld({ failImageAfter: 2 }).fetchStub);
+    const runId = createRun(keywordId, siteId);
+    await executePipeline(makeContext(runId));
+
+    const second = buildWorld();
+    vi.stubGlobal('fetch', second.fetchStub);
+    const outcome = await executePipeline(makeContext(runId));
+
+    expect(outcome.status).toBe('published');
+    // Two article images still owed, plus the Pinterest graphic. Not five.
+    const generates = second.calls.filter((u) => u.includes('/v1/generate'));
+    expect(generates).toHaveLength(3);
   });
 
   it('repairs and retries when the site rejects the article JSON', async () => {
@@ -350,6 +387,7 @@ describe('a run end to end, with the pieces combined', () => {
     settings.set('image_api_key', 'image-key');
     settings.set('image_base_url', 'https://imggen.test');
     settings.set('image_poll_interval_seconds', '0');
+    settings.set('image_gap_seconds', '0');
     settings.set('image_poll_max_attempts', '5');
     settings.set('buffer_enabled', 'false');
     settings.set('telegram_enabled', 'false');

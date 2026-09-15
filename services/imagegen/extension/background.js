@@ -109,6 +109,33 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 // same promise before reading flowKey closes the race where a request arrives
 // mid-hydration.
 
+// The account segment Flow puts in its URLs: '' or 'u/N/'.
+//
+// https://flow.google.com/project/<id> belongs to the profile's default Google
+// account; https://flow.google.com/u/4/project/<id> to its fifth. Which one
+// depends on how many accounts are signed in to this Chrome, so it differs
+// per installation and cannot be configured once. It is learned from any Flow
+// URL the tab lands on and kept in storage, so a project URL built here goes
+// to the account that owns the project rather than to account 0.
+let flowPathPrefix = '';
+
+function rememberFlowPrefix(url) {
+  const m = /^https:\/\/flow\.google\.com\/(u\/\d+\/)?(project\/)?/.exec(url || '');
+  if (!m) return;
+  const seen = m[1] || '';
+  // A bare /project/ URL is authoritative for 'no prefix'; a bare home URL is
+  // not, since Google may still be about to redirect it to /u/N/.
+  if (!seen && !m[2]) return;
+  if (seen === flowPathPrefix) return;
+  flowPathPrefix = seen;
+  chrome.storage.local.set({ flowPathPrefix });
+  console.log(`[FlowAgent] Flow account path is now '${seen || '(default account)'}'`);
+}
+
+chrome.tabs.onUpdated.addListener((_tabId, change) => {
+  if (change.url) rememberFlowPrefix(change.url);
+});
+
 let _hydration = null;
 let _hydratedAt = null;
 const _workerStartedAt = Date.now();
@@ -116,8 +143,10 @@ const _workerStartedAt = Date.now();
 async function reloadFromStorage() {
   const data = await chrome.storage.local.get([
     'flowKey', 'metrics', 'callbackSecret', 'accounts', 'currentAuthUser', 'autoRotate',
+    'flowPathPrefix',
   ]);
   if (data.flowKey) flowKey = data.flowKey;
+  if (typeof data.flowPathPrefix === 'string') flowPathPrefix = data.flowPathPrefix;
   if (data.metrics) Object.assign(metrics, data.metrics);
   if (data.callbackSecret) callbackSecret = data.callbackSecret;
   if (data.accounts) accounts = data.accounts;
@@ -140,6 +169,40 @@ function ensureHydrated() {
 // Runs on every service-worker revival, not only on install/startup.
 ensureHydrated();
 
+// Chrome starts on about:blank and is pointed at the right page from here,
+// because the right page depends on why it was started. For a queued job that
+// is the job's project -- the agent says which -- so the first page Google
+// sees is the one the work needs, rather than the home page followed by a
+// navigation away from it. With nothing queued it is the home page, which is
+// what someone opening the Browser page to sign in expects.
+const AGENT_LANDING_URL = 'http://127.0.0.1:8100/ext/landing';
+
+async function landWhereTheWorkIs() {
+  let url = FLOW_HOME;
+  try {
+    const resp = await fetch(AGENT_LANDING_URL);
+    if (resp.ok) url = (await resp.json())?.url || FLOW_HOME;
+  } catch (e) {
+    console.warn('[FlowAgent] Could not ask the agent where to land:', e?.message);
+  }
+  // The agent knows the project, not the account; the account segment is ours.
+  const project = /^https:\/\/flow\.google\.com\/project\/(.+)$/.exec(url);
+  if (project) url = projectUrl(project[1]);
+
+  // Only a tab that is nowhere yet. A Flow tab already on a project is left
+  // alone -- this runs on install and startup, never on a page mid-use.
+  const tabs = await chrome.tabs.query({});
+  const blank = tabs.find((t) => !t.url || t.url === 'about:blank' || t.url === 'chrome://newtab/');
+  const home = tabs.find((t) => isFlowUrl(t.url) && !(t.url || '').includes('/project/'));
+  const tab = blank || home;
+  if (!tab) return;
+  if ((tab.url || '') === url) return;
+
+  console.log('[FlowAgent] Landing on ' + url);
+  recordTabEvent('landed', 'startup', { url });
+  await chrome.tabs.update(tab.id, { url }).catch(() => {});
+}
+
 async function init() {
   // The toolbar icon opens the side panel. The popup it used to open is a
   // small window that closes the moment focus leaves it; the panel stays
@@ -151,6 +214,7 @@ async function init() {
     .catch(() => {});
 
   await ensureHydrated();
+  await landWhereTheWorkIs();
   connectToAgent();
   chrome.alarms.create('keepAlive', { periodInMinutes: 0.4 });
   // One minute is the floor Chrome enforces for a repeating alarm; the idle
@@ -840,9 +904,51 @@ async function findProjectUrl(tabId) {
   return null;
 }
 
-async function ensureFlowTabOnProject() {
+const projectUrl = (projectId) => `${FLOW_HOME}${flowPathPrefix}project/${projectId}`;
+const isOnProject = (url, projectId) => (url || '').includes(`/project/${projectId}`);
+
+/**
+ * Go to the job's own project when it names one.
+ *
+ * Directly, by id, rather than via a link on the home page: that is one page
+ * load instead of two and a navigation, and the tab then sits where the work
+ * is. The trap this once fell into is still there -- an id the account cannot
+ * open lands on Flow's 404, which issues no requests and has no reCAPTCHA --
+ * so a 404 is not the end: the tab goes back to the list and the link hunt
+ * below takes over, exactly as it did before ids were trusted at all.
+ *
+ * Returns true when the tab is on the named project.
+ */
+async function goToProject(tab, projectId) {
+  rememberFlowPrefix(tab.url);
+  if (isOnProject(tab.url, projectId)) return true;
+  const target = projectUrl(projectId);
+
+  console.log(`[FlowAgent] Moving to the job's project page: ${target}`);
+  const settled = waitForTabLoad(tab.id, 20000);
+  await chrome.tabs.update(tab.id, { url: target });
+  await settled.catch((e) =>
+    console.warn('[FlowAgent] Project page did not finish loading:', e.message),
+  );
+
+  const after = await chrome.tabs.get(tab.id).catch(() => null);
+  if (after) rememberFlowPrefix(after.url);
+  if (after && !isDeadProjectPage(after.url)) return true;
+
+  console.warn(
+    `[FlowAgent] Project ${projectId} is not one this account can open (Flow 404); ` +
+      'returning to the project list to find one that is',
+  );
+  const back = waitForTabLoad(tab.id, 20000);
+  await chrome.tabs.update(tab.id, { url: FLOW_HOME });
+  await back.catch(() => {});
+  return false;
+}
+
+async function ensureFlowTabOnProject(projectId = null) {
   const tab = (await queryFlowTabs())[0];
   if (!tab) return;
+  if (projectId && (await goToProject(tab, projectId))) return;
   if ((tab.url || '').includes('/project/')) return;
 
   const url = await findProjectUrl(tab.id);
@@ -1324,11 +1430,17 @@ async function runBatchRpc(cmd) {
   let candidate = tabs.find((t) => !t.discarded) || tabs[0];
 
   if (!candidate) {
-    // No Flow tab. Open one and let the app boot -- WIZ_global_data is not on
-    // the page immediately, and without it `at` comes back empty.
+    // No Flow tab. Open one -- on the job's project when it names one, so the
+    // first page Google sees is the one the work needs -- and let the app
+    // boot: WIZ_global_data is not on the page immediately, and without it
+    // `at` comes back empty.
     try {
-      await chrome.tabs.create({ url: FLOW_HOME, active: false });
-      await sleep(5000);
+      const created = await chrome.tabs.create({
+        url: cmd.projectId ? projectUrl(cmd.projectId) : FLOW_HOME,
+        active: false,
+      });
+      await waitForTabLoad(created.id, 20000).catch(() => {});
+      await sleep(1500);
       const fresh = await queryFlowTabs();
       candidate = fresh.find((t) => !t.discarded) || fresh[0];
     } catch (e) {
@@ -1347,7 +1459,7 @@ async function runBatchRpc(cmd) {
     // asking for a token; the batch path was written without it and every
     // captcha it asked for failed. Both transports need it for the same reason:
     // the captcha is minted by the page, so the page has to be one that has it.
-    await ensureFlowTabOnProject();
+    await ensureFlowTabOnProject(cmd.projectId);
 
     const solved = await solveCaptcha(cmd.id, cmd.captchaAction);
     if (!solved?.token) return { error: `CAPTCHA_FAILED: ${solved?.error || 'no token'}` };
@@ -1371,30 +1483,51 @@ async function runBatchRpc(cmd) {
         `&f.sid=${encodeURIComponent(sid || '')}&bl=${encodeURIComponent(bl || '')}` +
         `&hl=en-AU&_reqid=${reqid}&rt=c`;
 
-      const resp = await fetch(url, {
-        method: 'POST',
-        credentials: 'include',
-        headers: {
-          'content-type': 'application/x-www-form-urlencoded;charset=UTF-8',
-          'x-same-domain': '1',
-        },
-        body: new URLSearchParams({ 'f.req': freqStr, at }),
-      });
+      // Caught here, in the page, because a rejection from an injected
+      // function does not travel: executeScript answers with no result and
+      // the error is gone. That was every "NO_INJECTION_RESULT" -- a fetch
+      // cut off by the page navigating or reloading under it, reported as
+      // nothing at all. The message names what happened and where the tab
+      // was, which is what it takes to tell those apart.
+      try {
+        const resp = await fetch(url, {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            'content-type': 'application/x-www-form-urlencoded;charset=UTF-8',
+            'x-same-domain': '1',
+          },
+          body: new URLSearchParams({ 'f.req': freqStr, at }),
+        });
 
-      const text = await resp.text();
-      if (match) {
-        const found = text.indexOf(match);
+        const text = await resp.text();
+        if (match) {
+          const found = text.indexOf(match);
+          return {
+            status: resp.status,
+            matched: found !== -1,
+            text: found === -1 ? '' : text.slice(found, found + 800),
+          };
+        }
+        return { status: resp.status, text: text.slice(0, maxText) };
+      } catch (e) {
         return {
-          status: resp.status,
-          matched: found !== -1,
-          text: found === -1 ? '' : text.slice(found, found + 800),
+          error: `INJECTION_FAILED: ${e?.name || 'Error'}: ${e?.message || String(e)} ` +
+            `(${location.href})`,
         };
       }
-      return { status: resp.status, text: text.slice(0, maxText) };
     },
   });
 
-  return injected?.result || { error: 'NO_INJECTION_RESULT' };
+  if (injected?.result) return injected.result;
+
+  // Nothing came back and the function above did not catch it: the frame
+  // itself went away mid-call (a discard, a close), or a newer Chrome put the
+  // reason on the injection result. Say which, rather than the bare code.
+  const detail = injected?.error?.message || injected?.error || 'the tab returned nothing';
+  const where = await chrome.tabs.get(tab.id).then((t) => t?.url).catch(() => 'tab gone');
+  console.warn('[FlowAgent] batch RPC returned no result:', detail, where);
+  return { error: `NO_INJECTION_RESULT: ${detail} (${where})` };
 }
 
 // One captcha at a time, whatever the worker sends.
@@ -1538,7 +1671,7 @@ async function discoverImageModels({ known = [] }) {
 
 async function handleBatchRpc(msg) {
   const { id, params } = msg;
-  const { rpcid, freq, captchaAction, match } = params || {};
+  const { rpcid, freq, captchaAction, match, projectId } = params || {};
 
   if (!rpcid || !freq) {
     sendToAgent({ id, status: 400, error: 'INVALID_BATCH_RPC' });
@@ -1563,7 +1696,7 @@ async function handleBatchRpc(msg) {
   }
 
   try {
-    const cmd = { id, rpcid, freq, captchaAction, match };
+    const cmd = { id, rpcid, freq, captchaAction, match, projectId: projectId || null };
     const out = captchaAction
       ? await takeCaptchaTurn(() => runBatchRpc(cmd))
       : await runBatchRpc(cmd);
