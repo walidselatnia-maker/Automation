@@ -312,7 +312,7 @@ function runTable(runs: RunListRow[]): Html {
 export function runsPage(runs: RunListRow[], page: number, total: number): Html {
   const pages = Math.max(1, Math.ceil(total / 50));
   return html`
-    <h1>Runs</h1>
+    <h1>Articles</h1>
     <p class="subtitle">${total} run(s) recorded.</p>
     <div class="card table-wrap">
       ${runs.length === 0 ? emptyState('No runs yet.') : runTable(runs)}
@@ -1628,19 +1628,11 @@ export function settingsPage(
   ];
 
   return html`
-    <h1>Settings</h1>
+    <h1>General</h1>
     <p class="subtitle">
       Everything the platform needs, in one form. Nothing here is edited by hand
       on the server.
     </p>
-
-    <div class="row wrap" style="margin-bottom:16px">
-      <a class="button" href="/settings/keys">LLM API keys</a>
-      <a class="button" href="/settings/prompts">Prompts &amp; models</a>
-      <a class="button" href="/settings/account">Change password</a>
-      <a class="button" href="/settings/data">History &amp; storage</a>
-      <a class="button" href="/settings/facebook">Facebook pages</a>
-    </div>
 
     ${problems.length
       ? html`<div class="flash warn">
@@ -1866,7 +1858,7 @@ function settingField(spec: SettingSpec, value: string): Html {
 
 export function eventsPage(events: EventRow[]): Html {
   return html`
-    <h1>Event log</h1>
+    <h1>Events</h1>
     <p class="subtitle">Technical errors and scheduler activity.</p>
     <div class="card table-wrap">
       ${events.length === 0
