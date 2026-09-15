@@ -80,7 +80,10 @@ export interface DashboardData {
  * A <dialog>, so the modal behaviour, the backdrop and Escape to close are the
  * browser's rather than three more handlers to maintain.
  */
-function runPicker(data: DashboardData): Html {
+/** What the manual run picker needs: the sites, the keywords, their links, and whether a run is on. */
+export type RunPickerData = Pick<DashboardData, 'sites' | 'keywords' | 'links' | 'busy'>;
+
+export function runPicker(data: RunPickerData): Html {
   // Paused sites are listed, and labelled. Pausing stops the scheduler from
   // choosing a site; it is not meant to stop a person who names it.
   const runnable = data.sites;
@@ -192,184 +195,39 @@ function runPicker(data: DashboardData): Html {
   `;
 }
 
-export function dashboardPage(data: DashboardData): Html {
-  const problems = data.problems.length
-    ? html`<div class="flash warn">
-        <strong>Configuration needs attention</strong>
-        <ul>
-          ${data.problems.map((p) => html`<li>${p}</li>`)}
-        </ul>
-      </div>`
-    : raw('');
-
-  // A run in progress gets its own controls. Without them a run that hung had
-  // to be waited out: the lock only goes stale after ninety minutes, and until
-  // then nothing else can start and the page just says it is running.
-  const busy = data.busy
-    ? html`<div class="flash ok spread">
-        <span>A run is in progress (started ${timeAgo(data.lockedAt)}).</span>
-        <span class="row wrap">
-          <form method="post" action="/run/restart">
-            <button type="submit"
-                    title="Stop it and pick up from the last completed step">
-              Restart
-            </button>
-          </form>
-          <form method="post" action="/run/stop"
-                onsubmit="return confirm('Stop this run? It will be marked failed.')">
-            <button class="danger" type="submit">Stop</button>
-          </form>
-        </span>
-      </div>`
-    : raw('');
-
+/** Decisions as a page of its own, under Activity. */
+export function decisionsPage(
+  cycles: { cycle_id: string; created_at: string; n: number }[],
+  selected: string | null,
+  rows: DecisionRow[],
+  activity: { day: string; published: number; failed: number }[] = [],
+): Html {
   return html`
-    <div class="spread">
-      <div>
-        <h1>Dashboard</h1>
-        <p class="subtitle">
-          ${data.automationOn
-            ? 'Automation is running. The scheduler publishes at most one article per check.'
-            : 'Automation is off. Turn it on in Settings when you are ready.'}
-        </p>
-      </div>
-      <div class="row">
-        <form method="post" action="/run-now">
-          <input type="hidden" name="mode" value="dry" />
-          <button type="submit" ${data.busy ? raw('disabled') : raw('')}
-                  title="Run the whole pipeline and stop before publishing, so you can read the article first">
-            Dry run
-          </button>
-        </form>
-        <button class="primary" type="button" id="run-once-open"
-                ${data.busy ? raw('disabled') : raw('')}>
-          Run once now
-        </button>
-      </div>
-    </div>
+    <h1>Decisions</h1>
+    <p class="subtitle">Why the scheduler picked what it picked -- or nothing.</p>
 
-    ${runPicker(data)}
-
-    ${problems} ${busy}
-
-    <div class="grid">
-      <div class="stat"><div class="value">${data.publishedToday}</div><div class="label">Published today</div></div>
-      <div class="stat"><div class="value">${data.failedToday}</div><div class="label">Failed today</div></div>
-      <div class="stat"><div class="value">${data.eligibility.filter((e) => e.eligible).length}</div><div class="label">Sites eligible now</div></div>
-      <div class="stat ${data.supply.level === 'ok' ? '' : `supply-${data.supply.level}`}">
-        <div class="value">${data.supply.readyPairs}</div>
-        <div class="label">Articles queued</div>
-        <div class="muted small">
-          ${data.supply.daysRemaining === null
-            ? 'no active demand'
-            : data.supply.daysRemaining >= 1
-              ? `~${Math.floor(data.supply.daysRemaining)} day(s) left`
-              : 'less than a day left'}
-        </div>
-      </div>
-    </div>
-
-    ${data.activity.length
+    ${activity.length
       ? html`<div class="card">
           <div class="spread" style="align-items:center">
-            <h3 style="margin:0">Last ${data.activity.length} days</h3>
+            <h3 style="margin:0">Last ${activity.length} days</h3>
             <span class="muted small">
               <span class="key brand"></span> published
               <span class="key red"></span> failed
             </span>
           </div>
-          <div class="chart">${sparkline(data.activity, { width: 720, height: 64 })}</div>
+          <div class="chart">${sparkline(activity, { width: 720, height: 64 })}</div>
         </div>`
       : raw('')}
 
-    ${heldSection(data.held)}
-
-    <h2>Site status</h2>
-    <div class="card table-wrap">
-      ${data.sites.length === 0
-        ? emptyState('No sites yet. Add one under Sites.')
-        : html`<table>
-            <thead>
-              <tr><th>Site</th><th>Status</th><th>Today</th><th>Last publish</th><th>Eligible now?</th></tr>
-            </thead>
-            <tbody>
-              ${data.sites.map((site) => {
-                const verdict = data.eligibility.find((e) => e.domain === site.domain);
-                return html`<tr>
-                  <td><a href="/sites">${site.domain}</a><div class="muted small">${site.name}</div></td>
-                  <td>${statusBadge(site.status)}</td>
-                  <td class="nowrap">${site.publishedToday} / ${site.dailyTarget}</td>
-                  <td class="nowrap muted">${timeAgo(site.lastPublishAt)}</td>
-                  <td>
-                    ${verdict?.eligible
-                      ? html`<span class="badge ok">yes</span>`
-                      : html`<span class="badge muted">no</span>
-                          <div class="muted small">${verdict?.reason ?? ''}</div>`}
-                  </td>
-                </tr>`;
-              })}
-            </tbody>
-          </table>`}
-    </div>
-
-    <h2>Recent runs <a class="button small" href="/runs">All runs</a></h2>
-    <div class="card table-wrap scroll-y">
-      ${data.recentRuns.length === 0
-        ? emptyState('No runs yet.')
-        : runTable(data.recentRuns)}
-    </div>
-
-    ${decisionsSection(data.cycles, data.selectedCycle, data.decisions)}
+    ${decisionsSection(cycles, selected, rows, '/decisions')}
   `;
 }
 
-/**
- * Articles that are finished and waiting for a person.
- *
- * Deliberately above the site table: an article sitting here is work already
- * paid for that is doing nothing, and it is the one thing on this page that
- * only moves when someone acts.
- */
-function heldSection(held: RunListRow[]): Html {
-  if (held.length === 0) return raw('');
-
-  return html`
-    <h2>Waiting for you</h2>
-    <div class="card table-wrap">
-      <table>
-        <thead>
-          <tr><th>Article</th><th>Site</th><th>Why it stopped</th><th>Written</th><th></th></tr>
-        </thead>
-        <tbody>
-          ${held.map(
-            (run) => html`<tr>
-              <td>
-                <strong>${run.title || run.seed_keyword || `Run #${run.id}`}</strong>
-                ${run.title ? html`<div class="muted small">${run.seed_keyword ?? ''}</div>` : raw('')}
-              </td>
-              <td class="mono small">${run.site_domain ?? '—'}</td>
-              <td>${runBadge(run)}</td>
-              <td class="nowrap muted small">${timeAgo(run.started_at)}</td>
-              <td class="nowrap"><a class="button small primary" href="/runs/${run.id}">Read it</a></td>
-            </tr>`,
-          )}
-        </tbody>
-      </table>
-    </div>
-  `;
-}
-
-/**
- * Why the scheduler did what it did.
- *
- * This had its own page, which meant leaving the dashboard to answer a
- * question the dashboard had just raised — "why is nothing publishing?". It is
- * one table and a row of buttons, so it belongs under the numbers it explains.
- */
 function decisionsSection(
   cycles: { cycle_id: string; created_at: string; n: number }[],
   selected: string | null,
   rows: DecisionRow[],
+  base = '/',
 ): Html {
   if (cycles.length === 0) {
     return html`
@@ -391,7 +249,7 @@ function decisionsSection(
       <div class="row wrap">
         ${cycles.map(
           (c) => html`<a class="button small ${c.cycle_id === selected ? 'primary' : ''}"
-            href="/?cycle=${c.cycle_id}#decisions">${timeAgo(c.created_at)} (${c.n})</a>`,
+            href="${base}?cycle=${c.cycle_id}#decisions">${timeAgo(c.created_at)} (${c.n})</a>`,
         )}
       </div>
     </div>
@@ -777,7 +635,11 @@ function prettyJson(json: string): string {
  * Sites
  * ====================================================================== */
 
-export function sitesPage(sites: SiteRow[], views: SiteView[]): Html {
+export function sitesPage(
+  sites: SiteRow[],
+  views: SiteView[],
+  eligibility: { domain: string; eligible: boolean; reason: string }[] = [],
+): Html {
   return html`
     <h1>Sites</h1>
     <p class="subtitle">
@@ -848,7 +710,8 @@ export function sitesPage(sites: SiteRow[], views: SiteView[]): Html {
                   <input type="checkbox" id="pick-all" title="Select every site" />
                 </th>
                 <th>Domain</th><th>Status</th><th>Publishing</th><th>Target</th>
-                <th>Interval</th><th>Credentials</th><th>Today</th><th>Last publish</th><th></th>
+                <th>Interval</th><th>Credentials</th><th>Today</th><th>Last publish</th>
+                <th>Can run now?</th><th></th>
               </tr>
             </thead>
             <tbody>
@@ -885,6 +748,16 @@ export function sitesPage(sites: SiteRow[], views: SiteView[]): Html {
                   </td>
                   <td>${v?.publishedToday ?? 0}</td>
                   <td class="nowrap muted">${timeAgo(v?.lastPublishAt ?? null)}</td>
+                  <td>
+                    ${(() => {
+                      const verdict = eligibility.find((e) => e.domain === s.domain);
+                      if (!verdict) return raw('');
+                      return verdict.eligible
+                        ? html`<span class="badge ok">yes</span>`
+                        : html`<span class="badge muted">no</span>
+                            <div class="muted small">${verdict.reason}</div>`;
+                    })()}
+                  </td>
                   <td class="nowrap"><a class="button small" href="/sites/${s.id}">Edit</a></td>
                 </tr>`;
               })}

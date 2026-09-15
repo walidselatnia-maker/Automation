@@ -220,9 +220,9 @@ describe('the new workflow features', () => {
       expect(failedToday).toBe(0);
     });
 
-    it('appears on the dashboard as work waiting for a person', async () => {
+    it('appears on Home as something that needs a person', async () => {
       const response = await get('/');
-      expect(response.body).toContain('Waiting for you');
+      expect(response.body).toContain('Needs you');
       expect(response.body).toContain('Baked Chicken Breast');
     });
 

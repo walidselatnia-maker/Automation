@@ -179,7 +179,7 @@ describe('a hand-picked run', () => {
 
     await tick(settings, KEY, { mode: 'dry', pick: { siteId, keywordId } });
 
-    const events = (await app.inject({ method: 'GET', url: '/', headers: { cookie } })).body;
+    const events = (await app.inject({ method: 'GET', url: '/decisions', headers: { cookie } })).body;
     expect(events).toContain('Manual run');
   });
 });

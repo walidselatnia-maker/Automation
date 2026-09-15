@@ -9,13 +9,15 @@ import fastifyStatic from '@fastify/static';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { layout } from './views/layout.js';
+import { layout, type Html } from './views/layout.js';
 import { reelDetailPage } from './views/reel-detail.js';
+import { homePage, mergeRecent, type Attention, type Running } from './views/home.js';
 import { passwordAccepted, registerAuth, type AuthOptions } from './auth.js';
 import { rejectionReason, storePassword, storedPasswordHash } from './password.js';
 import { registerBrowserProxy } from './browser-proxy.js';
 import {
-  dashboardPage,
+  decisionsPage,
+  runPicker,
   dataPage,
   eventsPage,
   accountPage,
@@ -72,6 +74,7 @@ import {
   replaceStepOutput,
   setRunTitle,
   type StepRow,
+  type RunListRow,
   clearSharedImages,
   getLinksForKeyword,
   keywordImageCounts,
@@ -365,7 +368,7 @@ export function buildServer(
     reply: FastifyReply,
     title: string,
     active: string,
-    body: ReturnType<typeof dashboardPage>,
+    body: Html,
     flash: Flash = null,
   ): FastifyReply =>
     reply.type('text/html; charset=utf-8').send(
@@ -381,18 +384,104 @@ export function buildServer(
       }),
     );
 
-  /* -- Dashboard --------------------------------------------------------- */
+  /* -- Home ---------------------------------------------------------------- */
+
+  /**
+   * Everything a person has to do, each with the one place to do it.
+   *
+   * Gathered from every source that can stop the work or wait on a choice:
+   * configuration problems, the image service, articles held for approval,
+   * Facebook pages and tokens, and keyword supply. What stops work comes
+   * first.
+   */
+  const attentionFor = (): Attention[] => {
+    const items: Attention[] = [];
+
+    items.push(...problemsWithPlaces(settings));
+
+    for (const token of listFbTokens()) {
+      if (token.last_error) {
+        items.push({
+          kind: 'warn',
+          text: `Facebook token "${token.name}": ${token.last_error}`,
+          href: '/settings/facebook',
+          action: 'Check',
+        });
+      }
+    }
+
+    const held = listHeldRuns(20);
+    if (held.length === 1) {
+      const r = held[0]!;
+      items.push({
+        kind: 'info',
+        text: `"${r.title || r.seed_keyword || 'an article'}" on ${r.site_domain ?? '—'} is waiting for approval`,
+        href: `/runs/${r.id}`,
+        action: 'Review',
+      });
+    } else if (held.length > 1) {
+      items.push({
+        kind: 'info',
+        text: `${held.length} articles waiting for approval`,
+        href: '/runs',
+        action: 'Review',
+      });
+    }
+
+    for (const fbPage of listFbPages()) {
+      if (fbPage.enabled && fbPage.niche === null) {
+        items.push({
+          kind: 'info',
+          text: `Facebook page "${fbPage.name}" has no niche, so no reel goes to it`,
+          href: '/settings/facebook',
+          action: 'Assign',
+        });
+      }
+    }
+
+    const failedReels = listReels(50).filter((r) => r.status === 'failed').length;
+    if (failedReels) {
+      items.push({
+        kind: 'info',
+        text: `${failedReels} reel(s) failed and can be retried`,
+        href: '/reels',
+        action: 'See reels',
+      });
+    }
+
+    return items;
+  };
+
+  const runListRow = (id: number): RunListRow | undefined =>
+    get<RunListRow>(
+      `SELECT r.*, s.domain AS site_domain, k.seed_keyword
+         FROM runs r LEFT JOIN sites s ON s.id = r.site_id
+         LEFT JOIN keywords k ON k.id = r.keyword_id WHERE r.id = ?`,
+      id,
+    );
+
+  /** The run holding the lock, and the step it is on, in words. */
+  const runningNow = (): Running | null => {
+    const lock = lockStatus();
+    if (!lock?.locked_at) return null;
+    const run = lock.run_id ? runListRow(lock.run_id) : undefined;
+    const step = lock.run_id
+      ? listSteps(lock.run_id).filter((s) => s.status === 'running').at(-1)?.step
+      : undefined;
+    return {
+      runId: lock.run_id ?? null,
+      site: run?.site_domain ?? '—',
+      keyword: run?.seed_keyword ?? run?.title ?? '—',
+      step: step ? step.replace(/-/g, ' ') : 'starting',
+      startedAt: lock.locked_at,
+    };
+  };
 
   app.get('/', async (request, reply) => {
     const timezone = settings.get('timezone');
     const now = new Date();
     const dayKey = localDateKey(now, timezone);
     const views = loadSiteViews(dayKey, timezone);
-
-    const eligibility = views.map((site) => {
-      const verdict = evaluateSite(site, { now, timezone });
-      return { domain: site.domain, eligible: verdict.eligible, reason: verdict.reason };
-    });
 
     const published =
       get<{ n: number }>(
@@ -402,43 +491,68 @@ export function buildServer(
       get<{ n: number }>(
         `SELECT COUNT(*) AS n FROM runs WHERE status = 'failed' AND date(started_at) = date('now')`,
       )?.n ?? 0;
-    // Not "keywords with status go": one of those linked to nothing is not
-    // work. See src/core/supply.ts.
+    const reelsToday =
+      get<{ n: number }>(
+        `SELECT COUNT(*) AS n FROM reels WHERE status = 'published' AND date(updated_at) = date('now')`,
+      )?.n ?? 0;
     const supply = readSupply();
-
     const lock = lockStatus();
-
-    // The Decisions page used to live at /decisions. It is one table, and the
-    // question it answers ("why did nothing publish?") is asked while looking
-    // at these counters, so it is a section here instead.
-    const cycles = listRecentCycles(20);
-    const requested = (request.query as { cycle?: string }).cycle;
-    const selectedCycle = requested ?? cycles[0]?.cycle_id ?? null;
 
     return page(
       reply,
-      'Dashboard',
+      'Home',
       '/',
-      dashboardPage({
-        sites: views,
-        eligibility,
-        publishedToday: published,
-        failedToday: failed,
-        supply,
-        recentRuns: listRuns(10),
+      homePage({
         automationOn: settings.getBool('automation_enabled'),
-        problems: problemsFor(settings),
-        busy: Boolean(lock?.locked_at),
-        lockedAt: lock?.locked_at ?? null,
-        keywords: loadKeywordViews(),
-        links: loadLinkViews(),
-        cycles,
-        selectedCycle,
-        decisions: selectedCycle ? listDecisions(selectedCycle) : [],
-        held: listHeldRuns(20),
-        activity: dailyActivity(30, timezone),
+        running: runningNow(),
+        attention: attentionFor(),
+        today: {
+          published,
+          target: views.filter((s) => s.status === 'active').reduce((n, s) => n + s.dailyTarget, 0),
+          reels: reelsToday,
+          failed,
+          queued: supply.readyPairs,
+          supply,
+        },
+        recent: mergeRecent(listRuns(12), listReels(12)),
+        picker: runPicker({
+          sites: views,
+          keywords: loadKeywordViews(),
+          links: loadLinkViews(),
+          busy: Boolean(lock?.locked_at),
+        }),
       }),
       readFlash(request.query),
+    );
+  });
+
+  /** The master switch, from the status bar. */
+  app.post('/automation', async (request, reply) => {
+    const body = formBody(request);
+    const on = asString(body.enabled) === '1';
+    settings.set('automation_enabled', on ? 'true' : 'false');
+    return redirect(reply, '/', {
+      kind: 'ok',
+      message: on ? 'Automation is on.' : 'Automation is paused. Nothing new starts until it is on again.',
+    });
+  });
+
+  /* -- Decisions ------------------------------------------------------------ */
+
+  app.get('/decisions', async (request, reply) => {
+    const cycles = listRecentCycles(20);
+    const requested = asString((request.query as { cycle?: string }).cycle);
+    const selectedCycle = requested || cycles[0]?.cycle_id || null;
+    return page(
+      reply,
+      'Decisions',
+      '/decisions',
+      decisionsPage(
+        cycles,
+        selectedCycle,
+        selectedCycle ? listDecisions(selectedCycle) : [],
+        dailyActivity(30, settings.get('timezone')),
+      ),
     );
   });
 
@@ -694,8 +808,19 @@ export function buildServer(
 
   app.get('/sites', async (request, reply) => {
     const timezone = settings.get('timezone');
-    const views = loadSiteViews(localDateKey(new Date(), timezone), timezone);
-    return page(reply, 'Sites', '/sites', sitesPage(listSites(), views), readFlash(request.query));
+    const now = new Date();
+    const views = loadSiteViews(localDateKey(now, timezone), timezone);
+    const eligibility = views.map((site) => {
+      const verdict = evaluateSite(site, { now, timezone });
+      return { domain: site.domain, eligible: verdict.eligible, reason: verdict.reason };
+    });
+    return page(
+      reply,
+      'Sites',
+      '/sites',
+      sitesPage(listSites(), views, eligibility),
+      readFlash(request.query),
+    );
   });
 
   app.get('/sites/:id', async (request, reply) => {
@@ -2046,10 +2171,6 @@ export function buildServer(
 
   // It is a section of the dashboard now. Kept as a redirect because it was a
   // page for long enough to be bookmarked.
-  app.get('/decisions', async (request, reply) => {
-    const cycle = asString((request.query as { cycle?: string }).cycle);
-    return redirect(reply, cycle ? `/?cycle=${encodeURIComponent(cycle)}#decisions` : '/');
-  });
 
   /* -- Events ------------------------------------------------------------ */
 
@@ -2156,29 +2277,53 @@ export function buildServer(
    * Configuration problems, including ones that live outside the settings
    * table: no API keys, or sites missing their own credentials.
    */
-  const problemsFor = (s: Settings): string[] => {
-    const problems = s.validate();
+  const problemsWithPlaces = (s: Settings): Attention[] => {
+    // Each problem says where it is fixed, so Home can offer the button.
+    const problems: Attention[] = s
+      .validate()
+      .map((text) => ({ kind: 'warn', text, href: '/settings', action: 'Settings' }));
 
     if (listEndpoints(encryptionKey).filter((e) => e.enabled).length === 0) {
-      problems.push('No LLM API keys added — nothing can be generated.');
+      problems.push({
+        kind: 'warn',
+        text: 'No LLM API keys added — nothing can be generated.',
+        href: '/settings/keys',
+        action: 'Add a key',
+      });
     }
 
-    if (imageServiceProblem) problems.push(imageServiceProblem);
+    if (imageServiceProblem) {
+      const needsSignIn = /signed in/i.test(imageServiceProblem);
+      problems.push({
+        kind: 'warn',
+        text: imageServiceProblem,
+        href: needsSignIn ? '/browser' : '/settings',
+        action: needsSignIn ? 'Sign in' : 'Check',
+        external: needsSignIn,
+      });
+    }
 
     const supplyProblem = supplyWarning(readSupply());
-    if (supplyProblem) problems.push(supplyProblem);
+    if (supplyProblem) {
+      problems.push({ kind: 'warn', text: supplyProblem, href: '/keywords', action: 'Keywords' });
+    }
 
     const sitesMissingToken = listSites()
       .filter((site) => site.status === 'active' && !site.api_token_encrypted.trim())
       .map((site) => site.domain);
     if (sitesMissingToken.length > 0) {
-      problems.push(
-        `Active site(s) without an API token: ${sitesMissingToken.join(', ')}.`,
-      );
+      problems.push({
+        kind: 'warn',
+        text: `Active site(s) without an API token: ${sitesMissingToken.join(', ')}.`,
+        href: '/sites',
+        action: 'Sites',
+      });
     }
 
     return problems;
   };
+
+  const problemsFor = (s: Settings): string[] => problemsWithPlaces(s).map((p) => p.text);
 
   app.get('/settings', async (request, reply) => {
     const values = new Map(SETTING_SPECS.map((s) => [s.key, settings.get(s.key)] as const));

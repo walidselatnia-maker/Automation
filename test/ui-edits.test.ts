@@ -119,10 +119,10 @@ describe('web UI after the layout changes', () => {
       expect(tabs).not.toContain('href="/sites"');
     });
 
-    it('sends the old decisions URL to the dashboard section', async () => {
+    it('serves decisions as a page under Activity', async () => {
       const response = await get('/decisions?cycle=abc');
-      expect(response.statusCode).toBe(303);
-      expect(response.headers.location).toBe('/?cycle=abc#decisions');
+      expect(response.statusCode).toBe(200);
+      expect(response.body).toContain('href="/events"');
     });
 
     it('serves the prompts editor from under settings', async () => {
@@ -227,14 +227,19 @@ describe('web UI after the layout changes', () => {
          VALUES ('cycle-1', 'site', 'bitespoon.com', 'rejected', 'Daily publishing limit reached')`,
       );
 
-      const response = await get('/');
+      const response = await get('/decisions');
       expect(response.body).toContain('Decisions');
       expect(response.body).toContain('Daily publishing limit reached');
     });
 
-    it('bounds the recent runs table instead of letting it grow', async () => {
+    it('keeps the home recent list short instead of letting it grow', async () => {
+      const siteId = seedSite('a.com');
+      const keywordId = insertKeyword({ seed_keyword: 'k' });
+      for (let i = 0; i < 20; i++) createRun(keywordId, siteId);
+
       const response = await get('/');
-      expect(response.body).toContain('table-wrap scroll-y');
+      const rows = (response.body.match(/href="\/runs\/\d+"/g) ?? []).length;
+      expect(rows).toBeLessThanOrEqual(12);
     });
   });
 
