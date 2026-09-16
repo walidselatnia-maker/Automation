@@ -2846,7 +2846,6 @@ export function reelsPage(data: ReelsPageData): Html {
 export interface ReelComposerData {
   candidate: ReelCandidate;
   images: ReelImages;
-  prompt: string;
   caption: string;
   page: FbPageRow | undefined;
 }
@@ -2866,11 +2865,11 @@ export interface ReelComposerData {
  * the pin is built by a different step from a different template.
  */
 export function reelComposerPage(data: ReelComposerData): Html {
-  const choices: { key: keyof ReelImages; label: string; hint: string; on: boolean }[] = [
-    { key: 'feature', label: 'Feature', hint: 'The hero shot', on: true },
-    { key: 'topShot', label: 'Top shot', hint: 'Overhead', on: true },
-    { key: 'textureMacro', label: 'Texture macro', hint: 'Close-up detail', on: true },
-    { key: 'beforeAfter', label: 'Before / after', hint: 'The comparison', on: true },
+  const shots: { key: keyof ReelImages; label: string }[] = [
+    { key: 'feature', label: 'Feature' },
+    { key: 'topShot', label: 'Top shot' },
+    { key: 'textureMacro', label: 'Texture macro' },
+    { key: 'beforeAfter', label: 'Before / after' },
   ];
 
   return html`
@@ -2883,22 +2882,19 @@ export function reelComposerPage(data: ReelComposerData): Html {
     <form method="post" action="/reels/new/${data.candidate.run_id}">
       <div class="split">
         <div class="card">
-          <h2>Reference images</h2>
+          <h2>What it is made from</h2>
           <p class="help">
-            Google composes the video from whichever of these you keep. Fewer and more
-            consistent usually beats all four.
+            The storyboard is written for this article and filmed from these
+            photographs, scene by scene. Nothing to choose here.
           </p>
           <div class="pick-grid">
-            ${choices.map(
-              (choice) => html`
-                <label class="pick-tile">
-                  <input type="checkbox" name="reference" value="${choice.key}"
-                         ${choice.on ? raw('checked') : raw('')}>
-                  <img src="${onSite(data.candidate.site_domain, data.images[choice.key])}"
-                       alt="${choice.label}" loading="lazy">
-                  <span class="pick-label">${choice.label}</span>
-                  <span class="help">${choice.hint}</span>
-                </label>`,
+            ${shots.map(
+              (shot) => html`
+                <div class="pick-tile">
+                  <img src="${onSite(data.candidate.site_domain, data.images[shot.key])}"
+                       alt="${shot.label}" loading="lazy">
+                  <span class="pick-label">${shot.label}</span>
+                </div>`,
             )}
           </div>
         </div>
@@ -2914,23 +2910,17 @@ export function reelComposerPage(data: ReelComposerData): Html {
                   <p class="help">
                     The page for ${data.candidate.seed_keyword}.
                     ${data.page.auto_publish === 1
-                      ? raw('It publishes automatically once the video is ready.')
+                      ? raw('It publishes automatically once the reel is ready.')
                       : raw('It will be held for you to review.')}
                   </p>`
               : html`<div class="flash warn">
                   No page has the niche <strong>${data.candidate.seed_keyword}</strong>. The
-                  reel will be generated and then wait.
+                  reel will be made and then wait.
                   <a href="/settings/facebook">Assign one</a> to send it somewhere.
                 </div>`}
           </div>
 
           <div class="card">
-            <div class="field">
-              <label for="reel-prompt">Video prompt</label>
-              <textarea id="reel-prompt" name="prompt" rows="9" class="mono"
-                        spellcheck="false">${data.prompt}</textarea>
-            </div>
-
             <div class="field">
               <label for="reel-caption">Caption</label>
               <textarea id="reel-caption" name="caption" rows="6"
@@ -2942,9 +2932,9 @@ export function reelComposerPage(data: ReelComposerData): Html {
       </div>
 
       <div class="save-bar">
-        <button class="primary" type="submit">Generate the video</button>
+        <button class="primary" type="submit">Make the reel</button>
         <a class="button" href="/reels">Cancel</a>
-        <span class="muted small">Takes a few minutes. It appears under In progress.</span>
+        <span class="muted small">The storyboard is written first, then each scene is filmed. Ten minutes or so.</span>
       </div>
     </form>
     ${raw(REEL_CAPTION_SCRIPT)}

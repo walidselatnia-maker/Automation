@@ -58,6 +58,9 @@ function fakeDeps(overrides: Partial<ReelDeps> = {}): FakeDeps {
     } as unknown as ReelDeps['images'],
     telegram: { sendMessage: vi.fn(async () => true) } as unknown as ReelDeps['telegram'],
     download: vi.fn(async () => Buffer.from('mp4')),
+    prompt: vi.fn(async () => ({ content: '{}' })),
+    clipsDir: '',
+    assemble: vi.fn(async () => {}),
     ...overrides,
   };
 }

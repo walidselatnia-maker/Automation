@@ -3,9 +3,8 @@ import type { SeoData } from './content.js';
 import type { ArticleImages } from './images.js';
 import type { PostedRecipe } from '../../integrations/site-api.js';
 import { createLogger, errorMessage } from '../../lib/logger.js';
-import { createReel, getReel, pageForNiche, updateReel } from '../../db/repos.js';
-import { buildReelPrompt, referenceUrls, withoutLinks } from '../../reels/compose.js';
-import { startGeneration } from '../../reels/engine.js';
+import { createReel, pageForNiche, setReelStage } from '../../db/repos.js';
+import { seedFromRun, withoutLinks } from '../../reels/compose.js';
 
 const log = createLogger('reel-step');
 
@@ -20,8 +19,6 @@ export interface CreateReelOutput {
   reelId: number | null;
   /** Why no reel was made. Not an error: the article is out either way. */
   skipped?: string;
-  /** The reel exists but its video could not be queued; Retry on the reels page. */
-  error?: string;
 }
 
 /**
@@ -33,8 +30,9 @@ export interface CreateReelOutput {
  * as an article that did not go out. What can go wrong is recorded on the
  * reel instead, where the reels page has a Retry for it.
  *
- * From here the reel engine takes over: it polls the video and publishes with
- * the page's own token, and the link goes in as the first comment.
+ * From here the reel engine takes over: it writes the storyboard, films the
+ * scenes, assembles them, and publishes with the page's own token, and the
+ * link goes in as the first comment.
  */
 export const createReelStep: Step<CreateReelInput, CreateReelOutput> = {
   name: 'create-reel',
@@ -76,25 +74,16 @@ export const createReelStep: Step<CreateReelInput, CreateReelOutput> = {
       siteId: ctx.site.id,
       keywordId: ctx.keyword.id,
       fbPageId: page.id,
-      prompt: buildReelPrompt({
-        title,
-        spy_title: ctx.keyword.spy_title,
-        seed_keyword: ctx.keyword.seed_keyword,
-      }),
+      prompt: '',
       caption,
-      references: referenceUrls(host, input.images),
+      references: [],
+      stage: 'planning',
+    });
+    setReelStage(reelId, 'planning', {
+      planJson: JSON.stringify(seedFromRun(ctx.runId, host, input.images, title)),
     });
 
-    try {
-      await startGeneration(getReel(reelId)!, ctx.settings, ctx.images);
-    } catch (err) {
-      const error = errorMessage(err);
-      updateReel(reelId, { status: 'failed', error });
-      log.warn(`run ${ctx.runId}: reel ${reelId} could not start: ${error}`);
-      return { reelId, error };
-    }
-
-    log.info(`run ${ctx.runId}: reel ${reelId} queued for ${page.name || page.page_id}`);
+    log.info(`run ${ctx.runId}: reel ${reelId} queued for planning on ${page.name || page.page_id}`);
     return { reelId };
   },
 };

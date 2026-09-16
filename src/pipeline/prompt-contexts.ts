@@ -87,10 +87,6 @@ export const TEMPLATE_CONTEXTS: Record<string, Record<string, unknown>> = {
     site: { domain: 'example.com' },
     imagePrompts: { feature: 'f', textureMacro: 'm' },
   },
-  'reel-video.template': {
-    seo: SEO,
-    spy: SPY,
-  },
 };
 
 /** Kept for the callers that named it before there was more than one. */

@@ -1,19 +1,33 @@
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { FacebookClient, FacebookError } from '../integrations/facebook.js';
 import { ImageClient } from '../integrations/images.js';
 import { TelegramClient } from '../integrations/telegram.js';
 import { createLogger, errorMessage } from '../lib/logger.js';
 import { resolveProjectId } from '../core/project-id.js';
+import { resolveDataDir } from '../config.js';
+import { askPrompt } from '../llm/ask.js';
 import type { Settings } from '../settings.js';
 import {
   activeReels,
   fbPageToken,
   getFbPage,
   getSite,
+  listScenes,
   markFbPageFailed,
   markFbPageUsed,
+  presenterForPage,
+  recentFormatsForPage,
+  replaceScenes,
+  setReelStage,
   updateReel,
   type ReelView,
 } from '../db/repos.js';
+import { pickFormat } from './formats.js';
+import { planReel, type SourceRole } from './plan.js';
+import { filmPending } from './film.js';
+import { assembleReel } from './assemble.js';
+import type { ReelSeed } from './compose.js';
 
 const log = createLogger('reels');
 
@@ -31,6 +45,10 @@ const log = createLogger('reels');
  *
  *   draft -> generating -> ready -> publishing -> published
  *                       \-> failed <-/
+ *
+ * A studio reel spends its `generating` on stages -- planning, imaging,
+ * filming, assembling -- one per pass, recorded in `stage`, with one row per
+ * scene under it so a scene can fail and be retried on its own.
  */
 
 export interface ReelTickResult {
@@ -49,6 +67,12 @@ export interface ReelDeps {
   telegram: TelegramClient;
   /** Download a finished video. Separate so tests need no network. */
   download(url: string): Promise<Buffer>;
+  /** Ask the model one named prompt. The plan stage's only call. */
+  prompt(name: string, vars: Record<string, unknown>): Promise<{ content: string }>;
+  /** Where clips and assembled reels land. */
+  clipsDir: string;
+  /** Join scene clips into one file. ffmpeg, in production. */
+  assemble(clipPaths: string[], outPath: string, ctaText: string): Promise<void>;
 }
 
 export function defaultDeps(settings: Settings, key: Buffer): ReelDeps {
@@ -72,6 +96,9 @@ export function defaultDeps(settings: Settings, key: Buffer): ReelDeps {
       }
       return Buffer.from(await response.arrayBuffer());
     },
+    prompt: (name, vars) => askPrompt(settings, key, name, vars),
+    clipsDir: join(resolveDataDir(), 'reels'),
+    assemble: (clips, out, cta) => assembleReel(clips, out, { ctaText: cta }),
   };
 }
 
@@ -115,7 +142,21 @@ async function advance(
 ): Promise<boolean> {
   switch (reel.status) {
     case 'generating':
-      return pollGeneration(reel, deps);
+      switch (reel.stage) {
+        case 'planning':
+          return planStage(reel, settings, deps);
+        case 'filming':
+          return filmingStage(reel, settings, deps);
+        case 'assembling':
+          return assemblingStage(reel, settings, deps);
+        case 'imaging':
+          // Fresh-image mode is not on this build yet; the plan stage never
+          // sends a reel here. Treated as filming so nothing can stall.
+          return filmingStage(reel, settings, deps);
+        default:
+          // A one-shot reel from before the studio: one video job to poll.
+          return pollGeneration(reel, deps);
+      }
     case 'ready':
       return publishIfAllowed(reel, settings, deps);
     case 'publishing':
@@ -128,6 +169,88 @@ async function advance(
     default:
       return false;
   }
+}
+
+/**
+ * Write the storyboard.
+ *
+ * One model call, checked before anything is spent. The format comes from
+ * the page's rotation, the presenter from the page, the article from what
+ * the run stored on the reel when it was created.
+ */
+async function planStage(reel: ReelView, settings: Settings, deps: ReelDeps): Promise<boolean> {
+  const seed = JSON.parse(reel.plan_json || '{}') as Partial<ReelSeed>;
+  if (!seed.sources || !seed.article) throw new Error('This reel has no article to plan from.');
+
+  const page = reel.fb_page_id ? getFbPage(reel.fb_page_id) : undefined;
+  const presenter = page ? presenterForPage(page.id) : undefined;
+
+  const allowed = parseFormats(settings.get('reel_formats'));
+  const format = pickFormat(allowed, page ? recentFormatsForPage(page.id) : []);
+  const plan = await planReel({
+    prompt: deps.prompt,
+    article: seed.article,
+    sources: Object.keys(seed.sources) as SourceRole[],
+    presenter:
+      presenter && format.presenter !== 'never'
+        ? { name: presenter.name, voice: presenter.voice_description }
+        : null,
+    targetSeconds: settings.getNumber('reel_length_seconds') || 30,
+    format,
+    cta: settings.get('reel_cta_text'),
+  });
+
+  replaceScenes(
+    reel.id,
+    plan.scenes.map((s) => ({
+      seconds: s.seconds,
+      presenter: s.presenter,
+      sources: s.sources,
+      imagePrompt: s.image,
+      motionPrompt: s.motion,
+      line: s.line,
+    })),
+  );
+  setReelStage(reel.id, 'filming', {
+    planJson: JSON.stringify({ ...seed, plan }),
+    format: format.key,
+  });
+  log.info(`reel ${reel.id}: planned as ${format.key}, ${plan.scenes.length} scene(s)`);
+  return true;
+}
+
+/** Every allowed format key; an unset or unreadable setting means all of them. */
+function parseFormats(raw: string): string[] {
+  try {
+    const parsed = JSON.parse(raw || '[]') as unknown;
+    if (Array.isArray(parsed) && parsed.length) return parsed.map(String);
+  } catch {
+    // fall through
+  }
+  return [];
+}
+
+async function filmingStage(reel: ReelView, settings: Settings, deps: ReelDeps): Promise<boolean> {
+  const state = await filmPending(reel, deps, settings);
+  if (state === 'done') setReelStage(reel.id, 'assembling');
+  return true;
+}
+
+async function assemblingStage(
+  reel: ReelView,
+  settings: Settings,
+  deps: ReelDeps,
+): Promise<boolean> {
+  const scenes = listScenes(reel.id);
+  const clips = scenes.map((s) => s.clip_path).filter((p): p is string => Boolean(p));
+  if (clips.length !== scenes.length) throw new Error('Not every scene has a clip to assemble.');
+
+  const out = join(deps.clipsDir, `${reel.id}.mp4`);
+  await deps.assemble(clips, out, settings.get('reel_cta_text'));
+  setReelStage(reel.id, 'done', { outputPath: out });
+  updateReel(reel.id, { status: 'ready', error: null });
+  log.info(`reel ${reel.id}: assembled ${clips.length} clip(s)`);
+  return true;
 }
 
 /** Ask the image service whether the video is done yet. */
@@ -187,7 +310,7 @@ async function publishIfAllowed(
  */
 export async function publishReel(reel: ReelView, deps: ReelDeps): Promise<void> {
   if (!reel.fb_page_id) throw new Error('This reel has no Facebook page to publish to.');
-  if (!reel.video_url) throw new Error('This reel has no video to publish.');
+  if (!reel.output_path && !reel.video_url) throw new Error('This reel has no video to publish.');
 
   const page = getFbPage(reel.fb_page_id);
   if (!page) throw new Error('The Facebook page for this reel no longer exists.');
@@ -195,7 +318,11 @@ export async function publishReel(reel: ReelView, deps: ReelDeps): Promise<void>
   updateReel(reel.id, { status: 'publishing', error: null });
 
   const facebook = deps.facebookFor(page.id);
-  const video = await deps.download(reel.video_url);
+  // A studio reel is a file the platform assembled; a one-shot reel is a url
+  // the image service handed back.
+  const video = reel.output_path
+    ? await readFile(reel.output_path)
+    : await deps.download(reel.video_url!);
 
   const published = await facebook.publishReel({
     pageId: page.page_id,

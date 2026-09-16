@@ -1,27 +1,98 @@
-import { loadTemplate } from '../pipeline/prompts.js';
 import type { ArticleImages } from '../pipeline/steps/images.js';
+import { getCompletedStep } from '../db/repos.js';
+import type { SourceRole } from './plan.js';
 
 /**
- * What every reel is built from, whoever asks for it -- the pipeline after a
- * publish, or a person on the composer page. One copy, so the two cannot
- * drift apart.
+ * What every studio reel is built from, whoever asks for it -- the pipeline
+ * after a publish, or a person on the reels page. One copy, so the two
+ * cannot drift apart.
  */
 
+/** The article's images by role, as public urls; the pin only when there is one. */
+export function sourceUrls(
+  host: string,
+  images: ArticleImages,
+  pin: string | null,
+): Partial<Record<SourceRole, string>> {
+  const abs = (path: string) => `https://${host}${path}`;
+  const out: Partial<Record<SourceRole, string>> = {
+    feature: abs(images.feature),
+    topShot: abs(images.topShot),
+    textureMacro: abs(images.textureMacro),
+    beforeAfter: abs(images.beforeAfter),
+  };
+  if (pin) out.pin = abs(pin);
+  return out;
+}
+
 /**
- * The video prompt.
+ * The prompt one clip is filmed from.
  *
- * A template rather than a model call: on the composer a person edits it
- * before anything is generated, and the pipeline sends it as it is.
+ * The motion, then the line as dialogue in the form the Flow UI uses, then
+ * how the delivery should sound, in the same words every scene -- that
+ * repetition is what keeps the delivery the same clip to clip.
  */
-export function buildReelPrompt(c: {
-  title: string;
-  spy_title: string;
-  seed_keyword: string;
-}): string {
-  return loadTemplate('reel-video.template.txt', {
-    seo: { title: c.title || c.spy_title, category: c.seed_keyword },
-    spy: { title: c.spy_title, group: c.seed_keyword },
-  });
+export function clipPrompt(
+  scene: { motion: string; line: string },
+  presenter: { name: string; voice: string } | null,
+): string {
+  const parts = [scene.motion.trim()];
+  const line = scene.line.trim();
+  if (presenter && line) {
+    parts.push(`${presenter.name} says: "${line}"`);
+    if (presenter.voice.trim()) parts.push(`Voice: ${presenter.voice.trim()}.`);
+  } else if (line) {
+    parts.push(`A voice says: "${line}"`);
+  }
+  return parts.join(' ');
+}
+
+/** What a reel keeps about its article before and after planning. */
+export interface ReelSeed {
+  article: { title: string; recipe: string; imagePrompts: Record<string, string> };
+  sources: Partial<Record<SourceRole, string>>;
+}
+
+/**
+ * Everything the planner needs, read off the run's checkpoints.
+ *
+ * The recipe and the image prompts are what the article was written from;
+ * they are what makes a storyboard specific to this dish rather than to
+ * "a recipe". The pin graphic joins the sources when the run made one.
+ */
+export function seedFromRun(
+  runId: number,
+  host: string,
+  images: ArticleImages,
+  title: string,
+): ReelSeed {
+  const output = (step: string): unknown => {
+    const row = getCompletedStep(runId, step);
+    if (!row?.output_json) return null;
+    try {
+      return JSON.parse(row.output_json);
+    } catch {
+      return null;
+    }
+  };
+
+  const pin = output('generate-pin-image') as { url?: string } | null;
+  const recipe = output('generate-recipe');
+  const prompts = output('generate-image-prompts') as Record<string, unknown> | null;
+
+  const imagePrompts: Record<string, string> = {};
+  for (const [key, value] of Object.entries(prompts ?? {})) {
+    if (typeof value === 'string') imagePrompts[key] = value;
+  }
+
+  return {
+    article: {
+      title,
+      recipe: typeof recipe === 'string' ? recipe : recipe ? JSON.stringify(recipe) : '',
+      imagePrompts,
+    },
+    sources: sourceUrls(host, images, pin?.url ?? null),
+  };
 }
 
 /**
@@ -40,11 +111,4 @@ export function withoutLinks(caption: string): string {
     .join('\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
-}
-
-/** The four article images as absolute urls, in the order the template names them. */
-export function referenceUrls(host: string, images: ArticleImages): string[] {
-  return [images.feature, images.topShot, images.textureMacro, images.beforeAfter].map(
-    (path) => `https://${host}${path}`,
-  );
 }

@@ -98,9 +98,14 @@ function resolveAuthPassword(dataDir: string): { password: string; generated: bo
   return { password: readOrCreateSecret(path, generatePassword), generated: true };
 }
 
+/** Where the database lives, and with it everything the platform stores as files. */
+export function resolveDataDir(): string {
+  return dirname(resolve(process.env.DB_PATH ?? './data/platform.db'));
+}
+
 export function loadConfig(): AppConfig {
   const dbPath = process.env.DB_PATH ?? './data/platform.db';
-  const dataDir = dirname(resolve(dbPath));
+  const dataDir = resolveDataDir();
   mkdirSync(dataDir, { recursive: true });
 
   const level = (process.env.LOG_LEVEL ?? 'info') as AppConfig['logLevel'];

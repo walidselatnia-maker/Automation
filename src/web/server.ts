@@ -121,6 +121,7 @@ import {
   reelCandidates,
   setFbPageOptions,
   updateReel,
+  setReelStage,
   type ReelCandidate,
 } from '../db/repos.js';
 import { get } from '../db/index.js';
@@ -172,7 +173,7 @@ import { TelegramClient } from '../integrations/telegram.js';
 import { syncToken, type SyncResult } from '../reels/tokens.js';
 import { defaultDeps, publishReel, startGeneration } from '../reels/engine.js';
 import { loadPrompt } from '../pipeline/prompts.js';
-import { buildReelPrompt, withoutLinks } from '../reels/compose.js';
+import { seedFromRun, withoutLinks } from '../reels/compose.js';
 import { chat } from '../llm/client.js';
 import { normaliseDomain } from '../lib/domain.js';
 
@@ -1220,7 +1221,6 @@ export function buildServer(
       reelComposerPage({
         candidate,
         images,
-        prompt: buildReelPrompt(candidate),
         caption: placeholderCaption(candidate),
         page: pageForNiche(candidate.seed_keyword),
       }),
@@ -1250,11 +1250,7 @@ export function buildServer(
 
   app.post('/reels/new/:runId', async (request, reply) => {
     const runId = asNumber((request.params as { runId: string }).runId, 0);
-    const body = request.body as {
-      reference?: string | string[];
-      prompt?: string;
-      caption?: string;
-    };
+    const body = request.body as { caption?: string };
 
     const candidate = reelCandidates(500).find((c) => c.run_id === runId);
     if (!candidate) return reply.callNotFound();
@@ -1267,57 +1263,32 @@ export function buildServer(
       });
     }
 
-    // One checkbox arrives as a string, several as an array.
-    const chosen = ([] as string[]).concat(body.reference ?? []);
-    if (chosen.length === 0) {
-      return redirect(reply, `/reels/new/${runId}`, {
-        kind: 'error',
-        message: 'Pick at least one reference image.',
-      });
-    }
-
     const host = candidate.site_domain.replace(/^https?:\/\//, '').replace(/\/+$/, '');
-    const references = chosen
-      .map((key) => images[key as keyof typeof images])
-      .filter((path): path is string => Boolean(path))
-      .map((path) => `https://${host}${path}`);
-
     const target = pageForNiche(candidate.seed_keyword);
+    const title = candidate.title || candidate.spy_title;
 
+    // The same reel the pipeline would have made: the engine writes the
+    // storyboard, films it, and publishes it, one stage per minute.
     const reelId = createReel({
       runId,
       siteId: candidate.site_id,
       keywordId: candidate.keyword_id,
       fbPageId: target?.id ?? null,
-      prompt: (body.prompt ?? '').trim() || buildReelPrompt(candidate),
-      caption: (body.caption ?? '').trim(),
-      references,
+      prompt: '',
+      caption: (body.caption ?? '').trim() || title,
+      references: [],
+      stage: 'planning',
+    });
+    setReelStage(reelId, 'planning', {
+      planJson: JSON.stringify(seedFromRun(runId, host, images, title)),
     });
 
-    const reel = getReel(reelId);
-    if (!reel) return redirect(reply, '/reels');
-
-    try {
-      await startGeneration(reel, settings, defaultDeps(settings, encryptionKey).images);
-    } catch (err) {
-      updateReel(reelId, { status: 'failed', error: errorMessage(err) });
-      return redirect(reply, '/reels', { kind: 'error', message: errorMessage(err) });
-    }
-
-    return redirect(reply, '/reels', {
+    return redirect(reply, `/reels/${reelId}`, {
       kind: 'ok',
-      message: 'Generating the video. It takes a few minutes.',
+      message: 'The reel is queued. The storyboard is written first, then each scene is filmed.',
     });
   });
 
-  /**
-   * One reel, in full.
-   *
-   * The list card clips the error, and a video submit that comes back in an
-   * unexpected shape produces exactly the message you need to read whole. The
-   * prompt, the references and the job id were all stored already and had
-   * nowhere to be seen.
-   */
   app.get('/reels/:id', async (request, reply) => {
     const reel = getReel(asNumber((request.params as { id: string }).id, 0));
     if (!reel) return reply.callNotFound();

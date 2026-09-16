@@ -117,6 +117,9 @@ export class ImageClient {
   async submitVideo(input: {
     prompt: string;
     referenceUrls: string[];
+    /** The presenter's character and voice in the Flow project, when the scene has them. */
+    characterMediaId?: string;
+    voiceMediaId?: string;
     projectId?: string;
     orientation?: string;
   }): Promise<string> {
@@ -126,6 +129,8 @@ export class ImageClient {
       body: JSON.stringify({
         prompt: input.prompt,
         reference_urls: input.referenceUrls,
+        ...(input.characterMediaId ? { character_media_id: input.characterMediaId } : {}),
+        ...(input.voiceMediaId ? { voice_media_id: input.voiceMediaId } : {}),
         orientation: input.orientation ?? 'VERTICAL',
         ...(input.projectId ? { project_id: input.projectId } : {}),
       }),

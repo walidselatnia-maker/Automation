@@ -103,7 +103,7 @@ describe('the create-reel step', () => {
 
   const reelStep = (runId: number) => listSteps(runId).find((s) => s.step === 'create-reel');
 
-  it('makes a reel from the four images with a written caption and no link', async () => {
+  it('queues a reel for planning, with the article and its images, and a written caption', async () => {
     const pageId = pageForKeyword();
     const world = buildWorld();
     vi.stubGlobal('fetch', world.fetchStub);
@@ -113,17 +113,15 @@ describe('the create-reel step', () => {
 
     expect(outcome.status).toBe('published');
     const [reel] = listReels();
-    expect(reel).toMatchObject({
-      run_id: runId,
-      fb_page_id: pageId,
-      status: 'generating',
-      job_id: 'video-1',
-    });
+    expect(reel).toMatchObject({ run_id: runId, fb_page_id: pageId, status: 'generating', stage: 'planning' });
     expect(reel!.caption).toBe(['Hook line!', '', 'A cosy stew.'].join(String.fromCharCode(10)));
-    expect(JSON.parse(reel!.reference_json)).toHaveLength(4);
-    expect(JSON.parse(reel!.reference_json)[0]).toMatch(/^https:\/\/testsite\.com\//);
-    expect(reel!.prompt).toContain('reel video for Test Chicken');
-    expect(world.videoBodies[0]).toMatchObject({ orientation: 'VERTICAL', project_id: 'p1' });
+
+    const seed = JSON.parse(reel!.plan_json) as { article: { title: string; imagePrompts: Record<string, string> }; sources: Record<string, string> };
+    expect(seed.article.title).toBe('Test Chicken');
+    expect(Object.keys(seed.sources)).toEqual(expect.arrayContaining(['feature', 'topShot', 'textureMacro', 'beforeAfter', 'pin']));
+    expect(seed.sources.feature).toMatch(/^https:\/\/testsite\.com\//);
+    // Nothing is filmed inside the run: the engine does that, one scene per pass.
+    expect(world.videoBodies).toHaveLength(0);
     expect(reelStep(runId)?.status).toBe('ok');
   });
 
@@ -146,18 +144,6 @@ describe('the create-reel step', () => {
     await executePipeline(makeContext(createRun(keywordId, siteId)));
 
     expect(listReels()).toEqual([]);
-  });
-
-  it('a video submit that fails leaves a failed reel, not a failed run', async () => {
-    pageForKeyword();
-    vi.stubGlobal('fetch', buildWorld({ failVideoSubmit: true }).fetchStub);
-    const runId = createRun(keywordId, siteId);
-
-    expect((await executePipeline(makeContext(runId))).status).toBe('published');
-
-    expect(listReels()[0]).toMatchObject({ status: 'failed' });
-    expect(listReels()[0]!.error).toContain('503');
-    expect(reelStep(runId)?.status).toBe('ok');
   });
 
   it('falls back to the title when the caption model answers nothing', async () => {
