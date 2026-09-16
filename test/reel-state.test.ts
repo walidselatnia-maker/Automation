@@ -7,9 +7,13 @@ import {
   getReel,
   insertFbToken,
   insertKeyword,
+  listScenes,
   markRunPublished,
+  replaceScenes,
   setFbPageOptions,
+  setReelStage,
   updateReel,
+  updateScene,
   upsertFbPage,
   upsertSite,
   type ReelView,
@@ -61,6 +65,8 @@ function fakeDeps(overrides: Partial<ReelDeps> = {}): FakeDeps {
     prompt: vi.fn(async () => ({ content: '{}' })),
     clipsDir: '',
     assemble: vi.fn(async () => {}),
+    uploadImage: vi.fn(async () => 'https://bitespoon.com/fresh.webp'),
+    pause: vi.fn(async () => {}),
     ...overrides,
   };
 }
@@ -344,3 +350,84 @@ describe('a reel moving through its states', () => {
     expect(getReel(reelId)!.status).toBe('published');
   });
 });
+
+describe('a reel filmed from fresh images', () => {
+  beforeEach(() => {
+    setLogLevel('error');
+    openDatabase(':memory:');
+  });
+  afterEach(() => closeDatabase());
+
+  const seedImaging = () => {
+    const { reelId } = seed({ autoPublish: false });
+    updateReel(reelId, { status: 'generating' });
+    setReelStage(reelId, 'imaging', {
+      planJson: JSON.stringify({ sources: { feature: 'https://bitespoon.com/a.webp' } }),
+    });
+    replaceScenes(reelId, [
+      { seconds: 10, presenter: false, sources: ['feature'], imagePrompt: 'the stew from above', motionPrompt: 'steam', line: '' },
+      { seconds: 10, presenter: false, sources: ['feature'], imagePrompt: '', motionPrompt: 'a ladle', line: '' },
+    ]);
+    return reelId;
+  };
+
+  it('makes one image per scene that asks for one, following the feature image, and puts it on the site', async () => {
+    const reelId = seedImaging();
+    const settings = settingsWith(true);
+    settings.set('image_gap_seconds', '0');
+    const generate = vi.fn(async () => ({
+      jobId: 'J9', imageUrl: 'https://cdn/x', data: Buffer.from('img'), contentType: 'image/webp',
+    }));
+    const deps = fakeDeps({ images: { generate } as unknown as ReelDeps['images'] });
+
+    await tickReels(settings, deps);
+
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(generate.mock.calls[0]).toEqual([
+      'the stew from above', 'VERTICAL', { referenceUrls: ['https://bitespoon.com/a.webp'] },
+    ]);
+    expect(deps.uploadImage).toHaveBeenCalledWith(expect.any(Number), Buffer.from('img'), 'image/webp');
+    expect(listScenes(reelId).map((s) => s.image_url)).toEqual(['https://bitespoon.com/fresh.webp', null]);
+    expect(getReel(reelId)).toMatchObject({ status: 'generating', stage: 'filming' });
+  });
+
+  it('breathes between fresh images, and never remakes one it already has', async () => {
+    const reelId = seedImaging();
+    replaceScenes(reelId, [
+      { seconds: 10, presenter: false, sources: ['feature'], imagePrompt: 'one', motionPrompt: 'm', line: '' },
+      { seconds: 10, presenter: false, sources: ['feature'], imagePrompt: 'two', motionPrompt: 'm', line: '' },
+      { seconds: 10, presenter: false, sources: ['feature'], imagePrompt: 'three', motionPrompt: 'm', line: '' },
+    ]);
+    const [first] = listScenes(reelId);
+    updateSceneImage(first!.id);
+    const settings = settingsWith(true);
+    settings.set('image_gap_seconds', '30');
+    const generate = vi.fn(async () => ({
+      jobId: 'J9', imageUrl: 'https://cdn/x', data: Buffer.from('img'), contentType: 'image/webp',
+    }));
+    const deps = fakeDeps({ images: { generate } as unknown as ReelDeps['images'] });
+
+    await tickReels(settings, deps);
+
+    expect(generate.mock.calls.map((c) => c[0])).toEqual(['two', 'three']);
+    expect(deps.pause).toHaveBeenCalledTimes(1);
+    expect(deps.pause).toHaveBeenCalledWith(30_000);
+  });
+
+  it('fails the reel, not the process, when an image cannot be made', async () => {
+    const reelId = seedImaging();
+    const settings = settingsWith(true);
+    const deps = fakeDeps({
+      images: { generate: vi.fn(async () => { throw new Error('no credits'); }) } as unknown as ReelDeps['images'],
+    });
+
+    const result = await tickReels(settings, deps);
+
+    expect(result.failed).toBe(1);
+    expect(getReel(reelId)).toMatchObject({ status: 'failed', error: 'no credits' });
+  });
+});
+
+function updateSceneImage(sceneId: number): void {
+  updateScene(sceneId, { imageUrl: 'https://bitespoon.com/already.webp' });
+}

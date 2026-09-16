@@ -96,6 +96,10 @@ function sceneCard(reel: ReelView, scene: ReelSceneRow, presenter: PresenterRow 
       <p>${scene.motion_prompt}</p>
       ${scene.line ? html`<p class="muted">“${scene.line}”</p>` : raw('')}
       ${scene.error ? html`<pre>${scene.error}</pre>` : raw('')}
+      ${scene.image_url
+        ? html`<p class="small muted">Filmed from a fresh image:
+            <a href="${scene.image_url}" target="_blank" rel="noopener">open</a></p>`
+        : raw('')}
       ${scene.clip_path
         ? html`<video src="/reels/${reel.id}/scenes/${scene.id}/clip" controls playsinline
                      preload="none" style="max-width:100%;max-height:50vh"></video>`

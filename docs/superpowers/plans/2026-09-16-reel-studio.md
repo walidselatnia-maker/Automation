@@ -1960,6 +1960,8 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 ### Task 9: Fresh-image mode (the imaging stage)
 
+_Done: `imagingStage` in `src/reels/engine.ts`; `/v1/generate` takes `reference_urls`; tests in `test/reel-state.test.ts`, `test/image-client.test.ts`, `services/imagegen/tests/test_worker.py`._
+
 **Files:**
 - Modify: `src/reels/engine.ts` (`imagingStage`), `src/reels/film.ts` (a scene with `image_url` films from `[image_url]` instead of its sources), `test/reel-film.test.ts`
 

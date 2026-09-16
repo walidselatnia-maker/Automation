@@ -47,3 +47,22 @@ describe('waiting for an image job', () => {
     await expect(client().waitForCompletion('j')).rejects.toThrow(/did not complete.*HTTP 503/s);
   });
 });
+
+describe('an image that follows a photo', () => {
+  it('sends the reference urls only when there are any', async () => {
+    const bodies: unknown[] = [];
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      return new Response(JSON.stringify({ job_id: 'J1' }), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new ImageClient({ baseUrl: 'http://img', apiKey: 'k', pollIntervalMs: 1, maxAttempts: 1 });
+
+    await client.submit('soup', 'VERTICAL');
+    await client.submit('the same soup', 'VERTICAL', { referenceUrls: ['https://a/f.webp'] });
+
+    expect(bodies[0]).not.toHaveProperty('reference_urls');
+    expect(bodies[1]).toMatchObject({ reference_urls: ['https://a/f.webp'] });
+    vi.unstubAllGlobals();
+  });
+});

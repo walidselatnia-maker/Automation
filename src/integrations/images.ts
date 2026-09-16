@@ -71,14 +71,26 @@ export class ImageClient {
     return `${this.options.baseUrl.replace(/\/+$/, '')}${path}`;
   }
 
-  /** Submit a generation request and return the job id. */
-  async submit(prompt: string, orientation = 'VERTICAL'): Promise<string> {
+  /**
+   * Submit a generation request and return the job id.
+   *
+   * `referenceUrls` are public photos the image should follow -- the article's
+   * own feature image when a reel scene wants a fresh view of the same dish.
+   * Sent only when there are any, so an article image is the same request it
+   * always was.
+   */
+  async submit(
+    prompt: string,
+    orientation = 'VERTICAL',
+    options: { referenceUrls?: string[] } = {},
+  ): Promise<string> {
     const response = await fetch(this.url('/v1/generate'), {
       method: 'POST',
       headers: this.headers(),
       body: JSON.stringify({
         prompt,
         orientation,
+        ...(options.referenceUrls?.length ? { reference_urls: options.referenceUrls } : {}),
         // Omitted rather than sent empty, so the service falls back to its own
         // configured project instead of being told to use nothing.
         ...(this.options.projectId ? { project_id: this.options.projectId } : {}),
@@ -234,13 +246,17 @@ export class ImageClient {
   }
 
   /** Submit, wait, and download in one call. */
-  async generate(prompt: string, orientation = 'VERTICAL'): Promise<{
+  async generate(
+    prompt: string,
+    orientation = 'VERTICAL',
+    options: { referenceUrls?: string[] } = {},
+  ): Promise<{
     jobId: string;
     imageUrl: string;
     data: Buffer;
     contentType: string;
   }> {
-    const jobId = await this.submit(prompt, orientation);
+    const jobId = await this.submit(prompt, orientation, options);
     const imageUrl = await this.waitForCompletion(jobId);
     const { data, contentType } = await this.download(imageUrl);
     return { jobId, imageUrl, data, contentType };

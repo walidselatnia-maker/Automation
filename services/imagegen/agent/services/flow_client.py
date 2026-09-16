@@ -682,7 +682,8 @@ class FlowClient:
 
     async def generate_images_batch(self, prompt: str, project_id: str,
                                     aspect_ratio: str = "IMAGE_ASPECT_RATIO_PORTRAIT",
-                                    image_model_name: str | None = None) -> dict:
+                                    image_model_name: str | None = None,
+                                    ref_media_ids: list[str] | None = None) -> dict:
         """Generate one image on the batch path.
 
         Answers in the REST shape on purpose. The worker reads
@@ -705,6 +706,7 @@ class FlowClient:
             aspect=aspect_ratio,
             model=fb.IMAGE_MODEL_BY_NICKNAME.get(image_model_name or "", image_model_name)
             or fb.IMAGE_MODEL,
+            ref_media_ids=ref_media_ids or None,
         )
         out = await self._batch_payload(
             fb.RPC_GEN_IMAGE, freq, fb.CAPTCHA_IMAGE, timeout=180, project_id=project_id)

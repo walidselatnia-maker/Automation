@@ -17,14 +17,20 @@ _NOW = "strftime('%Y-%m-%dT%H:%M:%SZ', 'now')"
 
 
 async def create(prompt: str, orientation: str = "VERTICAL", project_id: str = "",
-                 image_model: str = "auto") -> dict:
-    """Queue a generation. Returns the new row."""
+                 image_model: str = "auto",
+                 reference_urls: list[str] | None = None) -> dict:
+    """Queue a generation. Returns the new row.
+
+    reference_urls sit in the same column video jobs use: an image that
+    follows a photo and a clip that follows one are the same idea.
+    """
     job_id = str(uuid.uuid4())
     db = await get_db()
     await db.execute(
-        "INSERT INTO job (id, prompt, orientation, project_id, image_model) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (job_id, prompt, orientation, project_id, image_model or "auto"),
+        "INSERT INTO job (id, prompt, orientation, project_id, image_model, reference_urls) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (job_id, prompt, orientation, project_id, image_model or "auto",
+         json.dumps(list(reference_urls or []))),
     )
     await db.commit()
     return await get(job_id)

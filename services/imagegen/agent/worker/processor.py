@@ -282,6 +282,14 @@ class WorkerController:
             # page shows it. That is how a name read off a page gets verified:
             # in Automatic mode the walk never reaches it, because Nano Banana 2
             # is unlimited, so a person picks it there and runs one article.
+            # References go up first, so the image can follow them. An image
+            # job with none -- every article image -- skips this entirely.
+            ref_media_ids = await self._upload_references_batch(job, request["project_id"])
+            if ref_media_ids is None:
+                return
+            if ref_media_ids:
+                request["ref_media_ids"] = ref_media_ids
+
             await image_models.ensure_discovered(client)
             choice = job.get("image_model") or image_models.AUTO
             models = image_models.plan(choice)
@@ -317,6 +325,40 @@ class WorkerController:
 
         await jobs.complete(job_id, extract_media_id(result), url)
         logger.info("job %s COMPLETED", job_id[:8])
+
+    async def _upload_references_batch(self, job: dict, project_id: str) -> list[str] | None:
+        """Every reference on the job, uploaded into the project; their media ids.
+
+        None means the job was failed here and the caller should stop. The
+        same upload the reel path does, kept apart so an image job with no
+        references never touches it.
+        """
+        try:
+            reference_urls = json.loads(job.get("reference_urls") or "[]")
+        except (TypeError, ValueError):
+            await self._handle_failure(job, "reference_urls is not valid JSON")
+            return None
+        if not reference_urls:
+            return []
+
+        client = get_flow_client()
+        media_ids: list[str] = []
+        for url in reference_urls[:3]:
+            fetched = await self._fetch_reference(url)
+            if "error" in fetched:
+                await self._handle_failure(job, fetched["error"])
+                return None
+            uploaded = await client.upload_image_batch(
+                image_base64=base64.b64encode(fetched["bytes"]).decode("ascii"),
+                project_id=project_id,
+                mime_type=fetched["mime"],
+                file_name=url.rsplit("/", 1)[-1][:100] or "reference.jpg",
+            )
+            if uploaded.get("error"):
+                await self._handle_failure(job, f"Uploading a reference failed: {uploaded['error']}")
+                return None
+            media_ids.append(uploaded["media_id"])
+        return media_ids
 
     async def _run_video(self, job: dict) -> None:
         """Reference images -> Flow -> a finished video URL.

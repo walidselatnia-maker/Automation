@@ -56,6 +56,12 @@ class GenerateRequest(BaseModel):
     # offers the keys, and a stale caller should still generate.
     image_model: Optional[str] = Field(default=None, max_length=40)
 
+    # Public image URLs the result should follow: the platform sends an
+    # article's own photo when a reel wants a fresh scene of the same dish.
+    # Uploaded into the project and sent as references, the way Flow's own UI
+    # keeps a subject the same from image to image. Empty means none.
+    reference_urls: list[str] = Field(default_factory=list, max_length=3)
+
 
 class GenerateVideoRequest(BaseModel):
     """One clip composed from images the platform already published and,
@@ -149,7 +155,8 @@ async def generate(body: GenerateRequest) -> GenerateResponse:
     if choice not in {image_models.AUTO, *(m["key"] for m in image_models.MODELS)}:
         choice = image_models.AUTO
 
-    job = await jobs.create(body.prompt, body.orientation, project_id, choice)
+    job = await jobs.create(body.prompt, body.orientation, project_id, choice,
+                            reference_urls=body.reference_urls)
     logger.info("queued job %s for project %s (%s)", job["id"][:8], project_id, choice)
     return GenerateResponse(job_id=job["id"], status=job["status"])
 

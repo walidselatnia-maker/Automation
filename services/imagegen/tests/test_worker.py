@@ -363,3 +363,75 @@ async def test_every_reference_is_uploaded_and_sent_with_the_presenter(monkeypat
     assert calls["reel"] == {"prompt": "pour the sauce", "ids": ["m-1", "m-2"],
                              "char": "char-1", "voice": "voice-1"}
     assert waited["op"] == "op-1"
+
+
+# --- An image that follows a photo -------------------------------------
+#
+# A reel scene that wants a fresh image of the same dish sends the article's
+# photo along. On the batch path that photo goes into the project first and
+# its media id rides on the image request.
+
+@pytest.mark.asyncio
+async def test_an_image_job_with_references_uploads_them_first(monkeypatch):
+    calls = {"uploaded": [], "refs": None}
+
+    class Fake:
+        connected = True
+
+        async def upload_image_batch(self, image_base64, project_id, mime_type, file_name):
+            calls["uploaded"].append((project_id, file_name))
+            return {"media_id": "m-1"}
+
+        async def generate_images_batch(self, prompt, project_id, aspect_ratio,
+                                        image_model_name=None, ref_media_ids=None):
+            calls["refs"] = ref_media_ids
+            return ok_response()
+
+    monkeypatch.setattr(processor, "IMAGE_USE_BATCH", True)
+    monkeypatch.setattr(processor, "get_flow_client", lambda: Fake())
+    monkeypatch.setattr(processor, "API_COOLDOWN", 0)
+
+    async def discovered(client):
+        return None
+
+    monkeypatch.setattr(processor.image_models, "ensure_discovered", discovered)
+    controller = processor.WorkerController()
+
+    async def fetched(url):
+        return {"bytes": b"jpg", "mime": "image/jpeg"}
+
+    monkeypatch.setattr(controller, "_fetch_reference", fetched)
+
+    job = await jobs.create("the same soup, from above", "VERTICAL", "P",
+                            reference_urls=["https://a/feature.jpg"])
+    await controller._run(job)
+
+    assert calls["uploaded"] == [("P", "feature.jpg")]
+    assert calls["refs"] == ["m-1"]
+    assert (await jobs.get(job["id"]))["status"] == "COMPLETED"
+
+
+@pytest.mark.asyncio
+async def test_an_image_job_without_references_never_uploads(monkeypatch):
+    class Fake:
+        connected = True
+
+        async def upload_image_batch(self, **kwargs):
+            raise AssertionError("nothing to upload")
+
+        async def generate_images_batch(self, prompt, project_id, aspect_ratio,
+                                        image_model_name=None, ref_media_ids=None):
+            assert ref_media_ids is None
+            return ok_response()
+
+    monkeypatch.setattr(processor, "IMAGE_USE_BATCH", True)
+    monkeypatch.setattr(processor, "get_flow_client", lambda: Fake())
+    monkeypatch.setattr(processor, "API_COOLDOWN", 0)
+
+    async def discovered(client):
+        return None
+
+    monkeypatch.setattr(processor.image_models, "ensure_discovered", discovered)
+    job = await jobs.create("soup", "VERTICAL", "P")
+    await processor.WorkerController()._run(job)
+    assert (await jobs.get(job["id"]))["status"] == "COMPLETED"

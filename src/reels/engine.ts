@@ -1,7 +1,9 @@
+import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { FacebookClient, FacebookError } from '../integrations/facebook.js';
 import { ImageClient } from '../integrations/images.js';
+import { SiteApiClient } from '../integrations/site-api.js';
 import { TelegramClient } from '../integrations/telegram.js';
 import { createLogger, errorMessage } from '../lib/logger.js';
 import { resolveProjectId } from '../core/project-id.js';
@@ -20,7 +22,9 @@ import {
   recentFormatsForPage,
   replaceScenes,
   setReelStage,
+  siteSecrets,
   updateReel,
+  updateScene,
   type ReelView,
 } from '../db/repos.js';
 import { pickFormat } from './formats.js';
@@ -73,6 +77,14 @@ export interface ReelDeps {
   clipsDir: string;
   /** Join scene clips into one file. ffmpeg, in production. */
   assemble(clipPaths: string[], outPath: string, ctaText: string): Promise<void>;
+  /**
+   * Put a fresh scene image on the site the reel belongs to, and give back
+   * its public url. Flow's own urls expire; the site's do not, and the clip
+   * is filmed from this one.
+   */
+  uploadImage(siteId: number, data: Buffer, contentType: string): Promise<string>;
+  /** Wait between fresh images, the same breath the article pipeline takes. */
+  pause(ms: number): Promise<void>;
 }
 
 export function defaultDeps(settings: Settings, key: Buffer): ReelDeps {
@@ -99,6 +111,15 @@ export function defaultDeps(settings: Settings, key: Buffer): ReelDeps {
     prompt: (name, vars) => askPrompt(settings, key, name, vars),
     clipsDir: join(resolveDataDir(), 'reels'),
     assemble: (clips, out, cta) => assembleReel(clips, out, { ctaText: cta }),
+    async uploadImage(siteId, data, contentType) {
+      const site = getSite(siteId);
+      if (!site) throw new Error('The site this reel belongs to no longer exists.');
+      const api = new SiteApiClient(site.domain, siteSecrets(site, key).apiToken);
+      const extension = contentType.includes('png') ? 'png' : contentType.includes('jpeg') ? 'jpg' : 'webp';
+      const uploaded = await api.uploadImage(data, `reel-${randomUUID()}.${extension}`, contentType, 'recipes');
+      return api.absoluteUrl(uploaded.url);
+    },
+    pause: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   };
 }
 
@@ -150,9 +171,7 @@ async function advance(
         case 'assembling':
           return assemblingStage(reel, settings, deps);
         case 'imaging':
-          // Fresh-image mode is not on this build yet; the plan stage never
-          // sends a reel here. Treated as filming so nothing can stall.
-          return filmingStage(reel, settings, deps);
+          return imagingStage(reel, settings, deps);
         default:
           // A one-shot reel from before the studio: one video job to poll.
           return pollGeneration(reel, deps);
@@ -211,11 +230,48 @@ async function planStage(reel: ReelView, settings: Settings, deps: ReelDeps): Pr
       line: s.line,
     })),
   );
-  setReelStage(reel.id, 'filming', {
+  // Setup -> Reels decides whether scenes are filmed from the article's own
+  // images or from a fresh one each. Fresh images cost an image credit per
+  // scene and a minute between them; the article's images cost nothing.
+  const next = settings.getBool('reel_fresh_images') ? 'imaging' : 'filming';
+  setReelStage(reel.id, next, {
     planJson: JSON.stringify({ ...seed, plan }),
     format: format.key,
   });
   log.info(`reel ${reel.id}: planned as ${format.key}, ${plan.scenes.length} scene(s)`);
+  return true;
+}
+
+/**
+ * Make a fresh image for every scene that describes one.
+ *
+ * The article's feature image rides along as a reference, so every scene is
+ * the same dish and not a new one. A scene with no image description keeps
+ * its article images, and a scene that already has a fresh image -- from a
+ * pass that died halfway -- is not made again. Images land on the site, not
+ * in the platform: Flow's urls expire and the clip is filmed from this one.
+ */
+async function imagingStage(reel: ReelView, settings: Settings, deps: ReelDeps): Promise<boolean> {
+  if (!reel.site_id) throw new Error('This reel has no site to keep its images on.');
+  const seed = JSON.parse(reel.plan_json || '{}') as Partial<ReelSeed>;
+  const feature = seed.sources?.feature;
+
+  const gapMs = Math.max(0, settings.getNumber('image_gap_seconds')) * 1000;
+  let made = 0;
+  for (const scene of listScenes(reel.id)) {
+    if (scene.image_url || !scene.image_prompt) continue;
+    if (made > 0 && gapMs > 0) await deps.pause(gapMs);
+
+    const image = await deps.images.generate(scene.image_prompt, 'VERTICAL', {
+      referenceUrls: feature ? [feature] : [],
+    });
+    const url = await deps.uploadImage(reel.site_id, image.data, image.contentType);
+    updateScene(scene.id, { imageUrl: url });
+    made += 1;
+    log.info(`reel ${reel.id}: fresh image for scene ${scene.position}`);
+  }
+
+  setReelStage(reel.id, 'filming');
   return true;
 }
 
