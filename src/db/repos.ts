@@ -1938,6 +1938,8 @@ export interface FbPageRow {
   enabled: number;
   last_used_at: string | null;
   last_error: string | null;
+  /** The presenter this page's reels are made with; NULL means dish only. */
+  presenter_id: number | null;
   created_at: string;
 }
 
@@ -2163,9 +2165,18 @@ export interface ReelRow {
   video_url: string | null;
   fb_video_id: string | null;
   error: string | null;
+  /** Which of the studio's stages an in-flight reel is on; 'done' past them all. */
+  stage: ReelStage;
+  /** The article, its images, and once planned the storyboard, as JSON. */
+  plan_json: string;
+  format: string;
+  /** The assembled file, once there is one. */
+  output_path: string;
   created_at: string;
   updated_at: string;
 }
+
+export type ReelStage = 'planning' | 'imaging' | 'filming' | 'assembling' | 'done';
 
 /** A reel with the names needed to render it, joined once rather than per row. */
 export interface ReelView extends ReelRow {
@@ -2202,17 +2213,20 @@ export const activeReels = (): ReelView[] =>
   );
 
 export function createReel(input: {
-  runId: number;
+  runId: number | null;
   siteId: number;
   keywordId: number;
   fbPageId: number | null;
   prompt: string;
   caption: string;
   references: string[];
+  /** A studio reel starts on a stage; a one-shot reel has none and is a draft. */
+  stage?: ReelStage;
 }): number {
   run(
-    `INSERT INTO reels (run_id, site_id, keyword_id, fb_page_id, prompt, caption, reference_json)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO reels (run_id, site_id, keyword_id, fb_page_id, prompt, caption, reference_json,
+                        status, stage)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     input.runId,
     input.siteId,
     input.keywordId,
@@ -2220,6 +2234,8 @@ export function createReel(input: {
     input.prompt,
     input.caption,
     JSON.stringify(input.references),
+    input.stage ? 'generating' : 'draft',
+    input.stage ?? 'done',
   );
   return get<{ id: number }>('SELECT last_insert_rowid() AS id')?.id ?? 0;
 }
@@ -2315,3 +2331,186 @@ export const reelCandidates = (limit = 50): ReelCandidate[] =>
       LIMIT ?`,
     limit,
   );
+
+/* -- Presenters ------------------------------------------------------------ */
+
+export interface PresenterRow {
+  id: number;
+  name: string;
+  flow_character_id: string;
+  flow_voice_id: string;
+  voice_description: string;
+  portrait_url: string;
+  created_at: string;
+}
+
+export const listPresenters = (): PresenterRow[] =>
+  all<PresenterRow>('SELECT * FROM presenters ORDER BY name');
+
+export const getPresenter = (id: number): PresenterRow | undefined =>
+  get<PresenterRow>('SELECT * FROM presenters WHERE id = ?', id);
+
+export function insertPresenter(input: {
+  name: string;
+  flowCharacterId: string;
+  flowVoiceId: string;
+  voiceDescription: string;
+  portraitUrl: string;
+}): number {
+  const name = input.name.trim();
+  if (!name) throw new Error('A presenter needs a name.');
+  if (!input.flowCharacterId.trim()) throw new Error('A presenter needs a character.');
+  return run(
+    `INSERT INTO presenters (name, flow_character_id, flow_voice_id, voice_description, portrait_url)
+     VALUES (?, ?, ?, ?, ?)`,
+    name,
+    input.flowCharacterId.trim(),
+    input.flowVoiceId.trim(),
+    input.voiceDescription.trim(),
+    input.portraitUrl.trim(),
+  ).lastInsertRowid;
+}
+
+export function updatePresenter(
+  id: number,
+  fields: Partial<{ name: string; voiceDescription: string; portraitUrl: string }>,
+): void {
+  if (fields.name !== undefined) {
+    run('UPDATE presenters SET name = ? WHERE id = ?', fields.name.trim(), id);
+  }
+  if (fields.voiceDescription !== undefined) {
+    run('UPDATE presenters SET voice_description = ? WHERE id = ?', fields.voiceDescription.trim(), id);
+  }
+  if (fields.portraitUrl !== undefined) {
+    run('UPDATE presenters SET portrait_url = ? WHERE id = ?', fields.portraitUrl.trim(), id);
+  }
+}
+
+/** ALTER-added foreign keys are not enforced by SQLite, so the pages are cleared here. */
+export function deletePresenter(id: number): void {
+  run('UPDATE fb_pages SET presenter_id = NULL WHERE presenter_id = ?', id);
+  run('DELETE FROM presenters WHERE id = ?', id);
+}
+
+export const setFbPagePresenter = (pageRowId: number, presenterId: number | null): void => {
+  run('UPDATE fb_pages SET presenter_id = ? WHERE id = ?', presenterId, pageRowId);
+};
+
+export const presenterForPage = (pageRowId: number): PresenterRow | undefined =>
+  get<PresenterRow>(
+    'SELECT p.* FROM presenters p JOIN fb_pages f ON f.presenter_id = p.id WHERE f.id = ?',
+    pageRowId,
+  );
+
+/* -- Reel stages and scenes ------------------------------------------------ */
+
+export function setReelStage(
+  reelId: number,
+  stage: ReelStage,
+  fields: Partial<{ planJson: string; format: string; outputPath: string }> = {},
+): void {
+  run(
+    `UPDATE reels SET stage = ?, updated_at = datetime('now'),
+       plan_json   = COALESCE(?, plan_json),
+       format      = COALESCE(?, format),
+       output_path = COALESCE(?, output_path)
+     WHERE id = ?`,
+    stage,
+    fields.planJson ?? null,
+    fields.format ?? null,
+    fields.outputPath ?? null,
+    reelId,
+  );
+}
+
+export interface ReelSceneRow {
+  id: number;
+  reel_id: number;
+  position: number;
+  seconds: number;
+  presenter: 0 | 1;
+  sources_json: string;
+  image_prompt: string;
+  motion_prompt: string;
+  line: string;
+  image_job_id: string | null;
+  image_url: string | null;
+  clip_job_id: string | null;
+  clip_path: string | null;
+  status: 'pending' | 'working' | 'done' | 'failed';
+  error: string | null;
+}
+
+export const listScenes = (reelId: number): ReelSceneRow[] =>
+  all<ReelSceneRow>('SELECT * FROM reel_scenes WHERE reel_id = ? ORDER BY position', reelId);
+
+export const getScene = (id: number): ReelSceneRow | undefined =>
+  get<ReelSceneRow>('SELECT * FROM reel_scenes WHERE id = ?', id);
+
+export function replaceScenes(
+  reelId: number,
+  scenes: Array<{
+    seconds: number;
+    presenter: boolean;
+    sources: string[];
+    imagePrompt: string;
+    motionPrompt: string;
+    line: string;
+  }>,
+): void {
+  run('DELETE FROM reel_scenes WHERE reel_id = ?', reelId);
+  scenes.forEach((scene, index) => {
+    run(
+      `INSERT INTO reel_scenes
+         (reel_id, position, seconds, presenter, sources_json, image_prompt, motion_prompt, line)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      reelId,
+      index + 1,
+      scene.seconds,
+      scene.presenter ? 1 : 0,
+      JSON.stringify(scene.sources),
+      scene.imagePrompt,
+      scene.motionPrompt,
+      scene.line,
+    );
+  });
+}
+
+export function updateScene(
+  id: number,
+  fields: Partial<{
+    status: ReelSceneRow['status'];
+    error: string | null;
+    imageJobId: string | null;
+    imageUrl: string | null;
+    clipJobId: string | null;
+    clipPath: string | null;
+  }>,
+): void {
+  const column: Record<string, string> = {
+    status: 'status',
+    error: 'error',
+    imageJobId: 'image_job_id',
+    imageUrl: 'image_url',
+    clipJobId: 'clip_job_id',
+    clipPath: 'clip_path',
+  };
+  const sets: string[] = [];
+  const values: (string | null)[] = [];
+  for (const [key, value] of Object.entries(fields)) {
+    if (value === undefined) continue;
+    sets.push(`${column[key]} = ?`);
+    values.push(value as string | null);
+  }
+  if (sets.length === 0) return;
+  run(`UPDATE reel_scenes SET ${sets.join(', ')} WHERE id = ?`, ...values, id);
+}
+
+/** The formats this page's last reels used, newest first, for the rotation. */
+export const recentFormatsForPage = (pageRowId: number, limit = 4): string[] =>
+  all<{ format: string }>(
+    `SELECT format FROM reels WHERE fb_page_id = ? AND format != ''
+      ORDER BY id DESC LIMIT ?`,
+    pageRowId,
+    limit,
+  ).map((r) => r.format);

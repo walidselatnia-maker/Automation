@@ -362,6 +362,63 @@ export const MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    id: '011-reel-studio',
+    description: 'Presenters, reel scenes, and the stage a reel is at',
+    up(db) {
+      // A presenter is a character and a voice that live in the Flow project
+      // as two assets -- that is where both are made and kept. What the
+      // platform adds is the pairing, the name the operator knows them by,
+      // and how the delivery should sound, in words the clip prompt repeats
+      // scene after scene so it stays the same.
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS presenters (
+          id                INTEGER PRIMARY KEY AUTOINCREMENT,
+          name              TEXT    NOT NULL,
+          flow_character_id TEXT    NOT NULL,
+          flow_voice_id     TEXT    NOT NULL DEFAULT '',
+          voice_description TEXT    NOT NULL DEFAULT '',
+          portrait_url      TEXT    NOT NULL DEFAULT '',
+          created_at        TEXT    NOT NULL DEFAULT (datetime('now'))
+        );
+      `);
+      addColumn(db, 'fb_pages', 'presenter_id', 'INTEGER REFERENCES presenters (id) ON DELETE SET NULL');
+
+      // The stage an in-flight reel is at. status stays as it was ('generating'
+      // covers every stage) because its CHECK cannot be widened without
+      // rebuilding the table; the stage says which of the five it is on.
+      // 'done' is the default so every reel from before this reads as past
+      // all of them, which for a one-shot reel is true.
+      addColumn(db, 'reels', 'stage', "TEXT NOT NULL DEFAULT 'done'");
+      addColumn(db, 'reels', 'plan_json', "TEXT NOT NULL DEFAULT ''");
+      addColumn(db, 'reels', 'format', "TEXT NOT NULL DEFAULT ''");
+      addColumn(db, 'reels', 'output_path', "TEXT NOT NULL DEFAULT ''");
+
+      // One row per scene: what to film it from, what happens, what is said,
+      // and how far it got. A scene that fails is retried alone.
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS reel_scenes (
+          id            INTEGER PRIMARY KEY AUTOINCREMENT,
+          reel_id       INTEGER NOT NULL REFERENCES reels (id) ON DELETE CASCADE,
+          position      INTEGER NOT NULL,
+          seconds       INTEGER NOT NULL DEFAULT 10,
+          presenter     INTEGER NOT NULL DEFAULT 0 CHECK (presenter IN (0, 1)),
+          sources_json  TEXT    NOT NULL DEFAULT '[]',
+          image_prompt  TEXT    NOT NULL DEFAULT '',
+          motion_prompt TEXT    NOT NULL DEFAULT '',
+          line          TEXT    NOT NULL DEFAULT '',
+          image_job_id  TEXT,
+          image_url     TEXT,
+          clip_job_id   TEXT,
+          clip_path     TEXT,
+          status        TEXT    NOT NULL DEFAULT 'pending'
+                        CHECK (status IN ('pending', 'working', 'done', 'failed')),
+          error         TEXT,
+          UNIQUE (reel_id, position)
+        );
+      `);
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */
