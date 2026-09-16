@@ -136,6 +136,8 @@ export const SECTIONS: NavSection[] = [
       { href: '/settings', label: 'General' },
       { href: '/settings/keys', label: 'LLM keys' },
       { href: '/settings/prompts', label: 'Prompts' },
+      { href: '/settings/reels', label: 'Reels' },
+      { href: '/settings/presenters', label: 'Presenters' },
       { href: '/browser', label: 'Browser', external: true },
       { href: '/settings/data', label: 'Data' },
       { href: '/settings/account', label: 'Password' },

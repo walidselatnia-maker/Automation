@@ -11,6 +11,7 @@ export interface SettingSpec {
   label: string;
   group:
     | 'general'
+    | 'reels'
     | 'llm'
     | 'images'
     | 'buffer'
@@ -250,15 +251,49 @@ export const SETTING_SPECS: SettingSpec[] = [
       'On: every published article becomes a reel on the Facebook page assigned ' +
       'to its niche (Channels → Facebook). Off: nothing is posted to Facebook.',
   },
+
+  // -- Reels -----------------------------------------------------------------
+  // Shown on their own page (Setup → Reels) rather than in the general form:
+  // the formats are a set of checkboxes, not a field.
   {
-    key: 'flow_video_model_key',
-    label: 'Video model key (optional)',
-    group: 'facebook',
+    key: 'reel_length_seconds',
+    label: 'Reel length (seconds)',
+    group: 'reels',
     secret: false,
-    default: '',
+    hidden: true,
+    default: '30',
+    type: 'number',
     help:
-      'Leave empty. Only needed if Google renames its video model and reels stop ' +
-      'generating; then paste the new name here.',
+      'How long a reel is. 30 seconds is three scenes; 60 is six. Longer costs more ' +
+      'video credits per article.',
+  },
+  {
+    key: 'reel_formats',
+    label: 'Formats',
+    group: 'reels',
+    secret: false,
+    hidden: true,
+    default: '["reveal","taste-test","three-things","mistake","pov","before-after","secret","countdown","myth","asmr","time-trap","first-bite","story"]',
+  },
+  {
+    key: 'reel_fresh_images',
+    label: 'Make a fresh image for every scene',
+    group: 'reels',
+    secret: false,
+    hidden: true,
+    default: 'false',
+    help:
+      "Off: scenes are filmed from the article's own images, which costs nothing " +
+      'extra. On: a new image is made for every scene first.',
+  },
+  {
+    key: 'reel_cta_text',
+    label: 'Call to action',
+    group: 'reels',
+    secret: false,
+    hidden: true,
+    default: 'Full recipe in the comments',
+    help: 'The last thing every reel says and shows. The article link goes in the first comment.',
   },
   {
     key: 'buffer_enabled',

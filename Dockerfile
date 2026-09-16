@@ -19,7 +19,7 @@ FROM node:24-alpine
 WORKDIR /app
 
 ENV NODE_ENV=production
-RUN apk add --no-cache tini wget && \
+RUN apk add --no-cache tini wget ffmpeg && \
     mkdir -p /app/data && chown -R node:node /app
 
 COPY --from=build --chown=node:node /app/node_modules ./node_modules

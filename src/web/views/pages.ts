@@ -28,7 +28,10 @@ import type {
   StepRow,
 } from '../../db/repos.js';
 import type { KeywordView, LinkView, SiteView } from '../../core/types.js';
+import type { PresenterRow } from '../../db/repos.js';
 import { formatMinutes } from '../../core/selector.js';
+import { scenesFor } from '../../reels/plan.js';
+import type { ReelFormat } from '../../reels/formats.js';
 import type { Endpoint } from '../../llm/pool.js';
 import type { SettingSpec } from '../../settings.js';
 import type { Supply } from '../../core/supply.js';
@@ -2864,6 +2867,86 @@ export interface ReelComposerData {
  * from the generate-images step, which produces the four article images, and
  * the pin is built by a different step from a different template.
  */
+export interface ReelSettingsData {
+  lengthSeconds: number;
+  allowed: string[];
+  freshImages: boolean;
+  cta: string;
+  formats: ReelFormat[];
+}
+
+/** Setup → Reels: how every reel is shaped. */
+export function reelSettingsPage(data: ReelSettingsData): Html {
+  const lengths = [15, 30, 45, 60];
+  return html`
+    <h1>Reels</h1>
+    <p class="subtitle">
+      How every reel is shaped. Nothing here is needed to start; change it when you
+      want reels longer, shorter, or in fewer shapes.
+    </p>
+
+    <form method="post" action="/settings/reels">
+      <h2>Length</h2>
+      <div class="card">
+        <div class="field">
+          <label for="reel_length_seconds">Reel length</label>
+          <select id="reel_length_seconds" name="reel_length_seconds">
+            ${lengths.map(
+              (n) => html`<option value="${n}" ${n === data.lengthSeconds ? raw('selected') : raw('')}>
+                ${n} seconds — ${scenesFor(n)} scenes
+              </option>`,
+            )}
+          </select>
+          <div class="help">
+            Each scene is a ten-second clip. Longer reels cost more video credits per article.
+          </div>
+        </div>
+        <div class="field">
+          <label for="reel_cta_text">Call to action</label>
+          <input type="text" id="reel_cta_text" name="reel_cta_text" value="${data.cta}" />
+          <div class="help">
+            The last thing every reel says and shows. The article link goes in the first comment.
+          </div>
+        </div>
+        <div class="field">
+          <label>
+            <input type="checkbox" name="reel_fresh_images" value="1"
+                   ${data.freshImages ? raw('checked') : raw('')} />
+            Make a fresh image for every scene
+          </label>
+          <div class="help">
+            Off: scenes are filmed from the article's own images, which costs nothing extra.
+            On: a new image is made for every scene first.
+          </div>
+        </div>
+      </div>
+
+      <h2>Shapes</h2>
+      <p class="subtitle">
+        Every reel takes one of these. A page never repeats a shape it used in its last
+        four reels, so turning more on means more variety.
+      </p>
+      <div class="card">
+        ${data.formats.map(
+          (f) => html`<div class="field">
+            <label>
+              <input type="checkbox" name="reel_formats" value="${f.key}"
+                     ${data.allowed.includes(f.key) ? raw('checked') : raw('')} />
+              <strong>${f.title}</strong>
+              <span class="muted"> — ${f.shape}</span>
+            </label>
+          </div>`,
+        )}
+      </div>
+
+      <div class="save-bar">
+        <button class="primary" type="submit">Save</button>
+        <span class="muted small">Applies to the next reel.</span>
+      </div>
+    </form>
+  `;
+}
+
 export function reelComposerPage(data: ReelComposerData): Html {
   const shots: { key: keyof ReelImages; label: string }[] = [
     { key: 'feature', label: 'Feature' },
@@ -2988,6 +3071,7 @@ export interface FacebookSettingsData {
   tokens: FbTokenView[];
   pages: FbPageRow[];
   groups: string[];
+  presenters: PresenterRow[];
 }
 
 /**
@@ -2999,6 +3083,100 @@ export interface FacebookSettingsData {
  * niche had to work out which of the four combinations they meant. Now the
  * page row asks one question, and the answer is in the row.
  */
+
+export interface PresentersData {
+  presenters: PresenterRow[];
+  /** Page names per presenter id, for "used by". */
+  usedBy: Map<number, string[]>;
+}
+
+/** Setup → Presenters: the people who appear in reels. */
+export function presentersPage(data: PresentersData): Html {
+  return html`
+    <h1>Presenters</h1>
+    <p class="subtitle">
+      A presenter is a character you made in Google Flow, with a voice. Reels on a page
+      that has one show them on screen and let them speak. Make the character and the
+      voice in Flow first (Setup &rarr; Browser), then add them here.
+    </p>
+
+    <h2>Add a presenter</h2>
+    <div class="card">
+      <form method="post" action="/settings/presenters">
+        <div class="field-row">
+          <div class="field">
+            <label for="presenter-name">Name</label>
+            <input type="text" id="presenter-name" name="name" required placeholder="Rima" />
+            <div class="help">What you call them. It goes into the clip prompts as who is speaking.</div>
+          </div>
+          <div class="field">
+            <label for="presenter-voice-description">How they sound</label>
+            <input type="text" id="presenter-voice-description" name="voice_description"
+                   placeholder="warm, unhurried, mid-thirties" />
+            <div class="help">
+              A few words. The same words go into every scene so the delivery stays the same.
+            </div>
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label for="presenter-character">Character</label>
+            <input type="text" id="presenter-character" name="character" required
+                   placeholder="https://flow.google.com/u/0/project/…/character/…" />
+            <div class="help">
+              In Flow, open the character. The address bar ends in
+              <span class="mono">/character/&lt;id&gt;</span>: paste the whole address, or just the id.
+            </div>
+          </div>
+          <div class="field">
+            <label for="presenter-voice">Voice</label>
+            <input type="text" id="presenter-voice" name="voice"
+                   placeholder="paste the voice's address or id" />
+            <div class="help">
+              In Flow, open the voice you made for them and paste its address the same way.
+              Leave empty for a presenter who does not speak.
+            </div>
+          </div>
+        </div>
+        <button class="primary" type="submit">Add presenter</button>
+      </form>
+    </div>
+
+    <h2>Presenters</h2>
+    ${data.presenters.length === 0
+      ? html`<div class="card">${emptyState('No presenters yet. Reels show the dish only until there is one.')}</div>`
+      : html`<div class="card table-wrap">
+          <table>
+            <thead>
+              <tr><th>Name</th><th>How they sound</th><th>Character</th><th>Voice</th><th>Used by</th><th></th></tr>
+            </thead>
+            <tbody>
+              ${data.presenters.map((p) => {
+                const formId = `presenter-${p.id}`;
+                const pages = data.usedBy.get(p.id) ?? [];
+                return html`<tr>
+                  <td><input type="text" name="name" form="${formId}" value="${p.name}" /></td>
+                  <td><input type="text" name="voice_description" form="${formId}" value="${p.voice_description}" /></td>
+                  <td class="mono small">${p.flow_character_id}</td>
+                  <td class="mono small">${p.flow_voice_id || html`<span class="muted">none</span>`}</td>
+                  <td class="small">${pages.length ? pages.join(', ') : html`<span class="muted">no page yet</span>`}</td>
+                  <td class="nowrap">
+                    <form method="post" action="/settings/presenters/${p.id}" id="${formId}">
+                      <button type="submit" class="small">Save</button>
+                    </form>
+                    <form method="post" action="/settings/presenters/${p.id}/delete"
+                          onsubmit="return confirm('Remove ${p.name}? Pages using them go back to dish-only reels.')">
+                      <button type="submit" class="small danger">Remove</button>
+                    </form>
+                  </td>
+                </tr>`;
+              })}
+            </tbody>
+          </table>
+        </div>`}
+  `;
+}
+
 export function facebookSettingsPage(data: FacebookSettingsData): Html {
   const tokenName = new Map(data.tokens.map((t) => [t.id, t.name]));
 
@@ -3089,7 +3267,7 @@ export function facebookSettingsPage(data: FacebookSettingsData): Html {
             <table>
               <thead>
                 <tr>
-                  <th>Page</th><th>Niche</th><th>Auto-publish</th><th>Enabled</th>
+                  <th>Page</th><th>Niche</th><th>Presenter</th><th>Auto-publish</th><th>Enabled</th>
                   <th>Last</th><th></th>
                 </tr>
               </thead>
@@ -3121,6 +3299,15 @@ export function facebookSettingsPage(data: FacebookSettingsData): Html {
                             Set to &ldquo;${p.niche}&rdquo;, which no keyword has any more.
                           </div>`
                         : raw('')}
+                    </td>
+                    <td>
+                      <select name="presenter_id" form="${formId}">
+                        <option value="">no presenter — dish only</option>
+                        ${data.presenters.map(
+                          (pr) => html`<option value="${pr.id}"
+                            ${p.presenter_id === pr.id ? raw('selected') : raw('')}>${pr.name}</option>`,
+                        )}
+                      </select>
                     </td>
                     <td>
                       <input type="checkbox" name="autoPublish" form="${formId}"

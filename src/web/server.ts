@@ -34,6 +34,8 @@ import {
   sitesPage,
   facebookSettingsPage,
   reelComposerPage,
+  reelSettingsPage,
+  presentersPage,
   reelsPage,
   type ReelImages,
   type ImageModelCatalogue,
@@ -122,6 +124,15 @@ import {
   setFbPageOptions,
   updateReel,
   setReelStage,
+  listScenes,
+  getScene,
+  updateScene,
+  presenterForPage,
+  listPresenters,
+  insertPresenter,
+  updatePresenter,
+  deletePresenter,
+  setFbPagePresenter,
   type ReelCandidate,
 } from '../db/repos.js';
 import { get } from '../db/index.js';
@@ -135,7 +146,7 @@ import {
   exportDataset,
   type Dataset,
 } from '../db/maintenance.js';
-import { createReadStream } from 'node:fs';
+import { createReadStream, existsSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -174,6 +185,8 @@ import { syncToken, type SyncResult } from '../reels/tokens.js';
 import { defaultDeps, publishReel, startGeneration } from '../reels/engine.js';
 import { loadPrompt } from '../pipeline/prompts.js';
 import { seedFromRun, withoutLinks } from '../reels/compose.js';
+import { FORMATS } from '../reels/formats.js';
+import { idFromFlowUrl } from '../reels/ids.js';
 import { chat } from '../llm/client.js';
 import { normaliseDomain } from '../lib/domain.js';
 
@@ -437,6 +450,19 @@ export function buildServer(
           href: '/settings/facebook',
           action: 'Assign',
         });
+      }
+    }
+
+    if (settings.getBool('fb_enabled') && listPresenters().length > 0) {
+      for (const fbPage of listFbPages()) {
+        if (fbPage.enabled && fbPage.niche !== null && fbPage.presenter_id === null) {
+          items.push({
+            kind: 'info',
+            text: `Page "${fbPage.name}" has no presenter, so its reels show the dish only`,
+            href: '/settings/facebook',
+            action: 'Pick one',
+          });
+        }
       }
     }
 
@@ -1293,7 +1319,49 @@ export function buildServer(
     const reel = getReel(asNumber((request.params as { id: string }).id, 0));
     if (!reel) return reply.callNotFound();
 
-    return page(reply, 'Reel', '/reels', reelDetailPage(reel) as never, readFlash(request.query));
+    return page(
+      reply,
+      'Reel',
+      '/reels',
+      reelDetailPage(
+        reel,
+        listScenes(reel.id),
+        reel.fb_page_id ? presenterForPage(reel.fb_page_id) : undefined,
+      ) as never,
+      readFlash(request.query),
+    );
+  });
+
+  /** The assembled reel, from the platform's own storage. */
+  app.get('/reels/:id/video', async (request, reply) => {
+    const reel = getReel(asNumber((request.params as { id: string }).id, 0));
+    if (!reel?.output_path || !existsSync(reel.output_path)) return reply.callNotFound();
+    return reply.type('video/mp4').send(createReadStream(reel.output_path));
+  });
+
+  /** One scene's clip, for the storyboard. */
+  app.get('/reels/:id/scenes/:sceneId/clip', async (request, reply) => {
+    const params = request.params as { id: string; sceneId: string };
+    const scene = getScene(asNumber(params.sceneId, 0));
+    if (!scene || scene.reel_id !== asNumber(params.id, 0)) return reply.callNotFound();
+    if (!scene.clip_path || !existsSync(scene.clip_path)) return reply.callNotFound();
+    return reply.type('video/mp4').send(createReadStream(scene.clip_path));
+  });
+
+  /**
+   * Retry one scene. The others keep what they have; the reel goes back to
+   * filming and the next tick picks the scene up.
+   */
+  app.post('/reels/:id/scenes/:sceneId/retry', async (request, reply) => {
+    const params = request.params as { id: string; sceneId: string };
+    const reelId = asNumber(params.id, 0);
+    const scene = getScene(asNumber(params.sceneId, 0));
+    if (!scene || scene.reel_id !== reelId) return reply.callNotFound();
+
+    updateScene(scene.id, { status: 'pending', error: null, clipJobId: null, clipPath: null });
+    setReelStage(reelId, 'filming');
+    updateReel(reelId, { status: 'generating', error: null });
+    return redirect(reply, `/reels/${reelId}`, { kind: 'ok', message: `Scene ${scene.position} will be filmed again.` });
   });
 
   app.post('/reels/:id/publish', async (request, reply) => {
@@ -1352,6 +1420,7 @@ export function buildServer(
         tokens: listFbTokens(),
         pages: listFbPages(),
         groups: keywordGroups(),
+        presenters: listPresenters(),
       }),
       flash,
     );
@@ -1436,7 +1505,12 @@ export function buildServer(
     const id = asNumber((request.params as { id: string }).id, 0);
     if (!getFbPage(id)) return reply.callNotFound();
 
-    const body = request.body as { niche?: string; autoPublish?: string; enabled?: string };
+    const body = request.body as {
+      niche?: string;
+      autoPublish?: string;
+      enabled?: string;
+      presenter_id?: string;
+    };
     const niche = (body.niche ?? '').trim();
 
     // A niche no keyword has is a page that never fires, and it looks
@@ -1451,6 +1525,8 @@ export function buildServer(
     }
 
     try {
+      const presenterId = asNumber(body.presenter_id, 0);
+      setFbPagePresenter(id, presenterId > 0 ? presenterId : null);
       setFbPageOptions(id, {
         niche,
         autoPublish: body.autoPublish === 'on',
@@ -2466,6 +2542,99 @@ export function buildServer(
         ? 'Settings saved. The image service accepted the key.'
         : `Settings saved, but the image service refused them: ${reachable.detail}`,
     });
+  });
+
+  /* -- Presenters ----------------------------------------------------------- */
+
+  const presentersView = () => {
+    const usedBy = new Map<number, string[]>();
+    for (const fbPage of listFbPages()) {
+      if (fbPage.presenter_id === null) continue;
+      usedBy.set(fbPage.presenter_id, [
+        ...(usedBy.get(fbPage.presenter_id) ?? []),
+        fbPage.name || fbPage.page_id,
+      ]);
+    }
+    return presentersPage({ presenters: listPresenters(), usedBy });
+  };
+
+  app.get('/settings/presenters', async (request, reply) =>
+    page(reply, 'Presenters', '/settings/presenters', presentersView(), readFlash(request.query)),
+  );
+
+  app.post('/settings/presenters', async (request, reply) => {
+    const body = formBody(request);
+    try {
+      const voiceRaw = asString(body.voice).trim();
+      insertPresenter({
+        name: asString(body.name),
+        flowCharacterId: idFromFlowUrl(asString(body.character)),
+        flowVoiceId: voiceRaw ? idFromFlowUrl(voiceRaw) : '',
+        voiceDescription: asString(body.voice_description),
+        portraitUrl: '',
+      });
+    } catch (err) {
+      return redirect(reply, '/settings/presenters', { kind: 'error', message: errorMessage(err) });
+    }
+    return redirect(reply, '/settings/presenters', {
+      kind: 'ok',
+      message: 'Presenter added. Pick them for a page under Channels → Facebook.',
+    });
+  });
+
+  app.post('/settings/presenters/:id', async (request, reply) => {
+    const id = asNumber((request.params as { id: string }).id, 0);
+    const body = formBody(request);
+    updatePresenter(id, {
+      name: asString(body.name),
+      voiceDescription: asString(body.voice_description),
+    });
+    return redirect(reply, '/settings/presenters', { kind: 'ok', message: 'Saved.' });
+  });
+
+  app.post('/settings/presenters/:id/delete', async (request, reply) => {
+    deletePresenter(asNumber((request.params as { id: string }).id, 0));
+    return redirect(reply, '/settings/presenters', { kind: 'ok', message: 'Presenter removed.' });
+  });
+
+  app.get('/settings/reels', async (request, reply) => {
+    let allowed: string[] = [];
+    try {
+      const parsed = JSON.parse(settings.get('reel_formats') || '[]') as unknown;
+      allowed = Array.isArray(parsed) ? parsed.map(String) : [];
+    } catch {
+      allowed = [];
+    }
+    if (allowed.length === 0) allowed = FORMATS.map((f) => f.key);
+    return page(
+      reply,
+      'Reels',
+      '/settings/reels',
+      reelSettingsPage({
+        lengthSeconds: settings.getNumber('reel_length_seconds') || 30,
+        allowed,
+        freshImages: settings.getBool('reel_fresh_images'),
+        cta: settings.get('reel_cta_text'),
+        formats: FORMATS,
+      }),
+      readFlash(request.query),
+    );
+  });
+
+  app.post('/settings/reels', async (request, reply) => {
+    const body = formBody(request);
+    const chosen = ([] as string[])
+      .concat((body.reel_formats as string | string[] | undefined) ?? [])
+      .filter((key) => FORMATS.some((f) => f.key === key));
+    if (chosen.length === 0) {
+      return redirect(reply, '/settings/reels', { kind: 'error', message: 'Keep at least one shape on.' });
+    }
+    const length = asNumber(body.reel_length_seconds, 30);
+    settings.set('reel_length_seconds', String([15, 30, 45, 60].includes(length) ? length : 30));
+    settings.set('reel_formats', JSON.stringify(chosen));
+    settings.set('reel_fresh_images', asString(body.reel_fresh_images) === '1' ? 'true' : 'false');
+    settings.set('reel_cta_text', asString(body.reel_cta_text).trim() || 'Full recipe in the comments');
+    return redirect(reply, '/settings/reels', { kind: 'ok', message: 'Saved. Applies to the next reel.' });
   });
 
   app.post('/settings/endpoints', async (request, reply) => {
