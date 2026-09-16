@@ -4,7 +4,7 @@
 
 **Goal:** A published article becomes a 15–60 s multi-scene reel — storyboard written per recipe, clips filmed by Flow with the page's presenter composed in, assembled with ffmpeg, published to the page — with the presenter created once per installation.
 
-**Architecture:** The existing reel engine (`src/reels/engine.ts`, one stage per minute-tick) grows from "generate → publish" into `planning → imaging → filming → assembling → ready → publishing`, with a `reel_scenes` table holding one row per scene so each stage does only what is not done and a failed scene is retried alone. The image service gains the captured *ingredients-to-video* request (`MZZa6b` / `abra_r2v_10s`) that carries a character in its own reference slot; the platform gains presenters (a Flow character + a voice description), formats, a plan prompt with a validator, and ffmpeg assembly.
+**Architecture:** The existing reel engine (`src/reels/engine.ts`, one stage per minute-tick) grows from "generate → publish" into `planning → imaging → filming → assembling → ready → publishing`, with a `reel_scenes` table holding one row per scene so each stage does only what is not done and a failed scene is retried alone. The image service gains the captured *ingredients-to-video* request (`MZZa6b` / `abra_r2v_10s`) that carries images, a voice and a character in three separate reference slots; the platform gains presenters (a Flow character + a Flow voice + a voice description), formats, a plan prompt with a validator, and ffmpeg assembly.
 
 **Tech Stack:** TypeScript / Fastify / `node:sqlite` / vitest (platform); Python / FastAPI / pytest (image service); ffmpeg (assembly); Google Flow via the Chrome extension.
 
@@ -19,9 +19,12 @@
 - Tests: platform `npx vitest run <file>`, typecheck `npx tsc --noEmit`; image service `cd services/imagegen && PYTHONPATH=. .venv/Scripts/python -m pytest -q` (Windows) / `.venv/bin/python` (Linux).
 - Everything reaches a page only behind the existing `fb_enabled` switch.
 
-## Open input
+## No open input
 
-One request has not been captured: **the list of a project's characters** (Flow's ingredients panel). Task 8 is written against a response fixture and names exactly what to capture; every other task is independent of it.
+Every request the studio sends was captured on 2026-09-16. A presenter's
+character and voice ids are read by the operator off Flow's address bar
+(`/project/<project>/character/<id>` and the voice's own page), which is what
+Task 8 asks for -- two pasted ids, each with a sentence saying where to find it.
 
 ---
 
@@ -67,26 +70,31 @@ One request has not been captured: **the list of a project's characters** (Flow'
 - [ ] **Step 1: Write the failing test that pins the captured shape**
 
 ```python
-"""The ingredients-to-video request, pinned to the capture of 2026-09-16.
+"""The ingredients-to-video request, pinned to the captures of 2026-09-16.
 
-Flow's UI sent exactly this when a character and one dish image were handed
+Flow's UI sent this when a character, a voice and a dish image were handed
 over as ingredients with a spoken line in the prompt:
 
-  rpcid MZZa6b, model abra_r2v_10s, aspect 2 (portrait),
-  [[<character media id>]] in its own slot, [[<image media id>]] in another,
-  and nothing at all about a voice -- the character carries it.
+  rpcid MZZa6b, model abra_r2v_10s, aspect 1 (portrait),
+  slot 1  [[null, <image media id>, null, null, null, <full-frame crop>]]  the images
+  slot 7  [[<voice media id>]]                                             the voice
+  slot 9  [[<character media id>]]                                         the character
 
-Everything here is what makes a clip carry the presenter. Drift is not a
-failure Google reports; it is a clip with nobody in it.
+Three separate slots. Everything here is what makes a clip carry the
+presenter and their voice. Drift is not a failure Google reports; it is a
+clip with nobody in it.
 """
 import json
 
+import pytest
+
 from agent.services import flow_batch as fb
 
-PROMPT = 'she lifts a spoon and says: "Full recipe in the comments."'
+PROMPT = 'She lifts the spoon and says: "Full recipe in the comments."'
 PROJECT = "559dd649-1000-4947-aaa5-e08ae6515705"
-CHARACTER = "509a1ad4-e08a-4a9d-87ba-afc4af20a0c1"
-IMAGE = "f346cb5a-ec29-4143-a87d-b13d70729bf5"
+CHARACTER = "f346cb5a-ec29-4143-a87d-b13d70729bf5"
+VOICE = "509a1ad4-e08a-4a9d-87ba-afc4af20a0c1"
+IMAGE = "1e9401b2-f0f5-40a2-a7db-a559744bdfe7"
 
 
 def inner_of(freq: str):
@@ -101,42 +109,44 @@ def test_the_reel_rpc_is_the_one_the_ui_sends():
 
 
 def test_the_request_matches_the_capture_slot_for_slot():
-    inner = inner_of(fb.reel_request(PROMPT, PROJECT, [IMAGE], CHARACTER,
+    inner = inner_of(fb.reel_request(PROMPT, PROJECT, [IMAGE], CHARACTER, VOICE,
                                      aspect="VIDEO_ASPECT_RATIO_PORTRAIT"))
     item = inner[0][0]
     assert item[0] == [None, None, [[[PROMPT]]]]
-    assert item[1] is None
+    assert item[1] == [[None, IMAGE, None, None, None, fb.REEL_IMAGE_CROP]]
     assert item[2] == "abra_r2v_10s"
-    assert item[3] == fb.VIDEO_ASPECT_PORTRAIT
+    assert item[3] == fb.VIDEO_ASPECT_PORTRAIT == 1
     assert item[4] is None
-    # Two client uuids in the slot the UI fills, upper-case like the UI's.
     assert item[5][:4] == [None, None, None, None]
     assert all(len(u) == 36 and u == u.upper() for u in item[5][4:6])
     assert item[6] is None
-    assert item[7] == [[CHARACTER]]
+    assert item[7] == [[VOICE]]
     assert item[8] is None
-    assert item[9] == [[IMAGE]]
-    # Context and the trailing [uuid, 2], as every generate call carries.
+    assert item[9] == [[CHARACTER]]
     assert inner[1][5] == PROJECT
     assert inner[1][10] == [fb.CAPTCHA_SLOT, 1]
     assert inner[2][1] == 2
 
 
+def test_the_crop_is_the_full_frame_the_ui_sends():
+    assert fb.REEL_IMAGE_CROP == [0.003875968992248069, None, 0.9961240310077519, 1]
+
+
 def test_several_images_each_take_their_own_entry():
-    inner = inner_of(fb.reel_request(PROMPT, PROJECT, [IMAGE, "b" * 36, "c" * 36], CHARACTER))
-    assert inner[0][0][9] == [[IMAGE], ["b" * 36], ["c" * 36]]
+    inner = inner_of(fb.reel_request(PROMPT, PROJECT, [IMAGE, "b" * 36], CHARACTER, VOICE))
+    assert [e[1] for e in inner[0][0][1]] == [IMAGE, "b" * 36]
 
 
-def test_no_character_leaves_that_slot_empty_not_missing():
-    inner = inner_of(fb.reel_request(PROMPT, PROJECT, [IMAGE], None))
-    assert inner[0][0][7] is None
-    assert inner[0][0][9] == [[IMAGE]]
+def test_no_presenter_leaves_both_slots_null_not_missing():
+    inner = inner_of(fb.reel_request(PROMPT, PROJECT, [IMAGE], None, None))
+    item = inner[0][0]
+    assert item[7] is None and item[9] is None
+    assert len(item) == 10
 
 
 def test_a_request_needs_at_least_one_image():
-    import pytest
     with pytest.raises(ValueError):
-        fb.reel_request(PROMPT, PROJECT, [], CHARACTER)
+        fb.reel_request(PROMPT, PROJECT, [], CHARACTER, VOICE)
 ```
 
 - [ ] **Step 2: Run it to see it fail**
@@ -149,11 +159,17 @@ Expected: FAIL — `AttributeError: module ... has no attribute 'RPC_GEN_REEL'`.
 After `RPC_GEN_VIDEO = "eb1hJf"` add:
 
 ```python
-#: Ingredients to video: the character and the images in separate reference
-#: slots, and the model that composes them. Captured 2026-09-16 from the Flow
-#: UI generating with a character; see tests/test_reel_request_shape.py.
+#: Ingredients to video: the scene's images, the presenter's voice, and the
+#: presenter, each in its own reference slot, and the model that composes
+#: them. Captured 2026-09-16 from the Flow UI; see
+#: tests/test_reel_request_shape.py.
 RPC_GEN_REEL = "MZZa6b"
 REEL_MODEL = "abra_r2v_10s"
+
+#: The crop box the UI puts on every ingredient image when nothing was
+#: reframed by hand. Not the same arrangement as FULL_FRAME_CROP, which is
+#: what image-to-video sends; the ingredient slot has its own.
+REEL_IMAGE_CROP = [0.003875968992248069, None, 0.9961240310077519, 1]
 ```
 
 After `video_request()` add:
@@ -161,29 +177,29 @@ After `video_request()` add:
 ```python
 def reel_request(prompt: str, project_id: str, image_media_ids: list[str],
                  character_media_id: Optional[str] = None,
+                 voice_media_id: Optional[str] = None,
                  aspect: Any = VIDEO_ASPECT_PORTRAIT) -> str:
     """One clip from ingredients: the scene's images and, when there is one,
-    the presenter.
+    the presenter and their voice.
 
-    Slot for slot what the UI sends. The character sits in its own slot
-    (index 7) and the images in another (index 9), each image its own
-    single-element list. Nothing here names a voice: the character carries
-    it. A clip with no presenter sends None in the character slot rather
-    than leaving it out, because the slot count is part of the shape.
+    Slot for slot what the UI sends. Images sit in slot 1, each with the
+    full-frame crop; the voice in slot 7; the character in slot 9. A clip
+    with no presenter sends None in 7 and 9 rather than leaving them out,
+    because the slot count is part of the shape.
     """
     if not image_media_ids:
         raise ValueError("a reel clip needs at least one image")
     item = [
         [None, None, [[[prompt]]]],
-        None,
+        [[None, mid, None, None, None, REEL_IMAGE_CROP] for mid in image_media_ids],
         REEL_MODEL,
         resolve_video_aspect(aspect),
         None,
         [None, None, None, None, _client_uuid(), _client_uuid()],
         None,
-        [[character_media_id]] if character_media_id else None,
+        [[voice_media_id]] if voice_media_id else None,
         None,
-        [[mid] for mid in image_media_ids],
+        [[character_media_id]] if character_media_id else None,
     ]
     inner = [[item], _context(project_id), [_client_uuid(), 2]]
     return build_envelope(RPC_GEN_REEL, inner)
@@ -191,21 +207,22 @@ def reel_request(prompt: str, project_id: str, image_media_ids: list[str],
 
 - [ ] **Step 4: Add the client call to `flow_client.py`**
 
-Replace `generate_video_batch` (the whole method, lines ~734–755) with:
+Replace `generate_video_batch` (the whole method) with:
 
 ```python
     async def generate_reel_batch(self, prompt: str, project_id: str,
                                   image_media_ids: list[str],
                                   character_media_id: str | None = None,
+                                  voice_media_id: str | None = None,
                                   aspect_ratio: str = "VIDEO_ASPECT_RATIO_PORTRAIT") -> dict:
         """Submit one clip from ingredients. Returns {"operation_id": ...}.
 
         The one way a reel clip is made. The images are uploaded media ids
-        from this project; the character is the presenter's, read from the
-        project's characters. See flow_batch.reel_request for the shape.
+        from this project; the character and voice are the presenter's, read
+        from the project's assets. See flow_batch.reel_request for the shape.
         """
         freq = fb.reel_request(prompt, project_id, image_media_ids,
-                               character_media_id, aspect=aspect_ratio)
+                               character_media_id, voice_media_id, aspect=aspect_ratio)
         out = await self._batch_payload(
             fb.RPC_GEN_REEL, freq, fb.CAPTCHA_VIDEO, timeout=180, project_id=project_id)
         if "error" in out:
@@ -246,7 +263,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: `FlowClient.generate_reel_batch(...)` from Task 1.
-- Produces: `POST /v1/generate-video` body `{prompt, reference_urls (1–3), character_media_id?, orientation?, project_id?}`; `jobs.create_video(prompt, reference_urls, project_id, orientation, character_media_id)`; the job row carries `character_media_id`.
+- Produces: `POST /v1/generate-video` body `{prompt, reference_urls (1–3), character_media_id?, voice_media_id?, orientation?, project_id?}`; `jobs.create_video(prompt, reference_urls, project_id, orientation, character_media_id, voice_media_id)`; the job row carries both ids.
 
 - [ ] **Step 1: Failing tests**
 
@@ -255,10 +272,12 @@ In `tests/test_jobs.py` add:
 ```python
 def test_a_video_job_keeps_the_presenter_it_was_asked_for(fresh_db):
     job = asyncio.run(jobs.create_video("soup", ["https://a/1.jpg"], "P", "VERTICAL",
-                                        character_media_id="509a1ad4-e08a-4a9d-87ba-afc4af20a0c1"))
-    assert job["character_media_id"] == "509a1ad4-e08a-4a9d-87ba-afc4af20a0c1"
+                                        character_media_id="f346cb5a-ec29-4143-a87d-b13d70729bf5",
+                                        voice_media_id="509a1ad4-e08a-4a9d-87ba-afc4af20a0c1"))
+    assert job["character_media_id"] == "f346cb5a-ec29-4143-a87d-b13d70729bf5"
+    assert job["voice_media_id"] == "509a1ad4-e08a-4a9d-87ba-afc4af20a0c1"
     plain = asyncio.run(jobs.create_video("soup", ["https://a/1.jpg"], "P", "VERTICAL"))
-    assert plain["character_media_id"] is None
+    assert plain["character_media_id"] is None and plain["voice_media_id"] is None
 ```
 
 In `tests/test_video_batch.py` replace every use of `generate_video_batch` with `generate_reel_batch` and add:
@@ -268,14 +287,15 @@ def test_a_clip_goes_out_as_the_reel_rpc_with_its_ingredients():
     client, sent = client_with({"status": 200, "data": envelope(
         fb.RPC_GEN_REEL, [None, ["operations/op-1"]])})
 
-    asyncio.run(client.generate_reel_batch("soup", "PROJ-1", ["img-1", "img-2"], "char-1"))
+    asyncio.run(client.generate_reel_batch("soup", "PROJ-1", ["img-1", "img-2"], "char-1", "voice-1"))
 
     assert sent["ws_method"] == "batch_rpc"
     assert sent["rpcid"] == fb.RPC_GEN_REEL
     assert sent["captchaAction"] == fb.CAPTCHA_VIDEO
     inner = json.loads(json.loads(sent["freq"])[0][0][1])
-    assert inner[0][0][7] == [["char-1"]]
-    assert inner[0][0][9] == [["img-1"], ["img-2"]]
+    assert [e[1] for e in inner[0][0][1]] == ["img-1", "img-2"]
+    assert inner[0][0][7] == [["voice-1"]]
+    assert inner[0][0][9] == [["char-1"]]
 ```
 
 In `tests/test_worker.py`, in the video section, add a test that drives `_run_video_batch` with a fake client and asserts every reference is uploaded and the reel request gets all the ids plus the character (model the fake on the existing video worker test in that file — it stubs `get_flow_client`, `_fetch_reference`, and `_await_video_batch`):
@@ -291,8 +311,8 @@ async def test_every_reference_is_uploaded_and_sent_with_the_presenter(monkeypat
             calls["uploaded"].append(file_name)
             return {"media_id": f"m-{len(calls['uploaded'])}"}
         async def generate_reel_batch(self, prompt, project_id, image_media_ids,
-                                      character_media_id=None, aspect_ratio=""):
-            calls["reel"] = dict(prompt=prompt, ids=image_media_ids, char=character_media_id)
+                                      character_media_id=None, voice_media_id=None, aspect_ratio=""):
+            calls["reel"] = dict(prompt=prompt, ids=image_media_ids, char=character_media_id, voice=voice_media_id)
             return {"operation_id": "op-1", "project_id": project_id}
 
     monkeypatch.setattr(processor, "get_flow_client", lambda: Fake())
@@ -307,12 +327,12 @@ async def test_every_reference_is_uploaded_and_sent_with_the_presenter(monkeypat
     monkeypatch.setattr(controller, "_await_video_batch", await_batch)
 
     job = await jobs.create_video("pour the sauce", ["https://a/1.jpg", "https://a/2.jpg"],
-                                  "P", "VERTICAL", character_media_id="char-1")
+                                  "P", "VERTICAL", character_media_id="char-1", voice_media_id="voice-1")
     settled = await controller._run_video_batch(job, json.loads(job["reference_urls"]), "P")
 
     assert settled is True
     assert calls["uploaded"] == ["1.jpg", "2.jpg"]
-    assert calls["reel"] == {"prompt": "pour the sauce", "ids": ["m-1", "m-2"], "char": "char-1"}
+    assert calls["reel"] == {"prompt": "pour the sauce", "ids": ["m-1", "m-2"], "char": "char-1", "voice": "voice-1"}
     assert waited["op"] == "op-1"
 ```
 
@@ -326,9 +346,11 @@ Expected: FAIL — `create_video() got an unexpected keyword argument 'character
 `schema.py`, in the list that already holds `("job", "kind", ...)`, add:
 
 ```python
-    # The presenter a clip is composed with: a character in the Flow project.
-    # NULL for a clip with nobody in it, and for every image job.
+    # The presenter a clip is composed with: a character and a voice, both
+    # assets in the Flow project. NULL for a clip with nobody in it, and for
+    # every image job.
     ("job", "character_media_id", "TEXT"),
+    ("job", "voice_media_id", "TEXT"),
 ```
 
 `jobs.py`:
@@ -340,16 +362,17 @@ async def create_video(
     project_id: str = "",
     orientation: str = "VERTICAL",
     character_media_id: str | None = None,
+    voice_media_id: str | None = None,
 ) -> dict:
-    """Queue one clip from reference images and, optionally, a presenter."""
+    """Queue one clip from reference images and, optionally, a presenter and voice."""
     job_id = str(uuid.uuid4())
     db = await get_db()
     await db.execute(
         """INSERT INTO job (id, prompt, orientation, project_id, kind, reference_urls,
-                            character_media_id)
-                VALUES (?, ?, ?, ?, 'video', ?, ?)""",
+                            character_media_id, voice_media_id)
+                VALUES (?, ?, ?, ?, 'video', ?, ?, ?)""",
         (job_id, prompt, orientation, project_id, json.dumps(reference_urls),
-         character_media_id or None),
+         character_media_id or None, voice_media_id or None),
     )
     await db.commit()
     return await get(job_id)
@@ -367,12 +390,14 @@ class GenerateVideoRequest(BaseModel):
     reference_urls are public image URLs: the service uploads each at
     generation time, so an article of any age can become a clip and no media
     id has to outlive the job. Three is what Flow takes as ingredients.
-    character_media_id is the presenter's character in the Flow project.
+    character_media_id and voice_media_id are the presenter's character and
+    voice, two assets in the Flow project.
     """
 
     prompt: str = Field(..., min_length=1, max_length=5000)
     reference_urls: list[str] = Field(..., min_length=1, max_length=3)
     character_media_id: Optional[str] = Field(default=None, max_length=200)
+    voice_media_id: Optional[str] = Field(default=None, max_length=200)
     orientation: Literal["VERTICAL", "HORIZONTAL"] = "VERTICAL"
     project_id: Optional[str] = Field(default=None, max_length=200)
 ```
@@ -383,6 +408,7 @@ and in `generate_video()`:
     job = await jobs.create_video(
         body.prompt, body.reference_urls, project_id, body.orientation,
         character_media_id=body.character_media_id,
+        voice_media_id=body.voice_media_id,
     )
 ```
 
@@ -415,6 +441,7 @@ In `processor.py`, replace the body of `_run_video_batch` from `fetched = await 
             project_id=project_id,
             image_media_ids=media_ids,
             character_media_id=job.get("character_media_id") or None,
+            voice_media_id=job.get("voice_media_id") or None,
             aspect_ratio=aspect,
         )
 
@@ -458,8 +485,8 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 **Interfaces (produces):**
 ```ts
-export interface PresenterRow { id; name; flow_character_id: string; voice_description: string; portrait_url: string; created_at }
-insertPresenter(input: { name; flowCharacterId; voiceDescription; portraitUrl }): number
+export interface PresenterRow { id; name; flow_character_id: string; flow_voice_id: string; voice_description: string; portrait_url: string; created_at }
+insertPresenter(input: { name; flowCharacterId; flowVoiceId; voiceDescription; portraitUrl }): number
 updatePresenter(id, fields: Partial<{ name; voiceDescription; portraitUrl }>): void
 deletePresenter(id): void
 listPresenters(): PresenterRow[]
@@ -506,14 +533,14 @@ describe('reel studio data', () => {
   };
 
   it('a presenter is a character in the project plus how they sound', () => {
-    const id = insertPresenter({ name: 'Rima', flowCharacterId: 'char-1',
+    const id = insertPresenter({ name: 'Rima', flowCharacterId: 'char-1', flowVoiceId: 'voice-1',
       voiceDescription: 'warm, unhurried', portraitUrl: 'https://x/p.jpg' });
-    expect(listPresenters()[0]).toMatchObject({ id, name: 'Rima', flow_character_id: 'char-1' });
+    expect(listPresenters()[0]).toMatchObject({ id, name: 'Rima', flow_character_id: 'char-1', flow_voice_id: 'voice-1' });
   });
 
   it('a page picks one presenter, and losing the presenter leaves the page without one', () => {
     const { pageId } = seed();
-    const presenterId = insertPresenter({ name: 'Rima', flowCharacterId: 'c', voiceDescription: '', portraitUrl: '' });
+    const presenterId = insertPresenter({ name: 'Rima', flowCharacterId: 'c', flowVoiceId: 'v', voiceDescription: '', portraitUrl: '' });
     setFbPagePresenter(pageId, presenterId);
     expect(presenterForPage(pageId)?.name).toBe('Rima');
     deletePresenter(presenterId);
@@ -570,15 +597,16 @@ Append to `MIGRATIONS` in `src/db/migrations.ts`:
     id: '011-reel-studio',
     description: 'Presenters, reel scenes, and the stage a reel is at',
     up(db) {
-      // A presenter is a character that lives in the Flow project -- that is
-      // where a face and a voice are made and kept. What the platform adds is
-      // the name the operator knows them by and how they sound, in words the
-      // clip prompt repeats so the voice stays the same scene to scene.
+      // A presenter is a character and a voice that live in the Flow project
+      // as two assets -- that is where both are made and kept. What the
+      // platform adds is the pairing, the name the operator knows them by,
+      // and how the delivery should sound, in words the clip prompt repeats.
       db.exec(`
         CREATE TABLE IF NOT EXISTS presenters (
           id                INTEGER PRIMARY KEY AUTOINCREMENT,
           name              TEXT    NOT NULL,
           flow_character_id TEXT    NOT NULL,
+          flow_voice_id     TEXT    NOT NULL DEFAULT '',
           voice_description TEXT    NOT NULL DEFAULT '',
           portrait_url      TEXT    NOT NULL DEFAULT '',
           created_at        TEXT    NOT NULL DEFAULT (datetime('now'))
@@ -634,6 +662,7 @@ export interface PresenterRow {
   id: number;
   name: string;
   flow_character_id: string;
+  flow_voice_id: string;
   voice_description: string;
   portrait_url: string;
   created_at: string;
@@ -648,6 +677,7 @@ export const getPresenter = (id: number): PresenterRow | undefined =>
 export function insertPresenter(input: {
   name: string;
   flowCharacterId: string;
+  flowVoiceId: string;
   voiceDescription: string;
   portraitUrl: string;
 }): number {
@@ -656,10 +686,11 @@ export function insertPresenter(input: {
   if (!input.flowCharacterId.trim()) throw new Error('A presenter needs a character.');
   return Number(
     run(
-      `INSERT INTO presenters (name, flow_character_id, voice_description, portrait_url)
-       VALUES (?, ?, ?, ?)`,
+      `INSERT INTO presenters (name, flow_character_id, flow_voice_id, voice_description, portrait_url)
+       VALUES (?, ?, ?, ?, ?)`,
       name,
       input.flowCharacterId.trim(),
+      input.flowVoiceId.trim(),
       input.voiceDescription.trim(),
       input.portraitUrl.trim(),
     ).lastInsertRowid,
@@ -1232,7 +1263,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 - Create: `test/reel-film.test.ts`
 
 **Interfaces:**
-- Consumes: Task 3 repos; Task 4 `planReel`, `pickFormat`; `ImageClient.submitVideo` gains `characterMediaId?: string`.
+- Consumes: Task 3 repos; Task 4 `planReel`, `pickFormat`; `ImageClient.submitVideo` gains `characterMediaId?: string` and `voiceMediaId?: string`.
 - Produces:
 ```ts
 // compose.ts
@@ -1295,7 +1326,7 @@ describe('filming', () => {
     const siteId = upsertSite({ name: 'a', domain: 'a.com', status: 'active', pin_username: '', project_id: '', daily_target: 1, interval_minutes: 60 }, KEY);
     const keywordId = insertKeyword({ seed_keyword: 'soup' });
     const pageId = upsertFbPage({ pageId: '1', name: 'Page', tokenId: insertFbToken('App', 'tok', KEY) });
-    const presenterId = insertPresenter({ name: 'Rima', flowCharacterId: 'char-1', voiceDescription: 'warm', portraitUrl: '' });
+    const presenterId = insertPresenter({ name: 'Rima', flowCharacterId: 'char-1', flowVoiceId: 'voice-1', voiceDescription: 'warm', portraitUrl: '' });
     setFbPagePresenter(pageId, presenterId);
     const reelId = createReel({ runId: null, siteId, keywordId, fbPageId: pageId, prompt: '', caption: 'c', references: [], stage: 'filming' });
     setReelStage(reelId, 'filming', { planJson: JSON.stringify({ sources: { feature: 'https://a.com/f.webp', pin: 'https://a.com/p.webp' } }) });
@@ -1320,8 +1351,8 @@ describe('filming', () => {
     const state = await filmPending(getReel(reelId)!, { images: images as never, download: async () => Buffer.from('mp4'), clipsDir: dir }, settings);
     expect(state).toBe('working');
     expect(images.submitVideo).toHaveBeenCalledTimes(2);
-    expect(images.submitVideo.mock.calls[0]![0]).toMatchObject({ referenceUrls: ['https://a.com/f.webp'], characterMediaId: 'char-1', projectId: 'P' });
-    expect(images.submitVideo.mock.calls[1]![0]).toMatchObject({ referenceUrls: ['https://a.com/p.webp', 'https://a.com/f.webp'], characterMediaId: undefined });
+    expect(images.submitVideo.mock.calls[0]![0]).toMatchObject({ referenceUrls: ['https://a.com/f.webp'], characterMediaId: 'char-1', voiceMediaId: 'voice-1', projectId: 'P' });
+    expect(images.submitVideo.mock.calls[1]![0]).toMatchObject({ referenceUrls: ['https://a.com/p.webp', 'https://a.com/f.webp'], characterMediaId: undefined, voiceMediaId: undefined });
     expect(listScenes(reelId).map((s) => s.status)).toEqual(['working', 'working']);
   });
 
@@ -1415,11 +1446,13 @@ In `src/integrations/images.ts`, `submitVideo`:
     prompt: string;
     referenceUrls: string[];
     characterMediaId?: string;
+    voiceMediaId?: string;
     projectId?: string;
     orientation?: string;
   }): Promise<string> {
     // ... body gains:
         ...(input.characterMediaId ? { character_media_id: input.characterMediaId } : {}),
+        ...(input.voiceMediaId ? { voice_media_id: input.voiceMediaId } : {}),
 ```
 
 - [ ] **Step 4: `src/reels/film.ts`**
@@ -1473,6 +1506,7 @@ export async function filmPending(
         prompt: clipPrompt({ motion: scene.motion_prompt, line: scene.line }, scene.presenter && presenter ? { name: presenter.name, voice: presenter.voice_description } : null),
         referenceUrls: urls,
         characterMediaId: scene.presenter && presenter ? presenter.flow_character_id : undefined,
+        voiceMediaId: scene.presenter && presenter ? presenter.flow_voice_id || undefined : undefined,
         projectId: project.projectId,
       });
       updateScene(scene.id, { status: 'working', clipJobId: jobId, error: null });
@@ -1838,26 +1872,86 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 8: Presenters — reading the project's characters, the page under Setup, the page picker
-
-**Open input:** the RPC the Flow UI calls to list a project's characters (the ingredients / characters panel). Capture: open the project, open the characters panel with DevTools → Network filtered to `batchexecute`, copy **as cURL** the request that appears when the panel loads, and copy its **response** body too (right-click → Copy → Copy response). The response is what the reader below is written against.
+### Task 8: Presenters — the page under Setup, and the page picker
 
 **Files:**
-- Modify: `services/imagegen/agent/services/flow_batch.py` (`RPC_CHARACTERS`, `characters_request(project_id)`, `read_characters(payload) -> list[Character(media_id, name, image_url)]`), `services/imagegen/agent/services/flow_client.py` (`list_characters_batch(project_id)`), `services/imagegen/agent/api/flow.py` (`GET /flow/characters?project_id=`)
-- Create: `services/imagegen/tests/test_characters.py` with the captured response saved as `tests/fixtures/characters_response.txt`
-- Modify: `src/integrations/images.ts` (`listCharacters(projectId): Promise<{ mediaId; name; imageUrl }[]>`), `src/web/server.ts`, `src/web/views/pages.ts` (`presentersPage`), `src/web/views/layout.ts` (Setup tab `Presenters` → `/settings/presenters`), the Facebook settings page (a presenter `<select>` per page row → `setFbPagePresenter`)
+- Modify: `src/web/server.ts`, `src/web/views/pages.ts` (`presentersPage`), `src/web/views/layout.ts` (Setup tab `Presenters` → `/settings/presenters`), the Facebook settings page (a presenter `<select>` per page row → `setFbPagePresenter`)
 - Create: `test/presenters.test.ts`
 
 **Interfaces:**
-- `GET /flow/characters?project_id=` → `{ characters: [{ media_id, name, image_url }] }` or `{ error }`.
-- `GET /settings/presenters`: the list (name, portrait, voice, which pages use them, Remove) and the add form: a select of the project's characters (name + portrait thumbnail, fetched live from the image service; on failure the page still renders with "The image service could not list the project's characters: …"), a name field defaulting to the character's name, the voice description field with the help "How they sound, in a few words — the same words go into every scene so the voice stays the same. Example: warm, unhurried, mid-thirties."; `POST /settings/presenters` → `insertPresenter`; `POST /settings/presenters/:id` (name, voice) → `updatePresenter`; `POST /settings/presenters/:id/delete`.
-- Facebook page row gains `presenter_id` select ("no presenter — dish only" + each presenter); `POST /settings/facebook/pages/:id` saves it with the niche.
+- `GET /settings/presenters`: the list (name, character id, voice id, voice description, which pages use them, Remove) and the add form: **Name**; **Character id** with the help "In Flow, open the character: the address bar ends in /character/<id>. Paste that id."; **Voice id** with the help "In Flow, open the voice you made for them and paste the id from the address bar the same way. Leave empty for a presenter who does not speak."; **How they sound** with the help "A few words. The same words go into every scene so the delivery stays the same. Example: warm, unhurried, mid-thirties." A pasted value that is a whole URL is accepted: the id is the last path segment.
+- `POST /settings/presenters` → `insertPresenter`; `POST /settings/presenters/:id` (name, voice description) → `updatePresenter`; `POST /settings/presenters/:id/delete` → `deletePresenter`.
+- Facebook page row gains a `presenter_id` select ("no presenter — dish only" + each presenter); `POST /settings/facebook/pages/:id` saves it with the niche.
+- `src/reels/ids.ts`: `idFromFlowUrl(value: string): string` — a bare id passes through; a URL yields its last non-empty path segment; anything that is not 36 chars of hex and dashes throws "That does not look like a Flow id. Copy it from the address bar: it is the long code after /character/."
 
-- [ ] **Step 1: Failing tests** — `test_characters.py` reads the fixture and asserts `read_characters` returns the media ids and names in it (write the expected values from the fixture once captured); `test/presenters.test.ts` covers: add → listed; page picks presenter → `presenterForPage`; remove → page's select shows none; the page renders when the image service is down (stub `fetch` to throw).
-- [ ] **Step 2–4:** implement, run `pytest -q` and `npx vitest run`, commit:
+- [ ] **Step 1: Failing tests**
+
+```ts
+// test/presenters.test.ts — login scaffolding as in test/home.test.ts
+import { idFromFlowUrl } from '../src/reels/ids.js';
+
+describe('a Flow id pasted by hand', () => {
+  it('takes a bare id, or the id off the end of the character page url', () => {
+    expect(idFromFlowUrl('f346cb5a-ec29-4143-a87d-b13d70729bf5')).toBe('f346cb5a-ec29-4143-a87d-b13d70729bf5');
+    expect(idFromFlowUrl('https://flow.google.com/u/4/project/559dd649-1000-4947-aaa5-e08ae6515705/character/f346cb5a-ec29-4143-a87d-b13d70729bf5'))
+      .toBe('f346cb5a-ec29-4143-a87d-b13d70729bf5');
+    expect(idFromFlowUrl('  F346CB5A-EC29-4143-A87D-B13D70729BF5/ ')).toBe('f346cb5a-ec29-4143-a87d-b13d70729bf5');
+  });
+  it('refuses anything that is not an id', () => {
+    expect(() => idFromFlowUrl('Rima')).toThrow(/address bar/);
+  });
+});
+
+describe('presenters', () => {
+  it('adds one from pasted ids and lists it', async () => {
+    await post('/settings/presenters', { name: 'Rima', character: 'https://flow.google.com/u/4/project/p/character/f346cb5a-ec29-4143-a87d-b13d70729bf5', voice: '509a1ad4-e08a-4a9d-87ba-afc4af20a0c1', voice_description: 'warm' });
+    expect(listPresenters()[0]).toMatchObject({ name: 'Rima', flow_character_id: 'f346cb5a-ec29-4143-a87d-b13d70729bf5', flow_voice_id: '509a1ad4-e08a-4a9d-87ba-afc4af20a0c1' });
+    expect((await get('/settings/presenters')).body).toContain('Rima');
+  });
+  it('refuses a character that is not an id, and says where to find one', async () => {
+    const r = await post('/settings/presenters', { name: 'Rima', character: 'rima', voice: '', voice_description: '' });
+    expect(decodeURIComponent(String(r.headers.location))).toMatch(/address bar/);
+  });
+  it('lets a Facebook page pick a presenter, and forget it when the presenter goes', async () => {
+    const tokenId = insertFbToken('App', 'tok', KEY);
+    const pageId = upsertFbPage({ pageId: '1', name: 'Page', tokenId });
+    insertKeyword({ seed_keyword: 'soup' });
+    const presenterId = insertPresenter({ name: 'Rima', flowCharacterId: 'f346cb5a-ec29-4143-a87d-b13d70729bf5', flowVoiceId: '', voiceDescription: '', portraitUrl: '' });
+    await post(`/settings/facebook/pages/${pageId}`, { niche: 'soup', enabled: 'on', autoPublish: 'on', presenter_id: String(presenterId) });
+    expect(presenterForPage(pageId)?.name).toBe('Rima');
+    await post(`/settings/presenters/${presenterId}/delete`, {});
+    expect(presenterForPage(pageId)).toBeUndefined();
+  });
+});
+```
+
+- [ ] **Step 2: Run to see it fail**, then implement `src/reels/ids.ts`:
+
+```ts
+const ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/**
+ * A Flow id as a person pastes it: on its own, or as the whole address of
+ * the character's page. Either way the id is the last thing in it.
+ */
+export function idFromFlowUrl(value: string): string {
+  const last = value.trim().split('/').filter(Boolean).pop() ?? '';
+  const id = last.split('?')[0]!.toLowerCase();
+  if (!ID.test(id)) {
+    throw new Error(
+      'That does not look like a Flow id. Copy it from the address bar: it is the long code after /character/.',
+    );
+  }
+  return id;
+}
+```
+
+then the page, the routes, the layout tab, and the presenter select on the Facebook page; `POST /settings/facebook/pages/:id` reads `presenter_id` ('' → null) and calls `setFbPagePresenter` after `setFbPageOptions`.
+
+- [ ] **Step 3:** `npx tsc --noEmit && npx vitest run`, then commit:
 
 ```bash
-git commit -m "Presenters: a character in the project, named here, chosen per page
+git commit -m "Presenters: a character and a voice from Flow, named here, chosen per page
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
@@ -1887,5 +1981,5 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ## Self-review
 
 - **Spec coverage:** presenters (T3, T8), Setup → Reels (T7), storyboard + retry (T7), plan + formats + rotation + prompt (T4, T5), scene clips with the captured request (T1, T2, T5), fresh images (T9), assemble (T6), publish (T6), Home notice (T7), settings (T7), `fb_enabled` gate (unchanged, `tickReels` checks it). Voice: in the clip prompt (T5). Nothing provisional: the one-shot path's `pollGeneration` remains only for reels created before the deploy.
-- **Placeholders:** Task 8's reader body depends on a capture that does not exist yet; its interface, route, and tests are fixed, and the fixture file is the only thing to fill. Task 9's reference-image support on `/v1/generate` is conditional on a check the implementer makes (`grep -n reference_urls services/imagegen/agent/api/v1.py`).
-- **Type consistency:** `ReelStage`, `ReelSceneRow`, `setReelStage`, `replaceScenes`, `listScenes`, `updateScene`, `presenterForPage`, `recentFormatsForPage` (T3) are the names used in T5–T8; `SourceRole`, `validatePlan`, `planReel`, `scenesFor` (T4) in T5; `filmPending` (T5) in the engine; `assembleReel` (T6) as `deps.assemble`; `submitVideo({ characterMediaId })` (T5) matches `character_media_id` (T2).
+- **Placeholders:** none. Task 9's reference-image support on `/v1/generate` is conditional on a check the implementer makes (`grep -n reference_urls services/imagegen/agent/api/v1.py`).
+- **Type consistency:** `ReelStage`, `ReelSceneRow`, `setReelStage`, `replaceScenes`, `listScenes`, `updateScene`, `presenterForPage`, `recentFormatsForPage` (T3) are the names used in T5–T8; `SourceRole`, `validatePlan`, `planReel`, `scenesFor` (T4) in T5; `filmPending` (T5) in the engine; `assembleReel` (T6) as `deps.assemble`; `submitVideo({ characterMediaId, voiceMediaId })` (T5) matches `character_media_id` / `voice_media_id` (T2).
