@@ -46,25 +46,25 @@ def envelope(rpcid: str, inner) -> str:
 
 def test_video_goes_out_as_a_batch_rpc_not_a_rest_call():
     reply = {"status": 200, "data": envelope(
-        fb.RPC_GEN_VIDEO, [None, 50, [["OP-1", "PROJ-1", "SCENE-1", "PENDING"]]]
+        fb.RPC_GEN_REEL, [None, 50, [["OP-1", "PROJ-1", "SCENE-1", "PENDING"]]]
     )}
     client, sent = client_with(reply)
 
-    asyncio.run(client.generate_video_batch("MEDIA-1", "soup", "PROJ-1"))
+    asyncio.run(client.generate_reel_batch("soup", "PROJ-1", ["MEDIA-1"], "CHAR-1", "VOICE-1"))
 
     assert sent["method"] == "batch_rpc"
-    assert sent["rpcid"] == fb.RPC_GEN_VIDEO
+    assert sent["rpcid"] == fb.RPC_GEN_REEL
     # No URL at all: nothing here talks to aisandbox-pa any more.
     assert "url" not in sent
 
 
 def test_the_video_submit_asks_for_a_captcha():
     reply = {"status": 200, "data": envelope(
-        fb.RPC_GEN_VIDEO, [None, 50, [["OP-1", "PROJ-1", "SCENE-1", "PENDING"]]]
+        fb.RPC_GEN_REEL, [None, 50, [["OP-1", "PROJ-1", "SCENE-1", "PENDING"]]]
     )}
     client, sent = client_with(reply)
 
-    asyncio.run(client.generate_video_batch("MEDIA-1", "soup", "PROJ-1"))
+    asyncio.run(client.generate_reel_batch("soup", "PROJ-1", ["MEDIA-1"], "CHAR-1", "VOICE-1"))
 
     assert sent["captchaAction"] == fb.CAPTCHA_VIDEO
 
@@ -73,22 +73,22 @@ def test_the_payload_leaves_a_slot_for_the_captcha():
     # The token is single-use and has to be minted in the page moments before
     # the request goes; the extension fills this in.
     reply = {"status": 200, "data": envelope(
-        fb.RPC_GEN_VIDEO, [None, 50, [["OP-1", "PROJ-1", "SCENE-1", "PENDING"]]]
+        fb.RPC_GEN_REEL, [None, 50, [["OP-1", "PROJ-1", "SCENE-1", "PENDING"]]]
     )}
     client, sent = client_with(reply)
 
-    asyncio.run(client.generate_video_batch("MEDIA-1", "soup", "PROJ-1"))
+    asyncio.run(client.generate_reel_batch("soup", "PROJ-1", ["MEDIA-1"], "CHAR-1", "VOICE-1"))
 
     assert fb.CAPTCHA_SLOT in sent["freq"]
 
 
 def test_the_operation_id_comes_back():
     reply = {"status": 200, "data": envelope(
-        fb.RPC_GEN_VIDEO, [None, 50, [["OP-1", "PROJ-1", "SCENE-1", "PENDING"]]]
+        fb.RPC_GEN_REEL, [None, 50, [["OP-1", "PROJ-1", "SCENE-1", "PENDING"]]]
     )}
     client, _ = client_with(reply)
 
-    out = asyncio.run(client.generate_video_batch("MEDIA-1", "soup", "PROJ-1"))
+    out = asyncio.run(client.generate_reel_batch("soup", "PROJ-1", ["MEDIA-1"], "CHAR-1", "VOICE-1"))
 
     assert out["operation_id"] == "OP-1"
     assert out["project_id"] == "PROJ-1"
@@ -97,7 +97,7 @@ def test_the_operation_id_comes_back():
 def test_a_transport_failure_is_reported_not_raised():
     client, _ = client_with({"error": "Extension not connected"})
 
-    out = asyncio.run(client.generate_video_batch("MEDIA-1", "soup", "PROJ-1"))
+    out = asyncio.run(client.generate_reel_batch("soup", "PROJ-1", ["MEDIA-1"], "CHAR-1", "VOICE-1"))
 
     assert "error" in out
 
@@ -105,9 +105,24 @@ def test_a_transport_failure_is_reported_not_raised():
 def test_an_http_error_is_reported():
     client, _ = client_with({"status": 500, "data": ""})
 
-    out = asyncio.run(client.generate_video_batch("MEDIA-1", "soup", "PROJ-1"))
+    out = asyncio.run(client.generate_reel_batch("soup", "PROJ-1", ["MEDIA-1"], "CHAR-1", "VOICE-1"))
 
     assert "error" in out
+
+
+def test_a_clip_goes_out_with_its_ingredients_in_their_slots():
+    import json
+    client, sent = client_with({"status": 200, "data": envelope(
+        fb.RPC_GEN_REEL, [None, 50, [["OP-1", "PROJ-1", "SCENE-1", "PENDING"]]])})
+
+    asyncio.run(client.generate_reel_batch("soup", "PROJ-1", ["img-1", "img-2"], "char-1", "voice-1"))
+
+    assert sent["ws_method"] == "batch_rpc"
+    assert sent["captchaAction"] == fb.CAPTCHA_VIDEO
+    inner = json.loads(json.loads(sent["freq"])[0][0][1])
+    assert [e[1] for e in inner[0][0][1]] == ["img-1", "img-2"]
+    assert inner[0][0][7] == [["voice-1"]]
+    assert inner[0][0][9] == [["char-1"]]
 
 
 # ─── Polling ────────────────────────────────────────────────

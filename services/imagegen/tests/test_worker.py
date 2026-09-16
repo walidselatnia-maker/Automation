@@ -313,3 +313,53 @@ async def test_a_failed_refresh_does_not_stop_the_batch(monkeypatch):
 
     monkeypatch.setattr(processor, "get_flow_client", Broken)
     await processor.WorkerController()._ensure_token(1)
+
+
+# --- Filming from ingredients ----------------------------------------------
+# A clip is composed from every reference the platform sends and, when the
+# page has one, the presenter's character and voice. One request shape, the
+# one Flow's own UI uses.
+
+@pytest.mark.asyncio
+async def test_every_reference_is_uploaded_and_sent_with_the_presenter(monkeypatch):
+    import json as _json
+    calls = {"uploaded": [], "reel": None}
+
+    class Fake:
+        connected = True
+
+        async def upload_image_batch(self, image_base64, project_id, mime_type, file_name):
+            calls["uploaded"].append(file_name)
+            return {"media_id": f"m-{len(calls['uploaded'])}"}
+
+        async def generate_reel_batch(self, prompt, project_id, image_media_ids,
+                                      character_media_id=None, voice_media_id=None,
+                                      aspect_ratio=""):
+            calls["reel"] = dict(prompt=prompt, ids=image_media_ids,
+                                 char=character_media_id, voice=voice_media_id)
+            return {"operation_id": "op-1", "project_id": project_id}
+
+    monkeypatch.setattr(processor, "get_flow_client", lambda: Fake())
+    controller = processor.WorkerController()
+
+    async def fetched(url):
+        return {"bytes": b"jpg", "mime": "image/jpeg"}
+
+    monkeypatch.setattr(controller, "_fetch_reference", fetched)
+    waited = {}
+
+    async def await_batch(job, operation_id, project):
+        waited["op"] = operation_id
+
+    monkeypatch.setattr(controller, "_await_video_batch", await_batch)
+
+    job = await jobs.create_video("pour the sauce", ["https://a/1.jpg", "https://a/2.jpg"],
+                                  "P", "VERTICAL", character_media_id="char-1",
+                                  voice_media_id="voice-1")
+    settled = await controller._run_video_batch(job, _json.loads(job["reference_urls"]), "P")
+
+    assert settled is True
+    assert calls["uploaded"] == ["1.jpg", "2.jpg"]
+    assert calls["reel"] == {"prompt": "pour the sauce", "ids": ["m-1", "m-2"],
+                             "char": "char-1", "voice": "voice-1"}
+    assert waited["op"] == "op-1"

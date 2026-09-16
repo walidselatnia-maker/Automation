@@ -441,9 +441,9 @@ class WorkerController:
         client stopped sending video that way entirely when Flow moved to
         batchexecute. Every step here runs inside the signed-in Flow tab.
 
-        Only the first image is used. Reference-to-video has no payload on this
-        path -- Flow Kit says its own was never captured off the new UI -- so a
-        reel is built from one photograph until that changes.
+        Every reference is an ingredient, and so are the presenter's character
+        and voice when the job names them: one request, the shape Flow's own
+        UI sends (flow_batch.reel_request).
 
         Returns True if the job was settled here, either finished or failed for
         a reason the old path cannot improve on.
@@ -452,52 +452,33 @@ class WorkerController:
         client = get_flow_client()
         aspect = VIDEO_ASPECT_RATIOS.get(job["orientation"], VIDEO_ASPECT_RATIOS["VERTICAL"])
 
-        fetched = await self._fetch_reference(reference_urls[0])
-        if "error" in fetched:
-            await self._handle_failure(job, fetched["error"])
-            return True
-
-        uploaded = await client.upload_image_batch(
-            image_base64=base64.b64encode(fetched["bytes"]).decode("ascii"),
-            project_id=project_id,
-            mime_type=fetched["mime"],
-            file_name=reference_urls[0].rsplit("/", 1)[-1][:100] or "reference.jpg",
-        )
-        if uploaded.get("error"):
-            await self._handle_failure(job, f"Uploading the reference failed: {uploaded['error']}")
-            return True
-
-        if len(reference_urls) > 1:
-            logger.warning(
-                "job %s: built from 1 of %d image(s) — reference-to-video has no "
-                "payload on this transport yet",
-                job_id[:8], len(reference_urls),
-            )
-
-        # Which of the three models this account may use is the account's
-        # business, and Google says so per model: PUBLIC_ERROR_MODEL_ACCESS_DENIED
-        # means "understood, captcha fine, not for you". So walk them, and keep
-        # the first one that is. Anything else is not a model problem and stops
-        # the walk -- each step is a captcha.
-        submitted = {}
-        denied: list[str] = []
-        for model in video_models.batch_plan(aspect):
-            submitted = await client.generate_video_batch(
-                start_image_media_id=uploaded["media_id"],
-                prompt=job["prompt"],
+        # Every reference goes up: they are the clip's ingredients, and Flow
+        # composes from all of them.
+        media_ids: list[str] = []
+        for url in reference_urls[:3]:
+            fetched = await self._fetch_reference(url)
+            if "error" in fetched:
+                await self._handle_failure(job, fetched["error"])
+                return True
+            uploaded = await client.upload_image_batch(
+                image_base64=base64.b64encode(fetched["bytes"]).decode("ascii"),
                 project_id=project_id,
-                aspect_ratio=aspect,
-                model_key=model,
+                mime_type=fetched["mime"],
+                file_name=url.rsplit("/", 1)[-1][:100] or "reference.jpg",
             )
-            if not submitted.get("error"):
-                video_models.remember_batch(aspect, model)
-                break
-            if not video_models.access_denied(submitted["error"]):
-                break
-            denied.append(model)
-            logger.warning("job %s: account may not use %s — trying the next model",
-                           job_id[:8], model)
-            video_models.forget_batch(aspect)
+            if uploaded.get("error"):
+                await self._handle_failure(job, f"Uploading a reference failed: {uploaded['error']}")
+                return True
+            media_ids.append(uploaded["media_id"])
+
+        submitted = await client.generate_reel_batch(
+            prompt=job["prompt"],
+            project_id=project_id,
+            image_media_ids=media_ids,
+            character_media_id=job.get("character_media_id") or None,
+            voice_media_id=job.get("voice_media_id") or None,
+            aspect_ratio=aspect,
+        )
 
         if submitted.get("error"):
             detail = submitted["error"]
@@ -510,14 +491,7 @@ class WorkerController:
                 logger.error("job %s FAILED: %s", job_id[:8], message)
                 await jobs.fail(job_id, message)
                 return True
-            if denied and len(denied) == len(video_models.BATCH_CANDIDATES):
-                detail = (
-                    f"This Google account is not allowed to use any of the video "
-                    f"models Flow offers ({', '.join(denied)}). That is a plan or "
-                    f"quota limit on the account, not something this service can "
-                    f"route around.\n\n{detail}"
-                )
-            await self._handle_failure(job, f"Video submit failed: {detail}")
+            await self._handle_failure(job, f"Clip submit failed: {detail}")
             return True
 
         operation_id = submitted["operation_id"]

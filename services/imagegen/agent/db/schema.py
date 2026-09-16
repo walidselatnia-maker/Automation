@@ -95,6 +95,11 @@ ADDED_COLUMNS = [
     # still "a prompt went to Flow and something came back", and the queue,
     # retry, stale-reset and watchdog logic are all worth having once.
     ("job", "kind", "TEXT NOT NULL DEFAULT 'image'"),
+    # The presenter a clip is composed with: a character and a voice, both
+    # assets in the Flow project. NULL for a clip with nobody in it, and for
+    # every image job.
+    ("job", "character_media_id", "TEXT"),
+    ("job", "voice_media_id", "TEXT"),
     ("job", "reference_urls", "TEXT NOT NULL DEFAULT '[]'"),
     ("job", "operation_json", "TEXT"),
     ("job", "image_model", "TEXT NOT NULL DEFAULT 'auto'"),

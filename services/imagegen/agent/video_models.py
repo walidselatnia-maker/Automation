@@ -155,49 +155,6 @@ def forget(aspect_ratio: str) -> None:
         pass
 
 
-# ─── The batch path has its own three ───────────────────────
-#
-# The endpoint Flow moved to accepts exactly three video models, and which of
-# them an account may use is a property of the account. A denial reads
-#
-#     PUBLIC_ERROR_MODEL_ACCESS_DENIED
-#
-# and it is not a stale name: the request was understood, the captcha passed,
-# and Google checked this account against this model and said no. The right
-# response is the next model, not a retry -- so the batch path walks these and
-# remembers the first one the account is allowed, keyed apart from the REST
-# names because the two sets do not overlap.
-#
-# Order: the plain lite model first. `low_priority` is the one an account was
-# just refused, and `ultra` is the one a paid tier gets, so it goes last as the
-# name least likely to be open by default.
-BATCH_CANDIDATES = (
-    "veo_3_1_i2v_lite",
-    "veo_3_1_i2v_s_fast_ultra",
-    "veo_3_1_i2v_lite_low_priority",
-)
-
-
-def _batch_key(aspect_ratio: str) -> str:
-    return f"batch:{aspect_ratio}"
-
-
-def batch_plan(aspect_ratio: str) -> list[str]:
-    """Model names to try on the batch path, in order. A remembered one alone."""
-    remembered = recall(_batch_key(aspect_ratio))
-    if remembered:
-        return [remembered[1]]
-    return list(BATCH_CANDIDATES)
-
-
-def remember_batch(aspect_ratio: str, model: str) -> None:
-    remember(_batch_key(aspect_ratio), "batch", model)
-
-
-def forget_batch(aspect_ratio: str) -> None:
-    forget(_batch_key(aspect_ratio))
-
-
 def access_denied(error: str) -> bool:
     """Google's answer when the account may not use the model it named."""
     return "MODEL_ACCESS_DENIED" in str(error or "").upper()

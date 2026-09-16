@@ -132,34 +132,6 @@ def test_other_errors_are_not_access_denials():
     assert video_models.access_denied("") is False
 
 
-def test_the_batch_walk_covers_every_model_the_endpoint_accepts():
-    plan = video_models.batch_plan(PORTRAIT)
-
-    assert set(plan) == set(video_models.BATCH_CANDIDATES)
-    assert len(plan) == len(set(plan))
-
-
-def test_a_remembered_batch_model_is_tried_alone():
-    video_models.remember_batch(PORTRAIT, "veo_3_1_i2v_lite")
-
-    assert video_models.batch_plan(PORTRAIT) == ["veo_3_1_i2v_lite"]
-
-
-def test_forgetting_a_batch_model_resumes_the_walk():
-    video_models.remember_batch(PORTRAIT, "veo_3_1_i2v_lite")
-    video_models.forget_batch(PORTRAIT)
-
-    assert len(video_models.batch_plan(PORTRAIT)) == len(video_models.BATCH_CANDIDATES)
-
-
-def test_batch_and_rest_memories_do_not_collide():
-    # The two sets of names do not overlap, and a REST name remembered for an
-    # aspect must not be handed to the batch endpoint as if it were one of its.
-    video_models.remember(PORTRAIT, "r2v", "veo_3_1_r2v_fast_portrait")
-
-    assert "veo_3_1_r2v_fast_portrait" not in video_models.batch_plan(PORTRAIT)
-
-
 def test_running_out_of_credits_is_recognised():
     # Recorded off the deployed container's Flow Kit panel: HTTP 200, and
     # inside it code 8 with this name. Nothing was generated.

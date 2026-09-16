@@ -58,15 +58,20 @@ class GenerateRequest(BaseModel):
 
 
 class GenerateVideoRequest(BaseModel):
-    """A video composed from images the platform already published.
+    """One clip composed from images the platform already published and,
+    when the page has one, its presenter.
 
-    reference_urls are ordinary public image URLs, not Flow media ids: the
-    service uploads each one at generation time, which means an article of any
-    age can become a video and no media id has to outlive the job that made it.
+    reference_urls are public image URLs: the service uploads each at
+    generation time, so an article of any age can become a clip and no media
+    id has to outlive the job. Three is what Flow takes as ingredients.
+    character_media_id and voice_media_id are the presenter's character and
+    voice, two assets in the Flow project.
     """
 
     prompt: str = Field(..., min_length=1, max_length=5000)
-    reference_urls: list[str] = Field(..., min_length=1, max_length=8)
+    reference_urls: list[str] = Field(..., min_length=1, max_length=3)
+    character_media_id: Optional[str] = Field(default=None, max_length=200)
+    voice_media_id: Optional[str] = Field(default=None, max_length=200)
     orientation: Literal["VERTICAL", "HORIZONTAL"] = "VERTICAL"
     project_id: Optional[str] = Field(default=None, max_length=200)
 
@@ -160,7 +165,9 @@ async def generate_video(body: GenerateVideoRequest) -> GenerateResponse:
     _reject_if_unavailable(project_id)
 
     job = await jobs.create_video(
-        body.prompt, body.reference_urls, project_id, body.orientation
+        body.prompt, body.reference_urls, project_id, body.orientation,
+        character_media_id=body.character_media_id,
+        voice_media_id=body.voice_media_id,
     )
     logger.info(
         "queued video job %s for project %s (%d reference image(s))",

@@ -35,14 +35,18 @@ async def create_video(
     reference_urls: list[str],
     project_id: str = "",
     orientation: str = "VERTICAL",
+    character_media_id: str | None = None,
+    voice_media_id: str | None = None,
 ) -> dict:
-    """Queue a video generation from reference images. Returns the new row."""
+    """Queue one clip from reference images and, optionally, a presenter and voice."""
     job_id = str(uuid.uuid4())
     db = await get_db()
     await db.execute(
-        """INSERT INTO job (id, prompt, orientation, project_id, kind, reference_urls)
-                VALUES (?, ?, ?, ?, 'video', ?)""",
-        (job_id, prompt, orientation, project_id, json.dumps(reference_urls)),
+        """INSERT INTO job (id, prompt, orientation, project_id, kind, reference_urls,
+                            character_media_id, voice_media_id)
+                VALUES (?, ?, ?, ?, 'video', ?, ?, ?)""",
+        (job_id, prompt, orientation, project_id, json.dumps(reference_urls),
+         character_media_id or None, voice_media_id or None),
     )
     await db.commit()
     return await get(job_id)

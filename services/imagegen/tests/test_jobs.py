@@ -326,3 +326,13 @@ def test_a_failed_job_surfaces_its_error(monkeypatch):
     # took the false branch and polled a dead job forever.
     assert body["status"] == "FAILED"
     assert body["error"] == "quota exhausted"
+
+
+def test_a_video_job_keeps_the_presenter_it_was_asked_for(fresh_db):
+    job = asyncio.run(jobs.create_video("soup", ["https://a/1.jpg"], "P", "VERTICAL",
+                                        character_media_id="f346cb5a-ec29-4143-a87d-b13d70729bf5",
+                                        voice_media_id="509a1ad4-e08a-4a9d-87ba-afc4af20a0c1"))
+    assert job["character_media_id"] == "f346cb5a-ec29-4143-a87d-b13d70729bf5"
+    assert job["voice_media_id"] == "509a1ad4-e08a-4a9d-87ba-afc4af20a0c1"
+    plain = asyncio.run(jobs.create_video("soup", ["https://a/1.jpg"], "P", "VERTICAL"))
+    assert plain["character_media_id"] is None and plain["voice_media_id"] is None
