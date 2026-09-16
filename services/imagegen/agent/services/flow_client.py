@@ -731,18 +731,21 @@ class FlowClient:
             },
         }
 
-    async def generate_video_batch(self, start_image_media_id: str, prompt: str,
-                                   project_id: str,
-                                   aspect_ratio: str = "VIDEO_ASPECT_RATIO_PORTRAIT",
-                                   model_key: str = "") -> dict:
-        """Submit a video on the batch path. Returns {"operation_id": ...}."""
-        freq = fb.video_request(
-            prompt, project_id, start_image_media_id,
-            aspect=aspect_ratio,
-            model=fb.resolve_video_model(model_key or None),
-        )
+    async def generate_reel_batch(self, prompt: str, project_id: str,
+                                  image_media_ids: list[str],
+                                  character_media_id: str | None = None,
+                                  voice_media_id: str | None = None,
+                                  aspect_ratio: str = "VIDEO_ASPECT_RATIO_PORTRAIT") -> dict:
+        """Submit one clip from ingredients. Returns {"operation_id": ...}.
+
+        The one way a reel clip is made. The images are uploaded media ids
+        from this project; the character and voice are the presenter's, read
+        from the project's assets. See flow_batch.reel_request for the shape.
+        """
+        freq = fb.reel_request(prompt, project_id, image_media_ids,
+                               character_media_id, voice_media_id, aspect=aspect_ratio)
         out = await self._batch_payload(
-            fb.RPC_GEN_VIDEO, freq, fb.CAPTCHA_VIDEO, timeout=180)
+            fb.RPC_GEN_REEL, freq, fb.CAPTCHA_VIDEO, timeout=180, project_id=project_id)
         if "error" in out:
             return out
         try:
