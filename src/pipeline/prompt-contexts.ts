@@ -55,6 +55,15 @@ export const STEP_CONTEXTS: Record<string, Record<string, unknown>> = {
   'repair-json': { postError: 'e', articleJson: '{}' },
   // No url on purpose: the link goes in the first comment, never the caption.
   'reel-caption': { seo: SEO, spy: SPY },
+  'reel-plan': {
+    article: { title: 't', recipe: 'r', imagePrompts: 'feature: f' },
+    sources: 'feature',
+    presenter: { name: 'n', voice: 'v' },
+    format: { key: 'k', title: 'f', shape: 's' },
+    scenes: 3,
+    targetSeconds: 30,
+    cta: 'c',
+  },
 };
 
 for (const part of ['part-1', 'part-2', 'part-3']) {

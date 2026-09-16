@@ -76,5 +76,11 @@
   "model": "gpt-oss:120b",
   "format": null,
   "hasSystem": false
+ },
+ "reel-plan": {
+  "sourceNode": "Reels",
+  "model": "gpt-oss:120b",
+  "format": "json",
+  "hasSystem": true
  }
 }
