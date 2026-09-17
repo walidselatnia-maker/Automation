@@ -2104,6 +2104,19 @@ export function setFbPageOptions(
     options.enabled ? 1 : 0,
     id,
   );
+
+  // Reels made before this page had the niche were left with nowhere to go.
+  // They are this page's now, so the Reels page shows them under it and
+  // auto-publish can take them.
+  if (niche && options.enabled) {
+    run(
+      `UPDATE reels SET fb_page_id = ?
+       WHERE fb_page_id IS NULL AND status != 'published'
+         AND keyword_id IN (SELECT id FROM keywords WHERE seed_keyword = ? COLLATE NOCASE)`,
+      id,
+      niche,
+    );
+  }
 }
 
 export const deleteFbPage = (id: number): void => {

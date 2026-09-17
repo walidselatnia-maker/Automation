@@ -3,12 +3,15 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { closeDatabase, openDatabase } from '../src/db/index.js';
 import {
+  createReel,
+  getReel,
   insertFbToken,
   insertKeyword,
   insertPresenter,
   listPresenters,
   presenterForPage,
   upsertFbPage,
+  upsertSite,
 } from '../src/db/repos.js';
 import { idFromFlowUrl } from '../src/reels/ids.js';
 import { Settings } from '../src/settings.js';
@@ -89,6 +92,23 @@ describe('presenters', () => {
     const r = await post('/settings/presenters', { name: 'Rima', character: 'rima', voice: '', voice_description: '' });
     expect(decodeURIComponent(String(r.headers.location))).toMatch(/address bar/);
     expect(listPresenters()).toEqual([]);
+  });
+
+  it('gives a page the reels that were waiting for its niche', async () => {
+    const tokenId = insertFbToken('App', 'tok', KEY);
+    const pageId = upsertFbPage({ pageId: '1', name: 'Page', tokenId });
+    const keywordId = insertKeyword({ seed_keyword: 'Chicken Thigh' });
+    const siteId = upsertSite(
+      { name: 'a', domain: 'a.com', status: 'active', pin_username: '', project_id: '',
+        daily_target: 1, interval_minutes: 60 },
+      KEY,
+    );
+    const reelId = createReel({ runId: null, siteId, keywordId, fbPageId: null, prompt: '',
+      caption: 'c', references: [], stage: 'done' });
+    expect(getReel(reelId)!.fb_page_id).toBeNull();
+
+    await post(`/settings/facebook/pages/${pageId}`, { niche: 'chicken thigh', enabled: 'on', presenter_id: '' });
+    expect(getReel(reelId)!.fb_page_id).toBe(pageId);
   });
 
   it('lets a Facebook page pick a presenter, and forget it when the presenter goes', async () => {

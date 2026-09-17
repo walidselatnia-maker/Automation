@@ -605,6 +605,14 @@
     @apply mt-auto gap-2 border-t pt-3;
     @apply border-edge dark:border-edge-dark;
   }
+  /* A page picker in the actions shares its line with the button beside it;
+     the full-width select default is for forms, not for a row of buttons. */
+  .tile-actions form.row {
+    @apply flex-1 min-w-0 flex-nowrap;
+  }
+  .tile-actions select {
+    @apply w-auto min-w-0 flex-1;
+  }
 
   /* ------------------------------------------------- Reel image picker */
   /* Wider minimum than .tiles: this is where the choice is actually made, and
