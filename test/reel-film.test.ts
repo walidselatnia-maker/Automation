@@ -40,8 +40,17 @@ describe('the clip prompt', () => {
     expect(text).toContain('warm, unhurried');
   });
 
-  it('is only the motion when there is nobody and nothing to say', () => {
-    expect(clipPrompt({ motion: 'steam rises', line: '' }, null)).toBe('steam rises');
+  it('names the dish and the pace in every clip, and nobody when nobody speaks', () => {
+    const text = clipPrompt({ motion: 'steam rises', line: '' }, null, 'Baked Ziti');
+    expect(text).toMatch(/^steam rises The dish is Baked Ziti/);
+    expect(text).toContain('no slow motion');
+    expect(text).not.toContain('says');
+  });
+
+  it('marks a line as voiceover when the presenter is off screen', () => {
+    const text = clipPrompt({ motion: 'a ladle', line: 'hi', onScreen: false }, { name: 'Rima', voice: 'warm' });
+    expect(text).toContain('Rima is not on screen; her voiceover says: "hi"');
+    expect(text).toContain('Voice: warm.');
   });
 });
 
@@ -90,6 +99,7 @@ describe('filming', () => {
     replaceScenes(reelId, [
       { seconds: 10, presenter: true, sources: ['feature'], imagePrompt: '', motionPrompt: 'she lifts the spoon', line: 'hi' },
       { seconds: 10, presenter: false, sources: ['pin', 'feature'], imagePrompt: '', motionPrompt: 'steam', line: '' },
+      { seconds: 10, presenter: false, sources: ['feature'], imagePrompt: '', motionPrompt: 'a ladle', line: 'and that is it' },
     ]);
     return reelId;
   };
@@ -122,7 +132,7 @@ describe('filming', () => {
     const state = await filmPending(getReel(reelId)!, deps(images), settings);
 
     expect(state).toBe('working');
-    expect(images.submitVideo).toHaveBeenCalledTimes(2);
+    expect(images.submitVideo).toHaveBeenCalledTimes(3);
     expect(images.submitVideo.mock.calls[0]![0]).toMatchObject({
       referenceUrls: ['https://a.com/f.webp'], characterMediaId: 'char-1', voiceMediaId: 'voice-1', projectId: 'P',
     });
@@ -131,7 +141,12 @@ describe('filming', () => {
       referenceUrls: ['https://a.com/p.webp', 'https://a.com/f.webp'],
     });
     expect(images.submitVideo.mock.calls[1]![0].characterMediaId).toBeUndefined();
-    expect(listScenes(reelId).map((s) => s.status)).toEqual(['working', 'working']);
+    expect(images.submitVideo.mock.calls[1]![0].voiceMediaId).toBeUndefined();
+    // Off screen but speaking: the voice goes, the character does not.
+    expect(images.submitVideo.mock.calls[2]![0]).toMatchObject({ voiceMediaId: 'voice-1' });
+    expect(images.submitVideo.mock.calls[2]![0].characterMediaId).toBeUndefined();
+    expect(images.submitVideo.mock.calls[2]![0].prompt).toContain('voiceover says: "and that is it"');
+    expect(listScenes(reelId).map((s) => s.status)).toEqual(['working', 'working', 'working']);
   });
 
   it('downloads a finished clip next to the reel, and is done when every scene is', async () => {
@@ -143,6 +158,8 @@ describe('filming', () => {
     jobs['job-1'] = 'COMPLETED';
     expect(await filmPending(getReel(reelId)!, d, settings)).toBe('working');
     jobs['job-2'] = 'COMPLETED';
+    expect(await filmPending(getReel(reelId)!, d, settings)).toBe('working');
+    jobs['job-3'] = 'COMPLETED';
     expect(await filmPending(getReel(reelId)!, d, settings)).toBe('done');
 
     const scenes = listScenes(reelId);

@@ -69,15 +69,23 @@ export async function filmPending(
         fail(scene, 'none of the images this scene was planned from exist');
       }
 
-      const withPresenter = scene.presenter === 1 && presenter ? presenter : null;
+      // The character is an ingredient only when the scene puts them on
+      // screen. The voice rides along with every spoken line, on screen or
+      // not: a line without the voice asset is read by whoever Flow picks,
+      // and that is a different voice in every clip.
+      const onScreen = scene.presenter === 1 && Boolean(presenter);
+      const speaks = Boolean(presenter) && scene.line.trim() !== '';
       const jobId = await deps.images.submitVideo({
         prompt: clipPrompt(
-          { motion: scene.motion_prompt, line: scene.line },
-          withPresenter ? { name: withPresenter.name, voice: withPresenter.voice_description } : null,
+          { motion: scene.motion_prompt, line: scene.line, onScreen },
+          presenter && (onScreen || speaks)
+            ? { name: presenter.name, voice: presenter.voice_description }
+            : null,
+          seed.article?.title ?? '',
         ),
         referenceUrls: urls,
-        characterMediaId: withPresenter?.flow_character_id || undefined,
-        voiceMediaId: withPresenter?.flow_voice_id || undefined,
+        characterMediaId: onScreen ? presenter!.flow_character_id || undefined : undefined,
+        voiceMediaId: speaks ? presenter!.flow_voice_id || undefined : undefined,
         projectId: project.projectId,
       });
       updateScene(scene.id, { status: 'working', clipJobId: jobId, error: null });

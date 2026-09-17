@@ -28,18 +28,35 @@ export function sourceUrls(
 /**
  * The prompt one clip is filmed from.
  *
- * The motion, then the line as dialogue in the form the Flow UI uses, then
- * how the delivery should sound, in the same words every scene -- that
- * repetition is what keeps the delivery the same clip to clip.
+ * The scene's own direction first, then what must hold in every clip: the
+ * dish is the one in the photographs, named, and the pace is real time.
+ * Then the line -- as the presenter speaking on screen, or as their
+ * voiceover when they are not in the shot -- and how the delivery should
+ * sound, in the same words every scene. That repetition, and the same voice
+ * asset riding along with every spoken line, is what keeps the voice the
+ * same clip to clip.
  */
 export function clipPrompt(
-  scene: { motion: string; line: string },
+  scene: { motion: string; line: string; onScreen?: boolean },
   presenter: { name: string; voice: string } | null,
+  dish = '',
 ): string {
   const parts = [scene.motion.trim()];
+  if (dish.trim()) {
+    parts.push(
+      `The dish is ${dish.trim()}, exactly the food in the reference photograph: ` +
+        'same plate, same colours, same portion; nothing added or swapped.',
+    );
+  }
+  parts.push('Natural real-time speed, no slow motion.');
+
   const line = scene.line.trim();
   if (presenter && line) {
-    parts.push(`${presenter.name} says: "${line}"`);
+    parts.push(
+      scene.onScreen === false
+        ? `${presenter.name} is not on screen; her voiceover says: "${line}"`
+        : `${presenter.name} says: "${line}"`,
+    );
     if (presenter.voice.trim()) parts.push(`Voice: ${presenter.voice.trim()}.`);
   } else if (line) {
     parts.push(`A voice says: "${line}"`);
