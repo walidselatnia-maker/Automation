@@ -63,6 +63,7 @@ export const STEP_CONTEXTS: Record<string, Record<string, unknown>> = {
     scenes: 3,
     targetSeconds: 30,
     cta: 'c',
+    note: '',
   },
 };
 

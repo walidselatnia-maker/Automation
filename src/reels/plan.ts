@@ -88,10 +88,10 @@ export function validatePlan(raw: unknown, rules: Rules): ReelPlan {
       throw new Error(`The ${rules.format.title} format has no speech, but scene ${n} has a line.`);
     }
 
-    const presenter = Boolean(s.presenter);
-    if (presenter && (!rules.hasPresenter || rules.format.presenter === 'never')) {
-      throw new Error(`Scene ${n} puts the presenter in a ${rules.format.key} reel that has none.`);
-    }
+    // A presenter in a reel that has none is a flag the model ticked, not a
+    // person it can film: cleared, and the scene shows the dish.
+    const presenter =
+      Boolean(s.presenter) && rules.hasPresenter && rules.format.presenter !== 'never';
 
     const motion = String(s.motion ?? '').trim();
     if (!motion) throw new Error(`Scene ${n} does not say what happens in it.`);
@@ -128,7 +128,7 @@ export async function planReel(input: {
   cta?: string;
 }): Promise<ReelPlan> {
   const cta = input.cta?.trim() || 'Full recipe in the comments';
-  const result = await input.prompt('reel-plan', {
+  const vars = {
     article: {
       title: input.article.title,
       recipe: input.article.recipe,
@@ -146,12 +146,26 @@ export async function planReel(input: {
     scenes: scenesFor(input.targetSeconds),
     targetSeconds: input.targetSeconds,
     cta,
-  });
-
-  return validatePlan(parseJson(result.content, 'the reel plan'), {
+    note: '',
+  };
+  const rules: Rules = {
     sources: input.sources,
     hasPresenter: input.presenter !== null,
     targetSeconds: input.targetSeconds,
     format: input.format,
-  });
+  };
+
+  // A plan the rules refuse costs nothing yet, so the model gets one more
+  // go with the refusal in front of it before the reel is failed.
+  const first = await input.prompt('reel-plan', vars);
+  try {
+    return validatePlan(parseJson(first.content, 'the reel plan'), rules);
+  } catch (err) {
+    const why = err instanceof Error ? err.message : String(err);
+    const second = await input.prompt('reel-plan', {
+      ...vars,
+      note: `Your previous storyboard was refused: ${why} Fix that and answer again with the full JSON.`,
+    });
+    return validatePlan(parseJson(second.content, 'the reel plan'), rules);
+  }
 }

@@ -42,3 +42,5 @@ Rules:
 - A scene where the presenter is not on screen but has a line is a voiceover; the "motion" then shows only the dish.
 - Lines are spoken, not read: short, warm, first person, no hashtags, no links. The same voice, tone and pace in every scene.
 - The last scene's line ends with the call to action, word for word.
+
+{{note}}

@@ -86,9 +86,10 @@ describe('the plan validator', () => {
     expect(() => validatePlan(plan([scene(), scene(), scene({ line: CTA })]), noOne)).not.toThrow();
 
     const pov = { ...rules(), format: FORMATS.find((f) => f.key === 'pov')! };
-    expect(() =>
-      validatePlan(plan([scene({ presenter: true }), scene(), scene({ line: CTA })]), pov),
-    ).toThrow(/pov/);
+    const out = validatePlan(plan([scene({ presenter: true }), scene(), scene({ line: CTA })]), pov);
+    expect(out.scenes[0]!.presenter).toBe(false);
+    expect(validatePlan(plan([scene({ presenter: true }), scene(), scene({ line: CTA })]), noOne)
+      .scenes[0]!.presenter).toBe(false);
   });
 
   it('lets a silent format skip the spoken CTA', () => {
@@ -112,9 +113,29 @@ describe('planning with the model', () => {
       scenes: 3,
       targetSeconds: 30,
       cta: CTA,
+      note: '',
     });
     expect(system + user).not.toMatch(/\{\{/);
     expect(user).toContain('Rima');
+  });
+
+  it('asks once more with the refusal when the first plan breaks a rule', async () => {
+    const calls: Record<string, unknown>[] = [];
+    const good = plan([scene({ presenter: true, line: 'hi' }), scene(), scene({ line: CTA })]);
+    const out = await planReel({
+      prompt: async (_name, vars) => {
+        calls.push(vars);
+        return { content: JSON.stringify(calls.length === 1 ? plan([scene()]) : good) };
+      },
+      article: { title: 'Soup', recipe: 'boil', imagePrompts: {} },
+      sources: ['feature'],
+      presenter: { name: 'Rima', voice: 'warm' },
+      targetSeconds: 30,
+      format: reveal,
+    });
+    expect(calls).toHaveLength(2);
+    expect(String(calls[1]!.note)).toContain('refused');
+    expect(out.scenes).toHaveLength(3);
   });
 
   it('shows the model only the prompts of photos the article has', async () => {
