@@ -256,6 +256,25 @@ export const SETTING_SPECS: SettingSpec[] = [
   // Shown on their own page (Setup → Reels) rather than in the general form:
   // the formats are a set of checkboxes, not a field.
   {
+    key: 'reel_mode',
+    label: 'How a reel is made',
+    group: 'reels',
+    secret: false,
+    hidden: true,
+    default: 'single',
+    help:
+      'single: one clip from one prompt and up to three of the article\u2019s photos. ' +
+      'scenes: a storyboard of ten-second scenes, filmed one by one and joined.',
+  },
+  {
+    key: 'reel_single_references',
+    label: 'Photos sent with a single-clip reel',
+    group: 'reels',
+    secret: false,
+    hidden: true,
+    default: '["feature","topShot","textureMacro"]',
+  },
+  {
     key: 'reel_length_seconds',
     label: 'Reel length (seconds)',
     group: 'reels',

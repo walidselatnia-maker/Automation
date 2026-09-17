@@ -448,9 +448,14 @@ export async function startGeneration(
     site?.domain ?? '',
   );
 
+  // The page's presenter is in the clip when the page has one: character on
+  // screen, voice on the line. Same ids every reel, so it is the same person.
+  const presenter = reel.fb_page_id ? presenterForPage(reel.fb_page_id) : undefined;
   const jobId = await images.submitVideo({
     prompt: reel.prompt,
     referenceUrls: references,
+    characterMediaId: presenter?.flow_character_id || undefined,
+    voiceMediaId: presenter?.flow_voice_id || undefined,
     projectId: project.projectId,
   });
 

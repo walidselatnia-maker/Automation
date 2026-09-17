@@ -3,8 +3,16 @@ import type { SeoData } from './content.js';
 import type { ArticleImages } from './images.js';
 import type { PostedRecipe } from '../../integrations/site-api.js';
 import { createLogger, errorMessage } from '../../lib/logger.js';
-import { createReel, pageForNiche, setReelStage } from '../../db/repos.js';
-import { seedFromRun, withoutLinks } from '../../reels/compose.js';
+import { createReel, getReel, pageForNiche, presenterForPage, setReelStage, updateReel } from '../../db/repos.js';
+import {
+  buildReelPrompt,
+  reelMode,
+  referenceUrls,
+  seedFromRun,
+  singleReferenceRoles,
+  withoutLinks,
+} from '../../reels/compose.js';
+import { startGeneration } from '../../reels/engine.js';
 
 const log = createLogger('reel-step');
 
@@ -19,6 +27,8 @@ export interface CreateReelOutput {
   reelId: number | null;
   /** Why no reel was made. Not an error: the article is out either way. */
   skipped?: string;
+  /** The reel exists but its video could not be queued; Retry on the reels page. */
+  error?: string;
 }
 
 /**
@@ -67,6 +77,35 @@ export const createReelStep: Step<CreateReelInput, CreateReelOutput> = {
       caption = withoutLinks(result.content) || title;
     } catch (err) {
       log.warn(`run ${ctx.runId}: reel caption not written, using the title: ${errorMessage(err)}`);
+    }
+
+    // Setup -> Reels: one clip from one prompt, or a storyboard of scenes.
+    if (reelMode(ctx.settings) === 'single') {
+      const presenter = presenterForPage(page.id);
+      const reelId = createReel({
+        runId: ctx.runId,
+        siteId: ctx.site.id,
+        keywordId: ctx.keyword.id,
+        fbPageId: page.id,
+        prompt: buildReelPrompt({
+          title,
+          presenter: presenter ? { name: presenter.name, voice: presenter.voice_description } : null,
+          cta: ctx.settings.get('reel_cta_text'),
+        }),
+        caption,
+        references: referenceUrls(host, input.images, singleReferenceRoles(ctx.settings)),
+      });
+
+      try {
+        await startGeneration(getReel(reelId)!, ctx.settings, ctx.images);
+      } catch (err) {
+        const error = errorMessage(err);
+        updateReel(reelId, { status: 'failed', error });
+        log.warn(`run ${ctx.runId}: reel ${reelId} could not start: ${error}`);
+        return { reelId, error };
+      }
+      log.info(`run ${ctx.runId}: reel ${reelId} queued as one clip for ${page.name || page.page_id}`);
+      return { reelId };
     }
 
     const reelId = createReel({

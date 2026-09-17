@@ -1,6 +1,69 @@
 import type { ArticleImages } from '../pipeline/steps/images.js';
 import { getCompletedStep } from '../db/repos.js';
+import { loadTemplate } from '../pipeline/prompts.js';
+import type { Settings } from '../settings.js';
 import type { SourceRole } from './plan.js';
+
+/** The two ways a reel can be made. Setup -> Reels picks one. */
+export type ReelMode = 'single' | 'scenes';
+
+export function reelMode(settings: Settings): ReelMode {
+  return settings.get('reel_mode') === 'scenes' ? 'scenes' : 'single';
+}
+
+/** The article images a single-clip reel is filmed from, in order. */
+export const ARTICLE_ROLES = ['feature', 'topShot', 'textureMacro', 'beforeAfter'] as const;
+export type ArticleRole = (typeof ARTICLE_ROLES)[number];
+
+/** Flow takes at most this many photos in one request. */
+export const MAX_REFERENCES = 3;
+
+/**
+ * Which article photos a single-clip reel sends, as set on Setup -> Reels.
+ * Unknown names are dropped; an empty or unreadable setting means the
+ * first three, which is what the template was written against.
+ */
+export function singleReferenceRoles(settings: Settings): ArticleRole[] {
+  let roles: ArticleRole[] = [];
+  try {
+    const parsed = JSON.parse(settings.get('reel_single_references') || '[]') as unknown;
+    if (Array.isArray(parsed)) {
+      roles = parsed.filter((r): r is ArticleRole => ARTICLE_ROLES.includes(r as ArticleRole));
+    }
+  } catch {
+    roles = [];
+  }
+  if (roles.length === 0) roles = ['feature', 'topShot', 'textureMacro'];
+  return roles.slice(0, MAX_REFERENCES);
+}
+
+/** The chosen article photos as absolute urls, in the order given. */
+export function referenceUrls(host: string, images: ArticleImages, roles: readonly ArticleRole[]): string[] {
+  return roles.map((role) => `https://${host}${images[role]}`);
+}
+
+/**
+ * The single-clip video prompt.
+ *
+ * A template rather than a model call: on the composer a person edits it
+ * before anything is generated, and the pipeline sends it as it is. The
+ * presenter's name and voice go in when the page has one, so the clip is
+ * spoken by the same person every reel.
+ */
+export function buildReelPrompt(c: {
+  title: string;
+  presenter: { name: string; voice: string } | null;
+  cta: string;
+}): string {
+  return loadTemplate('reel-video.template.txt', {
+    seo: { title: c.title },
+    presenter: c.presenter ?? {
+      name: 'A warm adult female food-creator voice',
+      voice: 'friendly, unhurried, enthusiastic',
+    },
+    cta: c.cta || 'Full recipe in the comments',
+  });
+}
 
 /**
  * What every studio reel is built from, whoever asks for it -- the pipeline

@@ -31,6 +31,14 @@ import type { KeywordView, LinkView, SiteView } from '../../core/types.js';
 import type { PresenterRow } from '../../db/repos.js';
 import { formatMinutes } from '../../core/selector.js';
 import { scenesFor } from '../../reels/plan.js';
+import { ARTICLE_ROLES, MAX_REFERENCES, type ArticleRole, type ReelMode } from '../../reels/compose.js';
+
+const ROLE_LABEL: Record<ArticleRole, string> = {
+  feature: 'Feature',
+  topShot: 'Top shot',
+  textureMacro: 'Texture macro',
+  beforeAfter: 'Before / after',
+};
 import type { ReelFormat } from '../../reels/formats.js';
 import type { Endpoint } from '../../llm/pool.js';
 import type { SettingSpec } from '../../settings.js';
@@ -2878,6 +2886,12 @@ export interface ReelComposerData {
   images: ReelImages;
   caption: string;
   page: FbPageRow | undefined;
+  /** Single: one clip from the prompt below and the ticked photos. Scenes: a storyboard. */
+  mode: ReelMode;
+  /** Single mode only: the prompt as the template renders it, for editing. */
+  prompt: string;
+  /** Single mode only: which photos are ticked to start with. */
+  references: readonly ArticleRole[];
 }
 
 /**
@@ -2895,6 +2909,8 @@ export interface ReelComposerData {
  * the pin is built by a different step from a different template.
  */
 export interface ReelSettingsData {
+  mode: ReelMode;
+  singleReferences: readonly ArticleRole[];
   lengthSeconds: number;
   allowed: string[];
   freshImages: boolean;
@@ -2913,7 +2929,42 @@ export function reelSettingsPage(data: ReelSettingsData): Html {
     </p>
 
     <form method="post" action="/settings/reels">
-      <h2>Length</h2>
+      <h2>How a reel is made</h2>
+      <div class="card">
+        <div class="field">
+          <label>
+            <input type="radio" name="reel_mode" value="single"
+                   ${data.mode === 'single' ? raw('checked') : raw('')} />
+            <strong>One clip from one prompt</strong>
+            <span class="muted"> &mdash; the article's photos and the reel-video prompt go to Flow once; ten seconds, done in minutes.</span>
+          </label>
+        </div>
+        <div class="field">
+          <label>
+            <input type="radio" name="reel_mode" value="scenes"
+                   ${data.mode === 'scenes' ? raw('checked') : raw('')} />
+            <strong>A storyboard of scenes</strong>
+            <span class="muted"> &mdash; the model writes scenes, each is filmed on its own and they are joined. Longer, more credits.</span>
+          </label>
+        </div>
+        <div class="field">
+          <label>Photos sent with a one-clip reel (up to ${MAX_REFERENCES})</label>
+          <div class="row wrap">
+            ${ARTICLE_ROLES.map(
+              (role) => html`<label class="row">
+                <input type="checkbox" name="reel_single_references" value="${role}"
+                       ${data.singleReferences.includes(role) ? raw('checked') : raw('')} />
+                ${ROLE_LABEL[role]}
+              </label>`,
+            )}
+          </div>
+          <div class="help">
+            The order here is the order Flow sees them: the first is the one it leans on most.
+          </div>
+        </div>
+      </div>
+
+      <h2>Storyboard length</h2>
       <div class="card">
         <div class="field">
           <label for="reel_length_seconds">Reel length</label>
@@ -2993,20 +3044,46 @@ export function reelComposerPage(data: ReelComposerData): Html {
       <div class="split">
         <div class="card">
           <h2>What it is made from</h2>
-          <p class="help">
-            The storyboard is written for this article and filmed from these
-            photographs, scene by scene. Nothing to choose here.
-          </p>
-          <div class="pick-grid">
-            ${shots.map(
-              (shot) => html`
-                <div class="pick-tile">
-                  <img src="${onSite(data.candidate.site_domain, data.images[shot.key])}"
-                       alt="${shot.label}" loading="lazy">
-                  <span class="pick-label">${shot.label}</span>
-                </div>`,
-            )}
-          </div>
+          ${data.mode === 'single'
+            ? html`<p class="help">
+                  Tick up to ${MAX_REFERENCES} photos. Flow reads the dish from them together, so
+                  the clip shows this food and not a lookalike.
+                </p>
+                <div class="pick-grid">
+                  ${shots.map(
+                    (shot) => html`
+                      <label class="pick-tile">
+                        <input type="checkbox" name="reference" value="${shot.key}"
+                               ${data.references.includes(shot.key) ? raw('checked') : raw('')} />
+                        <img src="${onSite(data.candidate.site_domain, data.images[shot.key])}"
+                             alt="${shot.label}" loading="lazy">
+                        <span class="pick-label">${shot.label}</span>
+                      </label>`,
+                  )}
+                </div>
+                <div class="field">
+                  <label for="reel-prompt">Video prompt</label>
+                  <textarea id="reel-prompt" name="prompt" rows="14" class="mono"
+                            spellcheck="false">${data.prompt}</textarea>
+                  <div class="help">
+                    Sent as it is. The wording for every reel lives under Setup &rarr; Prompts
+                    (reel-video).
+                  </div>
+                </div>`
+            : html`<p class="help">
+                  The storyboard is written for this article and filmed from these
+                  photographs, scene by scene. Nothing to choose here.
+                </p>
+                <div class="pick-grid">
+                  ${shots.map(
+                    (shot) => html`
+                      <div class="pick-tile">
+                        <img src="${onSite(data.candidate.site_domain, data.images[shot.key])}"
+                             alt="${shot.label}" loading="lazy">
+                        <span class="pick-label">${shot.label}</span>
+                      </div>`,
+                  )}
+                </div>`}
         </div>
 
         <div>
@@ -3044,7 +3121,11 @@ export function reelComposerPage(data: ReelComposerData): Html {
       <div class="save-bar">
         <button class="primary" type="submit">Make the reel</button>
         <a class="button" href="/reels">Cancel</a>
-        <span class="muted small">The storyboard is written first, then each scene is filmed. Ten minutes or so.</span>
+        <span class="muted small">
+          ${data.mode === 'single'
+            ? raw('One clip, a few minutes.')
+            : raw('The storyboard is written first, then each scene is filmed. Ten minutes or so.')}
+        </span>
       </div>
     </form>
     ${raw(REEL_CAPTION_SCRIPT)}

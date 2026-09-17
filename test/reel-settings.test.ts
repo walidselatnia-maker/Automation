@@ -91,20 +91,32 @@ describe('reel settings and the storyboard', () => {
 
   it('shows the reel style page under Setup, with every shape on by default', async () => {
     const body = (await get('/settings/reels')).body;
+    expect(body).toMatch(/name="reel_mode" value="single"\s+checked/);
     expect(body).toContain('name="reel_length_seconds"');
     expect((body.match(/name="reel_formats" value="[a-z-]+"\s+checked/g) ?? []).length).toBe(13);
   });
 
   it('saves the shapes that are ticked, and refuses none', async () => {
     await post('/settings/reels', {
+      reel_mode: 'scenes', reel_single_references: ['feature', 'topShot'],
       reel_length_seconds: '45', reel_formats: ['reveal', 'myth'], reel_cta_text: 'Recipe below',
     });
+    expect(settings.get('reel_mode')).toBe('scenes');
+    expect(JSON.parse(settings.get('reel_single_references'))).toEqual(['feature', 'topShot']);
     expect(JSON.parse(settings.get('reel_formats'))).toEqual(['reveal', 'myth']);
     expect(settings.getNumber('reel_length_seconds')).toBe(45);
     expect(settings.get('reel_cta_text')).toBe('Recipe below');
 
-    const refused = await post('/settings/reels', { reel_length_seconds: '45', reel_cta_text: 'x' });
+    const refused = await post('/settings/reels', {
+      reel_mode: 'scenes', reel_single_references: 'feature', reel_length_seconds: '45', reel_cta_text: 'x',
+    });
     expect(String(refused.headers.location)).toMatch(/error=/);
+
+    const tooMany = await post('/settings/reels', {
+      reel_mode: 'single', reel_single_references: ['feature', 'topShot', 'textureMacro', 'beforeAfter'],
+      reel_length_seconds: '30', reel_formats: ['reveal'], reel_cta_text: 'x',
+    });
+    expect(decodeURIComponent(String(tooMany.headers.location))).toMatch(/at most 3/);
   });
 
   it('renders the storyboard: one card per scene with its state and a retry on the failed one', async () => {

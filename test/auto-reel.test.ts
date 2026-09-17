@@ -7,9 +7,11 @@ import {
   getSite,
   insertFbToken,
   insertKeyword,
+  insertPresenter,
   listReels,
   listSteps,
   setFbPageOptions,
+  setFbPagePresenter,
   setLink,
   upsertFbPage,
   upsertSite,
@@ -103,7 +105,34 @@ describe('the create-reel step', () => {
 
   const reelStep = (runId: number) => listSteps(runId).find((s) => s.step === 'create-reel');
 
+  it('makes one clip from the prompt, the chosen photos and the page presenter, by default', async () => {
+    const pageId = pageForKeyword();
+    const presenterId = insertPresenter({ name: 'Rima', flowCharacterId: 'char-1', flowVoiceId: 'voice-1',
+      voiceDescription: 'warm', portraitUrl: '' });
+    setFbPagePresenter(pageId, presenterId);
+    settings.set('reel_single_references', '["feature","beforeAfter"]');
+    const world = buildWorld();
+    vi.stubGlobal('fetch', world.fetchStub);
+    const runId = createRun(keywordId, siteId);
+
+    const outcome = await executePipeline(makeContext(runId));
+
+    expect(outcome.status).toBe('published');
+    const [reel] = listReels();
+    expect(reel).toMatchObject({ run_id: runId, fb_page_id: pageId, status: 'generating', stage: 'done' });
+    expect(reel!.prompt).toContain('Test Chicken');
+    expect(world.videoBodies).toHaveLength(1);
+    expect(world.videoBodies[0]).toMatchObject({
+      reference_urls: [expect.stringMatching(/^https:\/\/testsite\.com\//), expect.stringMatching(/^https:\/\/testsite\.com\//)],
+      character_media_id: 'char-1',
+      voice_media_id: 'voice-1',
+    });
+    expect((world.videoBodies[0] as { reference_urls: string[] }).reference_urls).toHaveLength(2);
+    expect(reelStep(runId)?.status).toBe('ok');
+  });
+
   it('queues a reel for planning, with the article and its images, and a written caption', async () => {
+    settings.set('reel_mode', 'scenes');
     const pageId = pageForKeyword();
     const world = buildWorld();
     vi.stubGlobal('fetch', world.fetchStub);

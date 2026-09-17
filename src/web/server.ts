@@ -183,8 +183,19 @@ import { createLogger, errorMessage } from '../lib/logger.js';
 import { TelegramClient } from '../integrations/telegram.js';
 import { syncToken, type SyncResult } from '../reels/tokens.js';
 import { defaultDeps, publishReel, startGeneration } from '../reels/engine.js';
+import { presenterFor } from '../reels/presenter.js';
 import { loadPrompt } from '../pipeline/prompts.js';
-import { seedFromRun, withoutLinks } from '../reels/compose.js';
+import {
+  ARTICLE_ROLES,
+  MAX_REFERENCES,
+  buildReelPrompt,
+  reelMode,
+  referenceUrls,
+  seedFromRun,
+  singleReferenceRoles,
+  withoutLinks,
+  type ArticleRole,
+} from '../reels/compose.js';
 import { FORMATS } from '../reels/formats.js';
 import { idFromFlowUrl } from '../reels/ids.js';
 import { chat } from '../llm/client.js';
@@ -1241,6 +1252,7 @@ export function buildServer(
       });
     }
 
+    const composerPage = pageForNiche(candidate.seed_keyword);
     return page(
       reply,
       'Make a reel',
@@ -1249,7 +1261,14 @@ export function buildServer(
         candidate,
         images,
         caption: placeholderCaption(candidate),
-        page: pageForNiche(candidate.seed_keyword),
+        page: composerPage,
+        mode: reelMode(settings),
+        prompt: buildReelPrompt({
+          title: candidate.title || candidate.spy_title,
+          presenter: presenterFor(composerPage?.id),
+          cta: settings.get('reel_cta_text'),
+        }),
+        references: singleReferenceRoles(settings),
       }),
       readFlash(request.query),
     );
@@ -1277,7 +1296,7 @@ export function buildServer(
 
   app.post('/reels/new/:runId', async (request, reply) => {
     const runId = asNumber((request.params as { runId: string }).runId, 0);
-    const body = request.body as { caption?: string };
+    const body = request.body as { caption?: string; prompt?: string; reference?: string | string[] };
 
     const candidate = reelCandidates(500).find((c) => c.run_id === runId);
     if (!candidate) return reply.callNotFound();
@@ -1293,6 +1312,42 @@ export function buildServer(
     const host = candidate.site_domain.replace(/^https?:\/\//, '').replace(/\/+$/, '');
     const target = pageForNiche(candidate.seed_keyword);
     const title = candidate.title || candidate.spy_title;
+
+    if (reelMode(settings) === 'single') {
+      const ticked = ([] as string[])
+        .concat(body.reference ?? [])
+        .filter((r): r is ArticleRole => ARTICLE_ROLES.includes(r as ArticleRole));
+      if (ticked.length === 0) {
+        return redirect(reply, `/reels/new/${runId}`, { kind: 'error', message: 'Tick at least one photo.' });
+      }
+      if (ticked.length > MAX_REFERENCES) {
+        return redirect(reply, `/reels/new/${runId}`, {
+          kind: 'error',
+          message: `Flow takes at most ${MAX_REFERENCES} photos in one request.`,
+        });
+      }
+      const prompt = (body.prompt ?? '').trim();
+      if (!prompt) {
+        return redirect(reply, `/reels/new/${runId}`, { kind: 'error', message: 'The video prompt is empty.' });
+      }
+
+      const reelId = createReel({
+        runId,
+        siteId: candidate.site_id,
+        keywordId: candidate.keyword_id,
+        fbPageId: target?.id ?? null,
+        prompt,
+        caption: (body.caption ?? '').trim() || title,
+        references: referenceUrls(host, images, ticked),
+      });
+      try {
+        await startGeneration(getReel(reelId)!, settings, defaultDeps(settings, encryptionKey).images);
+      } catch (err) {
+        updateReel(reelId, { status: 'failed', error: errorMessage(err) });
+        return redirect(reply, `/reels/${reelId}`, { kind: 'error', message: errorMessage(err) });
+      }
+      return redirect(reply, `/reels/${reelId}`, { kind: 'ok', message: 'The clip is being made.' });
+    }
 
     // The same reel the pipeline would have made: the engine writes the
     // storyboard, films it, and publishes it, one stage per minute.
@@ -1403,7 +1458,7 @@ export function buildServer(
       // thing. Only a reel with nothing to show is generated again.
       if (reel.video_url || reel.output_path) {
         updateReel(id, { status: 'ready', error: null });
-      } else if (reel.stage) {
+      } else if (reel.stage !== 'done') {
         // A studio reel picks up at the stage it failed in. Scenes already
         // filmed keep their clips; only the failed ones are cleared.
         for (const scene of listScenes(id)) {
@@ -2633,6 +2688,8 @@ export function buildServer(
       'Reels',
       '/settings/reels',
       reelSettingsPage({
+        mode: reelMode(settings),
+        singleReferences: singleReferenceRoles(settings),
         lengthSeconds: settings.getNumber('reel_length_seconds') || 30,
         allowed,
         freshImages: settings.getBool('reel_fresh_images'),
@@ -2651,6 +2708,20 @@ export function buildServer(
     if (chosen.length === 0) {
       return redirect(reply, '/settings/reels', { kind: 'error', message: 'Keep at least one shape on.' });
     }
+    const refs = ([] as string[])
+      .concat((body.reel_single_references as string | string[] | undefined) ?? [])
+      .filter((r) => ARTICLE_ROLES.includes(r as ArticleRole));
+    if (refs.length === 0) {
+      return redirect(reply, '/settings/reels', { kind: 'error', message: 'Tick at least one photo for one-clip reels.' });
+    }
+    if (refs.length > MAX_REFERENCES) {
+      return redirect(reply, '/settings/reels', {
+        kind: 'error',
+        message: `Flow takes at most ${MAX_REFERENCES} photos in one request.`,
+      });
+    }
+    settings.set('reel_mode', asString(body.reel_mode) === 'scenes' ? 'scenes' : 'single');
+    settings.set('reel_single_references', JSON.stringify(refs));
     const length = asNumber(body.reel_length_seconds, 30);
     settings.set('reel_length_seconds', String([15, 30, 45, 60].includes(length) ? length : 30));
     settings.set('reel_formats', JSON.stringify(chosen));
