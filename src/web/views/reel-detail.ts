@@ -132,6 +132,22 @@ export function reelDetailPage(
       &middot; created ${timeAgo(reel.created_at)}
     </p>
 
+    <div class="row wrap tile-actions">
+      ${reel.status === 'ready' && reel.fb_page_id
+        ? html`<form method="post" action="/reels/${reel.id}/publish">
+            <button class="primary" type="submit">Publish to ${reel.page_name || 'the page'} now</button>
+          </form>`
+        : raw('')}
+      ${reel.status === 'ready' && !reel.fb_page_id
+        ? html`<span class="muted">No Facebook page has this niche, so it waits here. Give a page the niche under Channels &rarr; Facebook.</span>`
+        : raw('')}
+      ${reel.status === 'failed'
+        ? html`<form method="post" action="/reels/${reel.id}/retry">
+            <button type="submit">Retry</button>
+          </form>`
+        : raw('')}
+    </div>
+
     ${reel.error
       ? html`
           <div class="card">

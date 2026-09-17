@@ -116,6 +116,14 @@ describe('reel settings and the storyboard', () => {
     expect(body).toContain('Reveal');
   });
 
+  it('offers Publish on the reel page once it is ready', async () => {
+    const { reelId } = seedReel();
+    setReelStage(reelId, 'done', { outputPath: '/tmp/none.mp4' });
+    updateReel(reelId, { status: 'ready' });
+    const body = (await get(`/reels/${reelId}`)).body;
+    expect(body).toContain(`action="/reels/${reelId}/publish"`);
+  });
+
   it('retries one scene without touching the others', async () => {
     const { reelId, failedSceneId } = seedReel();
     const response = await post(`/reels/${reelId}/scenes/${failedSceneId}/retry`, {});
