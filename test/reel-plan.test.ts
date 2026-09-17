@@ -62,7 +62,6 @@ describe('the plan validator', () => {
 
   it.each([
     ['too few scenes', plan([scene()]), /2 and 6/],
-    ['a source that does not exist', plan([scene({ sources: ['beforeAfter'], presenter: true }), scene(), scene({ line: CTA })]), /beforeAfter/],
     ['a line too long to say in ten seconds', plan([scene({ presenter: true, line: 'word '.repeat(30) }), scene(), scene({ line: CTA })]), /22 words/],
     ['no presenter anywhere although the page has one', plan([scene(), scene(), scene({ line: CTA })]), /presenter/],
     ['the CTA missing from the last scene', plan([scene({ presenter: true, line: 'hi' }), scene(), scene({ line: 'bye' })]), /last scene/],
@@ -70,6 +69,16 @@ describe('the plan validator', () => {
     ['a scene with nothing happening in it', plan([scene({ presenter: true, motion: '' }), scene(), scene({ line: CTA })]), /what happens/],
   ])('rejects %s', (_label, raw, reason) => {
     expect(() => validatePlan(raw, rules())).toThrow(reason);
+  });
+
+  it('films from the feature image when a scene names a photo the article does not have', () => {
+    const out = validatePlan(
+      plan([scene({ sources: ['cookingProcess'], presenter: true }),
+        scene({ sources: ['cookingProcess', 'topShot'] }), scene({ line: CTA })]),
+      rules(),
+    );
+    expect(out.scenes[0]!.sources).toEqual(['feature']);
+    expect(out.scenes[1]!.sources).toEqual(['topShot']);
   });
 
   it('does not require the presenter when the page has none, and forbids one for pov', () => {
@@ -106,6 +115,23 @@ describe('planning with the model', () => {
     });
     expect(system + user).not.toMatch(/\{\{/);
     expect(user).toContain('Rima');
+  });
+
+  it('shows the model only the prompts of photos the article has', async () => {
+    let user = '';
+    await planReel({
+      prompt: async (_name, vars) => {
+        user = JSON.stringify(vars);
+        return { content: JSON.stringify(plan([scene({ presenter: true, line: 'hi' }), scene(), scene({ line: CTA })])) };
+      },
+      article: { title: 'Soup', recipe: 'boil', imagePrompts: { feature: 'a bowl', cookingProcess: 'a pot' } },
+      sources: ['feature', 'topShot'],
+      presenter: { name: 'Rima', voice: 'warm' },
+      targetSeconds: 30,
+      format: reveal,
+    });
+    expect(user).toContain('feature: a bowl');
+    expect(user).not.toContain('cookingProcess');
     expect(user).toContain('Reveal');
   });
 

@@ -66,12 +66,16 @@ export function validatePlan(raw: unknown, rules: Rules): ReelPlan {
   const cta = String(plan.cta ?? '').trim();
   const out: PlannedScene[] = scenes.map((s, i) => {
     const n = i + 1;
-    const sources = (Array.isArray(s.sources) ? s.sources : []).map(String) as SourceRole[];
-    if (sources.length === 0) throw new Error(`Scene ${n} names no image to film from.`);
-    for (const src of sources) {
-      if (!rules.sources.includes(src)) {
-        throw new Error(`Scene ${n} wants an image "${src}" the article does not have.`);
-      }
+    // A name the article has no photo for is dropped, not fatal: the model
+    // sometimes reaches for a prompt it saw in the recipe rather than a
+    // photograph on the list. A scene left with nothing films from the
+    // feature image, which every article has.
+    const named = (Array.isArray(s.sources) ? s.sources : []).map(String) as SourceRole[];
+    let sources = named.filter((src) => rules.sources.includes(src));
+    if (sources.length === 0) {
+      const fallback = rules.sources.includes('feature') ? 'feature' : rules.sources[0];
+      if (!fallback) throw new Error(`Scene ${n} names no image to film from.`);
+      sources = [fallback];
     }
 
     const line = String(s.line ?? '').trim();
@@ -128,7 +132,11 @@ export async function planReel(input: {
     article: {
       title: input.article.title,
       recipe: input.article.recipe,
+      // Only the photographs that exist. The article writes prompts for
+      // more images than it generates, and a name shown here is a name the
+      // model will film from.
       imagePrompts: Object.entries(input.article.imagePrompts)
+        .filter(([role]) => input.sources.includes(role as SourceRole))
         .map(([role, text]) => `${role}: ${text}`)
         .join('\n'),
     },
