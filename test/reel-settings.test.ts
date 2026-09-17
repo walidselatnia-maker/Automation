@@ -10,6 +10,7 @@ import {
   listScenes,
   replaceScenes,
   setReelStage,
+  updateReel,
   updateScene,
   upsertFbPage,
   upsertSite,
@@ -121,6 +122,17 @@ describe('reel settings and the storyboard', () => {
     expect(response.statusCode).toBe(303);
     expect(listScenes(reelId).map((s) => s.status)).toEqual(['pending', 'done']);
     expect(getReel(reelId)).toMatchObject({ status: 'generating', stage: 'filming' });
+  });
+
+  it('retries a failed studio reel at the stage it was in, not as a one-shot video', async () => {
+    const { reelId } = seedReel();
+    updateReel(reelId, { status: 'failed', error: 'no credits' });
+
+    const response = await post(`/reels/${reelId}/retry`, {});
+    expect(response.statusCode).toBe(303);
+    expect(String(response.headers.location)).not.toMatch(/error=/);
+    expect(getReel(reelId)).toMatchObject({ status: 'generating', stage: 'filming', error: null });
+    expect(listScenes(reelId).map((s) => s.status)).toEqual(['pending', 'done']);
   });
 
   it('lists Reels and Presenters as Setup tabs', async () => {

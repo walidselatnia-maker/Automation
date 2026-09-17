@@ -1388,8 +1388,17 @@ export function buildServer(
       // A reel that already has its video failed at publishing, and the video
       // is the expensive half -- so retry the publish rather than the whole
       // thing. Only a reel with nothing to show is generated again.
-      if (reel.video_url) {
+      if (reel.video_url || reel.output_path) {
         updateReel(id, { status: 'ready', error: null });
+      } else if (reel.stage) {
+        // A studio reel picks up at the stage it failed in. Scenes already
+        // filmed keep their clips; only the failed ones are cleared.
+        for (const scene of listScenes(id)) {
+          if (scene.status === 'failed') {
+            updateScene(scene.id, { status: 'pending', error: null, clipJobId: null, clipPath: null });
+          }
+        }
+        updateReel(id, { status: 'generating', error: null });
       } else {
         await startGeneration(reel, settings, defaultDeps(settings, encryptionKey).images);
       }
