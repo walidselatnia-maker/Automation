@@ -1222,6 +1222,7 @@ export function buildServer(
         configured: listFbTokens().length > 0 && listFbPages().some((p) => p.niche !== null),
         enabled: settings.getBool('fb_enabled'),
         pages: listFbPages().length,
+        fbPages: listFbPages(),
       }),
       readFlash(request.query),
     );
@@ -1327,6 +1328,7 @@ export function buildServer(
         reel,
         listScenes(reel.id),
         reel.fb_page_id ? presenterForPage(reel.fb_page_id) : undefined,
+        listFbPages(),
       ) as never,
       readFlash(request.query),
     );
@@ -1366,8 +1368,19 @@ export function buildServer(
 
   app.post('/reels/:id/publish', async (request, reply) => {
     const id = asNumber((request.params as { id: string }).id, 0);
-    const reel = getReel(id);
+    let reel = getReel(id);
     if (!reel) return reply.callNotFound();
+
+    // A reel no page's niche claimed can be sent to a page picked on the
+    // tile. Remembered on the reel, so the link comment and the record of
+    // where it went work as for any other.
+    const body = formBody(request);
+    const pickedPage = asNumber(body.page_id, 0);
+    if (!reel.fb_page_id && pickedPage > 0) {
+      if (!getFbPage(pickedPage)) return reply.callNotFound();
+      updateReel(id, { fbPageId: pickedPage });
+      reel = getReel(id)!;
+    }
 
     try {
       await publishReel(reel, defaultDeps(settings, encryptionKey));

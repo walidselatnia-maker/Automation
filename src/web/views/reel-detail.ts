@@ -1,5 +1,6 @@
 import { html, raw, timeAgo, type Html } from './layout.js';
-import type { PresenterRow, ReelSceneRow, ReelView } from '../../db/repos.js';
+import type { FbPageRow, PresenterRow, ReelSceneRow, ReelView } from '../../db/repos.js';
+import { publishControls } from './pages.js';
 import { formatByKey } from '../../reels/formats.js';
 
 /**
@@ -117,6 +118,7 @@ export function reelDetailPage(
   reel: ReelView,
   scenes: ReelSceneRow[] = [],
   presenter: PresenterRow | undefined = undefined,
+  fbPages: FbPageRow[] = [],
 ): Html {
   const format = formatByKey(reel.format);
 
@@ -133,14 +135,7 @@ export function reelDetailPage(
     </p>
 
     <div class="row wrap tile-actions">
-      ${reel.status === 'ready' && reel.fb_page_id
-        ? html`<form method="post" action="/reels/${reel.id}/publish">
-            <button class="primary" type="submit">Publish to ${reel.page_name || 'the page'} now</button>
-          </form>`
-        : raw('')}
-      ${reel.status === 'ready' && !reel.fb_page_id
-        ? html`<span class="muted">No Facebook page has this niche, so it waits here. Give a page the niche under Channels &rarr; Facebook.</span>`
-        : raw('')}
+      ${publishControls(reel, fbPages)}
       ${reel.status === 'failed'
         ? html`<form method="post" action="/reels/${reel.id}/retry">
             <button type="submit">Retry</button>

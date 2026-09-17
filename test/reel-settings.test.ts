@@ -7,6 +7,7 @@ import {
   getReel,
   insertFbToken,
   insertKeyword,
+  listFbPages,
   listScenes,
   replaceScenes,
   setReelStage,
@@ -122,6 +123,22 @@ describe('reel settings and the storyboard', () => {
     updateReel(reelId, { status: 'ready' });
     const body = (await get(`/reels/${reelId}`)).body;
     expect(body).toContain(`action="/reels/${reelId}/publish"`);
+  });
+
+  it('lets a ready reel with no page be published to a page picked on the spot', async () => {
+    const { reelId } = seedReel();
+    updateReel(reelId, { status: 'ready', fbPageId: null });
+    setReelStage(reelId, 'done', { outputPath: '/tmp/none.mp4' });
+
+    const body = (await get('/reels')).body;
+    expect(body).toContain('name="page_id"');
+    expect(body).toContain('>Page</option>');
+
+    expect(getReel(reelId)!.fb_page_id).toBeNull();
+    // The publish itself reaches for Facebook and fails here; what matters is
+    // the page was remembered on the reel.
+    await post(`/reels/${reelId}/publish`, { page_id: String(listFbPages()[0]!.id) });
+    expect(getReel(reelId)!.fb_page_id).toBe(listFbPages()[0]!.id);
   });
 
   it('retries one scene without touching the others', async () => {

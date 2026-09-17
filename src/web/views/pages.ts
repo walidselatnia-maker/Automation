@@ -2657,6 +2657,8 @@ export interface ReelsPageData {
   configured: boolean;
   enabled: boolean;
   pages: number;
+  /** Every Facebook page, for publishing a reel no page's niche claimed. */
+  fbPages: FbPageRow[];
 }
 
 const REEL_STATE: Record<string, { label: string; badge: string }> = {
@@ -2681,14 +2683,42 @@ const onSite = (domain: string | null, path: string): string =>
  * height of a screen. Tiles let the media be the size it needs to be and the
  * text sit under it.
  */
-function reelTile(reel: ReelView): Html {
+
+/**
+ * Publish a ready reel: straight to its page, or -- when no page has this
+ * niche -- to a page picked here and now. Picking one publishes to it and
+ * remembers it on the reel; it does not change the page's niche.
+ */
+export function publishControls(reel: ReelView, pages: FbPageRow[]): Html {
+  if (reel.status !== 'ready') return raw('');
+  if (reel.fb_page_id) {
+    return html`<form method="post" action="/reels/${reel.id}/publish">
+      <button class="primary" type="submit">Publish</button>
+    </form>`;
+  }
+  const enabled = pages.filter((p) => p.enabled === 1);
+  if (enabled.length === 0) {
+    return html`<a class="button" href="/settings/facebook">Add a Facebook page first</a>`;
+  }
+  return html`<form method="post" action="/reels/${reel.id}/publish" class="row wrap">
+    <select name="page_id" required>
+      <option value="">Pick a page…</option>
+      ${enabled.map((p) => html`<option value="${p.id}">${p.name || p.page_id}</option>`)}
+    </select>
+    <button class="primary" type="submit">Publish</button>
+  </form>`;
+}
+
+function reelTile(reel: ReelView, fbPages: FbPageRow[]): Html {
   const state = REEL_STATE[reel.status] ?? { label: reel.status, badge: 'pending' };
   const live = reel.fb_video_id ? `https://www.facebook.com/reel/${reel.fb_video_id}` : '';
 
   return html`
     <article class="tile">
       <div class="tile-media">
-        ${reel.video_url
+        ${reel.output_path
+          ? html`<video src="/reels/${reel.id}/video" controls muted playsinline preload="metadata"></video>`
+          : reel.video_url
           ? html`<video src="${reel.video_url}" controls muted playsinline preload="metadata"></video>`
           : html`<div class="tile-placeholder">
               ${reel.status === 'generating' ? 'Generating…' : 'No video yet'}
@@ -2709,7 +2739,8 @@ function reelTile(reel: ReelView): Html {
         <div class="help">
           ${reel.page_name
             ? html`To <strong>${reel.page_name}</strong>`
-            : html`<a href="/settings/facebook">No page for this niche &mdash; assign one</a>`}
+            : html`No page has this niche &mdash; pick one below, or give a page the niche under
+                <a href="/settings/facebook">Channels &rarr; Facebook</a>`}
         </div>
 
         ${reel.error
@@ -2720,11 +2751,7 @@ function reelTile(reel: ReelView): Html {
           : raw('')}
 
         <div class="row wrap tile-actions">
-          ${reel.status === 'ready' && reel.fb_page_id
-            ? html`<form method="post" action="/reels/${reel.id}/publish">
-                <button class="primary" type="submit">Publish</button>
-              </form>`
-            : raw('')}
+          ${publishControls(reel, fbPages)}
           ${reel.status === 'failed'
             ? html`<form method="post" action="/reels/${reel.id}/retry">
                 <button type="submit">Retry</button>
@@ -2805,7 +2832,7 @@ export function reelsPage(data: ReelsPageData): Html {
     <h2>In progress</h2>
     ${working.length === 0
       ? html`<div class="card">${emptyState('No reels on the go.')}</div>`
-      : html`<div class="grid tiles">${working.map(reelTile)}</div>`}
+      : html`<div class="grid tiles">${working.map((r) => reelTile(r, data.fbPages))}</div>`}
 
     <h2>Make a reel from</h2>
     <p class="subtitle">Published articles whose images are still on file.</p>
