@@ -1,3 +1,8 @@
+import {
+  imageServiceProblemFrom,
+  type FlowStatus,
+  type ServiceHealth,
+} from '../core/image-service-health.js';
 import Fastify, {
   type FastifyInstance,
   type FastifyReply,
@@ -2313,6 +2318,7 @@ export function buildServer(
    * renders.
    */
   let imageServiceProblem: string | null = null;
+  let extensionMissingPolls = 0;
 
   /**
    * Ask the image service whether it accepts the settings as they now stand.
@@ -2363,10 +2369,19 @@ export function buildServer(
         return;
       }
 
-      const status = (await response.json()) as { connected?: boolean };
-      imageServiceProblem = status.connected
-        ? null
-        : 'The image service browser is not signed in to Google. Open Browser to sign in.';
+      const status = (await response.json()) as FlowStatus;
+      // /health is where the watchdog says a sign-in wall is up. Best effort:
+      // without it, only what /flow/status says is judged.
+      let health: ServiceHealth | null = null;
+      try {
+        const h = await fetch(`${base}/health`, { signal: AbortSignal.timeout(5_000) });
+        if (h.ok) health = (await h.json()) as ServiceHealth;
+      } catch {
+        // Judged from status alone.
+      }
+      const chromeUp = status.chrome?.wanted_running ?? status.chrome?.always_on ?? true;
+      extensionMissingPolls = !status.connected && chromeUp ? extensionMissingPolls + 1 : 0;
+      imageServiceProblem = imageServiceProblemFrom(status, health, extensionMissingPolls);
 
       // The model catalogue rides on the same poll, so the Settings page reads
       // it from memory and never waits on the image service to render. It did
@@ -2417,7 +2432,7 @@ export function buildServer(
     }
 
     if (imageServiceProblem) {
-      const needsSignIn = /signed in/i.test(imageServiceProblem);
+      const needsSignIn = /signed out|Browser page/i.test(imageServiceProblem);
       problems.push({
         kind: 'warn',
         text: imageServiceProblem,
