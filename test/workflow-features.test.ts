@@ -528,17 +528,4 @@ describe('the new workflow features', () => {
       expect(response.headers.location).toContain('go');
     });
   });
-
-  /* -- the backup ----------------------------------------------------------- */
-
-  describe('backup', () => {
-    it('sends a database file', async () => {
-      const response = await get('/data/backup');
-
-      expect(response.statusCode).toBe(200);
-      expect(response.headers['content-disposition']).toContain('.db');
-      // SQLite's file magic, so this is a real database rather than an error page.
-      expect(response.rawPayload.subarray(0, 15).toString()).toBe('SQLite format 3');
-    });
-  });
 });

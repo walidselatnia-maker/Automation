@@ -23,7 +23,6 @@ import { registerBrowserProxy } from './browser-proxy.js';
 import {
   decisionsPage,
   runPicker,
-  dataPage,
   eventsPage,
   accountPage,
   keysPage,
@@ -142,18 +141,12 @@ import {
 } from '../db/repos.js';
 import { get } from '../db/index.js';
 import {
-  backupTo,
-  clearHistory,
-  exportSitesWithCredentials,
-  forgetAllSharedImages,
-  compactDatabase,
-  dataCounts,
+  DATASETS,
   exportDataset,
+  exportSitesWithCredentials,
   type Dataset,
-} from '../db/maintenance.js';
+} from '../db/exports.js';
 import { createReadStream, existsSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   deleteEndpoint,
@@ -2020,131 +2013,14 @@ export function buildServer(
     ]),
   );
 
-  /* -- History and storage ------------------------------------------------ */
-
-  /**
-   * Runs, steps, decisions and events grow one row per attempt forever.
-   *
-   * None of it is derived state — the counters are all computed from `runs` at
-   * read time — so deleting history changes nothing about what publishes next.
-   * It is still the only record of what happened, which is why every clear on
-   * this page sits next to the export of the same table.
-   */
-  app.get('/settings/data', async (request, reply) =>
-    page(
-      reply,
-      'History & storage',
-      '/settings',
-      dataPage(dataCounts(), settings.getNumber('retention_days')),
-      readFlash(request.query),
-    ),
-  );
-
-  /**
-   * The whole database as one file.
-   *
-   * Written to a temporary directory with VACUUM INTO, streamed, then removed.
-   * A plain copy of the .db would be missing every write still in the WAL
-   * sidecar, which is the kind of backup you only discover is wrong when you
-   * restore it.
-   */
-  app.get('/data/backup', async (_request, reply) => {
-    const directory = await mkdtemp(join(tmpdir(), 'platform-backup-'));
-    const file = join(directory, 'platform.db');
-
-    try {
-      backupTo(file);
-    } catch (err) {
-      await rm(directory, { recursive: true, force: true });
-      return redirect(reply, '/settings/data', { kind: 'error', message: errorMessage(err) });
-    }
-
-    const stamp = new Date().toISOString().slice(0, 10);
-    const stream = createReadStream(file);
-
-    // Cleaned up once the response is done, however it ends — a client that
-    // disconnects mid-download should not leave a copy of the database in the
-    // container's temp directory.
-    const cleanup = (): void => {
-      void rm(directory, { recursive: true, force: true });
-    };
-    stream.once('close', cleanup);
-    stream.once('error', cleanup);
-
-    return reply
-      .type('application/octet-stream')
-      .header('content-disposition', `attachment; filename="platform-${stamp}.db"`)
-      .send(stream);
-  });
-
-  const DATASETS: Dataset[] = [
-    'runs', 'steps', 'decisions', 'events', 'keywords', 'sites', 'articles', 'reels',
-  ];
+  /* -- Exports ------------------------------------------------------------ */
 
   app.get('/data/export/:dataset', async (request, reply) => {
     const name = asString((request.params as { dataset: string }).dataset) as Dataset;
-    if (!DATASETS.includes(name)) {
-      return redirect(reply, '/settings/data', {
-        kind: 'error',
-        message: `There is nothing called "${name}" to export.`,
-      });
-    }
+    if (!DATASETS.includes(name)) return reply.callNotFound();
 
     const data = exportDataset(name);
     return csvFile(reply, data.filename, data.rows);
-  });
-
-  app.post('/data/clear', async (request, reply) => {
-    const body = formBody(request);
-    const what = asString(body.what);
-
-    if (what === 'shared-images') {
-      const n = forgetAllSharedImages();
-      return redirect(reply, '/settings/data', {
-        kind: 'ok',
-        message:
-          `Forgot ${n} shared image set(s). No image was deleted — the next site ` +
-          'to publish those keywords will generate fresh ones.',
-      });
-    }
-
-    if (what !== 'runs' && what !== 'decisions' && what !== 'events') {
-      return redirect(reply, '/settings/data', {
-        kind: 'error',
-        message: 'Nothing was cleared: that is not something this page manages.',
-      });
-    }
-
-    // "0" from the dropdown means everything, which is null to clearHistory.
-    const days = asNumber(body.days, 30);
-    const cutoff = days <= 0 ? null : days;
-
-    try {
-      const removed = clearHistory(what, cutoff);
-      const scope = cutoff === null ? 'all' : `older than ${cutoff} day(s)`;
-      return redirect(reply, '/settings/data', {
-        kind: 'ok',
-        message:
-          removed === 0
-            ? `Nothing to clear — no ${what} ${scope}.`
-            : `Cleared ${removed} ${what} row(s) ${scope}.` +
-              (what === 'runs' ? ' Their steps went with them.' : ''),
-      });
-    } catch (err) {
-      return redirect(reply, '/settings/data', { kind: 'error', message: errorMessage(err) });
-    }
-  });
-
-  app.post('/data/compact', async (_request, reply) => {
-    try {
-      compactDatabase();
-      return redirect(reply, '/settings/data', {
-        kind: 'ok',
-        message: 'Database compacted. The file on disk is now its true size.',
-      });
-    } catch (err) {
-      return redirect(reply, '/settings/data', { kind: 'error', message: errorMessage(err) });
-    }
   });
 
   /* -- Prompts ----------------------------------------------------------- */

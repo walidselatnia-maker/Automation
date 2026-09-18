@@ -13,7 +13,7 @@ import {
   setLink,
   upsertSite,
 } from '../src/db/repos.js';
-import { dataCounts, exportDataset } from '../src/db/maintenance.js';
+import { exportDataset } from '../src/db/exports.js';
 import { Settings } from '../src/settings.js';
 import { buildServer } from '../src/web/server.js';
 import { setLogLevel } from '../src/lib/logger.js';
@@ -208,10 +208,10 @@ describe('web UI after the layout changes', () => {
       expect(response.body).not.toContain('MAX_CONCURRENT_REQUESTS');
     });
 
-    it('links prompts and history from the settings page', async () => {
+    it('links prompts from the settings page, and no history page', async () => {
       const response = await get('/settings');
       expect(response.body).toContain('href="/settings/prompts"');
-      expect(response.body).toContain('href="/settings/data"');
+      expect(response.body).not.toContain('href="/settings/data"');
       // Per-step token counts live on the run that spent them, not on a page
       // of their own.
       expect(response.body).not.toContain('href="/settings/usage"');
@@ -491,89 +491,43 @@ describe('web UI after the layout changes', () => {
 
   /* -- history and storage ---------------------------------------------- */
 
-  describe('history and storage', () => {
+  describe('exports', () => {
     beforeEach(() => {
       const site = seedSite('bitespoon.com');
       const keyword = insertKeyword({ seed_keyword: 'chicken soup', status: 'go' });
-
       run(
-        `INSERT INTO runs (keyword_id, site_id, status, started_at)
-         VALUES (?, ?, 'published', datetime('now', '-60 days'))`,
+        `INSERT INTO runs (keyword_id, site_id, status, started_at, title, post_url)
+         VALUES (?, ?, 'published', datetime('now'), 'Chicken Soup', 'https://bitespoon.com/chicken-soup')`,
         keyword,
         site,
       );
-      run(
-        `INSERT INTO runs (keyword_id, site_id, status, started_at)
-         VALUES (?, ?, 'failed', datetime('now'))`,
-        keyword,
-        site,
-      );
-      run(
-        `INSERT INTO runs (keyword_id, site_id, status, started_at)
-         VALUES (?, ?, 'running', datetime('now', '-90 days'))`,
-        keyword,
-        site,
-      );
-      run(
-        `INSERT INTO decisions (cycle_id, subject_type, subject_label, decision, reason)
-         VALUES ('old', 'site', 'bitespoon.com', 'rejected', 'too soon')`,
-      );
-      run("INSERT INTO events (level, source, message) VALUES ('error', 'test', 'boom')");
     });
 
-    it('counts what has piled up', () => {
-      const counts = dataCounts();
-      expect(counts.runs).toBe(3);
-      expect(counts.decisions).toBe(1);
-      expect(counts.events).toBe(1);
-      expect(counts.oldestRunAt).not.toBeNull();
+    it('has no history page and nothing to clear, back up or compact', async () => {
+      expect((await get('/settings/data')).statusCode).toBe(404);
+      expect((await get('/data/backup')).statusCode).toBe(404);
+      expect((await post('/data/clear', { what: 'runs', days: '0' })).statusCode).toBe(404);
+      expect((await get('/data/export/runs')).statusCode).toBe(404);
+      expect((await get('/data/export/events')).statusCode).toBe(404);
     });
 
-    it('renders the page with those counts', async () => {
-      const response = await get('/settings/data');
+    it('exports the articles from the Articles page', async () => {
+      const page = await get('/runs');
+      expect(page.body).toContain('href="/data/export/articles"');
+
+      const response = await get('/data/export/articles');
       expect(response.statusCode).toBe(200);
-      expect(response.body).toContain('History &amp; storage');
-      expect(response.body).toContain('Forget shared images');
+      expect(response.headers['content-disposition']).toContain('articles.csv');
+      expect(response.body).toContain('Chicken Soup');
+      expect(response.body).toContain('https://bitespoon.com/chicken-soup');
     });
 
-    it('clears only history older than the cutoff', async () => {
-      await post('/data/clear', { what: 'runs', days: '30' });
-      expect(dataCounts().runs).toBe(2);
-    });
-
-    it('never deletes a run that is still going', async () => {
-      await post('/data/clear', { what: 'runs', days: '0' });
-
-      // Everything is cleared except the one the scheduler lock points at.
-      expect(dataCounts().runs).toBe(1);
-      expect(
-        dbGet<{ n: number }>("SELECT COUNT(*) AS n FROM runs WHERE status = 'running'")?.n,
-      ).toBe(1);
-    });
-
-    it('reports a no-op instead of claiming success', async () => {
-      await post('/data/clear', { what: 'events', days: '0' });
-      const again = await post('/data/clear', { what: 'events', days: '0' });
-      expect(again.headers.location).toContain('Nothing%20to%20clear');
-    });
-
-    it('refuses a table it does not manage', async () => {
-      const response = await post('/data/clear', { what: 'sites', days: '0' });
-      expect(response.headers.location).toContain('error=');
-      expect(dataCounts().runs).toBe(3);
-    });
-
-    it('forgets shared images without touching anything else', async () => {
-      const response = await post('/data/clear', { what: 'shared-images' });
-      expect(response.headers.location).toContain('ok=');
-      expect(dataCounts().runs).toBe(3);
-    });
-
-    it('exports runs as CSV with a filename', async () => {
-      const response = await get('/data/export/runs');
+    it('exports the reels from the Reels page', async () => {
+      const page = await get('/reels');
+      expect(page.body).toContain('href="/data/export/reels"');
+      const response = await get('/data/export/reels');
       expect(response.statusCode).toBe(200);
-      expect(response.headers['content-disposition']).toContain('runs.csv');
-      expect(response.body).toContain('bitespoon.com');
+      expect(response.headers['content-disposition']).toContain('reels.csv');
     });
 
     it('exports keywords in the shape the importer reads back', () => {
@@ -603,9 +557,7 @@ describe('web UI after the layout changes', () => {
     });
 
     it('rejects an unknown dataset', async () => {
-      const response = await get('/data/export/settings');
-      expect(response.statusCode).toBe(303);
-      expect(response.headers.location).toContain('error=');
+      expect((await get('/data/export/settings')).statusCode).toBe(404);
     });
   });
 });

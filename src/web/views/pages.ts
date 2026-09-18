@@ -50,7 +50,6 @@ import type {
   KeywordListView,
   SharedImageInfo,
 } from '../../db/repos.js';
-import type { DataCounts } from '../../db/maintenance.js';
 
 /* =========================================================================
  * Dashboard
@@ -323,11 +322,16 @@ function runTable(runs: RunListRow[]): Html {
 export function runsPage(runs: RunListRow[], page: number, total: number): Html {
   const pages = Math.max(1, Math.ceil(total / 50));
   return html`
-    <h1>Articles</h1>
-    <p class="subtitle">
-      ${total} article(s) so far. Open one to see every step, what it cost, and
-      why it failed if it did.
-    </p>
+    <div class="spread">
+      <div>
+        <h1>Articles</h1>
+        <p class="subtitle">
+          ${total} article(s) so far. Open one to see every step, what it cost, and
+          why it failed if it did.
+        </p>
+      </div>
+      <a class="button" href="/data/export/articles" download>Export CSV</a>
+    </div>
     <div class="card table-wrap">
       ${runs.length === 0 ? emptyState('No runs yet.') : runTable(runs)}
     </div>
@@ -2158,193 +2162,6 @@ function diffBlock(older: string, newer: string): Html {
 }
 
 /* =========================================================================
- * History and storage
- * ====================================================================== */
-
-/**
- * The tables that grow forever, with a way to take them away.
- *
- * Everything on this page is history: runs, the steps under them, the
- * scheduler's reasoning, the event log. None of it is derived state, so
- * deleting any of it changes nothing about what the platform will do next —
- * which is exactly why the export sits beside the delete rather than behind
- * a separate page. Take the copy, then clear.
- */
-export function dataPage(counts: DataCounts, retentionDays: number): Html {
-  const clearCard = (
-    what: 'runs' | 'decisions' | 'events',
-    title: string,
-    rows: number,
-    blurb: Html,
-    exportName: string,
-  ): Html => html`
-    <div class="card">
-      <div class="spread">
-        <div>
-          <h3 style="margin-bottom:4px">${title}</h3>
-          <div class="muted small">${rows} row(s) stored</div>
-        </div>
-        <a class="button small" href="/data/export/${exportName}" download>Export CSV</a>
-      </div>
-      <p class="muted small">${blurb}</p>
-      <form method="post" action="/data/clear" class="row wrap"
-            onsubmit="return confirm('Delete this history? The export is the only copy.')">
-        <input type="hidden" name="what" value="${what}" />
-        <label for="days-${what}" style="margin:0">Older than</label>
-        <select id="days-${what}" name="days" style="width:auto">
-          <option value="90">90 days</option>
-          <option value="30" selected>30 days</option>
-          <option value="7">7 days</option>
-          <option value="0">everything</option>
-        </select>
-        <button class="danger" type="submit">Clear</button>
-      </form>
-    </div>
-  `;
-
-  return html`
-    <div class="spread">
-      <div>
-        <h1>History &amp; storage</h1>
-        <p class="subtitle">
-          How much history is stored, and how to export or clear it. Clearing
-          never changes what gets published next &mdash; but it is the only record
-          of what happened, so export first.
-        </p>
-      </div>
-      <a class="button" href="/settings">Back to settings</a>
-    </div>
-
-    <div class="grid">
-      <div class="stat"><div class="value">${counts.runs}</div><div class="label">Runs</div></div>
-      <div class="stat"><div class="value">${counts.steps}</div><div class="label">Run steps</div></div>
-      <div class="stat"><div class="value">${counts.cycles}</div><div class="label">Scheduler checks</div></div>
-      <div class="stat"><div class="value">${counts.events}</div><div class="label">Log events</div></div>
-    </div>
-
-    <p class="muted small">
-      ${counts.oldestRunAt
-        ? html`Oldest run recorded ${timeAgo(counts.oldestRunAt)}.`
-        : raw('No runs recorded yet.')}
-      Decisions and events older than ${retentionDays} day(s) are pruned
-      automatically &mdash; that number is <em>Keep logs for</em> under Settings
-      &rarr; Schedule. Runs are never pruned automatically, because a run is the
-      record of an article you published.
-    </p>
-
-    <h2>Clear history</h2>
-
-    ${clearCard(
-      'runs',
-      'Runs and their steps',
-      counts.runs,
-      html`One row per publishing attempt, plus every step underneath it &mdash;
-        prompts, model outputs, timings. This is the bulk of the database.
-        A run still in progress is never deleted.`,
-      'runs',
-    )}
-
-    ${clearCard(
-      'decisions',
-      'Scheduler decisions',
-      counts.decisions,
-      html`Why each site was picked or skipped, written on every check. At one
-        check every few minutes this is the fastest-growing table here, and it
-        is only useful while you are asking why something did not publish.`,
-      'decisions',
-    )}
-
-    ${clearCard(
-      'events',
-      'Event log',
-      counts.events,
-      html`Technical errors and scheduler activity &mdash; the Events page.`,
-      'events',
-    )}
-
-    <h2>Shared article images</h2>
-    <div class="card">
-      <div class="spread">
-        <div>
-          <h3 style="margin-bottom:4px">Remembered image sets</h3>
-          <div class="muted small">${counts.sharedImages} keyword(s) with a stored set</div>
-        </div>
-      </div>
-      <p class="muted small">
-        When a keyword runs on several sites, the first site to publish it
-        becomes the source of its four article images and the rest copy them
-        instead of asking Google again. Clearing this forgets those URLs: no
-        image is deleted anywhere, the next site to publish simply generates a
-        fresh set. Do it when you want new pictures for keywords you have
-        already run.
-      </p>
-      <form method="post" action="/data/clear"
-            onsubmit="return confirm('Forget every shared image set? Future runs will generate new images.')">
-        <input type="hidden" name="what" value="shared-images" />
-        <button class="danger" type="submit">Forget shared images</button>
-      </form>
-    </div>
-
-    <h2>What was made</h2>
-    <div class="card">
-      <p class="muted small" style="margin-top:0">
-        One row per article &mdash; title, description, category, link, the four
-        images, the pin &mdash; and one per reel &mdash; page, caption, video, the
-        Facebook link. Plain CSV.
-      </p>
-      <div class="row wrap">
-        <a class="button" href="/data/export/articles" download>Articles</a>
-        <a class="button" href="/data/export/reels" download>Reels</a>
-      </div>
-    </div>
-
-    <h2>Export everything</h2>
-    <div class="card">
-      <p class="muted small" style="margin-top:0">
-        Plain CSV, one file per table, nothing encrypted &mdash; site API tokens
-        and LLM keys are deliberately not included in any of these.
-      </p>
-      <div class="row wrap">
-        <a class="button" href="/data/export/runs" download>Runs</a>
-        <a class="button" href="/data/export/steps" download>Run steps</a>
-        <a class="button" href="/data/export/decisions" download>Decisions</a>
-        <a class="button" href="/data/export/events" download>Events</a>
-        <a class="button" href="/data/export/keywords" download>Keywords</a>
-        <a class="button" href="/data/export/sites" download>Sites</a>
-      </div>
-    </div>
-
-    <h2>Back it all up</h2>
-    <div class="card">
-      <p class="muted small" style="margin-top:0">
-        One file holding the whole database: sites, keywords, settings, history. Written with
-        <span class="mono">VACUUM INTO</span> rather than copied, because the database runs in
-        WAL mode and a plain copy of the file silently omits every recent write.
-      </p>
-      <p class="muted small">
-        Site tokens and API keys inside it stay encrypted with
-        <span class="mono">ENCRYPTION_KEY</span>, which lives in the data volume and not in this
-        file &mdash; so restoring onto a fresh deployment needs that key as well, and this file
-        alone does not hand anyone your credentials.
-      </p>
-      <a class="button primary" href="/data/backup" download>Download the database</a>
-    </div>
-
-    <h2>Reclaim disk space</h2>
-    <div class="card">
-      <p class="muted small" style="margin-top:0">
-        SQLite keeps the space a delete frees and reuses it later, so the file
-        on disk does not shrink on its own. This rewrites it at its true size.
-        It takes a moment and blocks other writes while it runs.
-      </p>
-      <form method="post" action="/data/compact">
-        <button type="submit">Compact the database</button>
-      </form>
-    </div>
-  `;
-}
-
-/* =========================================================================
  * One keyword: why it is or is not publishing
  * ====================================================================== */
 
@@ -2832,6 +2649,7 @@ export function reelsPage(data: ReelsPageData): Html {
         </p>
       </div>
       <div class="row wrap">
+        <a class="button" href="/data/export/reels" download>Export CSV</a>
         <a class="button" href="/settings/facebook">Facebook pages</a>
       </div>
     </div>

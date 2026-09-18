@@ -139,7 +139,6 @@ export const SECTIONS: NavSection[] = [
       { href: '/settings/reels', label: 'Reels' },
       { href: '/settings/presenters', label: 'Presenters' },
       { href: '/browser', label: 'Browser', external: true },
-      { href: '/settings/data', label: 'Data' },
       { href: '/settings/account', label: 'Password' },
     ],
   },

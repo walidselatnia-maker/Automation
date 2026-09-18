@@ -18,7 +18,7 @@ import {
   upsertSite,
 } from '../src/db/repos.js';
 import { upsertEndpoint } from '../src/llm/pool.js';
-import { exportDataset } from '../src/db/maintenance.js';
+import { exportDataset } from '../src/db/exports.js';
 import { Settings } from '../src/settings.js';
 import { configurePrompts } from '../src/pipeline/prompts.js';
 import { executePipeline } from '../src/pipeline/index.js';
