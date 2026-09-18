@@ -105,3 +105,20 @@ describe('migration 010-fb-tokens', () => {
     expect(() => migration010().up(db)).not.toThrow();
   });
 });
+
+describe('migration 012-fb-pages-auto-publish', () => {
+  it('switches every page that was holding for review to publishing on its own', () => {
+    setLogLevel('error');
+    const db = legacyDb();
+    db.prepare(
+      "INSERT INTO fb_pages (id, page_id, name, auto_publish) VALUES (1, 'p1', 'Held', 0), (2, 'p2', 'Auto', 1)",
+    ).run();
+
+    MIGRATIONS.find((m) => m.id === '012-fb-pages-auto-publish')!.up(db);
+
+    expect(db.prepare('SELECT id, auto_publish FROM fb_pages ORDER BY id').all()).toEqual([
+      { id: 1, auto_publish: 1 },
+      { id: 2, auto_publish: 1 },
+    ]);
+  });
+});

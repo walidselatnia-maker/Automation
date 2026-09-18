@@ -2894,20 +2894,7 @@ export interface ReelComposerData {
   references: readonly ArticleRole[];
 }
 
-/**
- * Choose what the reel is made from.
- *
- * All four are ticked by default. They were not, on the reasoning that a
- * texture macro alone makes a video of an unidentifiable surface -- true of
- * that image alone, and beside the point when it arrives alongside the other
- * three. The prompt asks the model to read the dish from the photos together,
- * and giving it two of the four to read from is throwing away the detail it
- * needs to keep ingredients and textures honest. Untick one to exclude it.
- *
- * The Pinterest graphic is deliberately not here and never was: these come
- * from the generate-images step, which produces the four article images, and
- * the pin is built by a different step from a different template.
- */
+/** What Setup → Reels shows and saves. */
 export interface ReelSettingsData {
   mode: ReelMode;
   singleReferences: readonly ArticleRole[];
@@ -2918,103 +2905,119 @@ export interface ReelSettingsData {
   formats: ReelFormat[];
 }
 
-/** Setup → Reels: how every reel is shaped. */
+/**
+ * Setup → Reels: how every reel is made.
+ *
+ * Two ways to make one, and each way's own options live under its radio
+ * and show only when it is picked: the photo list means nothing to a
+ * storyboard, and length and shapes mean nothing to a single clip. What is
+ * true of both -- the call to action -- sits apart, below.
+ */
 export function reelSettingsPage(data: ReelSettingsData): Html {
   const lengths = [15, 30, 45, 60];
+  const modeCard = (
+    mode: ReelMode,
+    title: string,
+    detail: string,
+  ) => html`<label class="choice ${data.mode === mode ? 'on' : ''}">
+    <input type="radio" name="reel_mode" value="${mode}"
+           ${data.mode === mode ? raw('checked') : raw('')} />
+    <span><strong>${title}</strong><span class="muted small">${detail}</span></span>
+  </label>`;
+
   return html`
     <h1>Reels</h1>
     <p class="subtitle">
-      How every reel is shaped. Nothing here is needed to start; change it when you
-      want reels longer, shorter, or in fewer shapes.
+      How every reel is made. Where it goes is decided per page under
+      <a href="/settings/facebook">Channels &rarr; Facebook</a>.
     </p>
 
-    <form method="post" action="/settings/reels">
+    <form method="post" action="/settings/reels" id="reel-settings">
       <h2>How a reel is made</h2>
       <div class="card">
-        <div class="field">
-          <label>
-            <input type="radio" name="reel_mode" value="single"
-                   ${data.mode === 'single' ? raw('checked') : raw('')} />
-            <strong>One clip from one prompt</strong>
-            <span class="muted"> &mdash; the article's photos and the reel-video prompt go to Flow once; ten seconds, done in minutes.</span>
-          </label>
+        <div class="row wrap">
+          ${modeCard(
+            'single',
+            'One clip',
+            "One prompt and up to three of the article's photos go to Flow once. Ten seconds, ready in minutes.",
+          )}
+          ${modeCard(
+            'scenes',
+            'A storyboard',
+            'The model writes scenes; each is filmed on its own and they are joined. Longer, and more credits.',
+          )}
         </div>
-        <div class="field">
-          <label>
-            <input type="radio" name="reel_mode" value="scenes"
-                   ${data.mode === 'scenes' ? raw('checked') : raw('')} />
-            <strong>A storyboard of scenes</strong>
-            <span class="muted"> &mdash; the model writes scenes, each is filmed on its own and they are joined. Longer, more credits.</span>
-          </label>
-        </div>
-        <div class="field">
-          <label>Photos sent with a one-clip reel (up to ${MAX_REFERENCES})</label>
-          <div class="row wrap">
-            ${ARTICLE_ROLES.map(
-              (role) => html`<label class="row">
-                <input type="checkbox" name="reel_single_references" value="${role}"
-                       ${data.singleReferences.includes(role) ? raw('checked') : raw('')} />
-                ${ROLE_LABEL[role]}
-              </label>`,
-            )}
+
+        <div data-mode="single" ${data.mode === 'single' ? raw('') : raw('hidden')}>
+          <div class="field">
+            <label>Photos sent with the prompt</label>
+            <div class="row wrap">
+              ${ARTICLE_ROLES.map(
+                (role) => html`<label class="inline-check">
+                  <input type="checkbox" name="reel_single_references" value="${role}"
+                         ${data.singleReferences.includes(role) ? raw('checked') : raw('')} />
+                  ${ROLE_LABEL[role]}
+                </label>`,
+              )}
+            </div>
+            <div class="help">
+              Flow takes up to ${MAX_REFERENCES} and leans on the first most. They can be
+              changed for one reel on its Make a reel page.
+            </div>
           </div>
-          <div class="help">
-            The order here is the order Flow sees them: the first is the one it leans on most.
+        </div>
+
+        <div data-mode="scenes" ${data.mode === 'scenes' ? raw('') : raw('hidden')}>
+          <div class="field">
+            <label for="reel_length_seconds">Length</label>
+            <select id="reel_length_seconds" name="reel_length_seconds">
+              ${lengths.map(
+                (n) => html`<option value="${n}" ${n === data.lengthSeconds ? raw('selected') : raw('')}>
+                  ${n} seconds &mdash; ${scenesFor(n)} scenes
+                </option>`,
+              )}
+            </select>
+            <div class="help">Each scene is one ten-second clip and costs its own video credits.</div>
+          </div>
+          <div class="field">
+            <label class="inline-check">
+              <input type="checkbox" name="reel_fresh_images" value="1"
+                     ${data.freshImages ? raw('checked') : raw('')} />
+              Make a new image for every scene
+            </label>
+            <div class="help">
+              Off, scenes are filmed from the article's own photos for nothing extra.
+            </div>
+          </div>
+          <div class="field">
+            <label>Shapes a storyboard can take</label>
+            ${data.formats.map(
+              (f) => html`<div>
+                <label class="inline-check">
+                  <input type="checkbox" name="reel_formats" value="${f.key}"
+                         ${data.allowed.includes(f.key) ? raw('checked') : raw('')} />
+                  <strong>${f.title}</strong>
+                  <span class="muted">&mdash; ${f.shape}</span>
+                </label>
+              </div>`,
+            )}
+            <div class="help">
+              A page never repeats a shape from its last four reels, so more ticked means
+              more variety.
+            </div>
           </div>
         </div>
       </div>
 
-      <h2>Storyboard length</h2>
+      <h2>Every reel</h2>
       <div class="card">
-        <div class="field">
-          <label for="reel_length_seconds">Reel length</label>
-          <select id="reel_length_seconds" name="reel_length_seconds">
-            ${lengths.map(
-              (n) => html`<option value="${n}" ${n === data.lengthSeconds ? raw('selected') : raw('')}>
-                ${n} seconds — ${scenesFor(n)} scenes
-              </option>`,
-            )}
-          </select>
-          <div class="help">
-            Each scene is a ten-second clip. Longer reels cost more video credits per article.
-          </div>
-        </div>
         <div class="field">
           <label for="reel_cta_text">Call to action</label>
           <input type="text" id="reel_cta_text" name="reel_cta_text" value="${data.cta}" />
           <div class="help">
-            The last thing every reel says and shows. The article link goes in the first comment.
+            The last thing every reel says. The article link goes in the first comment.
           </div>
         </div>
-        <div class="field">
-          <label>
-            <input type="checkbox" name="reel_fresh_images" value="1"
-                   ${data.freshImages ? raw('checked') : raw('')} />
-            Make a fresh image for every scene
-          </label>
-          <div class="help">
-            Off: scenes are filmed from the article's own images, which costs nothing extra.
-            On: a new image is made for every scene first.
-          </div>
-        </div>
-      </div>
-
-      <h2>Shapes</h2>
-      <p class="subtitle">
-        Every reel takes one of these. A page never repeats a shape it used in its last
-        four reels, so turning more on means more variety.
-      </p>
-      <div class="card">
-        ${data.formats.map(
-          (f) => html`<div class="field">
-            <label>
-              <input type="checkbox" name="reel_formats" value="${f.key}"
-                     ${data.allowed.includes(f.key) ? raw('checked') : raw('')} />
-              <strong>${f.title}</strong>
-              <span class="muted"> — ${f.shape}</span>
-            </label>
-          </div>`,
-        )}
       </div>
 
       <div class="save-bar">
@@ -3022,6 +3025,27 @@ export function reelSettingsPage(data: ReelSettingsData): Html {
         <span class="muted small">Applies to the next reel.</span>
       </div>
     </form>
+
+    <script>
+      (function () {
+        var form = document.getElementById('reel-settings');
+        if (!form) return;
+        var radios = form.querySelectorAll('input[name="reel_mode"]');
+        var sections = form.querySelectorAll('[data-mode]');
+        function show() {
+          var picked = form.querySelector('input[name="reel_mode"]:checked');
+          var mode = picked ? picked.value : 'single';
+          for (var i = 0; i < sections.length; i++) {
+            sections[i].hidden = sections[i].dataset.mode !== mode;
+          }
+          for (var j = 0; j < radios.length; j++) {
+            radios[j].closest('.choice').classList.toggle('on', radios[j].checked);
+          }
+        }
+        for (var k = 0; k < radios.length; k++) radios[k].addEventListener('change', show);
+        show();
+      })();
+    </script>
   `;
 }
 
@@ -3365,8 +3389,9 @@ export function facebookSettingsPage(data: FacebookSettingsData): Html {
     <div class="card">
       <h2>Pages</h2>
       <p class="help">
-        One niche per page. A page with no niche is left alone. With auto-publish off, a
-        reel waits on the <a href="/reels">Reels</a> page for you to publish it.
+        One niche per page. A page with no niche is left alone. Every page publishes its
+        reels as soon as they are ready; untick auto-publish to have them wait on the
+        <a href="/reels">Reels</a> page for you instead.
       </p>
 
       ${data.pages.length === 0

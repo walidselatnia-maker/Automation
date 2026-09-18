@@ -216,9 +216,9 @@ export const MIGRATIONS: Migration[] = [
           id            INTEGER PRIMARY KEY AUTOINCREMENT,
           page_id       TEXT    NOT NULL UNIQUE,
           name          TEXT    NOT NULL DEFAULT '',
-          -- Per page, not per site: a niche page that has earned trust can
-          -- publish unattended while a new one still waits to be read.
-          auto_publish  INTEGER NOT NULL DEFAULT 0 CHECK (auto_publish IN (0, 1)),
+          -- Per page, not per site: one page can be told to hold its reels
+          -- for review while the others post on their own.
+          auto_publish  INTEGER NOT NULL DEFAULT 1 CHECK (auto_publish IN (0, 1)),
           enabled       INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
           last_used_at  TEXT,
           last_error    TEXT,
@@ -417,6 +417,18 @@ export const MIGRATIONS: Migration[] = [
           UNIQUE (reel_id, position)
         );
       `);
+    },
+  },
+  {
+    id: '012-fb-pages-auto-publish',
+    description: 'Facebook pages publish on their own unless told otherwise',
+    up(db) {
+      // 009 created pages holding for review, then upsertFbPage started
+      // adding them with auto-publish on, so the pages that have been here
+      // longest were the only ones still waiting to be read. The platform's
+      // point is not to be asked; a page that should wait is switched off
+      // under Channels -> Facebook.
+      db.exec('UPDATE fb_pages SET auto_publish = 1');
     },
   },
 ];
