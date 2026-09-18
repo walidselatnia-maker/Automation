@@ -2285,6 +2285,19 @@ export function dataPage(counts: DataCounts, retentionDays: number): Html {
       </form>
     </div>
 
+    <h2>What was made</h2>
+    <div class="card">
+      <p class="muted small" style="margin-top:0">
+        One row per article &mdash; title, description, category, link, the four
+        images, the pin &mdash; and one per reel &mdash; page, caption, video, the
+        Facebook link. Plain CSV.
+      </p>
+      <div class="row wrap">
+        <a class="button" href="/data/export/articles" download>Articles</a>
+        <a class="button" href="/data/export/reels" download>Reels</a>
+      </div>
+    </div>
+
     <h2>Export everything</h2>
     <div class="card">
       <p class="muted small" style="margin-top:0">

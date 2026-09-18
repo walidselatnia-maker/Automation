@@ -13,7 +13,15 @@
 import { all, get, run } from './index.js';
 import { siteSecrets, type SiteRow } from './repos.js';
 
-export type Dataset = 'runs' | 'steps' | 'decisions' | 'events' | 'keywords' | 'sites';
+export type Dataset =
+  | 'runs'
+  | 'steps'
+  | 'decisions'
+  | 'events'
+  | 'keywords'
+  | 'sites'
+  | 'articles'
+  | 'reels';
 
 export interface DataCounts {
   runs: number;
@@ -235,7 +243,126 @@ export function exportDataset(dataset: Dataset): Export {
         ],
       };
     }
+
+    case 'articles':
+      return exportArticles();
+
+    case 'reels':
+      return exportReels();
   }
+}
+
+/**
+ * The latest successful output of each step, per run, parsed.
+ *
+ * The step outputs are where everything the model wrote lives -- the title,
+ * the image links, the pin -- and a step that ran twice keeps both rows, so
+ * the newest ok one wins.
+ */
+function stepOutputs(): Map<number, Map<string, unknown>> {
+  const byRun = new Map<number, Map<string, unknown>>();
+  const rows = all<{ run_id: number; step: string; output_json: string | null }>(
+    `SELECT run_id, step, output_json FROM run_steps
+      WHERE status = 'ok' AND output_json IS NOT NULL ORDER BY id`,
+  );
+  for (const row of rows) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(row.output_json!);
+    } catch {
+      continue;
+    }
+    let steps = byRun.get(row.run_id);
+    if (!steps) byRun.set(row.run_id, (steps = new Map()));
+    steps.set(row.step, parsed);
+  }
+  return byRun;
+}
+
+const field = (value: unknown, key: string): string =>
+  value && typeof value === 'object' ? text((value as Record<string, unknown>)[key]) : '';
+
+/** The images step keeps the path the article uses; a sheet wants the link. */
+const onSite = (domain: unknown, path: string): string => {
+  if (!path || /^https?:\/\//.test(path)) return path;
+  const host = text(domain).replace(/^https?:\/\//, '').replace(/\/+$/, '');
+  return host ? `https://${host}${path}` : path;
+};
+
+/**
+ * One row per article the platform made: what it is, where it went, and the
+ * pictures and pin that went with it. The body is left out on purpose --
+ * thousands of words a row is not something a spreadsheet opens.
+ */
+function exportArticles(): Export {
+  const outputs = stepOutputs();
+  const runs = all<Record<string, unknown>>(
+    `SELECT r.id, r.status, r.title, r.post_id, r.post_url,
+            s.domain AS site, k.seed_keyword AS keyword
+       FROM runs r
+       LEFT JOIN sites s ON s.id = r.site_id
+       LEFT JOIN keywords k ON k.id = r.keyword_id
+      ORDER BY r.id`,
+  );
+  return {
+    filename: 'articles.csv',
+    rows: [
+      ['run_id', 'site', 'keyword', 'status', 'title', 'description', 'category',
+        'post_url', 'post_id', 'feature_image', 'top_shot', 'texture_macro',
+        'before_after', 'pin_image', 'pin_description'],
+      ...runs.map((r) => {
+        const steps = outputs.get(Number(r.id)) ?? new Map<string, unknown>();
+        const seo = steps.get('validate-spy');
+        const images = steps.get('generate-images');
+        const pin = steps.get('generate-pin-image');
+        return [
+          text(r.id), text(r.site), text(r.keyword), text(r.status),
+          field(seo, 'title') || text(r.title), field(seo, 'description'),
+          field(seo, 'category'), text(r.post_url), text(r.post_id),
+          onSite(r.site, field(images, 'feature')), onSite(r.site, field(images, 'topShot')),
+          onSite(r.site, field(images, 'textureMacro')), onSite(r.site, field(images, 'beforeAfter')),
+          field(pin, 'url'),
+          text(steps.get('generate-pin-description')),
+        ];
+      }),
+    ],
+  };
+}
+
+/** One row per reel: what it is, which page it is for, and where the video is. */
+function exportReels(): Export {
+  const reels = all<Record<string, unknown>>(
+    `SELECT r.status, r.stage, r.format, r.caption, r.video_url, r.fb_video_id, r.error,
+            s.domain AS site, k.seed_keyword AS keyword,
+            COALESCE(NULLIF(run.title, ''), k.spy_title) AS title,
+            p.name AS fb_page,
+            (SELECT COUNT(*) FROM reel_scenes sc WHERE sc.reel_id = r.id) AS scenes
+       FROM reels r
+       LEFT JOIN sites s    ON s.id = r.site_id
+       LEFT JOIN keywords k ON k.id = r.keyword_id
+       LEFT JOIN runs run   ON run.id = r.run_id
+       LEFT JOIN fb_pages p ON p.id = r.fb_page_id
+      ORDER BY r.id`,
+  );
+  return {
+    filename: 'reels.csv',
+    rows: [
+      ['site', 'keyword', 'title', 'fb_page', 'status', 'mode', 'format', 'scenes',
+        'caption', 'video_url', 'facebook_url', 'error'],
+      ...reels.map((r) => {
+        // A single-clip reel never enters the studio's stages and has no
+        // shape; anything else is a storyboard.
+        const scenes = r.stage !== 'done' || text(r.format) !== '' || Number(r.scenes) > 0;
+        return [
+          text(r.site), text(r.keyword), text(r.title), text(r.fb_page), text(r.status),
+          scenes ? 'scenes' : 'single', text(r.format), scenes ? text(r.scenes) : '',
+          text(r.caption), text(r.video_url),
+          r.fb_video_id ? `https://www.facebook.com/reel/${text(r.fb_video_id)}` : '',
+          text(r.error),
+        ];
+      }),
+    ],
+  };
 }
 
 /**

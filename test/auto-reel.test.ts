@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { closeDatabase, openDatabase } from '../src/db/index.js';
 import {
   createRun,
+  updateReel,
   getKeyword,
   getSite,
   insertFbToken,
@@ -17,6 +18,7 @@ import {
   upsertSite,
 } from '../src/db/repos.js';
 import { upsertEndpoint } from '../src/llm/pool.js';
+import { exportDataset } from '../src/db/maintenance.js';
 import { Settings } from '../src/settings.js';
 import { configurePrompts } from '../src/pipeline/prompts.js';
 import { executePipeline } from '../src/pipeline/index.js';
@@ -129,6 +131,42 @@ describe('the create-reel step', () => {
     });
     expect((world.videoBodies[0] as { reference_urls: string[] }).reference_urls).toHaveLength(2);
     expect(reelStep(runId)?.status).toBe('ok');
+  });
+
+  it('exports what was made: the article with its images and pin, and the reel with its Facebook link', async () => {
+    pageForKeyword();
+    const world = buildWorld();
+    vi.stubGlobal('fetch', world.fetchStub);
+    const runId = createRun(keywordId, siteId);
+    await executePipeline(makeContext(runId));
+    const [reel] = listReels();
+    updateReel(reel!.id, { status: 'published', fbVideoId: '4242' });
+
+    const articles = exportDataset('articles');
+    expect(articles.filename).toBe('articles.csv');
+    const article = Object.fromEntries(articles.rows[0]!.map((h, i) => [h, articles.rows[1]![i]]));
+    expect(article).toMatchObject({
+      run_id: String(runId),
+      site: 'testsite.com',
+      status: 'published',
+      title: expect.stringContaining('Chicken'),
+      feature_image: expect.stringMatching(/^https:\/\/testsite\.com\//),
+      before_after: expect.stringMatching(/^https:\/\/testsite\.com\//),
+    });
+    expect(article.post_url).not.toBe('');
+    expect(Object.keys(article)).not.toContain('error');
+
+    const reels = exportDataset('reels');
+    const row = Object.fromEntries(reels.rows[0]!.map((h, i) => [h, reels.rows[1]![i]]));
+    expect(row).toMatchObject({
+      site: 'testsite.com',
+      fb_page: 'Chicken Page',
+      status: 'published',
+      mode: 'single',
+      scenes: '',
+      facebook_url: 'https://www.facebook.com/reel/4242',
+    });
+    expect(Object.keys(row)).not.toContain('prompt');
   });
 
   it('queues a reel for planning, with the article and its images, and a written caption', async () => {

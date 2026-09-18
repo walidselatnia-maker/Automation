@@ -2077,7 +2077,9 @@ export function buildServer(
       .send(stream);
   });
 
-  const DATASETS: Dataset[] = ['runs', 'steps', 'decisions', 'events', 'keywords', 'sites'];
+  const DATASETS: Dataset[] = [
+    'runs', 'steps', 'decisions', 'events', 'keywords', 'sites', 'articles', 'reels',
+  ];
 
   app.get('/data/export/:dataset', async (request, reply) => {
     const name = asString((request.params as { dataset: string }).dataset) as Dataset;
