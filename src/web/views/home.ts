@@ -40,6 +40,8 @@ export interface RecentItem {
   what: string;
   status: string;
   detail: string;
+  /** Which of the two the row is, shown as a badge in the last column. */
+  kind: 'article' | 'reel';
 }
 
 export interface HomeData {
@@ -133,7 +135,10 @@ export function homePage(data: HomeData): Html {
                   <td class="nowrap muted small">${timeAgo(r.at)}</td>
                   <td><a href="${r.href}">${r.what}</a></td>
                   <td>${statusBadge(r.status)}</td>
-                  <td class="small muted">${r.detail}</td>
+                  <td class="nowrap">
+                    <span class="badge ${r.kind === 'reel' ? 'reel' : 'muted'}">${r.kind}</span>
+                    ${r.detail ? html`<span class="small muted"> ${r.detail}</span>` : raw('')}
+                  </td>
                 </tr>`,
               )}
             </tbody>
@@ -189,6 +194,7 @@ export function mergeRecent(runs: RunListRow[], reels: ReelView[], limit = 12): 
       href: `/runs/${r.id}`,
       what: `${r.site_domain ?? '—'} · ${r.seed_keyword ?? r.title ?? '—'}`,
       status: r.status,
+      kind: 'article',
       detail:
         r.status === 'failed'
           ? `failed at ${r.failed_step ?? '?'}`
@@ -196,9 +202,7 @@ export function mergeRecent(runs: RunListRow[], reels: ReelView[], limit = 12): 
             ? r.hold === 'awaiting'
               ? 'waiting for approval'
               : 'dry run'
-            : r.status === 'published'
-              ? 'article'
-              : '',
+            : '',
     });
   }
 
@@ -206,8 +210,9 @@ export function mergeRecent(runs: RunListRow[], reels: ReelView[], limit = 12): 
     items.push({
       at: r.created_at,
       href: `/reels/${r.id}`,
-      what: `Reel → ${r.page_name ?? 'no page'} · ${r.seed_keyword ?? r.run_title ?? '—'}`,
+      what: `${r.page_name ?? 'no page'} · ${r.seed_keyword ?? r.run_title ?? '—'}`,
       status: r.status,
+      kind: 'reel',
       detail: r.error ? r.error.slice(0, 80) : '',
     });
   }

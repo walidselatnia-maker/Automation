@@ -137,6 +137,7 @@ describe('the recent list', () => {
     const items = mergeRecent(runs, reels);
     expect(items.map((i) => i.href)).toEqual(['/runs/2', '/reels/7', '/runs/1']);
     expect(items[0]!.detail).toBe('failed at generate-image-feature');
-    expect(items[1]!.what).toContain('Reel → Sweet');
+    expect(items[1]).toMatchObject({ kind: 'reel', what: 'Sweet · soup' });
+    expect(items[2]).toMatchObject({ kind: 'article', detail: '' });
   });
 });

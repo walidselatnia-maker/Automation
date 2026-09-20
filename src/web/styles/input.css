@@ -425,6 +425,11 @@
   .badge.brand {
     @apply border-brand/25 bg-brand-soft text-brand;
   }
+  /* A reel beside an article in the same list: its own hue, so the eye can
+     tell the two apart without reading. */
+  .badge.reel {
+    @apply border-violet-500/25 bg-violet-500/10 text-violet-600 dark:text-violet-300;
+  }
 
   .pill {
     @apply border-edge text-slate-500 dark:border-edge-dark dark:text-slate-400;
