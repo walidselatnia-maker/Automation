@@ -1550,8 +1550,14 @@ export function buildServer(
 
     const name = listFbTokens().find((t) => t.id === id)?.name ?? 'Token';
     const result = await syncToken(id, encryptionKey);
+    // A token Graph refuses is not kept: a row that never worked is one more
+    // thing on the page to wonder about, and the reason is in the message.
     if (!result.ok) {
-      await tellTelegram(`<b>Facebook token failed</b>\n${name}\n${result.error}`);
+      deleteFbToken(id);
+      return redirect(reply, '/settings/facebook', {
+        kind: 'error',
+        message: `${name} was not saved: ${result.error}`,
+      });
     }
     return redirect(reply, '/settings/facebook', describeSync(name, result));
   });
@@ -1576,42 +1582,88 @@ export function buildServer(
     });
   });
 
-  app.post('/settings/facebook/pages/:id', async (request, reply) => {
-    const id = asNumber((request.params as { id: string }).id, 0);
-    if (!getFbPage(id)) return reply.callNotFound();
+  /**
+   * One page's settings, as the pages form carries them: every row's fields
+   * are in the one form, suffixed with the page id, so a row's Save and the
+   * Save-all button post the same body.
+   */
+  const pageFields = (body: Record<string, unknown>, id: number) => ({
+    niche: asString(body[`niche_${id}`]).trim(),
+    presenterId: asNumber(body[`presenter_${id}`], 0),
+    autoPublish: asString(body[`auto_${id}`]) === 'on',
+    enabled: asString(body[`enabled_${id}`]) === 'on',
+  });
 
-    const body = request.body as {
-      niche?: string;
-      autoPublish?: string;
-      enabled?: string;
-      presenter_id?: string;
-    };
-    const niche = (body.niche ?? '').trim();
-
+  const savePage = (id: number, fields: ReturnType<typeof pageFields>): void => {
     // A niche no keyword has is a page that never fires, and it looks
     // identical to a working one in the table. The field is a select, so
     // this only catches a hand-made request -- and a keyword group renamed
     // since the page was last saved.
-    if (niche !== '' && !keywordGroups().some((g) => g.toLowerCase() === niche.toLowerCase())) {
-      return redirect(reply, '/settings/facebook', {
-        kind: 'error',
-        message: `No keyword has the niche “${niche}”, so nothing would ever go to this page.`,
-      });
+    if (
+      fields.niche !== '' &&
+      !keywordGroups().some((g) => g.toLowerCase() === fields.niche.toLowerCase())
+    ) {
+      throw new Error(
+        `No keyword has the niche “${fields.niche}”, so nothing would ever go to this page.`,
+      );
     }
+    setFbPagePresenter(id, fields.presenterId > 0 ? fields.presenterId : null);
+    setFbPageOptions(id, {
+      niche: fields.niche,
+      autoPublish: fields.autoPublish,
+      enabled: fields.enabled,
+    });
+  };
+
+  app.post('/settings/facebook/pages/:id', async (request, reply) => {
+    const id = asNumber((request.params as { id: string }).id, 0);
+    if (!getFbPage(id)) return reply.callNotFound();
 
     try {
-      const presenterId = asNumber(body.presenter_id, 0);
-      setFbPagePresenter(id, presenterId > 0 ? presenterId : null);
-      setFbPageOptions(id, {
-        niche,
-        autoPublish: body.autoPublish === 'on',
-        enabled: body.enabled === 'on',
-      });
+      savePage(id, pageFields(formBody(request), id));
     } catch (err) {
       return redirect(reply, '/settings/facebook', { kind: 'error', message: errorMessage(err) });
     }
 
     return redirect(reply, '/settings/facebook', { kind: 'ok', message: 'Page saved.' });
+  });
+
+  /**
+   * Every page at once. A page whose niche is moving is cleared first, so
+   * two pages swapping niches do not refuse each other over a niche that is
+   * about to be free.
+   */
+  app.post('/settings/facebook/pages', async (request, reply) => {
+    const body = formBody(request);
+    const pages = listFbPages().filter((p) => `niche_${p.id}` in body);
+    const fields = new Map(pages.map((p) => [p.id, pageFields(body, p.id)]));
+
+    for (const p of pages) {
+      const next = fields.get(p.id)!;
+      if (p.niche && next.niche.toLowerCase() !== p.niche.toLowerCase()) {
+        setFbPageOptions(p.id, { niche: null, autoPublish: next.autoPublish, enabled: next.enabled });
+      }
+    }
+
+    const problems: string[] = [];
+    for (const p of pages) {
+      try {
+        savePage(p.id, fields.get(p.id)!);
+      } catch (err) {
+        problems.push(`${p.name || p.page_id}: ${errorMessage(err)}`);
+      }
+    }
+
+    if (problems.length > 0) {
+      return redirect(reply, '/settings/facebook', {
+        kind: 'error',
+        message: `${pages.length - problems.length} page(s) saved. ${problems.join(' ')}`,
+      });
+    }
+    return redirect(reply, '/settings/facebook', {
+      kind: 'ok',
+      message: `${pages.length} page(s) saved.`,
+    });
   });
 
   app.get('/keywords', async (request, reply) => {

@@ -3227,76 +3227,80 @@ export function facebookSettingsPage(data: FacebookSettingsData): Html {
 
       ${data.pages.length === 0
         ? emptyState('No pages. They arrive with a token.')
-        : html`<div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Page</th><th>Niche</th><th>Presenter</th><th>Auto-publish</th><th>Enabled</th>
-                  <th>Last</th><th></th>
-                </tr>
-              </thead>
-              <tbody>
-                ${data.pages.map((p) => {
-                  const formId = `fb-page-${p.id}`;
-                  return html`<tr>
-                    <td>
-                      ${p.name || p.page_id}
-                      <div class="small muted">
-                        ${p.page_id}
-                        ${p.token_id && tokenName.get(p.token_id)
-                          ? html`&middot; ${tokenName.get(p.token_id)}`
+        : html`<form method="post" action="/settings/facebook/pages">
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Page</th><th>Niche</th><th>Presenter</th><th>Auto-publish</th><th>Enabled</th>
+                    <th>Last</th><th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${data.pages.map(
+                    (p) => html`<tr>
+                      <td>
+                        ${p.name || p.page_id}
+                        <div class="small muted">
+                          ${p.page_id}
+                          ${p.token_id && tokenName.get(p.token_id)
+                            ? html`&middot; ${tokenName.get(p.token_id)}`
+                            : raw('')}
+                        </div>
+                      </td>
+                      <td>
+                        <select name="niche_${p.id}">
+                          <option value="">not used</option>
+                          ${data.groups.map(
+                            (g) => html`<option value="${g}"
+                              ${p.niche && g.toLowerCase() === p.niche.toLowerCase()
+                                ? raw('selected')
+                                : raw('')}>${g}</option>`,
+                          )}
+                        </select>
+                        ${p.niche && !data.groups.some((g) => g.toLowerCase() === p.niche!.toLowerCase())
+                          ? html`<div class="small error">
+                              Set to &ldquo;${p.niche}&rdquo;, which no keyword has any more.
+                            </div>`
                           : raw('')}
-                      </div>
-                    </td>
-                    <td>
-                      <select name="niche" form="${formId}">
-                        <option value="">not used</option>
-                        ${data.groups.map(
-                          (g) => html`<option value="${g}"
-                            ${p.niche && g.toLowerCase() === p.niche.toLowerCase()
-                              ? raw('selected')
-                              : raw('')}>${g}</option>`,
-                        )}
-                      </select>
-                      ${p.niche && !data.groups.some((g) => g.toLowerCase() === p.niche!.toLowerCase())
-                        ? html`<div class="small error">
-                            Set to &ldquo;${p.niche}&rdquo;, which no keyword has any more.
-                          </div>`
-                        : raw('')}
-                    </td>
-                    <td>
-                      <select name="presenter_id" form="${formId}">
-                        <option value="">no presenter — dish only</option>
-                        ${data.presenters.map(
-                          (pr) => html`<option value="${pr.id}"
-                            ${p.presenter_id === pr.id ? raw('selected') : raw('')}>${pr.name}</option>`,
-                        )}
-                      </select>
-                    </td>
-                    <td>
-                      <input type="checkbox" name="autoPublish" form="${formId}"
-                             ${p.auto_publish === 1 ? raw('checked') : raw('')} />
-                    </td>
-                    <td>
-                      <input type="checkbox" name="enabled" form="${formId}"
-                             ${p.enabled === 1 ? raw('checked') : raw('')} />
-                    </td>
-                    <td class="small">
-                      ${p.last_used_at
-                        ? html`<span class="muted nowrap">${timeAgo(p.last_used_at)}</span>`
-                        : html`<span class="muted">&mdash;</span>`}
-                      ${p.last_error ? html`<div class="error">${p.last_error}</div>` : raw('')}
-                    </td>
-                    <td class="nowrap">
-                      <form method="post" action="/settings/facebook/pages/${p.id}" id="${formId}">
-                        <button type="submit" class="small">Save</button>
-                      </form>
-                    </td>
-                  </tr>`;
-                })}
-              </tbody>
-            </table>
-          </div>`}
+                      </td>
+                      <td>
+                        <select name="presenter_${p.id}">
+                          <option value="">no presenter — dish only</option>
+                          ${data.presenters.map(
+                            (pr) => html`<option value="${pr.id}"
+                              ${p.presenter_id === pr.id ? raw('selected') : raw('')}>${pr.name}</option>`,
+                          )}
+                        </select>
+                      </td>
+                      <td>
+                        <input type="checkbox" name="auto_${p.id}"
+                               ${p.auto_publish === 1 ? raw('checked') : raw('')} />
+                      </td>
+                      <td>
+                        <input type="checkbox" name="enabled_${p.id}"
+                               ${p.enabled === 1 ? raw('checked') : raw('')} />
+                      </td>
+                      <td class="small">
+                        ${p.last_used_at
+                          ? html`<span class="muted nowrap">${timeAgo(p.last_used_at)}</span>`
+                          : html`<span class="muted">&mdash;</span>`}
+                        ${p.last_error ? html`<div class="error">${p.last_error}</div>` : raw('')}
+                      </td>
+                      <td class="nowrap">
+                        <button type="submit" class="small"
+                                formaction="/settings/facebook/pages/${p.id}">Save</button>
+                      </td>
+                    </tr>`,
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <div class="save-bar">
+              <button class="primary" type="submit">Save all pages</button>
+              <span class="muted small">Every row above, in one go.</span>
+            </div>
+          </form>`}
     </div>
   `;
 }

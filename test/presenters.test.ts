@@ -107,7 +107,9 @@ describe('presenters', () => {
       caption: 'c', references: [], stage: 'done' });
     expect(getReel(reelId)!.fb_page_id).toBeNull();
 
-    await post(`/settings/facebook/pages/${pageId}`, { niche: 'chicken thigh', enabled: 'on', presenter_id: '' });
+    await post(`/settings/facebook/pages/${pageId}`, {
+      [`niche_${pageId}`]: 'chicken thigh', [`enabled_${pageId}`]: 'on', [`presenter_${pageId}`]: '',
+    });
     expect(getReel(reelId)!.fb_page_id).toBe(pageId);
   });
 
@@ -119,7 +121,8 @@ describe('presenters', () => {
       voiceDescription: '', portraitUrl: '' });
 
     await post(`/settings/facebook/pages/${pageId}`, {
-      niche: 'soup', enabled: 'on', autoPublish: 'on', presenter_id: String(presenterId),
+      [`niche_${pageId}`]: 'soup', [`enabled_${pageId}`]: 'on', [`auto_${pageId}`]: 'on',
+      [`presenter_${pageId}`]: String(presenterId),
     });
     expect(presenterForPage(pageId)?.name).toBe('Rima');
     expect((await get('/settings/facebook')).body).toMatch(/value="\d+"\s+selected>Rima/);

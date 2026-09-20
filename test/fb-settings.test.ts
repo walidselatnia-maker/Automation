@@ -51,6 +51,17 @@ const flashOf = (res: { headers: Record<string, unknown> }): string =>
 
 const sorted = () => [...listFbPages()].sort((a, b) => a.page_id.localeCompare(b.page_id));
 
+/** One page's row of the pages form, the way the form names its fields. */
+const row = (
+  id: number,
+  f: { niche?: string; auto?: boolean; enabled?: boolean; presenter?: string },
+): Record<string, string> => ({
+  [`niche_${id}`]: f.niche ?? '',
+  ...(f.auto ? { [`auto_${id}`]: 'on' } : {}),
+  ...(f.enabled ? { [`enabled_${id}`]: 'on' } : {}),
+  ...(f.presenter !== undefined ? { [`presenter_${id}`]: f.presenter } : {}),
+});
+
 beforeEach(async () => {
   setLogLevel('error');
   openDatabase(':memory:');
@@ -90,7 +101,7 @@ describe('Settings -> Facebook', () => {
     expect(listFbTokens()[0]!.page_count).toBe(2);
   });
 
-  it('a token Graph refuses is kept with the reason on it', async () => {
+  it('a token Graph refuses is not saved, and the reason is in the message', async () => {
     vi.stubGlobal(
       'fetch',
       async () =>
@@ -102,9 +113,10 @@ describe('Settings -> Facebook', () => {
 
     const res = await post('/settings/facebook/tokens', { name: 'Bad', token: 'nope' });
 
+    expect(flashOf(res)).toContain('not saved');
     expect(flashOf(res)).toContain('Invalid OAuth');
-    expect(listFbTokens()).toHaveLength(1);
-    expect(listFbTokens()[0]!.last_error).toContain('Invalid OAuth');
+    expect(listFbTokens()).toEqual([]);
+    expect(listFbPages()).toEqual([]);
   });
 
   it('refuses an empty token without creating anything', async () => {
@@ -122,19 +134,11 @@ describe('Settings -> Facebook', () => {
     await post('/settings/facebook/tokens', { name: 'A', token: 'x' });
     const [one, two] = sorted();
 
-    let res = await post(`/settings/facebook/pages/${one!.id}`, {
-      niche: 'soup',
-      autoPublish: 'on',
-      enabled: 'on',
-    });
+    let res = await post(`/settings/facebook/pages/${one!.id}`, row(one!.id, { niche: 'soup', auto: true, enabled: true }));
     expect(flashOf(res)).toContain('ok=');
     expect(getFbPage(one!.id)).toMatchObject({ niche: 'soup', auto_publish: 1, enabled: 1 });
 
-    res = await post(`/settings/facebook/pages/${two!.id}`, {
-      niche: 'soup',
-      autoPublish: 'on',
-      enabled: 'on',
-    });
+    res = await post(`/settings/facebook/pages/${two!.id}`, row(two!.id, { niche: 'soup', auto: true, enabled: true }));
     expect(flashOf(res)).toContain('already on One');
     expect(getFbPage(two!.id)!.niche).toBeNull();
   });
@@ -143,7 +147,8 @@ describe('Settings -> Facebook', () => {
     graphReturns([{ id: '1', name: 'One' }]);
     await post('/settings/facebook/tokens', { name: 'A', token: 'x' });
 
-    await post(`/settings/facebook/pages/${listFbPages()[0]!.id}`, { niche: '' });
+    const id = listFbPages()[0]!.id;
+    await post(`/settings/facebook/pages/${id}`, row(id, { niche: '' }));
 
     expect(listFbPages()[0]).toMatchObject({ niche: null, auto_publish: 0, enabled: 0 });
   });
@@ -152,12 +157,56 @@ describe('Settings -> Facebook', () => {
     graphReturns([{ id: '1', name: 'One' }]);
     await post('/settings/facebook/tokens', { name: 'A', token: 'x' });
 
-    const res = await post(`/settings/facebook/pages/${listFbPages()[0]!.id}`, {
-      niche: 'nothing',
-      enabled: 'on',
-    });
+    const id = listFbPages()[0]!.id;
+    const res = await post(`/settings/facebook/pages/${id}`, row(id, { niche: 'nothing', enabled: true }));
 
     expect(flashOf(res)).toContain('No keyword');
+  });
+
+  it('saves every page at once, even two swapping niches', async () => {
+    insertKeyword({ seed_keyword: 'soup', spy_title: 's' });
+    insertKeyword({ seed_keyword: 'cake', spy_title: 'c' });
+    graphReturns([
+      { id: '1', name: 'One' },
+      { id: '2', name: 'Two' },
+      { id: '3', name: 'Three' },
+    ]);
+    await post('/settings/facebook/tokens', { name: 'A', token: 'x' });
+    const [one, two, three] = sorted();
+    setFbPageOptions(one!.id, { niche: 'soup', autoPublish: true, enabled: true });
+    setFbPageOptions(two!.id, { niche: 'cake', autoPublish: true, enabled: true });
+
+    const res = await post('/settings/facebook/pages', {
+      ...row(one!.id, { niche: 'cake', auto: true, enabled: true }),
+      ...row(two!.id, { niche: 'soup', auto: false, enabled: true }),
+      ...row(three!.id, { niche: '', auto: true, enabled: false }),
+    });
+
+    expect(flashOf(res)).toContain('3 page(s) saved');
+    expect(getFbPage(one!.id)).toMatchObject({ niche: 'cake', auto_publish: 1, enabled: 1 });
+    expect(getFbPage(two!.id)).toMatchObject({ niche: 'soup', auto_publish: 0, enabled: 1 });
+    expect(getFbPage(three!.id)).toMatchObject({ niche: null, auto_publish: 1, enabled: 0 });
+  });
+
+  it('saving all reports the pages it could not save and keeps the rest', async () => {
+    insertKeyword({ seed_keyword: 'soup', spy_title: 's' });
+    graphReturns([
+      { id: '1', name: 'One' },
+      { id: '2', name: 'Two' },
+    ]);
+    await post('/settings/facebook/tokens', { name: 'A', token: 'x' });
+    const [one, two] = sorted();
+
+    const res = await post('/settings/facebook/pages', {
+      ...row(one!.id, { niche: 'soup', enabled: true }),
+      ...row(two!.id, { niche: 'soup', enabled: true }),
+    });
+
+    expect(flashOf(res)).toContain('1 page(s) saved');
+    expect(flashOf(res)).toContain('Two: ');
+    expect(flashOf(res)).toContain('already on One');
+    expect(getFbPage(one!.id)!.niche).toBe('soup');
+    expect(getFbPage(two!.id)!.niche).toBeNull();
   });
 
   it('refreshing a token disables a page it no longer manages', async () => {
