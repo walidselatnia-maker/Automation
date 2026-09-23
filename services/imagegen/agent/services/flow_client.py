@@ -670,6 +670,17 @@ class FlowClient:
         except Exception as e:
             return {"error": f"upload gave no media id: {type(e).__name__}: {e}"}
 
+    async def scan_flow_ui(self, project_id: str | None = None) -> dict:
+        """What Flow's generate controls look like on the live page.
+
+        The batch path builds Flow's requests for it, and a request that is
+        not quite Flow's own is what UNUSUAL_ACTIVITY is a verdict on. Driving
+        the page's controls instead needs to know what they are, and Flow's
+        markup is minified and unannounced, so it is read rather than assumed.
+        Read-only, and short: nothing generates while it runs.
+        """
+        return await self._send("scan_flow_ui", {"projectId": project_id}, timeout=60)
+
     async def discover_image_models(self, known: list[str]) -> dict:
         """The model names the Flow page's own source carries.
 

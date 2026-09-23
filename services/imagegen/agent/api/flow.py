@@ -47,6 +47,19 @@ async def extension_status() -> dict:
     }
 
 
+@router.get("/ui-scan")
+async def ui_scan(project_id: str | None = None) -> dict:
+    """Flow's generate controls, read off the signed-in tab.
+
+    A diagnostic, and the input to driving the UI rather than rebuilding its
+    requests. Chrome is started and pinned for it the way signing in is: a
+    scan is not a queued job, so nothing else would hold the browser up.
+    """
+    chrome.hold_manually()
+    await chrome.ensure_running("a UI scan was asked for")
+    return await get_flow_client().scan_flow_ui(project_id)
+
+
 @router.post("/chrome/start")
 async def chrome_start() -> dict:
     """Bring Chrome up and pin it there for a while.

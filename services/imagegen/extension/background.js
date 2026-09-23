@@ -573,6 +573,8 @@ function connectToAgent() {
         await handleBatchRpc(msg);
       } else if (msg.method === 'discover_image_models') {
         sendToAgent({ id: msg.id, result: await discoverImageModels(msg.params || {}) });
+      } else if (msg.method === 'scan_flow_ui') {
+        sendToAgent({ id: msg.id, result: await scanFlowUi(msg.params || {}) });
       } else if (msg.method === 'api_request') {
         await handleApiRequest(msg);
       } else if (msg.method === 'trpc_request') {
@@ -1667,6 +1669,173 @@ async function discoverImageModels({ known = [] }) {
       anchor_hits: hits,
     },
   };
+}
+
+// ─── Reading Flow's own interface ───────────────────────────
+//
+// Everything above reaches Flow by building its requests for it: we mint the
+// captcha, we assemble f.req, we set the query string. That only works while
+// our reconstruction matches what the real client sends, and when it drifts
+// Google answers PUBLIC_ERROR_UNUSUAL_ACTIVITY -- a verdict on the request,
+// not on the account.
+//
+// Driving the page's own controls has no reconstruction in it: Flow builds
+// the request, Flow mints the captcha in its normal flow. What that needs is
+// the controls, and Flow's markup is minified and changes without notice, so
+// they are not hardcoded anywhere. This reads them off the live page, from
+// the tab that is already signed in, and answers with enough to write a
+// selector against -- and to write a new one the next time Flow moves.
+//
+// Read-only. It types nothing and clicks nothing.
+
+/** Attributes worth seeing, with the noise (class soup, Angular ids) left out. */
+const SCAN_ATTRS = [
+  'id', 'name', 'type', 'role', 'placeholder', 'aria-label', 'aria-labelledby',
+  'data-testid', 'data-test-id', 'jsname', 'jsaction', 'contenteditable',
+  'disabled', 'title', 'value',
+];
+
+function describeElement(el) {
+  const attrs = {};
+  for (const name of SCAN_ATTRS) {
+    const value = el.getAttribute?.(name);
+    if (value !== null && value !== undefined && value !== '') {
+      attrs[name] = String(value).slice(0, 200);
+    }
+  }
+  const box = el.getBoundingClientRect?.() || { width: 0, height: 0, x: 0, y: 0 };
+  return {
+    tag: el.tagName?.toLowerCase(),
+    text: (el.innerText || el.textContent || '').trim().slice(0, 120),
+    attrs,
+    // A control the eye cannot see is a control a click cannot reach, and
+    // Flow keeps several hidden copies of its own buttons.
+    visible: box.width > 0 && box.height > 0,
+    box: { x: Math.round(box.x), y: Math.round(box.y),
+           w: Math.round(box.width), h: Math.round(box.height) },
+    path: cssPathOf(el),
+  };
+}
+
+/** A selector that finds this element again: the stable attributes, or nth-child. */
+function cssPathOf(el) {
+  const parts = [];
+  let node = el;
+  while (node && node.nodeType === 1 && parts.length < 6) {
+    let part = node.tagName.toLowerCase();
+    const testid = node.getAttribute('data-testid') || node.getAttribute('data-test-id');
+    const jsname = node.getAttribute('jsname');
+    if (node.id) {
+      parts.unshift(`#${node.id}`);
+      break;
+    }
+    if (testid) part += `[data-testid="${testid}"]`;
+    else if (jsname) part += `[jsname="${jsname}"]`;
+    else if (node.parentElement) {
+      const kin = [...node.parentElement.children].filter((c) => c.tagName === node.tagName);
+      if (kin.length > 1) part += `:nth-of-type(${kin.indexOf(node) + 1})`;
+    }
+    parts.unshift(part);
+    node = node.parentElement;
+  }
+  return parts.join(' > ');
+}
+
+async function scanFlowUi({ projectId = null } = {}) {
+  // grecaptcha and the generate controls both live on a project page, so the
+  // scan has to be taken from one or it reports an interface that is not
+  // there. Same reason the captcha path parks the tab first.
+  await ensureFlowTabOnProject(projectId);
+
+  const tabs = await queryFlowTabs();
+  const candidate = tabs.find((t) => !t.discarded) || tabs[0];
+  if (!candidate) return { error: 'NO_FLOW_TAB' };
+  const tab = await reviveTabIfNeeded(candidate);
+  if (!tab) return { error: 'FLOW_TAB_DISCARDED' };
+
+  const [injected] = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    world: 'MAIN',
+    args: [SCAN_ATTRS],
+    func: (attrNames) => {
+      // Redefined in the page: an injected function is serialised on its own
+      // and carries nothing from the extension's scope with it.
+      const pathOf = (el) => {
+        const parts = [];
+        let node = el;
+        while (node && node.nodeType === 1 && parts.length < 6) {
+          let part = node.tagName.toLowerCase();
+          const testid = node.getAttribute('data-testid') || node.getAttribute('data-test-id');
+          const jsname = node.getAttribute('jsname');
+          if (node.id) { parts.unshift('#' + node.id); break; }
+          if (testid) part += `[data-testid="${testid}"]`;
+          else if (jsname) part += `[jsname="${jsname}"]`;
+          else if (node.parentElement) {
+            const kin = [...node.parentElement.children].filter((c) => c.tagName === node.tagName);
+            if (kin.length > 1) part += `:nth-of-type(${kin.indexOf(node) + 1})`;
+          }
+          parts.unshift(part);
+          node = node.parentElement;
+        }
+        return parts.join(' > ');
+      };
+
+      const describe = (el) => {
+        const attrs = {};
+        for (const name of attrNames) {
+          const value = el.getAttribute && el.getAttribute(name);
+          if (value !== null && value !== undefined && value !== '') {
+            attrs[name] = String(value).slice(0, 200);
+          }
+        }
+        const box = el.getBoundingClientRect
+          ? el.getBoundingClientRect()
+          : { width: 0, height: 0, x: 0, y: 0 };
+        return {
+          tag: el.tagName ? el.tagName.toLowerCase() : '?',
+          text: (el.innerText || el.textContent || '').trim().slice(0, 120),
+          attrs,
+          visible: box.width > 0 && box.height > 0,
+          box: { x: Math.round(box.x), y: Math.round(box.y),
+                 w: Math.round(box.width), h: Math.round(box.height) },
+          path: pathOf(el),
+        };
+      };
+
+      const take = (selector, limit) =>
+        [...document.querySelectorAll(selector)].slice(0, limit).map(describe);
+
+      // Where the prompt is typed. Flow's box has been a textarea and has
+      // been a contenteditable div; both are asked for rather than guessed.
+      const inputs = take('textarea, [contenteditable="true"], input[type="text"]', 25);
+
+      // Every button, visible ones first: the generate control is a button
+      // whose label is an icon as often as a word, so nothing is filtered on
+      // text here -- that judgement is made off the scan, not inside it.
+      const buttons = take('button, [role="button"]', 80)
+        .sort((a, b) => Number(b.visible) - Number(a.visible));
+
+      // The form, when there is one, is the smallest piece of markup that
+      // holds the whole control cluster.
+      const form = document.querySelector('form');
+
+      return {
+        url: location.href,
+        title: document.title,
+        grecaptcha: typeof window.grecaptcha?.enterprise?.execute === 'function',
+        counts: {
+          inputs: document.querySelectorAll('textarea, [contenteditable="true"], input[type="text"]').length,
+          buttons: document.querySelectorAll('button, [role="button"]').length,
+        },
+        inputs,
+        buttons,
+        formHtml: form ? form.outerHTML.slice(0, 20000) : null,
+      };
+    },
+  });
+
+  if (injected?.result) return injected.result;
+  return { error: 'NO_INJECTION_RESULT: the scan returned nothing' };
 }
 
 async function handleBatchRpc(msg) {
