@@ -20,6 +20,7 @@ from agent.config import (
     API_COOLDOWN,
     FLOW_PROJECT_ID,
     IMAGE_USE_BATCH,
+    IMAGE_USE_UI,
     MAX_CONCURRENT_REQUESTS,
     MAX_RETRIES,
     POLL_INTERVAL,
@@ -290,29 +291,21 @@ class WorkerController:
             if ref_media_ids:
                 request["ref_media_ids"] = ref_media_ids
 
-            await image_models.ensure_discovered(client)
-            choice = job.get("image_model") or image_models.AUTO
-            models = image_models.plan(choice)
-            if not models:
-                await self._handle_failure(job, image_models.why_empty(choice))
-                return
-            result = {"error": "no image model configured"}
-            for model in models:
-                result = await client.generate_images_batch(**request, image_model_name=model)
-                err = None if not is_error(result) else error_text(result)
-                image_models.record(model, err)
-                if err is None:
-                    break
-                if image_models.is_refusal(err):
-                    logger.warning("job %s: %s refused (%s) — trying the next model",
-                                   job_id[:8], model, err[:120])
-                    image_models.refused(model)
-                    continue
-                if not image_models.is_known(model) and image_models.is_bad_name(err):
-                    logger.warning("job %s: %s is not a model Flow knows (%s) — dropped",
-                                   job_id[:8], model, err[:120])
-                    continue
-                break
+            # Google's frontend build of 2026-09-22 refuses every captcha-gated
+            # call we send -- PUBLIC_ERROR_UNUSUAL_ACTIVITY -- while the same
+            # account generates fine when the button is clicked, so the app is
+            # left to send it and the result is read from the project listing.
+            # See uiGenerateImage in the extension for what was measured.
+            #
+            # The model walk does not apply on this path: the composer's model
+            # is whatever is selected in the Flow UI, and nothing here can
+            # refuse a model by name to move down a list.
+            if IMAGE_USE_UI:
+                result = await client.generate_images_ui(
+                    request["prompt"], request["project_id"],
+                )
+            else:
+                result = await self._generate_by_model(client, job, job_id, request)
 
         if is_error(result):
             await self._handle_failure(job, error_text(result))
@@ -325,6 +318,38 @@ class WorkerController:
 
         await jobs.complete(job_id, extract_media_id(result), url)
         logger.info("job %s COMPLETED", job_id[:8])
+
+
+    async def _generate_by_model(self, client, job: dict, job_id: str, request: dict) -> dict:
+        """The captcha-gated path: walk the models and keep the first Google takes.
+
+        Kept behind IMAGE_USE_UI for a Flow build that honours these calls
+        again, and because video still goes this way.
+        """
+        await image_models.ensure_discovered(client)
+        choice = job.get("image_model") or image_models.AUTO
+        models = image_models.plan(choice)
+        if not models:
+            return {"error": image_models.why_empty(choice)}
+
+        result = {"error": "no image model configured"}
+        for model in models:
+            result = await client.generate_images_batch(**request, image_model_name=model)
+            err = None if not is_error(result) else error_text(result)
+            image_models.record(model, err)
+            if err is None:
+                break
+            if image_models.is_refusal(err):
+                logger.warning("job %s: %s refused (%s) — trying the next model",
+                               job_id[:8], model, err[:120])
+                image_models.refused(model)
+                continue
+            if not image_models.is_known(model) and image_models.is_bad_name(err):
+                logger.warning("job %s: %s is not a model Flow knows (%s) — dropped",
+                               job_id[:8], model, err[:120])
+                continue
+            break
+        return result
 
     async def _upload_references_batch(self, job: dict, project_id: str) -> list[str] | None:
         """Every reference on the job, uploaded into the project; their media ids.

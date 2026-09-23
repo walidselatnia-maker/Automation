@@ -48,6 +48,14 @@ STALE_PROCESSING_TIMEOUT = int(os.environ.get("STALE_PROCESSING_TIMEOUT", "600")
 # article. See WorkerController.reload_before.
 TOKEN_MAX_AGE_BEFORE_BATCH = int(os.environ.get("TOKEN_MAX_AGE_BEFORE_BATCH", "0"))
 
+# Generate images by driving Flow's composer instead of sending the call.
+#
+# Google's frontend build of 2026-09-22 answers PUBLIC_ERROR_UNUSUAL_ACTIVITY to
+# every captcha-gated RPC sent from the extension, while the same account
+# generates normally when the button is clicked. Off restores the old path for a
+# build that honours it again.
+IMAGE_USE_UI = os.environ.get("IMAGE_USE_UI", "1") not in ("", "0", "false", "False")
+
 # Send images over Flow's batchexecute transport instead of the REST API.
 #
 # On by default because REST images started answering

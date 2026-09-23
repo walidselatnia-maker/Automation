@@ -702,6 +702,76 @@ class FlowClient:
         """
         return await self._send("discover_image_models", {"known": known}, timeout=45)
 
+    async def project_images(self, project_id: str) -> list:
+        """Every image in the project, newest first, as GeneratedImage.
+
+        Carries no captcha, so it is the half of the image path that Google's
+        2026-09-22 change left working.
+        """
+        out = await self._batch_payload(
+            fb.RPC_PROJECT_MEDIA, fb.project_media_request(project_id),
+            timeout=120, project_id=project_id,
+        )
+        if "error" in out:
+            return out
+        try:
+            return fb.read_images(out["payload"])
+        except Exception as e:
+            return {"error": f"project listing unreadable: {type(e).__name__}: {e}"}
+
+    async def generate_images_ui(self, prompt: str, project_id: str,
+                                 poll_seconds: float = 180) -> dict:
+        """Generate by driving Flow's composer, and read the result back.
+
+        The captcha-gated call cannot be sent from here any more -- see
+        uiGenerateImage in the extension for the measurements -- so the app
+        sends it and this watches the project for what appeared.
+
+        Which image is ours is decided by what the project did not have before
+        the click. That is why the listing is read first and diffed after,
+        rather than trusting the newest entry: another job on the same project,
+        or a person in the Flow tab, can land an image in between, and taking
+        the newest would hand this job somebody else's picture.
+
+        Answers in the REST shape generate_images_batch answers in, so nothing
+        downstream knows which path ran.
+        """
+        before = await self.project_images(project_id)
+        if isinstance(before, dict):
+            return before
+        known = {image.media_id for image in before}
+
+        submitted = await self.ui_generate_image(prompt, project_id)
+        if submitted.get("error"):
+            return {"error": f"the composer would not take it: {submitted['error']}"}
+
+        # Flow's own UI decides how many variants a submit makes, so a submit
+        # can bring back more than one. The first new one is this job's; the
+        # rest stay in the project and cost nothing to leave there.
+        deadline = time.monotonic() + poll_seconds
+        while time.monotonic() < deadline:
+            await asyncio.sleep(5)
+            now = await self.project_images(project_id)
+            if isinstance(now, dict):
+                continue  # a listing that failed once is not the generation failing
+            fresh = [image for image in now if image.media_id not in known]
+            if fresh:
+                first = fresh[0]
+                return {
+                    "status": 200,
+                    "data": {
+                        "media": [{
+                            "name": first.media_id,
+                            "image": {"generatedImage": {
+                                "mediaId": first.media_id,
+                                "fifeUrl": first.url,
+                            }},
+                        }],
+                    },
+                }
+
+        return {"error": f"the composer took the prompt but no image appeared in {poll_seconds:.0f}s"}
+
     async def generate_images_batch(self, prompt: str, project_id: str,
                                     aspect_ratio: str = "IMAGE_ASPECT_RATIO_PORTRAIT",
                                     image_model_name: str | None = None,
