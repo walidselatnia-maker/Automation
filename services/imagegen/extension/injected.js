@@ -30,13 +30,67 @@ window.fetch = async function (...args) {
 };
 
 
+/**
+ * The widget Flow rendered on this page, if it rendered one.
+ *
+ * Flow does not mint with a site key and an action. It renders an invisible
+ * reCAPTCHA Enterprise widget -- one client in ___grecaptcha_cfg, with the
+ * hidden g-recaptcha-response-<id> field beside it -- and executes that.
+ * Minting through the same widget inherits whatever Flow configured on it,
+ * including the action, so this does not have to know what the action is,
+ * and does not break the next time Google renames it.
+ *
+ * Which is what happened. This used to pass action: 'IMAGE_GENERATION' with
+ * the site key, and Google stopped recognising that name: measured against
+ * the live endpoint, a token minted that way is refused exactly as a token
+ * minted with a deliberately invented action is -- both
+ * PUBLIC_ERROR_UNUSUAL_ACTIVITY, while the page's own button, in the same
+ * session seconds later, generated fine. The verdict was on the token, not
+ * the account: the same failure reproduces from a signed-in browser on a
+ * home connection, so no amount of pausing or IP changing could have moved it.
+ */
+function pageWidgetId() {
+  const clients = (window.___grecaptcha_cfg || {}).clients || {};
+  const ids = Object.keys(clients);
+  return ids.length ? ids[0] : null;
+}
+
+/**
+ * A token, minted the way this page mints them.
+ *
+ * An invisible widget holds one response at a time, so it is reset before
+ * being executed again -- without that the second generate of a run gets the
+ * first one's answer back, and a replayed token is refused. The site-key call
+ * stays as the fallback for a page with no widget on it, which is what every
+ * older Flow build was.
+ */
+async function mintCaptcha(pageAction) {
+  const enterprise = window.grecaptcha.enterprise;
+  const widgetId = pageWidgetId();
+
+  if (widgetId !== null) {
+    try {
+      try {
+        enterprise.reset(widgetId);
+      } catch (resetError) {
+        // A widget that has never run has nothing to reset. Not a failure.
+      }
+      const token = await enterprise.execute(widgetId);
+      if (token) return token;
+      console.warn('[FlowAgent] the page widget gave an empty token — using the site key');
+    } catch (e) {
+      console.warn('[FlowAgent] the page widget would not execute — using the site key:', e.message);
+    }
+  }
+
+  return enterprise.execute(SITE_KEY, { action: pageAction });
+}
+
 window.addEventListener('GET_CAPTCHA', async ({ detail }) => {
   const { requestId, pageAction } = detail;
   try {
     await waitForGrecaptcha();
-    const token = await window.grecaptcha.enterprise.execute(SITE_KEY, {
-      action: pageAction,
-    });
+    const token = await mintCaptcha(pageAction);
     window.dispatchEvent(new CustomEvent('CAPTCHA_RESULT', {
       detail: { requestId, token },
     }));
