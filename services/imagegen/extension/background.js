@@ -573,6 +573,13 @@ function connectToAgent() {
         await handleBatchRpc(msg);
       } else if (msg.method === 'discover_image_models') {
         sendToAgent({ id: msg.id, result: await discoverImageModels(msg.params || {}) });
+      } else if (msg.method === 'ui_generate_image') {
+        holdFlowTab();
+        try {
+          sendToAgent({ id: msg.id, result: await uiGenerateImage(msg.params || {}) });
+        } finally {
+          releaseFlowTab();
+        }
       } else if (msg.method === 'scan_flow_ui') {
         sendToAgent({ id: msg.id, result: await scanFlowUi(msg.params || {}) });
       } else if (msg.method === 'api_request') {
@@ -1865,6 +1872,172 @@ async function scanFlowUi({ projectId = null } = {}) {
 
   if (injected?.result) return injected.result;
   return { error: 'NO_INJECTION_RESULT: the scan returned nothing' };
+}
+
+// ─── Generating through Flow's own composer ─────────────────
+//
+// Since Google's frontend build of 2026-09-22 every captcha-gated RPC --
+// ogiZ0b image, eb1hJf video, SPrCad export -- answers
+// PUBLIC_ERROR_UNUSUAL_ACTIVITY when we send it ourselves, while the same
+// account in the same tab generates fine when the button is clicked. The
+// calls that carry no captcha (jwpduf polling, Zzl0ze project media, as29s
+// media urls) were never affected and still work.
+//
+// It is not the payload and it is not the token's name. Measured against the
+// live endpoint: our f.req matches the composer's slot for slot, the site key
+// and action match, a token minted per captcha slot fails the same way, and
+// the failure reproduces from a signed-in browser on a home connection. The
+// assessment is now bound to something the page supplies on its own submit
+// path and that grecaptcha.enterprise.execute in the MAIN world cannot
+// reproduce. Upstream reached the same conclusion from three independent
+// reproductions (crisng95/flowkit#58); the fix there is to stop sending these
+// calls at all and let the app send them.
+//
+// So this types the prompt into the composer and clicks Generate, and the
+// result is read afterwards from the project listing, which needs no captcha.
+//
+// The clicks go through chrome.debugger rather than element.click(), and that
+// is the load-bearing part: a synthetic click does nothing here at all -- no
+// request is issued, the composer keeps its text. Only a trusted event submits,
+// and CDP's Input domain is the only way an extension can raise one.
+
+const CDP_VERSION = '1.3';
+
+/** Run `body` with the debugger attached, and always detach afterwards. */
+async function withDebugger(tabId, body) {
+  const target = { tabId };
+  try {
+    await chrome.debugger.attach(target, CDP_VERSION);
+  } catch (e) {
+    // Already attached -- by a previous run that died, or by DevTools being
+    // open on this tab. Neither is ours to steal.
+    return { error: `DEBUGGER_ATTACH_FAILED: ${e?.message || e}` };
+  }
+  try {
+    return await body(target);
+  } finally {
+    await chrome.debugger.detach(target).catch(() => {});
+  }
+}
+
+/** One trusted click at viewport coordinates. */
+async function trustedClick(target, x, y) {
+  const base = { x: Math.round(x), y: Math.round(y), button: 'left', clickCount: 1 };
+  await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent',
+    { type: 'mousePressed', ...base });
+  await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent',
+    { type: 'mouseReleased', ...base });
+}
+
+/**
+ * Where the composer and the Generate button are, and whether it is ready.
+ *
+ * Read immediately before each click rather than once: the composer grows as
+ * text is typed into it and the button moves down the page with it.
+ */
+async function composerBox(tabId) {
+  const [out] = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    func: () => {
+      const editor = document.querySelector('div.ProseMirror');
+      const button = document.querySelector('button[aria-label="Start generation"]');
+      const box = (el) => {
+        if (!el) return null;
+        const r = el.getBoundingClientRect();
+        return { x: r.x + r.width / 2, y: r.y + r.height / 2, w: r.width, h: r.height };
+      };
+      return {
+        editor: box(editor),
+        button: box(button),
+        ready: !!button && !button.disabled,
+        text: editor ? editor.innerText.trim() : null,
+      };
+    },
+  });
+  return out?.result || null;
+}
+
+/**
+ * Put `prompt` in the composer.
+ *
+ * insertText through execCommand rather than assigning textContent: the
+ * composer is a ProseMirror editor and keeps its own document, so text set
+ * on the node is text the editor does not know it has -- the button stays
+ * disabled and a submit sends nothing. selectAll first, so a prompt left over
+ * from an attempt that failed is replaced rather than appended to.
+ */
+async function typePrompt(tabId, prompt) {
+  const [out] = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    args: [prompt],
+    func: (text) => {
+      const editor = document.querySelector('div.ProseMirror');
+      if (!editor) return { error: 'NO_COMPOSER' };
+      editor.focus();
+      document.execCommand('selectAll', false, null);
+      document.execCommand('insertText', false, text);
+      return { text: editor.innerText.trim() };
+    },
+  });
+  return out?.result || { error: 'NO_INJECTION_RESULT' };
+}
+
+/**
+ * Type a prompt into Flow's composer and press Generate.
+ *
+ * Says only whether the submit went in. What it produced is read from the
+ * project listing afterwards, by the agent -- that call carries no captcha,
+ * so it is the half of this that never broke.
+ */
+async function uiGenerateImage({ projectId = null, prompt = '' } = {}) {
+  if (!prompt.trim()) return { error: 'EMPTY_PROMPT' };
+
+  await ensureFlowTabOnProject(projectId);
+  const tabs = await queryFlowTabs();
+  const candidate = tabs.find((t) => !t.discarded) || tabs[0];
+  if (!candidate) return { error: 'NO_FLOW_TAB' };
+  const tab = await reviveTabIfNeeded(candidate);
+  if (!tab) return { error: 'FLOW_TAB_DISCARDED' };
+
+  // The composer only exists on a project page. A tab that landed on the
+  // project list or Flow's 404 has none, and clicking where it would be
+  // clicks the page behind it.
+  let box = await composerBox(tab.id);
+  if (!box || !box.editor) return { error: 'NO_COMPOSER: the tab is not on a project page' };
+
+  return withDebugger(tab.id, async (target) => {
+    // Focus by clicking it, not by calling focus(): ProseMirror places the
+    // caret from the pointer event, and text inserted without a caret goes
+    // nowhere.
+    await trustedClick(target, box.editor.x, box.editor.y);
+    const typed = await typePrompt(tab.id, prompt);
+    if (typed.error) return typed;
+    if (typed.text !== prompt.trim()) {
+      return { error: `COMPOSER_REJECTED_PROMPT: it holds ${JSON.stringify((typed.text || '').slice(0, 80))}` };
+    }
+
+    // The button enables on the editor's own change event, which lands a
+    // frame or two after the insert.
+    for (let i = 0; i < 20; i++) {
+      box = await composerBox(tab.id);
+      if (box?.ready) break;
+      await sleep(100);
+    }
+    if (!box?.ready) return { error: 'GENERATE_DISABLED: the composer did not accept the prompt' };
+
+    await trustedClick(target, box.button.x, box.button.y);
+
+    // Submitted is the composer going empty again. Without this a caller can
+    // start polling the listing before Flow has sent anything.
+    for (let i = 0; i < 30; i++) {
+      await sleep(200);
+      const after = await composerBox(tab.id);
+      if (after && after.text === '') return { ok: true, submitted: true };
+    }
+    return { error: 'SUBMIT_NOT_ACCEPTED: the prompt is still in the composer' };
+  });
 }
 
 async function handleBatchRpc(msg) {

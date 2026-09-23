@@ -670,6 +670,17 @@ class FlowClient:
         except Exception as e:
             return {"error": f"upload gave no media id: {type(e).__name__}: {e}"}
 
+    async def ui_generate_image(self, prompt: str, project_id: str) -> dict:
+        """Type the prompt into Flow's composer and press Generate.
+
+        Says only that the submit went in; what it made is read from the
+        project listing afterwards. Generous timeout: this drives a real page
+        and waits for the composer to clear.
+        """
+        return await self._send(
+            "ui_generate_image", {"projectId": project_id, "prompt": prompt}, timeout=180,
+        )
+
     async def scan_flow_ui(self, project_id: str | None = None) -> dict:
         """What Flow's generate controls look like on the live page.
 
