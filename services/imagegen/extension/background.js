@@ -1479,11 +1479,40 @@ async function runBatchRpc(cmd) {
       const bl = wiz.cfb2h;
       if (!at) return { error: 'NO_AT_TOKEN' };
 
-      const reqid = Math.floor(Math.random() * 900000) + 100000;
+      // The query string Flow's own client sends, in its order. Captured off
+      // a signed-in tab generating by hand, because every part of this was
+      // guessed and three parts were guessed wrong:
+      //
+      //   source-path  the page the call came from. Flow sends it on every
+      //                RPC and this sent it on none -- a generate from
+      //                nowhere, which is not a request the app can make.
+      //   hl           the page's own language. Hardcoded to en-AU here
+      //                against a page that says en.
+      //   _reqid       a session counter, not a nonce: it starts somewhere
+      //                random and rises by exactly 100000 per request, so it
+      //                says how far into the session a call is. A new random
+      //                number each time describes a session that never gets
+      //                anywhere -- and every generate we make looks like the
+      //                first one a brand-new page ever sent.
+      //
+      // The counter continues the page's own sequence rather than keeping a
+      // private one, so our calls and Flow's read as the one session they
+      // are. Our own requests land in the same timeline, so it advances by
+      // itself from there.
+      const seen = performance.getEntriesByType('resource')
+        .filter((e) => e.name.includes('batchexecute'))
+        .map((e) => Number(new URLSearchParams(e.name.split('?')[1] || '').get('_reqid')))
+        .filter((n) => Number.isFinite(n) && n > 0);
+      const reqid = seen.length
+        ? Math.max(...seen) + 100000
+        : Math.floor(Math.random() * 90000) + 10000;
+
       const url =
         `/_/AiSandboxAngularFrontend/data/batchexecute?rpcids=${encodeURIComponent(rpcid)}` +
-        `&f.sid=${encodeURIComponent(sid || '')}&bl=${encodeURIComponent(bl || '')}` +
-        `&hl=en-AU&_reqid=${reqid}&rt=c`;
+        `&source-path=${encodeURIComponent(location.pathname)}` +
+        `&bl=${encodeURIComponent(bl || '')}&f.sid=${encodeURIComponent(sid || '')}` +
+        `&hl=${encodeURIComponent(document.documentElement.lang || 'en')}` +
+        `&_reqid=${reqid}&rt=c`;
 
       // Caught here, in the page, because a rejection from an injected
       // function does not travel: executeScript answers with no result and
