@@ -1,3 +1,8 @@
+import {
+  imageServiceProblemFrom,
+  type FlowStatus,
+  type ServiceHealth,
+} from '../core/image-service-health.js';
 import Fastify, {
   type FastifyInstance,
   type FastifyReply,
@@ -9,13 +14,15 @@ import fastifyStatic from '@fastify/static';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { layout } from './views/layout.js';
+import { layout, type Html } from './views/layout.js';
+import { reelDetailPage } from './views/reel-detail.js';
+import { homePage, mergeRecent, type Attention, type Running } from './views/home.js';
 import { passwordAccepted, registerAuth, type AuthOptions } from './auth.js';
 import { rejectionReason, storePassword, storedPasswordHash } from './password.js';
 import { registerBrowserProxy } from './browser-proxy.js';
 import {
-  dashboardPage,
-  dataPage,
+  decisionsPage,
+  runPicker,
   eventsPage,
   accountPage,
   keysPage,
@@ -29,6 +36,12 @@ import {
   settingsPage,
   siteEditPage,
   sitesPage,
+  facebookSettingsPage,
+  reelComposerPage,
+  reelSettingsPage,
+  presentersPage,
+  reelsPage,
+  type ReelImages,
   type ImageModelCatalogue,
 } from './views/pages.js';
 import type { KeywordFilterView, SiteMark } from './views/pages.js';
@@ -67,6 +80,7 @@ import {
   replaceStepOutput,
   setRunTitle,
   type StepRow,
+  type RunListRow,
   clearSharedImages,
   getLinksForKeyword,
   keywordImageCounts,
@@ -99,21 +113,40 @@ import {
   setLink,
   setLinkShareImages,
   upsertSite,
+  createReel,
+  deleteFbToken,
+  deleteReel,
+  getFbPage,
+  getReel,
+  insertFbToken,
+  keywordGroups,
+  listFbPages,
+  listFbTokens,
+  listReels,
+  pageForNiche,
+  reelCandidates,
+  setFbPageOptions,
+  updateReel,
+  setReelStage,
+  listScenes,
+  getScene,
+  updateScene,
+  presenterForPage,
+  listPresenters,
+  insertPresenter,
+  updatePresenter,
+  deletePresenter,
+  setFbPagePresenter,
+  type ReelCandidate,
 } from '../db/repos.js';
 import { get } from '../db/index.js';
 import {
-  backupTo,
-  clearHistory,
-  exportSitesWithCredentials,
-  forgetAllSharedImages,
-  compactDatabase,
-  dataCounts,
+  DATASETS,
   exportDataset,
+  exportSitesWithCredentials,
   type Dataset,
-} from '../db/maintenance.js';
-import { createReadStream } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+} from '../db/exports.js';
+import { createReadStream, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   deleteEndpoint,
@@ -145,9 +178,115 @@ import {
   tick,
 } from '../scheduler/index.js';
 import { createLogger, errorMessage } from '../lib/logger.js';
+import { TelegramClient } from '../integrations/telegram.js';
+import { syncToken, type SyncResult } from '../reels/tokens.js';
+import { defaultDeps, publishReel, startGeneration } from '../reels/engine.js';
+import { presenterFor } from '../reels/presenter.js';
+import { loadPrompt } from '../pipeline/prompts.js';
+import {
+  ARTICLE_ROLES,
+  MAX_REFERENCES,
+  buildReelPrompt,
+  reelMode,
+  referenceUrls,
+  seedFromRun,
+  singleReferenceRoles,
+  withoutLinks,
+  type ArticleRole,
+} from '../reels/compose.js';
+import { FORMATS } from '../reels/formats.js';
+import { idFromFlowUrl } from '../reels/ids.js';
+import { chat } from '../llm/client.js';
 import { normaliseDomain } from '../lib/domain.js';
 
 const log = createLogger('web');
+
+/* -- Reels ---------------------------------------------------------------- */
+
+/**
+ * The four image paths a published run left behind.
+ *
+ * Read from the generate-images checkpoint rather than from keyword_images:
+ * that table only holds a row when sharing is on, and a site that generated
+ * its own images has just as much to build a reel from. A checkpoint that
+ * cannot be read is not an error worth showing -- the run simply cannot become
+ * a reel, and the page says so.
+ */
+function readReelImages(candidate: ReelCandidate): ReelImages | null {
+  if (!candidate.images_json) return null;
+
+  try {
+    const parsed = JSON.parse(candidate.images_json) as Partial<ReelImages>;
+    if (!parsed.feature || !parsed.topShot || !parsed.textureMacro || !parsed.beforeAfter) {
+      return null;
+    }
+    return parsed as ReelImages;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * What the caption box shows the instant the composer opens.
+ *
+ * The title and nothing else. The url that used to sit under it is gone on
+ * purpose -- the link goes in the first comment, never the caption -- and the
+ * model's version arrives a moment later, fetched by the page, if the model is
+ * up. The page never waits for it: it did once, the LLM pool was down, and the
+ * composer sat past Cloudflare's hundred seconds and answered 524.
+ */
+function placeholderCaption(candidate: ReelCandidate): string {
+  return candidate.title || candidate.spy_title;
+}
+
+/**
+ * A caption written by the model. Fetched by the composer after it has
+ * rendered, never awaited by a page.
+ *
+ * Written rather than assembled: the old default was the title with the
+ * article url under it, which Facebook shows as a bare link on a post nobody
+ * has a reason to stop for. The shape wanted is a hook that stops the scroll,
+ * a few lines about the dish, hashtags -- and no link anywhere in it. The link
+ * goes in the first comment, where it does not drag the post's reach down and
+ * still gets tapped.
+ *
+ * Never fatal. A model that is down or slow costs the suggestion, not the
+ * page: the title stays in the box and the person types.
+ */
+async function buildReelCaption(
+  candidate: ReelCandidate,
+  settings: Settings,
+  encryptionKey: Buffer,
+): Promise<string> {
+  const title = candidate.title || candidate.spy_title;
+  try {
+    const { system, user } = loadPrompt('reel-caption', {
+      seo: { title },
+      spy: {
+        group: candidate.seed_keyword,
+        description: candidate.spy_description,
+        annotation: candidate.annotation,
+      },
+    });
+    const messages = system.trim()
+      ? [
+          { role: 'system' as const, content: system },
+          { role: 'user' as const, content: user },
+        ]
+      : [{ role: 'user' as const, content: user }];
+
+    const result = await chat(
+      { model: modelFor('reel-caption'), messages, format: null },
+      encryptionKey,
+      settings.get('llm_base_url'),
+    );
+    const caption = withoutLinks(result.content);
+    return caption || title;
+  } catch (err) {
+    log.warn(`reel caption for run ${candidate.run_id} not generated: ${errorMessage(err)}`);
+    return title;
+  }
+}
 
 type Flash = { kind: 'ok' | 'error' | 'warn'; message: string } | null;
 
@@ -252,31 +391,133 @@ export function buildServer(
     reply: FastifyReply,
     title: string,
     active: string,
-    body: ReturnType<typeof dashboardPage>,
+    body: Html,
     flash: Flash = null,
   ): FastifyReply =>
     reply.type('text/html; charset=utf-8').send(
       layout({
         title,
-        active,
+        // The real path, so the rail picks the section and the tab picks the
+        // page. `active` is what the route thinks it is, and every settings
+        // page says '/settings'; the URL knows better.
+        active: reply.request.url.split('?')[0] || active,
         body,
         flash,
         automationOn: settings.getBool('automation_enabled'),
       }),
     );
 
-  /* -- Dashboard --------------------------------------------------------- */
+  /* -- Home ---------------------------------------------------------------- */
+
+  /**
+   * Everything a person has to do, each with the one place to do it.
+   *
+   * Gathered from every source that can stop the work or wait on a choice:
+   * configuration problems, the image service, articles held for approval,
+   * Facebook pages and tokens, and keyword supply. What stops work comes
+   * first.
+   */
+  const attentionFor = (): Attention[] => {
+    const items: Attention[] = [];
+
+    items.push(...problemsWithPlaces(settings));
+
+    for (const token of listFbTokens()) {
+      if (token.last_error) {
+        items.push({
+          kind: 'warn',
+          text: `Facebook token "${token.name}": ${token.last_error}`,
+          href: '/settings/facebook',
+          action: 'Check',
+        });
+      }
+    }
+
+    const held = listHeldRuns(20);
+    if (held.length === 1) {
+      const r = held[0]!;
+      items.push({
+        kind: 'info',
+        text: `"${r.title || r.seed_keyword || 'an article'}" on ${r.site_domain ?? '—'} is waiting for approval`,
+        href: `/runs/${r.id}`,
+        action: 'Review',
+      });
+    } else if (held.length > 1) {
+      items.push({
+        kind: 'info',
+        text: `${held.length} articles waiting for approval`,
+        href: '/runs',
+        action: 'Review',
+      });
+    }
+
+    for (const fbPage of listFbPages()) {
+      if (fbPage.enabled && fbPage.niche === null) {
+        items.push({
+          kind: 'info',
+          text: `Facebook page "${fbPage.name}" has no niche, so no reel goes to it`,
+          href: '/settings/facebook',
+          action: 'Assign',
+        });
+      }
+    }
+
+    if (settings.getBool('fb_enabled') && listPresenters().length > 0) {
+      for (const fbPage of listFbPages()) {
+        if (fbPage.enabled && fbPage.niche !== null && fbPage.presenter_id === null) {
+          items.push({
+            kind: 'info',
+            text: `Page "${fbPage.name}" has no presenter, so its reels show the dish only`,
+            href: '/settings/facebook',
+            action: 'Pick one',
+          });
+        }
+      }
+    }
+
+    const failedReels = listReels(50).filter((r) => r.status === 'failed').length;
+    if (failedReels) {
+      items.push({
+        kind: 'info',
+        text: `${failedReels} reel(s) failed and can be retried`,
+        href: '/reels',
+        action: 'See reels',
+      });
+    }
+
+    return items;
+  };
+
+  const runListRow = (id: number): RunListRow | undefined =>
+    get<RunListRow>(
+      `SELECT r.*, s.domain AS site_domain, k.seed_keyword
+         FROM runs r LEFT JOIN sites s ON s.id = r.site_id
+         LEFT JOIN keywords k ON k.id = r.keyword_id WHERE r.id = ?`,
+      id,
+    );
+
+  /** The run holding the lock, and the step it is on, in words. */
+  const runningNow = (): Running | null => {
+    const lock = lockStatus();
+    if (!lock?.locked_at) return null;
+    const run = lock.run_id ? runListRow(lock.run_id) : undefined;
+    const step = lock.run_id
+      ? listSteps(lock.run_id).filter((s) => s.status === 'running').at(-1)?.step
+      : undefined;
+    return {
+      runId: lock.run_id ?? null,
+      site: run?.site_domain ?? '—',
+      keyword: run?.seed_keyword ?? run?.title ?? '—',
+      step: step ? step.replace(/-/g, ' ') : 'starting',
+      startedAt: lock.locked_at,
+    };
+  };
 
   app.get('/', async (request, reply) => {
     const timezone = settings.get('timezone');
     const now = new Date();
     const dayKey = localDateKey(now, timezone);
     const views = loadSiteViews(dayKey, timezone);
-
-    const eligibility = views.map((site) => {
-      const verdict = evaluateSite(site, { now, timezone });
-      return { domain: site.domain, eligible: verdict.eligible, reason: verdict.reason };
-    });
 
     const published =
       get<{ n: number }>(
@@ -286,43 +527,68 @@ export function buildServer(
       get<{ n: number }>(
         `SELECT COUNT(*) AS n FROM runs WHERE status = 'failed' AND date(started_at) = date('now')`,
       )?.n ?? 0;
-    // Not "keywords with status go": one of those linked to nothing is not
-    // work. See src/core/supply.ts.
+    const reelsToday =
+      get<{ n: number }>(
+        `SELECT COUNT(*) AS n FROM reels WHERE status = 'published' AND date(updated_at) = date('now')`,
+      )?.n ?? 0;
     const supply = readSupply();
-
     const lock = lockStatus();
-
-    // The Decisions page used to live at /decisions. It is one table, and the
-    // question it answers ("why did nothing publish?") is asked while looking
-    // at these counters, so it is a section here instead.
-    const cycles = listRecentCycles(20);
-    const requested = (request.query as { cycle?: string }).cycle;
-    const selectedCycle = requested ?? cycles[0]?.cycle_id ?? null;
 
     return page(
       reply,
-      'Dashboard',
+      'Home',
       '/',
-      dashboardPage({
-        sites: views,
-        eligibility,
-        publishedToday: published,
-        failedToday: failed,
-        supply,
-        recentRuns: listRuns(10),
+      homePage({
         automationOn: settings.getBool('automation_enabled'),
-        problems: problemsFor(settings),
-        busy: Boolean(lock?.locked_at),
-        lockedAt: lock?.locked_at ?? null,
-        keywords: loadKeywordViews(),
-        links: loadLinkViews(),
-        cycles,
-        selectedCycle,
-        decisions: selectedCycle ? listDecisions(selectedCycle) : [],
-        held: listHeldRuns(20),
-        activity: dailyActivity(30, timezone),
+        running: runningNow(),
+        attention: attentionFor(),
+        today: {
+          published,
+          target: views.filter((s) => s.status === 'active').reduce((n, s) => n + s.dailyTarget, 0),
+          reels: reelsToday,
+          failed,
+          queued: supply.readyPairs,
+          supply,
+        },
+        recent: mergeRecent(listRuns(12), listReels(12)),
+        picker: runPicker({
+          sites: views,
+          keywords: loadKeywordViews(),
+          links: loadLinkViews(),
+          busy: Boolean(lock?.locked_at),
+        }),
       }),
       readFlash(request.query),
+    );
+  });
+
+  /** The master switch, from the status bar. */
+  app.post('/automation', async (request, reply) => {
+    const body = formBody(request);
+    const on = asString(body.enabled) === '1';
+    settings.set('automation_enabled', on ? 'true' : 'false');
+    return redirect(reply, '/', {
+      kind: 'ok',
+      message: on ? 'Automation is on.' : 'Automation is paused. Nothing new starts until it is on again.',
+    });
+  });
+
+  /* -- Decisions ------------------------------------------------------------ */
+
+  app.get('/decisions', async (request, reply) => {
+    const cycles = listRecentCycles(20);
+    const requested = asString((request.query as { cycle?: string }).cycle);
+    const selectedCycle = requested || cycles[0]?.cycle_id || null;
+    return page(
+      reply,
+      'Decisions',
+      '/decisions',
+      decisionsPage(
+        cycles,
+        selectedCycle,
+        selectedCycle ? listDecisions(selectedCycle) : [],
+        dailyActivity(30, settings.get('timezone')),
+      ),
     );
   });
 
@@ -578,8 +844,19 @@ export function buildServer(
 
   app.get('/sites', async (request, reply) => {
     const timezone = settings.get('timezone');
-    const views = loadSiteViews(localDateKey(new Date(), timezone), timezone);
-    return page(reply, 'Sites', '/sites', sitesPage(listSites(), views), readFlash(request.query));
+    const now = new Date();
+    const views = loadSiteViews(localDateKey(now, timezone), timezone);
+    const eligibility = views.map((site) => {
+      const verdict = evaluateSite(site, { now, timezone });
+      return { domain: site.domain, eligible: verdict.eligible, reason: verdict.reason };
+    });
+    return page(
+      reply,
+      'Sites',
+      '/sites',
+      sitesPage(listSites(), views, eligibility),
+      readFlash(request.query),
+    );
   });
 
   app.get('/sites/:id', async (request, reply) => {
@@ -938,6 +1215,456 @@ export function buildServer(
       siteId: Math.max(0, asNumber(q.site, 0)),
     };
   };
+
+  /* -- Reels ------------------------------------------------------------ */
+
+  app.get('/reels', async (request, reply) => {
+    const candidates = reelCandidates().map((c) => ({ ...c, images: readReelImages(c) }));
+
+    return page(
+      reply,
+      'Reels',
+      '/reels',
+      reelsPage({
+        candidates,
+        reels: listReels(),
+        configured: listFbTokens().length > 0 && listFbPages().some((p) => p.niche !== null),
+        enabled: settings.getBool('fb_enabled'),
+        pages: listFbPages().length,
+        fbPages: listFbPages(),
+      }),
+      readFlash(request.query),
+    );
+  });
+
+  app.get('/reels/new/:runId', async (request, reply) => {
+    const runId = asNumber((request.params as { runId: string }).runId, 0);
+    const candidate = reelCandidates(500).find((c) => c.run_id === runId);
+    if (!candidate) return reply.callNotFound();
+
+    const images = readReelImages(candidate);
+    if (!images) {
+      return redirect(reply, '/reels', {
+        kind: 'error',
+        message: 'That run’s images could not be read.',
+      });
+    }
+
+    const composerPage = pageForNiche(candidate.seed_keyword);
+    return page(
+      reply,
+      'Make a reel',
+      '/reels',
+      reelComposerPage({
+        candidate,
+        images,
+        caption: placeholderCaption(candidate),
+        page: composerPage,
+        mode: reelMode(settings),
+        prompt: buildReelPrompt({
+          title: candidate.title || candidate.spy_title,
+          presenter: presenterFor(composerPage?.id),
+          cta: settings.get('reel_cta_text'),
+        }),
+        references: singleReferenceRoles(settings),
+      }),
+      readFlash(request.query),
+    );
+  });
+
+  /**
+   * The model's caption, for the composer to fill in once it has rendered.
+   *
+   * Its own request, not part of the page: the model takes anywhere from two
+   * seconds to twenty and is sometimes down, and a page that waits on it sits
+   * past Cloudflare's hundred seconds and answers 524 -- which is how this was
+   * found. The composer opens with the title and swaps this in if it arrives.
+   */
+  app.get('/reels/new/:runId/caption', async (request, reply) => {
+    const runId = asNumber((request.params as { runId: string }).runId, 0);
+    const candidate = reelCandidates(500).find((c) => c.run_id === runId);
+    if (!candidate) return reply.status(404).send({ caption: null });
+
+    const caption = await buildReelCaption(candidate, settings, encryptionKey);
+    // The placeholder is the fallback; sending it back would replace the
+    // person's own edits with nothing new.
+    const generated = caption !== placeholderCaption(candidate);
+    return reply.send({ caption: generated ? caption : null });
+  });
+
+  app.post('/reels/new/:runId', async (request, reply) => {
+    const runId = asNumber((request.params as { runId: string }).runId, 0);
+    const body = request.body as { caption?: string; prompt?: string; reference?: string | string[] };
+
+    const candidate = reelCandidates(500).find((c) => c.run_id === runId);
+    if (!candidate) return reply.callNotFound();
+
+    const images = readReelImages(candidate);
+    if (!images) {
+      return redirect(reply, '/reels', {
+        kind: 'error',
+        message: 'That run’s images could not be read.',
+      });
+    }
+
+    const host = candidate.site_domain.replace(/^https?:\/\//, '').replace(/\/+$/, '');
+    const target = pageForNiche(candidate.seed_keyword);
+    const title = candidate.title || candidate.spy_title;
+
+    if (reelMode(settings) === 'single') {
+      const ticked = ([] as string[])
+        .concat(body.reference ?? [])
+        .filter((r): r is ArticleRole => ARTICLE_ROLES.includes(r as ArticleRole));
+      if (ticked.length === 0) {
+        return redirect(reply, `/reels/new/${runId}`, { kind: 'error', message: 'Tick at least one photo.' });
+      }
+      if (ticked.length > MAX_REFERENCES) {
+        return redirect(reply, `/reels/new/${runId}`, {
+          kind: 'error',
+          message: `Flow takes at most ${MAX_REFERENCES} photos in one request.`,
+        });
+      }
+      const prompt = (body.prompt ?? '').trim();
+      if (!prompt) {
+        return redirect(reply, `/reels/new/${runId}`, { kind: 'error', message: 'The video prompt is empty.' });
+      }
+
+      const reelId = createReel({
+        runId,
+        siteId: candidate.site_id,
+        keywordId: candidate.keyword_id,
+        fbPageId: target?.id ?? null,
+        prompt,
+        caption: (body.caption ?? '').trim() || title,
+        references: referenceUrls(host, images, ticked),
+      });
+      try {
+        await startGeneration(getReel(reelId)!, settings, defaultDeps(settings, encryptionKey).images);
+      } catch (err) {
+        updateReel(reelId, { status: 'failed', error: errorMessage(err) });
+        return redirect(reply, `/reels/${reelId}`, { kind: 'error', message: errorMessage(err) });
+      }
+      return redirect(reply, `/reels/${reelId}`, { kind: 'ok', message: 'The clip is being made.' });
+    }
+
+    // The same reel the pipeline would have made: the engine writes the
+    // storyboard, films it, and publishes it, one stage per minute.
+    const reelId = createReel({
+      runId,
+      siteId: candidate.site_id,
+      keywordId: candidate.keyword_id,
+      fbPageId: target?.id ?? null,
+      prompt: '',
+      caption: (body.caption ?? '').trim() || title,
+      references: [],
+      stage: 'planning',
+    });
+    setReelStage(reelId, 'planning', {
+      planJson: JSON.stringify(seedFromRun(runId, host, images, title)),
+    });
+
+    return redirect(reply, `/reels/${reelId}`, {
+      kind: 'ok',
+      message: 'The reel is queued. The storyboard is written first, then each scene is filmed.',
+    });
+  });
+
+  app.get('/reels/:id', async (request, reply) => {
+    const reel = getReel(asNumber((request.params as { id: string }).id, 0));
+    if (!reel) return reply.callNotFound();
+
+    return page(
+      reply,
+      'Reel',
+      '/reels',
+      reelDetailPage(
+        reel,
+        listScenes(reel.id),
+        reel.fb_page_id ? presenterForPage(reel.fb_page_id) : undefined,
+        listFbPages(),
+      ) as never,
+      readFlash(request.query),
+    );
+  });
+
+  /** The assembled reel, from the platform's own storage. */
+  app.get('/reels/:id/video', async (request, reply) => {
+    const reel = getReel(asNumber((request.params as { id: string }).id, 0));
+    if (!reel?.output_path || !existsSync(reel.output_path)) return reply.callNotFound();
+    return reply.type('video/mp4').send(createReadStream(reel.output_path));
+  });
+
+  /** One scene's clip, for the storyboard. */
+  app.get('/reels/:id/scenes/:sceneId/clip', async (request, reply) => {
+    const params = request.params as { id: string; sceneId: string };
+    const scene = getScene(asNumber(params.sceneId, 0));
+    if (!scene || scene.reel_id !== asNumber(params.id, 0)) return reply.callNotFound();
+    if (!scene.clip_path || !existsSync(scene.clip_path)) return reply.callNotFound();
+    return reply.type('video/mp4').send(createReadStream(scene.clip_path));
+  });
+
+  /**
+   * Retry one scene. The others keep what they have; the reel goes back to
+   * filming and the next tick picks the scene up.
+   */
+  app.post('/reels/:id/scenes/:sceneId/retry', async (request, reply) => {
+    const params = request.params as { id: string; sceneId: string };
+    const reelId = asNumber(params.id, 0);
+    const scene = getScene(asNumber(params.sceneId, 0));
+    if (!scene || scene.reel_id !== reelId) return reply.callNotFound();
+
+    updateScene(scene.id, { status: 'pending', error: null, clipJobId: null, clipPath: null });
+    setReelStage(reelId, 'filming');
+    updateReel(reelId, { status: 'generating', error: null });
+    return redirect(reply, `/reels/${reelId}`, { kind: 'ok', message: `Scene ${scene.position} will be filmed again.` });
+  });
+
+  app.post('/reels/:id/publish', async (request, reply) => {
+    const id = asNumber((request.params as { id: string }).id, 0);
+    let reel = getReel(id);
+    if (!reel) return reply.callNotFound();
+
+    // A reel no page's niche claimed can be sent to a page picked on the
+    // tile. Remembered on the reel, so the link comment and the record of
+    // where it went work as for any other.
+    const body = formBody(request);
+    const pickedPage = asNumber(body.page_id, 0);
+    if (!reel.fb_page_id && pickedPage > 0) {
+      if (!getFbPage(pickedPage)) return reply.callNotFound();
+      updateReel(id, { fbPageId: pickedPage });
+      reel = getReel(id)!;
+    }
+
+    try {
+      await publishReel(reel, defaultDeps(settings, encryptionKey));
+    } catch (err) {
+      updateReel(id, { status: 'failed', error: errorMessage(err) });
+      return redirect(reply, '/reels', { kind: 'error', message: errorMessage(err) });
+    }
+
+    return redirect(reply, '/reels', { kind: 'ok', message: 'Reel published.' });
+  });
+
+  app.post('/reels/:id/retry', async (request, reply) => {
+    const id = asNumber((request.params as { id: string }).id, 0);
+    const reel = getReel(id);
+    if (!reel) return reply.callNotFound();
+
+    try {
+      // A reel that already has its video failed at publishing, and the video
+      // is the expensive half -- so retry the publish rather than the whole
+      // thing. Only a reel with nothing to show is generated again.
+      if (reel.video_url || reel.output_path) {
+        updateReel(id, { status: 'ready', error: null });
+      } else if (reel.stage !== 'done') {
+        // A studio reel picks up at the stage it failed in. Scenes already
+        // filmed keep their clips; only the failed ones are cleared.
+        for (const scene of listScenes(id)) {
+          if (scene.status === 'failed') {
+            updateScene(scene.id, { status: 'pending', error: null, clipJobId: null, clipPath: null });
+          }
+        }
+        updateReel(id, { status: 'generating', error: null });
+      } else {
+        await startGeneration(reel, settings, defaultDeps(settings, encryptionKey).images);
+      }
+    } catch (err) {
+      updateReel(id, { status: 'failed', error: errorMessage(err) });
+      return redirect(reply, '/reels', { kind: 'error', message: errorMessage(err) });
+    }
+
+    return redirect(reply, '/reels', { kind: 'ok', message: 'Retrying.' });
+  });
+
+  app.post('/reels/:id/discard', async (request, reply) => {
+    deleteReel(asNumber((request.params as { id: string }).id, 0));
+    return redirect(reply, '/reels', { kind: 'ok', message: 'Reel discarded.' });
+  });
+
+  /* -- Settings -> Facebook ---------------------------------------------- */
+
+  /* -- Settings -> Facebook ------------------------------------------------ */
+
+  const facebookPage = (reply: FastifyReply, flash: Flash) =>
+    page(
+      reply,
+      'Facebook',
+      '/settings',
+      facebookSettingsPage({
+        enabled: settings.getBool('fb_enabled'),
+        tokens: listFbTokens(),
+        pages: listFbPages(),
+        groups: keywordGroups(),
+        presenters: listPresenters(),
+      }),
+      flash,
+    );
+
+  // Rendered from the database alone. Graph is asked only when a token is
+  // added or refreshed; a page that waited on it would sit past Cloudflare's
+  // hundred seconds whenever Facebook was slow.
+  app.get('/settings/facebook', async (request, reply) =>
+    facebookPage(reply, readFlash(request.query)),
+  );
+
+  const describeSync = (name: string, result: SyncResult): Flash => {
+    if (!result.ok) return { kind: 'error', message: `${name}: ${result.error}` };
+    if (result.total === 0) {
+      return {
+        kind: 'warn',
+        message:
+          `${name}: the token works but manages no pages. Give the system user access ` +
+          'to the pages in Business Settings, then refresh.',
+      };
+    }
+    return {
+      kind: 'ok',
+      message:
+        `${name}: ${result.total} page(s) — ${result.added} new, ${result.renamed} renamed, ` +
+        `${result.dropped} no longer there.`,
+    };
+  };
+
+  /** A token that stopped working is worth a message; a page render is not. */
+  const tellTelegram = async (message: string): Promise<void> => {
+    if (!settings.getBool('telegram_enabled')) return;
+    try {
+      await new TelegramClient(
+        settings.get('telegram_bot_token'),
+        settings.get('telegram_chat_id'),
+      ).sendMessage(message);
+    } catch (err) {
+      log.warn(`could not send a Telegram message: ${errorMessage(err)}`);
+    }
+  };
+
+  app.post('/settings/facebook/tokens', async (request, reply) => {
+    const body = request.body as { name?: string; token?: string };
+
+    let id: number;
+    try {
+      id = insertFbToken(body.name ?? '', body.token ?? '', encryptionKey);
+    } catch (err) {
+      return redirect(reply, '/settings/facebook', { kind: 'error', message: errorMessage(err) });
+    }
+
+    const name = listFbTokens().find((t) => t.id === id)?.name ?? 'Token';
+    const result = await syncToken(id, encryptionKey);
+    // A token Graph refuses is not kept: a row that never worked is one more
+    // thing on the page to wonder about, and the reason is in the message.
+    if (!result.ok) {
+      deleteFbToken(id);
+      return redirect(reply, '/settings/facebook', {
+        kind: 'error',
+        message: `${name} was not saved: ${result.error}`,
+      });
+    }
+    return redirect(reply, '/settings/facebook', describeSync(name, result));
+  });
+
+  app.post('/settings/facebook/tokens/:id/refresh', async (request, reply) => {
+    const id = asNumber((request.params as { id: string }).id, 0);
+    const token = listFbTokens().find((t) => t.id === id);
+    if (!token) return reply.callNotFound();
+
+    const result = await syncToken(id, encryptionKey);
+    if (!result.ok) {
+      await tellTelegram(`<b>Facebook token failed</b>\n${token.name}\n${result.error}`);
+    }
+    return redirect(reply, '/settings/facebook', describeSync(token.name, result));
+  });
+
+  app.post('/settings/facebook/tokens/:id/delete', async (request, reply) => {
+    deleteFbToken(asNumber((request.params as { id: string }).id, 0));
+    return redirect(reply, '/settings/facebook', {
+      kind: 'ok',
+      message: 'Token and its pages removed.',
+    });
+  });
+
+  /**
+   * One page's settings, as the pages form carries them: every row's fields
+   * are in the one form, suffixed with the page id, so a row's Save and the
+   * Save-all button post the same body.
+   */
+  const pageFields = (body: Record<string, unknown>, id: number) => ({
+    niche: asString(body[`niche_${id}`]).trim(),
+    presenterId: asNumber(body[`presenter_${id}`], 0),
+    autoPublish: asString(body[`auto_${id}`]) === 'on',
+    enabled: asString(body[`enabled_${id}`]) === 'on',
+  });
+
+  const savePage = (id: number, fields: ReturnType<typeof pageFields>): void => {
+    // A niche no keyword has is a page that never fires, and it looks
+    // identical to a working one in the table. The field is a select, so
+    // this only catches a hand-made request -- and a keyword group renamed
+    // since the page was last saved.
+    if (
+      fields.niche !== '' &&
+      !keywordGroups().some((g) => g.toLowerCase() === fields.niche.toLowerCase())
+    ) {
+      throw new Error(
+        `No keyword has the niche “${fields.niche}”, so nothing would ever go to this page.`,
+      );
+    }
+    setFbPagePresenter(id, fields.presenterId > 0 ? fields.presenterId : null);
+    setFbPageOptions(id, {
+      niche: fields.niche,
+      autoPublish: fields.autoPublish,
+      enabled: fields.enabled,
+    });
+  };
+
+  app.post('/settings/facebook/pages/:id', async (request, reply) => {
+    const id = asNumber((request.params as { id: string }).id, 0);
+    if (!getFbPage(id)) return reply.callNotFound();
+
+    try {
+      savePage(id, pageFields(formBody(request), id));
+    } catch (err) {
+      return redirect(reply, '/settings/facebook', { kind: 'error', message: errorMessage(err) });
+    }
+
+    return redirect(reply, '/settings/facebook', { kind: 'ok', message: 'Page saved.' });
+  });
+
+  /**
+   * Every page at once. A page whose niche is moving is cleared first, so
+   * two pages swapping niches do not refuse each other over a niche that is
+   * about to be free.
+   */
+  app.post('/settings/facebook/pages', async (request, reply) => {
+    const body = formBody(request);
+    const pages = listFbPages().filter((p) => `niche_${p.id}` in body);
+    const fields = new Map(pages.map((p) => [p.id, pageFields(body, p.id)]));
+
+    for (const p of pages) {
+      const next = fields.get(p.id)!;
+      if (p.niche && next.niche.toLowerCase() !== p.niche.toLowerCase()) {
+        setFbPageOptions(p.id, { niche: null, autoPublish: next.autoPublish, enabled: next.enabled });
+      }
+    }
+
+    const problems: string[] = [];
+    for (const p of pages) {
+      try {
+        savePage(p.id, fields.get(p.id)!);
+      } catch (err) {
+        problems.push(`${p.name || p.page_id}: ${errorMessage(err)}`);
+      }
+    }
+
+    if (problems.length > 0) {
+      return redirect(reply, '/settings/facebook', {
+        kind: 'error',
+        message: `${pages.length - problems.length} page(s) saved. ${problems.join(' ')}`,
+      });
+    }
+    return redirect(reply, '/settings/facebook', {
+      kind: 'ok',
+      message: `${pages.length} page(s) saved.`,
+    });
+  });
 
   app.get('/keywords', async (request, reply) => {
     const q = request.query as { page?: string };
@@ -1338,129 +2065,14 @@ export function buildServer(
     ]),
   );
 
-  /* -- History and storage ------------------------------------------------ */
-
-  /**
-   * Runs, steps, decisions and events grow one row per attempt forever.
-   *
-   * None of it is derived state — the counters are all computed from `runs` at
-   * read time — so deleting history changes nothing about what publishes next.
-   * It is still the only record of what happened, which is why every clear on
-   * this page sits next to the export of the same table.
-   */
-  app.get('/settings/data', async (request, reply) =>
-    page(
-      reply,
-      'History & storage',
-      '/settings',
-      dataPage(dataCounts(), settings.getNumber('retention_days')),
-      readFlash(request.query),
-    ),
-  );
-
-  /**
-   * The whole database as one file.
-   *
-   * Written to a temporary directory with VACUUM INTO, streamed, then removed.
-   * A plain copy of the .db would be missing every write still in the WAL
-   * sidecar, which is the kind of backup you only discover is wrong when you
-   * restore it.
-   */
-  app.get('/data/backup', async (_request, reply) => {
-    const directory = await mkdtemp(join(tmpdir(), 'platform-backup-'));
-    const file = join(directory, 'platform.db');
-
-    try {
-      backupTo(file);
-    } catch (err) {
-      await rm(directory, { recursive: true, force: true });
-      return redirect(reply, '/settings/data', { kind: 'error', message: errorMessage(err) });
-    }
-
-    const stamp = new Date().toISOString().slice(0, 10);
-    const stream = createReadStream(file);
-
-    // Cleaned up once the response is done, however it ends — a client that
-    // disconnects mid-download should not leave a copy of the database in the
-    // container's temp directory.
-    const cleanup = (): void => {
-      void rm(directory, { recursive: true, force: true });
-    };
-    stream.once('close', cleanup);
-    stream.once('error', cleanup);
-
-    return reply
-      .type('application/octet-stream')
-      .header('content-disposition', `attachment; filename="platform-${stamp}.db"`)
-      .send(stream);
-  });
-
-  const DATASETS: Dataset[] = ['runs', 'steps', 'decisions', 'events', 'keywords', 'sites'];
+  /* -- Exports ------------------------------------------------------------ */
 
   app.get('/data/export/:dataset', async (request, reply) => {
     const name = asString((request.params as { dataset: string }).dataset) as Dataset;
-    if (!DATASETS.includes(name)) {
-      return redirect(reply, '/settings/data', {
-        kind: 'error',
-        message: `There is nothing called "${name}" to export.`,
-      });
-    }
+    if (!DATASETS.includes(name)) return reply.callNotFound();
 
     const data = exportDataset(name);
     return csvFile(reply, data.filename, data.rows);
-  });
-
-  app.post('/data/clear', async (request, reply) => {
-    const body = formBody(request);
-    const what = asString(body.what);
-
-    if (what === 'shared-images') {
-      const n = forgetAllSharedImages();
-      return redirect(reply, '/settings/data', {
-        kind: 'ok',
-        message:
-          `Forgot ${n} shared image set(s). No image was deleted — the next site ` +
-          'to publish those keywords will generate fresh ones.',
-      });
-    }
-
-    if (what !== 'runs' && what !== 'decisions' && what !== 'events') {
-      return redirect(reply, '/settings/data', {
-        kind: 'error',
-        message: 'Nothing was cleared: that is not something this page manages.',
-      });
-    }
-
-    // "0" from the dropdown means everything, which is null to clearHistory.
-    const days = asNumber(body.days, 30);
-    const cutoff = days <= 0 ? null : days;
-
-    try {
-      const removed = clearHistory(what, cutoff);
-      const scope = cutoff === null ? 'all' : `older than ${cutoff} day(s)`;
-      return redirect(reply, '/settings/data', {
-        kind: 'ok',
-        message:
-          removed === 0
-            ? `Nothing to clear — no ${what} ${scope}.`
-            : `Cleared ${removed} ${what} row(s) ${scope}.` +
-              (what === 'runs' ? ' Their steps went with them.' : ''),
-      });
-    } catch (err) {
-      return redirect(reply, '/settings/data', { kind: 'error', message: errorMessage(err) });
-    }
-  });
-
-  app.post('/data/compact', async (_request, reply) => {
-    try {
-      compactDatabase();
-      return redirect(reply, '/settings/data', {
-        kind: 'ok',
-        message: 'Database compacted. The file on disk is now its true size.',
-      });
-    } catch (err) {
-      return redirect(reply, '/settings/data', { kind: 'error', message: errorMessage(err) });
-    }
   });
 
   /* -- Prompts ----------------------------------------------------------- */
@@ -1618,10 +2230,6 @@ export function buildServer(
 
   // It is a section of the dashboard now. Kept as a redirect because it was a
   // page for long enough to be bookmarked.
-  app.get('/decisions', async (request, reply) => {
-    const cycle = asString((request.query as { cycle?: string }).cycle);
-    return redirect(reply, cycle ? `/?cycle=${encodeURIComponent(cycle)}#decisions` : '/');
-  });
 
   /* -- Events ------------------------------------------------------------ */
 
@@ -1640,6 +2248,7 @@ export function buildServer(
    * renders.
    */
   let imageServiceProblem: string | null = null;
+  let extensionMissingPolls = 0;
 
   /**
    * Ask the image service whether it accepts the settings as they now stand.
@@ -1690,14 +2299,25 @@ export function buildServer(
         return;
       }
 
-      const status = (await response.json()) as { connected?: boolean };
-      imageServiceProblem = status.connected
-        ? null
-        : 'The image service browser is not signed in to Google. Open Browser to sign in.';
+      const status = (await response.json()) as FlowStatus;
+      // /health is where the watchdog says a sign-in wall is up. Best effort:
+      // without it, only what /flow/status says is judged.
+      let health: ServiceHealth | null = null;
+      try {
+        const h = await fetch(`${base}/health`, { signal: AbortSignal.timeout(5_000) });
+        if (h.ok) health = (await h.json()) as ServiceHealth;
+      } catch {
+        // Judged from status alone.
+      }
+      const chromeUp = status.chrome?.wanted_running ?? status.chrome?.always_on ?? true;
+      extensionMissingPolls = !status.connected && chromeUp ? extensionMissingPolls + 1 : 0;
+      imageServiceProblem = imageServiceProblemFrom(status, health, extensionMissingPolls);
 
       // The model catalogue rides on the same poll, so the Settings page reads
-      // it from memory and never waits on the image service to render. Best
-      // effort: a poll that cannot fetch it keeps the last one it had.
+      // it from memory and never waits on the image service to render. It did
+      // once, for the caption, and the page sat behind a dead service until
+      // Cloudflare gave up. Best effort: a poll that cannot fetch it keeps the
+      // last one it had.
       try {
         const models = await fetch(`${base}/flow/image-models`, {
           headers: { 'X-API-Key': settings.get('image_api_key') },
@@ -1726,29 +2346,53 @@ export function buildServer(
    * Configuration problems, including ones that live outside the settings
    * table: no API keys, or sites missing their own credentials.
    */
-  const problemsFor = (s: Settings): string[] => {
-    const problems = s.validate();
+  const problemsWithPlaces = (s: Settings): Attention[] => {
+    // Each problem says where it is fixed, so Home can offer the button.
+    const problems: Attention[] = s
+      .validate()
+      .map((text) => ({ kind: 'warn', text, href: '/settings', action: 'Settings' }));
 
     if (listEndpoints(encryptionKey).filter((e) => e.enabled).length === 0) {
-      problems.push('No LLM API keys added — nothing can be generated.');
+      problems.push({
+        kind: 'warn',
+        text: 'No LLM API keys added — nothing can be generated.',
+        href: '/settings/keys',
+        action: 'Add a key',
+      });
     }
 
-    if (imageServiceProblem) problems.push(imageServiceProblem);
+    if (imageServiceProblem) {
+      const needsSignIn = /signed out|Browser page/i.test(imageServiceProblem);
+      problems.push({
+        kind: 'warn',
+        text: imageServiceProblem,
+        href: needsSignIn ? '/browser' : '/settings',
+        action: needsSignIn ? 'Sign in' : 'Check',
+        external: needsSignIn,
+      });
+    }
 
     const supplyProblem = supplyWarning(readSupply());
-    if (supplyProblem) problems.push(supplyProblem);
+    if (supplyProblem) {
+      problems.push({ kind: 'warn', text: supplyProblem, href: '/keywords', action: 'Keywords' });
+    }
 
     const sitesMissingToken = listSites()
       .filter((site) => site.status === 'active' && !site.api_token_encrypted.trim())
       .map((site) => site.domain);
     if (sitesMissingToken.length > 0) {
-      problems.push(
-        `Active site(s) without an API token: ${sitesMissingToken.join(', ')}.`,
-      );
+      problems.push({
+        kind: 'warn',
+        text: `Active site(s) without an API token: ${sitesMissingToken.join(', ')}.`,
+        href: '/sites',
+        action: 'Sites',
+      });
     }
 
     return problems;
   };
+
+  const problemsFor = (s: Settings): string[] => problemsWithPlaces(s).map((p) => p.text);
 
   app.get('/settings', async (request, reply) => {
     const values = new Map(SETTING_SPECS.map((s) => [s.key, settings.get(s.key)] as const));
@@ -1920,6 +2564,115 @@ export function buildServer(
         ? 'Settings saved. The image service accepted the key.'
         : `Settings saved, but the image service refused them: ${reachable.detail}`,
     });
+  });
+
+  /* -- Presenters ----------------------------------------------------------- */
+
+  const presentersView = () => {
+    const usedBy = new Map<number, string[]>();
+    for (const fbPage of listFbPages()) {
+      if (fbPage.presenter_id === null) continue;
+      usedBy.set(fbPage.presenter_id, [
+        ...(usedBy.get(fbPage.presenter_id) ?? []),
+        fbPage.name || fbPage.page_id,
+      ]);
+    }
+    return presentersPage({ presenters: listPresenters(), usedBy });
+  };
+
+  app.get('/settings/presenters', async (request, reply) =>
+    page(reply, 'Presenters', '/settings/presenters', presentersView(), readFlash(request.query)),
+  );
+
+  app.post('/settings/presenters', async (request, reply) => {
+    const body = formBody(request);
+    try {
+      const voiceRaw = asString(body.voice).trim();
+      insertPresenter({
+        name: asString(body.name),
+        flowCharacterId: idFromFlowUrl(asString(body.character)),
+        flowVoiceId: voiceRaw ? idFromFlowUrl(voiceRaw) : '',
+        voiceDescription: asString(body.voice_description),
+        portraitUrl: '',
+      });
+    } catch (err) {
+      return redirect(reply, '/settings/presenters', { kind: 'error', message: errorMessage(err) });
+    }
+    return redirect(reply, '/settings/presenters', {
+      kind: 'ok',
+      message: 'Presenter added. Pick them for a page under Channels → Facebook.',
+    });
+  });
+
+  app.post('/settings/presenters/:id', async (request, reply) => {
+    const id = asNumber((request.params as { id: string }).id, 0);
+    const body = formBody(request);
+    updatePresenter(id, {
+      name: asString(body.name),
+      voiceDescription: asString(body.voice_description),
+    });
+    return redirect(reply, '/settings/presenters', { kind: 'ok', message: 'Saved.' });
+  });
+
+  app.post('/settings/presenters/:id/delete', async (request, reply) => {
+    deletePresenter(asNumber((request.params as { id: string }).id, 0));
+    return redirect(reply, '/settings/presenters', { kind: 'ok', message: 'Presenter removed.' });
+  });
+
+  app.get('/settings/reels', async (request, reply) => {
+    let allowed: string[] = [];
+    try {
+      const parsed = JSON.parse(settings.get('reel_formats') || '[]') as unknown;
+      allowed = Array.isArray(parsed) ? parsed.map(String) : [];
+    } catch {
+      allowed = [];
+    }
+    if (allowed.length === 0) allowed = FORMATS.map((f) => f.key);
+    return page(
+      reply,
+      'Reels',
+      '/settings/reels',
+      reelSettingsPage({
+        mode: reelMode(settings),
+        singleReferences: singleReferenceRoles(settings),
+        lengthSeconds: settings.getNumber('reel_length_seconds') || 30,
+        allowed,
+        freshImages: settings.getBool('reel_fresh_images'),
+        cta: settings.get('reel_cta_text'),
+        formats: FORMATS,
+      }),
+      readFlash(request.query),
+    );
+  });
+
+  app.post('/settings/reels', async (request, reply) => {
+    const body = formBody(request);
+    const chosen = ([] as string[])
+      .concat((body.reel_formats as string | string[] | undefined) ?? [])
+      .filter((key) => FORMATS.some((f) => f.key === key));
+    if (chosen.length === 0) {
+      return redirect(reply, '/settings/reels', { kind: 'error', message: 'Keep at least one shape on.' });
+    }
+    const refs = ([] as string[])
+      .concat((body.reel_single_references as string | string[] | undefined) ?? [])
+      .filter((r) => ARTICLE_ROLES.includes(r as ArticleRole));
+    if (refs.length === 0) {
+      return redirect(reply, '/settings/reels', { kind: 'error', message: 'Tick at least one photo for one-clip reels.' });
+    }
+    if (refs.length > MAX_REFERENCES) {
+      return redirect(reply, '/settings/reels', {
+        kind: 'error',
+        message: `Flow takes at most ${MAX_REFERENCES} photos in one request.`,
+      });
+    }
+    settings.set('reel_mode', asString(body.reel_mode) === 'scenes' ? 'scenes' : 'single');
+    settings.set('reel_single_references', JSON.stringify(refs));
+    const length = asNumber(body.reel_length_seconds, 30);
+    settings.set('reel_length_seconds', String([15, 30, 45, 60].includes(length) ? length : 30));
+    settings.set('reel_formats', JSON.stringify(chosen));
+    settings.set('reel_fresh_images', asString(body.reel_fresh_images) === '1' ? 'true' : 'false');
+    settings.set('reel_cta_text', asString(body.reel_cta_text).trim() || 'Full recipe in the comments');
+    return redirect(reply, '/settings/reels', { kind: 'ok', message: 'Saved. Applies to the next reel.' });
   });
 
   app.post('/settings/endpoints', async (request, reply) => {

@@ -54,6 +54,13 @@ MAX_RESTARTS_BEFORE_FIRST_CONNECT = 1
 # says why.
 FAILURE_THRESHOLD = int(os.environ.get("WATCHDOG_FAILURE_THRESHOLD", "5"))
 
+# How far back the breaker looks. The job table outlives the container, so an
+# unbounded look-back makes a run of failures permanent evidence: it would trip
+# thirty seconds after every start, pause the worker, and -- because a paused
+# worker reports no work waiting -- keep Chrome stopped and send nothing, for
+# ever, long after the cause was fixed. That is exactly what happened.
+CIRCUIT_WINDOW_S = int(os.environ.get("WATCHDOG_CIRCUIT_WINDOW", "1800"))
+
 CHECK_INTERVAL_S = int(os.environ.get("WATCHDOG_INTERVAL", "30"))
 
 # Print the Flow tab's state every Nth watchdog cycle. Two cycles is a minute,
@@ -82,6 +89,7 @@ class WatchdogState:
     chrome_restarts: list[float] = field(default_factory=list)
     disconnected_since: Optional[float] = None
     ever_connected: bool = False
+    paused_by: Optional[str] = None
 
     def as_dict(self) -> dict:
         return {
@@ -121,9 +129,9 @@ def _restarts_in_last_hour() -> int:
     return len(state.chrome_restarts)
 
 
-async def _recent_failures(limit: int = 10) -> list[dict]:
+async def _recent_failures(limit: int = 10, within_seconds: int = 0) -> list[dict]:
     """Most recent finished jobs, newest first."""
-    return await jobs.recent_finished(limit)
+    return await jobs.recent_finished(limit, within_seconds)
 
 
 async def _check_session_wall(controller) -> bool:
@@ -146,12 +154,23 @@ async def _check_session_wall(controller) -> bool:
 
 
 async def _check_circuit_breaker(controller) -> bool:
-    """Pause if the last N finished requests all failed. True if tripped."""
-    recent = await _recent_failures(limit=FAILURE_THRESHOLD)
-    if len(recent) < FAILURE_THRESHOLD:
-        return False
-    if not all(r.get("status") == "FAILED" for r in recent):
+    """Pause if the last N finished requests all failed. True if tripped.
+
+    Only failures inside CIRCUIT_WINDOW_S count, and the pause is lifted again
+    once they age out. Without both halves this latches: it paused the worker,
+    a paused worker reports nothing waiting so Chrome never starts, and nothing
+    anywhere cleared needs_human -- so the service went quiet permanently and
+    came back quiet after every restart, because the failures are on disk.
+    """
+    recent = await _recent_failures(limit=FAILURE_THRESHOLD, within_seconds=CIRCUIT_WINDOW_S)
+    tripped = (
+        len(recent) >= FAILURE_THRESHOLD
+        and all(r.get("status") == "FAILED" for r in recent)
+    )
+
+    if not tripped:
         state.consecutive_failures = 0
+        _release_circuit_breaker(controller)
         return False
 
     state.consecutive_failures = FAILURE_THRESHOLD
@@ -162,8 +181,21 @@ async def _check_circuit_breaker(controller) -> bool:
         f"Stopped after {FAILURE_THRESHOLD} failures in a row. "
         f"Most recent: {last_error}"
     )
+    state.paused_by = "circuit breaker"
     controller.pause("circuit breaker")
     return True
+
+
+def _release_circuit_breaker(controller) -> None:
+    """Undo a pause this check made, once its failures have aged out."""
+    if state.paused_by != "circuit breaker":
+        return
+    logger.info("Watchdog: the failures that tripped the breaker have aged out")
+    state.paused_by = None
+    state.needs_human = False
+    state.healthy = True
+    state.reason = None
+    controller.resume()
 
 
 async def _check_extension(controller) -> bool:

@@ -1,10 +1,19 @@
+import { randomBytes } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { closeDatabase, openDatabase } from '../src/db/index.js';
-import { getLinkShare, insertKeyword, setLink } from '../src/db/repos.js';
+import {
+  getLinkShare,
+  insertFbToken,
+  insertKeyword,
+  pageForNiche,
+  setFbPageOptions,
+  setLink,
+  upsertFbPage,
+} from '../src/db/repos.js';
 
 /**
  * schema.sql is CREATE TABLE IF NOT EXISTS throughout, so a column added to one
@@ -15,6 +24,8 @@ import { getLinkShare, insertKeyword, setLink } from '../src/db/repos.js';
  * These tests build a database the way an earlier deploy left it, then open it
  * with the current code.
  */
+
+const KEY = randomBytes(32);
 
 let directory: string | null = null;
 
@@ -125,5 +136,50 @@ describe('opening a database from an earlier deploy', () => {
     setLink(keywordId, 1, 'go');
 
     expect(getLinkShare(keywordId, 1)).toBe(true);
+  });
+
+  it('creates the reels tables on a database that predates them', () => {
+    const path = databaseFromOldSchema();
+    const db = openDatabase(path);
+
+    const tables = (
+      db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as {
+        name: string;
+      }[]
+    ).map((t) => t.name);
+
+    expect(tables).toContain('fb_pages');
+    expect(tables).toContain('fb_page_routes');
+    expect(tables).toContain('reels');
+  });
+
+  it('finds the page for a niche on a migrated database, not only a fresh one', () => {
+    // The tables existing is not the same as them working: the niche column
+    // and its partial unique index arrive by migration 010, and without them
+    // the lookup below fails on a column the code is certain is there.
+    const path = databaseFromOldSchema();
+    openDatabase(path);
+
+    const token = insertFbToken('A', 'tok', KEY);
+    const page = upsertFbPage({ pageId: '111', name: 'Slow Cooker', tokenId: token });
+    setFbPageOptions(page, { niche: 'slow cooker', autoPublish: false, enabled: true });
+
+    expect(pageForNiche('Slow Cooker')?.page_id).toBe('111');
+  });
+
+  it('applies the reels migration exactly once', () => {
+    const path = databaseFromOldSchema();
+
+    openDatabase(path);
+    closeDatabase();
+    const db = openDatabase(path);
+
+    const applied = (
+      db
+        .prepare('SELECT id FROM schema_migrations WHERE id = ?')
+        .all('009-facebook-reels') as { id: string }[]
+    ).length;
+
+    expect(applied).toBe(1);
   });
 });

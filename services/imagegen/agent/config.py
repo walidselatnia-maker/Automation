@@ -48,6 +48,14 @@ STALE_PROCESSING_TIMEOUT = int(os.environ.get("STALE_PROCESSING_TIMEOUT", "600")
 # article. See WorkerController.reload_before.
 TOKEN_MAX_AGE_BEFORE_BATCH = int(os.environ.get("TOKEN_MAX_AGE_BEFORE_BATCH", "0"))
 
+# Generate images by driving Flow's composer instead of sending the call.
+#
+# Off. It was the first answer to Google's 2026-09-22 build refusing our
+# captcha-gated calls, and it misses things in practice; upstream also found it
+# refused again after a cold Chrome restart (crisng95/flowkit#58). The widget
+# mint in extension/injected.js is the fix. This stays for trying by hand.
+IMAGE_USE_UI = os.environ.get("IMAGE_USE_UI", "0") not in ("", "0", "false", "False")
+
 # Send images over Flow's batchexecute transport instead of the REST API.
 #
 # On by default because REST images started answering
@@ -74,11 +82,67 @@ with open(_MODELS_FILE) as _f:
     _MODELS = json.load(_f)
 
 IMAGE_MODELS = _MODELS["image_models"]
+VIDEO_MODELS = _MODELS["video_models"]
+
+# Which Veo model generates a video from reference images.
+#
+# The tier decides which table in models.json is consulted; the override skips
+# the table entirely. Flow's UI has moved on to model names ("Omni") that are
+# not in this file, and the only way to learn one is to read a real request in
+# DevTools -- so the override exists to let that value be pasted in without a
+# redeploy. Empty means "use the table", which is the shipped behaviour.
+VIDEO_PAYGATE_TIER = os.environ.get("VIDEO_PAYGATE_TIER", "PAYGATE_TIER_ONE").strip()
+VIDEO_MODEL_KEY = os.environ.get("VIDEO_MODEL_KEY", "").strip()
+
+# The same override for the i2v fallback, deliberately separate: these are
+# different model families, and one variable forcing both would send an r2v key
+# to the start-image endpoint, rejected with the same unexplained
+# INVALID_ARGUMENT the fallback exists to get around.
+I2V_MODEL_KEY = os.environ.get("VIDEO_I2V_MODEL_KEY", "").strip()
+
+# Skip reference-to-video entirely and generate from the first image.
+#
+# r2v is being retired. Flow Kit's model list for the endpoint Google is
+# migrating to accepts three video models and every one is i2v, and its own r2v
+# method refuses outright -- "its payload was never captured off the new UI".
+# Once r2v stops working here for good this turns one wasted submit per reel
+# into none, without a redeploy.
+VIDEO_FORCE_I2V = os.environ.get("VIDEO_FORCE_I2V", "") not in ("", "0", "false", "False")
+
+# Send video over Flow's batchexecute transport instead of the REST API.
+#
+# On by default because REST video answers INVALID_ARGUMENT and will not
+# come back: Flow Kit stopped sending video that way entirely when Flow
+# moved in September 2026. Set to 0 to fall back to the old path.
+VIDEO_USE_BATCH = os.environ.get("VIDEO_USE_BATCH", "1") == "1"
+
+# Same for images. When video moved, images were left on REST because REST
+# images still worked. Three days later they stopped:
+#
+#   {'code': 401, 'message': 'Request had invalid authentication credentials.
+#    Expected OAuth 2 access token, login cookie or other valid authentication
+#    credential.', 'status': 'UNAUTHENTICATED'}
+#
+# That is the bearer token itself being refused, not the request -- the token
+# sniffed off the page is no longer good for aisandbox-pa, because the page no
+# longer talks to aisandbox-pa. Same retirement, one endpoint at a time. The
+# batch path signs itself inside the tab and needs no sniffed token at all.
+#
+# Set to 0 to fall back to REST, for the day Google turns it back on.
+IMAGE_USE_BATCH = os.environ.get("IMAGE_USE_BATCH", "1") == "1"
+
+# Video generation is minutes, not the 30-90 seconds an image takes, so it gets
+# its own budget rather than inheriting numbers chosen for images.
+VIDEO_POLL_INTERVAL = int(os.environ.get("VIDEO_POLL_INTERVAL", "15"))
+VIDEO_MAX_POLLS = int(os.environ.get("VIDEO_MAX_POLLS", "80"))
 
 # --- API Endpoints ------------------------------------------
 # Frozen: these paths and their query shape are what the Flow UI calls.
 ENDPOINTS = {
     "generate_images": "/v1/projects/{project_id}/flowMedia:batchGenerateImages",
+    "generate_video": "/v1/video:batchAsyncGenerateVideoStartImage",
+    "generate_video_references": "/v1/video:batchAsyncGenerateVideoReferenceImages",
+    "check_video_status": "/v1/video:batchCheckAsyncVideoGenerationStatus",
     "upload_image": "/v1/flow/uploadImage",
     "get_credits": "/v1/credits",
     "get_media": "/v1/media/{media_id}",

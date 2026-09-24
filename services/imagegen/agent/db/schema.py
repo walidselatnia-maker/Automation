@@ -37,6 +37,17 @@ CREATE TABLE IF NOT EXISTS job (
     -- Which image model, as chosen on the platform's Settings page: one of
     -- the model keys, or 'auto' for Pro first and the others as fallbacks.
     image_model   TEXT NOT NULL DEFAULT 'auto',
+
+    -- 'image' or 'video'. Defaulted so every row written before video existed
+    -- reads back correctly, and so the image path needs no changes at all.
+    kind          TEXT NOT NULL DEFAULT 'image'
+                  CHECK(kind IN ('image','video')),
+
+    -- Video only: the source images to compose from, and the Flow operation
+    -- handed back at submit time that the worker polls until it resolves.
+    reference_urls TEXT NOT NULL DEFAULT '[]',
+    operation_json TEXT,
+
     status        TEXT NOT NULL DEFAULT 'PENDING'
                   CHECK(status IN ('PENDING','PROCESSING','COMPLETED','FAILED')),
     media_id      TEXT,
@@ -80,6 +91,17 @@ async def get_db() -> aiosqlite.Connection:
 # data and it cannot fail on a second run.
 ADDED_COLUMNS = [
     ("job", "project_id", "TEXT NOT NULL DEFAULT ''"),
+    # Video, added alongside images rather than in a table of its own: a job is
+    # still "a prompt went to Flow and something came back", and the queue,
+    # retry, stale-reset and watchdog logic are all worth having once.
+    ("job", "kind", "TEXT NOT NULL DEFAULT 'image'"),
+    # The presenter a clip is composed with: a character and a voice, both
+    # assets in the Flow project. NULL for a clip with nobody in it, and for
+    # every image job.
+    ("job", "character_media_id", "TEXT"),
+    ("job", "voice_media_id", "TEXT"),
+    ("job", "reference_urls", "TEXT NOT NULL DEFAULT '[]'"),
+    ("job", "operation_json", "TEXT"),
     ("job", "image_model", "TEXT NOT NULL DEFAULT 'auto'"),
 ]
 

@@ -36,6 +36,18 @@ MEDIA_HOST = "flow-content.google"
 
 RPC_GEN_IMAGE = "ogiZ0b"
 RPC_GEN_VIDEO = "eb1hJf"
+
+#: Ingredients to video: the scene's images, the presenter's voice, and the
+#: presenter, each in its own reference slot, and the model that composes
+#: them. Captured 2026-09-16 from the Flow UI; see
+#: tests/test_reel_request_shape.py.
+RPC_GEN_REEL = "MZZa6b"
+REEL_MODEL = "abra_r2v_10s"
+
+#: The crop box the UI puts on every ingredient image when nothing was
+#: reframed by hand. Not the same arrangement as FULL_FRAME_CROP, which is
+#: what image-to-video sends; the ingredient slot has its own.
+REEL_IMAGE_CROP = [0.003875968992248069, None, 0.9961240310077519, 1]
 RPC_OPERATION = "jwpduf"
 RPC_PROJECT_MEDIA = "Zzl0ze"
 RPC_MEDIA = "as29s"
@@ -355,6 +367,36 @@ def video_request(prompt: str, project_id: str, source_media_id: str,
         [_client_uuid(), 2],
     ]
     return build_envelope(RPC_GEN_VIDEO, inner)
+
+
+def reel_request(prompt: str, project_id: str, image_media_ids: list[str],
+                 character_media_id: Optional[str] = None,
+                 voice_media_id: Optional[str] = None,
+                 aspect: Any = VIDEO_ASPECT_PORTRAIT) -> str:
+    """One clip from ingredients: the scene's images and, when there is one,
+    the presenter and their voice.
+
+    Slot for slot what the UI sends. Images sit in slot 1, each with the
+    full-frame crop; the voice in slot 7; the character in slot 9. A clip
+    with no presenter sends None in 7 and 9 rather than leaving them out,
+    because the slot count is part of the shape.
+    """
+    if not image_media_ids:
+        raise ValueError("a reel clip needs at least one image")
+    item = [
+        [None, None, [[[prompt]]]],
+        [[None, mid, None, None, None, REEL_IMAGE_CROP] for mid in image_media_ids],
+        REEL_MODEL,
+        resolve_video_aspect(aspect),
+        None,
+        [None, None, None, None, _client_uuid(), _client_uuid()],
+        None,
+        [[voice_media_id]] if voice_media_id else None,
+        None,
+        [[character_media_id]] if character_media_id else None,
+    ]
+    inner = [[item], _context(project_id), [_client_uuid(), 2]]
+    return build_envelope(RPC_GEN_REEL, inner)
 
 
 def upload_request(image_b64: str, project_id: str, mime_type: str = "image/jpeg",

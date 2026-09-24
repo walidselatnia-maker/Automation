@@ -13,6 +13,12 @@ import {
 } from './layout.js';
 import { BUFFER_ACCOUNT_LIMIT, hasSecret, type BufferAccount } from '../../db/repos.js';
 import type {
+  FbPageRow,
+  FbTokenView,
+  ReelCandidate,
+  ReelView,
+} from '../../db/repos.js';
+import type {
   DecisionRow,
   EventRow,
   KeywordRow,
@@ -22,7 +28,18 @@ import type {
   StepRow,
 } from '../../db/repos.js';
 import type { KeywordView, LinkView, SiteView } from '../../core/types.js';
+import type { PresenterRow } from '../../db/repos.js';
 import { formatMinutes } from '../../core/selector.js';
+import { scenesFor } from '../../reels/plan.js';
+import { ARTICLE_ROLES, MAX_REFERENCES, type ArticleRole, type ReelMode } from '../../reels/compose.js';
+
+const ROLE_LABEL: Record<ArticleRole, string> = {
+  feature: 'Feature',
+  topShot: 'Top shot',
+  textureMacro: 'Texture macro',
+  beforeAfter: 'Before / after',
+};
+import type { ReelFormat } from '../../reels/formats.js';
 import type { Endpoint } from '../../llm/pool.js';
 import type { SettingSpec } from '../../settings.js';
 import type { Supply } from '../../core/supply.js';
@@ -33,7 +50,6 @@ import type {
   KeywordListView,
   SharedImageInfo,
 } from '../../db/repos.js';
-import type { DataCounts } from '../../db/maintenance.js';
 
 /* =========================================================================
  * Dashboard
@@ -74,7 +90,10 @@ export interface DashboardData {
  * A <dialog>, so the modal behaviour, the backdrop and Escape to close are the
  * browser's rather than three more handlers to maintain.
  */
-function runPicker(data: DashboardData): Html {
+/** What the manual run picker needs: the sites, the keywords, their links, and whether a run is on. */
+export type RunPickerData = Pick<DashboardData, 'sites' | 'keywords' | 'links' | 'busy'>;
+
+export function runPicker(data: RunPickerData): Html {
   // Paused sites are listed, and labelled. Pausing stops the scheduler from
   // choosing a site; it is not meant to stop a person who names it.
   const runnable = data.sites;
@@ -186,184 +205,39 @@ function runPicker(data: DashboardData): Html {
   `;
 }
 
-export function dashboardPage(data: DashboardData): Html {
-  const problems = data.problems.length
-    ? html`<div class="flash warn">
-        <strong>Configuration needs attention</strong>
-        <ul>
-          ${data.problems.map((p) => html`<li>${p}</li>`)}
-        </ul>
-      </div>`
-    : raw('');
-
-  // A run in progress gets its own controls. Without them a run that hung had
-  // to be waited out: the lock only goes stale after ninety minutes, and until
-  // then nothing else can start and the page just says it is running.
-  const busy = data.busy
-    ? html`<div class="flash ok spread">
-        <span>A run is in progress (started ${timeAgo(data.lockedAt)}).</span>
-        <span class="row wrap">
-          <form method="post" action="/run/restart">
-            <button type="submit"
-                    title="Stop it and pick up from the last completed step">
-              Restart
-            </button>
-          </form>
-          <form method="post" action="/run/stop"
-                onsubmit="return confirm('Stop this run? It will be marked failed.')">
-            <button class="danger" type="submit">Stop</button>
-          </form>
-        </span>
-      </div>`
-    : raw('');
-
+/** Decisions as a page of its own, under Activity. */
+export function decisionsPage(
+  cycles: { cycle_id: string; created_at: string; n: number }[],
+  selected: string | null,
+  rows: DecisionRow[],
+  activity: { day: string; published: number; failed: number }[] = [],
+): Html {
   return html`
-    <div class="spread">
-      <div>
-        <h1>Dashboard</h1>
-        <p class="subtitle">
-          ${data.automationOn
-            ? 'Automation is running. The scheduler publishes at most one article per check.'
-            : 'Automation is off. Turn it on in Settings when you are ready.'}
-        </p>
-      </div>
-      <div class="row">
-        <form method="post" action="/run-now">
-          <input type="hidden" name="mode" value="dry" />
-          <button type="submit" ${data.busy ? raw('disabled') : raw('')}
-                  title="Run the whole pipeline and stop before publishing, so you can read the article first">
-            Dry run
-          </button>
-        </form>
-        <button class="primary" type="button" id="run-once-open"
-                ${data.busy ? raw('disabled') : raw('')}>
-          Run once now
-        </button>
-      </div>
-    </div>
+    <h1>Decisions</h1>
+    <p class="subtitle">Why the scheduler picked what it picked -- or nothing.</p>
 
-    ${runPicker(data)}
-
-    ${problems} ${busy}
-
-    <div class="grid">
-      <div class="stat"><div class="value">${data.publishedToday}</div><div class="label">Published today</div></div>
-      <div class="stat"><div class="value">${data.failedToday}</div><div class="label">Failed today</div></div>
-      <div class="stat"><div class="value">${data.eligibility.filter((e) => e.eligible).length}</div><div class="label">Sites eligible now</div></div>
-      <div class="stat ${data.supply.level === 'ok' ? '' : `supply-${data.supply.level}`}">
-        <div class="value">${data.supply.readyPairs}</div>
-        <div class="label">Articles queued</div>
-        <div class="muted small">
-          ${data.supply.daysRemaining === null
-            ? 'no active demand'
-            : data.supply.daysRemaining >= 1
-              ? `~${Math.floor(data.supply.daysRemaining)} day(s) left`
-              : 'less than a day left'}
-        </div>
-      </div>
-    </div>
-
-    ${data.activity.length
+    ${activity.length
       ? html`<div class="card">
           <div class="spread" style="align-items:center">
-            <h3 style="margin:0">Last ${data.activity.length} days</h3>
+            <h3 style="margin:0">Last ${activity.length} days</h3>
             <span class="muted small">
               <span class="key brand"></span> published
               <span class="key red"></span> failed
             </span>
           </div>
-          <div class="chart">${sparkline(data.activity, { width: 720, height: 64 })}</div>
+          <div class="chart">${sparkline(activity, { width: 720, height: 64 })}</div>
         </div>`
       : raw('')}
 
-    ${heldSection(data.held)}
-
-    <h2>Site status</h2>
-    <div class="card table-wrap">
-      ${data.sites.length === 0
-        ? emptyState('No sites yet. Add one under Sites.')
-        : html`<table>
-            <thead>
-              <tr><th>Site</th><th>Status</th><th>Today</th><th>Last publish</th><th>Eligible now?</th></tr>
-            </thead>
-            <tbody>
-              ${data.sites.map((site) => {
-                const verdict = data.eligibility.find((e) => e.domain === site.domain);
-                return html`<tr>
-                  <td><a href="/sites">${site.domain}</a><div class="muted small">${site.name}</div></td>
-                  <td>${statusBadge(site.status)}</td>
-                  <td class="nowrap">${site.publishedToday} / ${site.dailyTarget}</td>
-                  <td class="nowrap muted">${timeAgo(site.lastPublishAt)}</td>
-                  <td>
-                    ${verdict?.eligible
-                      ? html`<span class="badge ok">yes</span>`
-                      : html`<span class="badge muted">no</span>
-                          <div class="muted small">${verdict?.reason ?? ''}</div>`}
-                  </td>
-                </tr>`;
-              })}
-            </tbody>
-          </table>`}
-    </div>
-
-    <h2>Recent runs <a class="button small" href="/runs">All runs</a></h2>
-    <div class="card table-wrap scroll-y">
-      ${data.recentRuns.length === 0
-        ? emptyState('No runs yet.')
-        : runTable(data.recentRuns)}
-    </div>
-
-    ${decisionsSection(data.cycles, data.selectedCycle, data.decisions)}
+    ${decisionsSection(cycles, selected, rows, '/decisions')}
   `;
 }
 
-/**
- * Articles that are finished and waiting for a person.
- *
- * Deliberately above the site table: an article sitting here is work already
- * paid for that is doing nothing, and it is the one thing on this page that
- * only moves when someone acts.
- */
-function heldSection(held: RunListRow[]): Html {
-  if (held.length === 0) return raw('');
-
-  return html`
-    <h2>Waiting for you</h2>
-    <div class="card table-wrap">
-      <table>
-        <thead>
-          <tr><th>Article</th><th>Site</th><th>Why it stopped</th><th>Written</th><th></th></tr>
-        </thead>
-        <tbody>
-          ${held.map(
-            (run) => html`<tr>
-              <td>
-                <strong>${run.title || run.seed_keyword || `Run #${run.id}`}</strong>
-                ${run.title ? html`<div class="muted small">${run.seed_keyword ?? ''}</div>` : raw('')}
-              </td>
-              <td class="mono small">${run.site_domain ?? '—'}</td>
-              <td>${runBadge(run)}</td>
-              <td class="nowrap muted small">${timeAgo(run.started_at)}</td>
-              <td class="nowrap"><a class="button small primary" href="/runs/${run.id}">Read it</a></td>
-            </tr>`,
-          )}
-        </tbody>
-      </table>
-    </div>
-  `;
-}
-
-/**
- * Why the scheduler did what it did.
- *
- * This had its own page, which meant leaving the dashboard to answer a
- * question the dashboard had just raised — "why is nothing publishing?". It is
- * one table and a row of buttons, so it belongs under the numbers it explains.
- */
 function decisionsSection(
   cycles: { cycle_id: string; created_at: string; n: number }[],
   selected: string | null,
   rows: DecisionRow[],
+  base = '/',
 ): Html {
   if (cycles.length === 0) {
     return html`
@@ -385,7 +259,7 @@ function decisionsSection(
       <div class="row wrap">
         ${cycles.map(
           (c) => html`<a class="button small ${c.cycle_id === selected ? 'primary' : ''}"
-            href="/?cycle=${c.cycle_id}#decisions">${timeAgo(c.created_at)} (${c.n})</a>`,
+            href="${base}?cycle=${c.cycle_id}#decisions">${timeAgo(c.created_at)} (${c.n})</a>`,
         )}
       </div>
     </div>
@@ -448,8 +322,16 @@ function runTable(runs: RunListRow[]): Html {
 export function runsPage(runs: RunListRow[], page: number, total: number): Html {
   const pages = Math.max(1, Math.ceil(total / 50));
   return html`
-    <h1>Runs</h1>
-    <p class="subtitle">${total} run(s) recorded.</p>
+    <div class="spread">
+      <div>
+        <h1>Articles</h1>
+        <p class="subtitle">
+          ${total} article(s) so far. Open one to see every step, what it cost, and
+          why it failed if it did.
+        </p>
+      </div>
+      <a class="button" href="/data/export/articles" download>Export CSV</a>
+    </div>
     <div class="card table-wrap">
       ${runs.length === 0 ? emptyState('No runs yet.') : runTable(runs)}
     </div>
@@ -582,15 +464,21 @@ function approvalBar(
       <strong>
         ${run.hold === 'dry'
           ? 'Dry run — nothing was published'
-          : 'Written and waiting for your approval'}
+          : duplicate && duplicate.similarity >= 1
+            ? 'Held — this title is already on the site'
+            : 'Written and waiting for your approval'}
       </strong>
       <div class="small" style="margin-top:6px">
         ${run.hold === 'dry'
           ? html`This ran the whole pipeline against ${run.title ? 'the keyword' : 'a keyword'} and
               stopped before posting. The images were generated and uploaded; only the article
               itself was not published. Publish it anyway if you like what you see.`
-          : html`This site has automatic publishing turned off, so every article stops here.
-              Approving publishes it and continues to Pinterest exactly as a normal run would.`}
+          : duplicate && duplicate.similarity >= 1
+            ? html`An article with this exact title is already published here, so this one
+                stopped before posting rather than putting a second copy on the site. Approve
+                only if you mean to have both; otherwise discard it.`
+            : html`This site has automatic publishing turned off, so every article stops here.
+                Approving publishes it and continues to Pinterest exactly as a normal run would.`}
       </div>
 
       ${duplicate
@@ -765,12 +653,17 @@ function prettyJson(json: string): string {
  * Sites
  * ====================================================================== */
 
-export function sitesPage(sites: SiteRow[], views: SiteView[]): Html {
+export function sitesPage(
+  sites: SiteRow[],
+  views: SiteView[],
+  eligibility: { domain: string; eligible: boolean; reason: string }[] = [],
+): Html {
   return html`
     <h1>Sites</h1>
     <p class="subtitle">
-      Daily counts and last-publish times are computed from the run history, not stored, so
-      they can never drift out of step with reality.
+      Every website you publish to. Each one has its own daily target, gap between
+      posts, and tokens. "Can run now?" says whether the platform would pick it at
+      this moment, and why not if it would not.
     </p>
 
     ${sites.length === 0
@@ -836,7 +729,8 @@ export function sitesPage(sites: SiteRow[], views: SiteView[]): Html {
                   <input type="checkbox" id="pick-all" title="Select every site" />
                 </th>
                 <th>Domain</th><th>Status</th><th>Publishing</th><th>Target</th>
-                <th>Interval</th><th>Credentials</th><th>Today</th><th>Last publish</th><th></th>
+                <th>Interval</th><th>Credentials</th><th>Today</th><th>Last publish</th>
+                <th>Can run now?</th><th></th>
               </tr>
             </thead>
             <tbody>
@@ -873,6 +767,16 @@ export function sitesPage(sites: SiteRow[], views: SiteView[]): Html {
                   </td>
                   <td>${v?.publishedToday ?? 0}</td>
                   <td class="nowrap muted">${timeAgo(v?.lastPublishAt ?? null)}</td>
+                  <td>
+                    ${(() => {
+                      const verdict = eligibility.find((e) => e.domain === s.domain);
+                      if (!verdict) return raw('');
+                      return verdict.eligible
+                        ? html`<span class="badge ok">yes</span>`
+                        : html`<span class="badge muted">no</span>
+                            <div class="muted small">${verdict.reason}</div>`;
+                    })()}
+                  </td>
                   <td class="nowrap"><a class="button small" href="/sites/${s.id}">Edit</a></td>
                 </tr>`;
               })}
@@ -1177,24 +1081,28 @@ function siteForm(site: SiteRow | null): Html {
           'api_token',
           'Site API token',
           site?.api_token_encrypted ?? '',
-          'Bearer token for the /api/recipe, /api/upload and /api/categories endpoints on this domain.',
+          "The token that lets the platform post articles and upload images to this website. From the site's own admin.",
         )}
         ${secretField(
           'buffer_token',
           'Buffer API token',
           site?.buffer_token_encrypted ?? '',
-          'The Buffer account belonging to this site. Its channel is resolved automatically.',
+          "The Buffer account that schedules this site's Pinterest pins. The Pinterest channel is found automatically.",
         )}
       </div>
       <div class="field-row">
         <div class="field">
           <label>Pinterest username</label>
           <input type="text" name="pin_username" value="${site?.pin_username ?? ''}" />
-          <div class="help">Used to pick the right Buffer channel when there is more than one.</div>
+          <div class="help">Only needed if the Buffer account has more than one Pinterest profile: names which one.</div>
         </div>
         <div class="field">
-          <label>Project ID</label>
+          <label>Google Flow project</label>
           <input type="text" name="project_id" value="${site?.project_id ?? ''}" />
+          <div class="help">
+            The Flow project this site's images go into: the long code after /project/
+            in the address bar. Leave blank to use the shared one from Settings.
+          </div>
         </div>
       </div>
 
@@ -1714,35 +1622,44 @@ export function settingsPage(
     key: SettingSpec['group'];
     title: string;
     blurb?: string;
-    /** Rendered inside the card after the fields. */
+    /** Rendered inside the card after the fields: links or a picker. */
     footer?: Html;
   }[] = [
-    { key: 'general', title: 'General' },
-    { key: 'schedule', title: 'Schedule' },
-    { key: 'retry', title: 'Retries' },
-    { key: 'llm', title: 'LLM' },
+    { key: 'general', title: 'General', blurb: 'The main switch.' },
+    {
+      key: 'schedule',
+      title: 'Schedule',
+      blurb: 'How often the platform checks for work, and how long one article may take.',
+    },
+    { key: 'retry', title: 'Retries', blurb: 'What happens when an article fails.' },
+    { key: 'llm', title: 'Article writer', blurb: 'The AI service that writes the articles.' },
     {
       key: 'images',
       title: 'Image generation',
+      blurb: 'Images are generated in Google Flow through the browser under Setup → Browser.',
       footer: imageModelPicker(values.get('image_model') ?? 'auto', imageModels),
     },
-    { key: 'buffer', title: 'Buffer' },
-    { key: 'telegram', title: 'Telegram' },
+    { key: 'buffer', title: 'Pinterest (Buffer)', blurb: 'A pin for every article, scheduled through Buffer.' },
+    {
+      key: 'facebook',
+      title: 'Facebook',
+      // The tokens and pages live on their own page: they are tables, not
+      // fields, and the switch here is the only thing about Facebook that
+      // belongs in a settings form.
+      footer: html`
+        <div class="row wrap field-links">
+          <a class="button primary" href="/settings/facebook">Tokens &amp; pages</a>
+        </div>
+      `,
+    },
+    { key: 'telegram', title: 'Telegram', blurb: 'Messages to your phone when something needs you.' },
   ];
 
   return html`
-    <h1>Settings</h1>
+    <h1>General</h1>
     <p class="subtitle">
-      Everything the platform needs, in one form. Nothing here is edited by hand
-      on the server.
+      How the platform behaves. Every change applies as soon as you save.
     </p>
-
-    <div class="row wrap" style="margin-bottom:16px">
-      <a class="button" href="/settings/keys">LLM API keys</a>
-      <a class="button" href="/settings/prompts">Prompts &amp; models</a>
-      <a class="button" href="/settings/account">Change password</a>
-      <a class="button" href="/settings/data">History &amp; storage</a>
-    </div>
 
     ${problems.length
       ? html`<div class="flash warn">
@@ -1760,6 +1677,7 @@ export function settingsPage(
         if (fields.length === 0) return raw('');
         return html`
           <h2>${group.title}</h2>
+          ${group.blurb ? html`<p class="subtitle">${group.blurb}</p>` : raw('')}
           <div class="card">
             ${fields.map((spec) => settingField(spec, values.get(spec.key) ?? ''))}
             ${group.footer ?? raw('')}
@@ -1781,11 +1699,9 @@ export function keysPage(endpoints: Endpoint[], baseUrl: string): Html {
   return html`
     <h1>LLM API keys</h1>
     <p class="subtitle">
-      Every key here talks to the same provider — <span class="mono">${baseUrl}</span>,
-      set under Settings &rarr; LLM. Keys exist to spread that provider's rate
-      limit, not to pick models. Requests go to the least recently used healthy
-      key; on a 429 the same request is retried on the next one, so a throttled
-      key never breaks a run.
+      The API keys the article writer uses, all from <span class="mono">${baseUrl}</span>.
+      More keys means more articles per hour: when one key hits its limit, the
+      next one is used. Keys do not choose the model &mdash; that is under Prompts.
     </p>
 
     <div class="card table-wrap">
@@ -1876,12 +1792,12 @@ export function keysPage(endpoints: Endpoint[], baseUrl: string): Html {
             <div class="field">
               <label>Restrict to models</label>
               <input type="text" name="models" placeholder="leave blank for all models" />
-              <div class="help">Comma separated. Normally blank &mdash; any key can serve any model.</div>
+              <div class="help">Leave blank. Only if this key may not be used for some models.</div>
             </div>
             <div class="field">
               <label>Override base URL</label>
               <input type="text" name="base_url" placeholder="leave blank to use the shared URL" />
-              <div class="help">Only for mixing in a self-hosted instance.</div>
+              <div class="help">Leave blank unless this key belongs to a different provider.</div>
             </div>
           </div>
         </details>
@@ -1968,8 +1884,11 @@ function settingField(spec: SettingSpec, value: string): Html {
 
 export function eventsPage(events: EventRow[]): Html {
   return html`
-    <h1>Event log</h1>
-    <p class="subtitle">Technical errors and scheduler activity.</p>
+    <h1>Events</h1>
+    <p class="subtitle">
+      A log of technical problems and what the scheduler did. If an article failed
+      and its page did not say enough, the reason is usually here.
+    </p>
     <div class="card table-wrap">
       ${events.length === 0
         ? emptyState('Nothing logged yet.')
@@ -2030,16 +1949,14 @@ export function promptsPage(
   return html`
     <h1>Prompts</h1>
     <p class="subtitle">
-      These are the product. Article quality lives here, not in the code that
-      sends them. Every edit is stored in the database, so it survives a
-      redeploy &mdash; the shipped text stays underneath as the version you can
-      always revert to, and the last ${PROMPT_VERSIONS_KEPT} saves of each are
+      The instructions the AI follows at each step. Editing them changes how
+      articles are written. Every edit is saved and the original is always there
+      to go back to; the last ${PROMPT_VERSIONS_KEPT} saves of each are
       kept so you can go back to this morning rather than all the way.
     </p>
     <p class="subtitle">
-      The model each prompt is sent to is set here too. It has nothing to do
-      with API keys: any key can serve any model, keys spread a rate limit, and
-      this decides quality.
+      Each prompt is sent to one AI model, chosen here. A bigger model writes
+      better and costs more; API keys have nothing to do with this choice.
     </p>
 
     ${editedCount > 0
@@ -2242,181 +2159,6 @@ function diffBlock(older: string, newer: string): Html {
     ${removed.map((line) => html`<div class="del">- ${line}</div>`)}
     ${added.map((line) => html`<div class="add">+ ${line}</div>`)}
   </div>`;
-}
-
-/* =========================================================================
- * History and storage
- * ====================================================================== */
-
-/**
- * The tables that grow forever, with a way to take them away.
- *
- * Everything on this page is history: runs, the steps under them, the
- * scheduler's reasoning, the event log. None of it is derived state, so
- * deleting any of it changes nothing about what the platform will do next —
- * which is exactly why the export sits beside the delete rather than behind
- * a separate page. Take the copy, then clear.
- */
-export function dataPage(counts: DataCounts, retentionDays: number): Html {
-  const clearCard = (
-    what: 'runs' | 'decisions' | 'events',
-    title: string,
-    rows: number,
-    blurb: Html,
-    exportName: string,
-  ): Html => html`
-    <div class="card">
-      <div class="spread">
-        <div>
-          <h3 style="margin-bottom:4px">${title}</h3>
-          <div class="muted small">${rows} row(s) stored</div>
-        </div>
-        <a class="button small" href="/data/export/${exportName}" download>Export CSV</a>
-      </div>
-      <p class="muted small">${blurb}</p>
-      <form method="post" action="/data/clear" class="row wrap"
-            onsubmit="return confirm('Delete this history? The export is the only copy.')">
-        <input type="hidden" name="what" value="${what}" />
-        <label for="days-${what}" style="margin:0">Older than</label>
-        <select id="days-${what}" name="days" style="width:auto">
-          <option value="90">90 days</option>
-          <option value="30" selected>30 days</option>
-          <option value="7">7 days</option>
-          <option value="0">everything</option>
-        </select>
-        <button class="danger" type="submit">Clear</button>
-      </form>
-    </div>
-  `;
-
-  return html`
-    <div class="spread">
-      <div>
-        <h1>History &amp; storage</h1>
-        <p class="subtitle">
-          What has piled up since the platform started, and how to take it away.
-          None of this is used to decide what publishes next, so clearing it is
-          safe &mdash; but it is the only record of what happened, so export
-          first.
-        </p>
-      </div>
-      <a class="button" href="/settings">Back to settings</a>
-    </div>
-
-    <div class="grid">
-      <div class="stat"><div class="value">${counts.runs}</div><div class="label">Runs</div></div>
-      <div class="stat"><div class="value">${counts.steps}</div><div class="label">Run steps</div></div>
-      <div class="stat"><div class="value">${counts.cycles}</div><div class="label">Scheduler checks</div></div>
-      <div class="stat"><div class="value">${counts.events}</div><div class="label">Log events</div></div>
-    </div>
-
-    <p class="muted small">
-      ${counts.oldestRunAt
-        ? html`Oldest run recorded ${timeAgo(counts.oldestRunAt)}.`
-        : raw('No runs recorded yet.')}
-      Decisions and events older than ${retentionDays} day(s) are pruned
-      automatically &mdash; that number is <em>Keep logs for</em> under Settings
-      &rarr; Schedule. Runs are never pruned automatically, because a run is the
-      record of an article you published.
-    </p>
-
-    <h2>Clear history</h2>
-
-    ${clearCard(
-      'runs',
-      'Runs and their steps',
-      counts.runs,
-      html`One row per publishing attempt, plus every step underneath it &mdash;
-        prompts, model outputs, timings. This is the bulk of the database.
-        A run still in progress is never deleted.`,
-      'runs',
-    )}
-
-    ${clearCard(
-      'decisions',
-      'Scheduler decisions',
-      counts.decisions,
-      html`Why each site was picked or skipped, written on every check. At one
-        check every few minutes this is the fastest-growing table here, and it
-        is only useful while you are asking why something did not publish.`,
-      'decisions',
-    )}
-
-    ${clearCard(
-      'events',
-      'Event log',
-      counts.events,
-      html`Technical errors and scheduler activity &mdash; the Events page.`,
-      'events',
-    )}
-
-    <h2>Shared article images</h2>
-    <div class="card">
-      <div class="spread">
-        <div>
-          <h3 style="margin-bottom:4px">Remembered image sets</h3>
-          <div class="muted small">${counts.sharedImages} keyword(s) with a stored set</div>
-        </div>
-      </div>
-      <p class="muted small">
-        When a keyword runs on several sites, the first site to publish it
-        becomes the source of its four article images and the rest copy them
-        instead of asking Google again. Clearing this forgets those URLs: no
-        image is deleted anywhere, the next site to publish simply generates a
-        fresh set. Do it when you want new pictures for keywords you have
-        already run.
-      </p>
-      <form method="post" action="/data/clear"
-            onsubmit="return confirm('Forget every shared image set? Future runs will generate new images.')">
-        <input type="hidden" name="what" value="shared-images" />
-        <button class="danger" type="submit">Forget shared images</button>
-      </form>
-    </div>
-
-    <h2>Export everything</h2>
-    <div class="card">
-      <p class="muted small" style="margin-top:0">
-        Plain CSV, one file per table, nothing encrypted &mdash; site API tokens
-        and LLM keys are deliberately not included in any of these.
-      </p>
-      <div class="row wrap">
-        <a class="button" href="/data/export/runs" download>Runs</a>
-        <a class="button" href="/data/export/steps" download>Run steps</a>
-        <a class="button" href="/data/export/decisions" download>Decisions</a>
-        <a class="button" href="/data/export/events" download>Events</a>
-        <a class="button" href="/data/export/keywords" download>Keywords</a>
-        <a class="button" href="/data/export/sites" download>Sites</a>
-      </div>
-    </div>
-
-    <h2>Back it all up</h2>
-    <div class="card">
-      <p class="muted small" style="margin-top:0">
-        One file holding the whole database: sites, keywords, settings, history. Written with
-        <span class="mono">VACUUM INTO</span> rather than copied, because the database runs in
-        WAL mode and a plain copy of the file silently omits every recent write.
-      </p>
-      <p class="muted small">
-        Site tokens and API keys inside it stay encrypted with
-        <span class="mono">ENCRYPTION_KEY</span>, which lives in the data volume and not in this
-        file &mdash; so restoring onto a fresh deployment needs that key as well, and this file
-        alone does not hand anyone your credentials.
-      </p>
-      <a class="button primary" href="/data/backup" download>Download the database</a>
-    </div>
-
-    <h2>Reclaim disk space</h2>
-    <div class="card">
-      <p class="muted small" style="margin-top:0">
-        SQLite keeps the space a delete frees and reuses it later, so the file
-        on disk does not shrink on its own. This rewrites it at its true size.
-        It takes a moment and blocks other writes while it runs.
-      </p>
-      <form method="post" action="/data/compact">
-        <button type="submit">Compact the database</button>
-      </form>
-    </div>
-  `;
 }
 
 /* =========================================================================
@@ -2731,6 +2473,834 @@ function imagesSection(
             and records them here; every site after that copies them, unless you have turned
             <span class="mono">reuse</span> off for that site above.
           </p>`}
+    </div>
+  `;
+}
+
+/* =========================================================================
+ * Reels
+ * ====================================================================== */
+
+/** The four article images, as the generate-images step recorded them. */
+export interface ReelImages {
+  feature: string;
+  topShot: string;
+  textureMacro: string;
+  beforeAfter: string;
+}
+
+export interface ReelsPageData {
+  candidates: (ReelCandidate & { images: ReelImages | null })[];
+  reels: ReelView[];
+  configured: boolean;
+  enabled: boolean;
+  pages: number;
+  /** Every Facebook page, for publishing a reel no page's niche claimed. */
+  fbPages: FbPageRow[];
+}
+
+const REEL_STATE: Record<string, { label: string; badge: string }> = {
+  draft: { label: 'Draft', badge: 'pending' },
+  generating: { label: 'Generating', badge: 'pending' },
+  ready: { label: 'Ready to review', badge: 'ok' },
+  publishing: { label: 'Publishing', badge: 'pending' },
+  published: { label: 'Published', badge: 'ok' },
+  failed: { label: 'Failed', badge: 'failed' },
+};
+
+/** An absolute URL for an image the site published. */
+const onSite = (domain: string | null, path: string): string =>
+  `https://${(domain ?? '').replace(/^https?:\/\//, '').replace(/\/+$/, '')}${path}`;
+
+/**
+ * One reel, as a tile.
+ *
+ * A tile rather than a table row: the thing being judged here is a video and
+ * four photographs, and a table forces that into a column narrow enough to
+ * wrap a title onto four lines while a 9:16 preview stretches the row past the
+ * height of a screen. Tiles let the media be the size it needs to be and the
+ * text sit under it.
+ */
+
+/**
+ * Publish a ready reel: straight to its page, or -- when no page has this
+ * niche -- to a page picked here and now. Picking one publishes to it and
+ * remembers it on the reel; it does not change the page's niche.
+ */
+export function publishControls(reel: ReelView, pages: FbPageRow[]): Html {
+  if (reel.status !== 'ready') return raw('');
+  if (reel.fb_page_id) {
+    return html`<form method="post" action="/reels/${reel.id}/publish">
+      <button class="primary" type="submit">Publish</button>
+    </form>`;
+  }
+  const enabled = pages.filter((p) => p.enabled === 1);
+  if (enabled.length === 0) {
+    return html`<a class="button" href="/settings/facebook">Add a Facebook page first</a>`;
+  }
+  return html`<form method="post" action="/reels/${reel.id}/publish" class="row wrap">
+    <select name="page_id" required>
+      <option value="">Pick a page…</option>
+      ${enabled.map((p) => html`<option value="${p.id}">${p.name || p.page_id}</option>`)}
+    </select>
+    <button class="primary" type="submit">Publish</button>
+  </form>`;
+}
+
+function reelTile(reel: ReelView, fbPages: FbPageRow[]): Html {
+  const state = REEL_STATE[reel.status] ?? { label: reel.status, badge: 'pending' };
+  const live = reel.fb_video_id ? `https://www.facebook.com/reel/${reel.fb_video_id}` : '';
+
+  return html`
+    <article class="tile">
+      <div class="tile-media">
+        ${reel.output_path
+          ? html`<video src="/reels/${reel.id}/video" controls muted playsinline preload="metadata"></video>`
+          : reel.video_url
+          ? html`<video src="${reel.video_url}" controls muted playsinline preload="metadata"></video>`
+          : html`<div class="tile-placeholder">
+              ${reel.status === 'generating' ? 'Generating…' : 'No video yet'}
+            </div>`}
+      </div>
+
+      <div class="tile-body">
+        <div class="row wrap">
+          ${statusBadge(state.badge)}<span class="small">${state.label}</span>
+        </div>
+
+        <div class="tile-title">
+          <a href="/reels/${reel.id}">${reel.run_title ?? '(untitled)'}</a>
+        </div>
+        <div class="help">
+          ${reel.site_domain ?? ''} &middot; ${reel.seed_keyword ?? ''}
+        </div>
+        <div class="help">
+          ${reel.page_name
+            ? html`To <strong>${reel.page_name}</strong>`
+            : html`No page has this niche &mdash; pick one below, or give a page the niche under
+                <a href="/settings/facebook">Channels &rarr; Facebook</a>`}
+        </div>
+
+        ${reel.error
+          ? html`<div class="tile-error small">
+              ${reel.error.length > 200 ? html`${reel.error.slice(0, 200)}…` : html`${reel.error}`}
+              <a href="/reels/${reel.id}">Full report</a>
+            </div>`
+          : raw('')}
+
+        <div class="row wrap tile-actions">
+          ${publishControls(reel, fbPages)}
+          ${reel.status === 'failed'
+            ? html`<form method="post" action="/reels/${reel.id}/retry">
+                <button type="submit">Retry</button>
+              </form>`
+            : raw('')}
+          ${live ? html`<a class="button" href="${live}" target="_blank" rel="noopener">View</a>` : raw('')}
+          <form method="post" action="/reels/${reel.id}/discard"
+                onsubmit="return confirm('Discard this reel?')">
+            <button class="danger" type="submit">Discard</button>
+          </form>
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+/** One published article that could become a reel. */
+function candidateTile(c: ReelCandidate & { images: ReelImages | null }): Html {
+  const images = c.images;
+
+  return html`
+    <article class="tile">
+      <div class="tile-strip">
+        ${images
+          ? [images.feature, images.topShot, images.textureMacro, images.beforeAfter].map(
+              (src) => html`<img src="${onSite(c.site_domain, src)}" alt="" loading="lazy">`,
+            )
+          : html`<div class="tile-placeholder">Images unavailable</div>`}
+      </div>
+
+      <div class="tile-body">
+        <div class="tile-title">${c.title || c.spy_title}</div>
+        <div class="help">
+          ${c.site_domain} &middot; ${c.seed_keyword} &middot; ${timeAgo(c.published_at ?? '')}
+        </div>
+        <div class="row wrap tile-actions">
+          ${images
+            ? html`<a class="button" href="/reels/new/${c.run_id}">Make a reel</a>`
+            : raw('')}
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+export function reelsPage(data: ReelsPageData): Html {
+  const working = data.reels.filter((r) => r.status !== 'published');
+  const published = data.reels.filter((r) => r.status === 'published');
+
+  return html`
+    <div class="spread">
+      <div>
+        <h1>Reels</h1>
+        <p class="subtitle">
+          Every published article whose niche has a page becomes a reel here. Make one by
+          hand from any article below.
+        </p>
+      </div>
+      <div class="row wrap">
+        <a class="button" href="/data/export/reels" download>Export CSV</a>
+        <a class="button" href="/settings/facebook">Facebook pages</a>
+      </div>
+    </div>
+
+    ${!data.configured
+      ? html`<div class="flash warn">
+          <strong>Facebook is not set up yet.</strong>
+          Add a token and give a page a niche under
+          <a href="/settings/facebook">Settings &rarr; Facebook</a>; reels are made automatically from then on.
+        </div>`
+      : !data.enabled
+        ? html`<div class="flash warn">
+            <strong>Reel publishing is switched off.</strong>
+            Reels can still be generated and reviewed. Turn on &ldquo;Publish reels to
+            Facebook&rdquo; in <a href="/settings">Settings</a> to release them.
+          </div>`
+        : raw('')}
+
+    <h2>In progress</h2>
+    ${working.length === 0
+      ? html`<div class="card">${emptyState('No reels on the go.')}</div>`
+      : html`<div class="grid tiles">${working.map((r) => reelTile(r, data.fbPages))}</div>`}
+
+    <h2>Make a reel from</h2>
+    <p class="subtitle">Published articles whose images are still on file.</p>
+    ${data.candidates.length === 0
+      ? html`<div class="card">
+          ${emptyState('Nothing to turn into a reel yet. Publish an article first.')}
+        </div>`
+      : html`<div class="grid tiles">${data.candidates.map(candidateTile)}</div>`}
+
+    ${published.length === 0
+      ? raw('')
+      : html`
+          <!-- Folded away: finished work is worth being able to find, and worth
+               nothing at all in the space where the current work is judged. -->
+          <details class="card">
+            <summary>Published (${published.length})</summary>
+            <div class="table-wrap scroll-y">
+              <table>
+                <thead><tr><th>Article</th><th>Page</th><th>When</th><th></th></tr></thead>
+                <tbody>
+                  ${published.map(
+                    (reel) => html`<tr>
+                      <td>${reel.run_title ?? '(untitled)'}</td>
+                      <td class="small">${reel.page_name ?? ''}</td>
+                      <td class="muted small nowrap">${timeAgo(reel.updated_at)}</td>
+                      <td class="nowrap">
+                        ${reel.fb_video_id
+                          ? html`<a class="button" target="_blank" rel="noopener"
+                                   href="https://www.facebook.com/reel/${reel.fb_video_id}">View</a>`
+                          : raw('')}
+                      </td>
+                    </tr>`,
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </details>`}
+  `;
+}
+
+export interface ReelComposerData {
+  candidate: ReelCandidate;
+  images: ReelImages;
+  caption: string;
+  page: FbPageRow | undefined;
+  /** Single: one clip from the prompt below and the ticked photos. Scenes: a storyboard. */
+  mode: ReelMode;
+  /** Single mode only: the prompt as the template renders it, for editing. */
+  prompt: string;
+  /** Single mode only: which photos are ticked to start with. */
+  references: readonly ArticleRole[];
+}
+
+/** What Setup → Reels shows and saves. */
+export interface ReelSettingsData {
+  mode: ReelMode;
+  singleReferences: readonly ArticleRole[];
+  lengthSeconds: number;
+  allowed: string[];
+  freshImages: boolean;
+  cta: string;
+  formats: ReelFormat[];
+}
+
+/**
+ * Setup → Reels: how every reel is made.
+ *
+ * Two ways to make one, and each way's own options live under its radio
+ * and show only when it is picked: the photo list means nothing to a
+ * storyboard, and length and shapes mean nothing to a single clip. What is
+ * true of both -- the call to action -- sits apart, below.
+ */
+export function reelSettingsPage(data: ReelSettingsData): Html {
+  const lengths = [15, 30, 45, 60];
+  const modeCard = (
+    mode: ReelMode,
+    title: string,
+    detail: string,
+  ) => html`<label class="choice ${data.mode === mode ? 'on' : ''}">
+    <input type="radio" name="reel_mode" value="${mode}"
+           ${data.mode === mode ? raw('checked') : raw('')} />
+    <span><strong>${title}</strong><span class="muted small">${detail}</span></span>
+  </label>`;
+
+  return html`
+    <h1>Reels</h1>
+    <p class="subtitle">
+      How every reel is made. Where it goes is decided per page under
+      <a href="/settings/facebook">Channels &rarr; Facebook</a>.
+    </p>
+
+    <form method="post" action="/settings/reels" id="reel-settings">
+      <h2>How a reel is made</h2>
+      <div class="card">
+        <div class="row wrap">
+          ${modeCard(
+            'single',
+            'One clip',
+            "One prompt and up to three of the article's photos go to Flow once. Ten seconds, ready in minutes.",
+          )}
+          ${modeCard(
+            'scenes',
+            'A storyboard',
+            'The model writes scenes; each is filmed on its own and they are joined. Longer, and more credits.',
+          )}
+        </div>
+
+        <div data-mode="single" ${data.mode === 'single' ? raw('') : raw('hidden')}>
+          <div class="field">
+            <label>Photos sent with the prompt</label>
+            <div class="row wrap">
+              ${ARTICLE_ROLES.map(
+                (role) => html`<label class="inline-check">
+                  <input type="checkbox" name="reel_single_references" value="${role}"
+                         ${data.singleReferences.includes(role) ? raw('checked') : raw('')} />
+                  ${ROLE_LABEL[role]}
+                </label>`,
+              )}
+            </div>
+            <div class="help">
+              Flow takes up to ${MAX_REFERENCES} and leans on the first most. They can be
+              changed for one reel on its Make a reel page.
+            </div>
+          </div>
+        </div>
+
+        <div data-mode="scenes" ${data.mode === 'scenes' ? raw('') : raw('hidden')}>
+          <div class="field">
+            <label for="reel_length_seconds">Length</label>
+            <select id="reel_length_seconds" name="reel_length_seconds">
+              ${lengths.map(
+                (n) => html`<option value="${n}" ${n === data.lengthSeconds ? raw('selected') : raw('')}>
+                  ${n} seconds &mdash; ${scenesFor(n)} scenes
+                </option>`,
+              )}
+            </select>
+            <div class="help">Each scene is one ten-second clip and costs its own video credits.</div>
+          </div>
+          <div class="field">
+            <label class="inline-check">
+              <input type="checkbox" name="reel_fresh_images" value="1"
+                     ${data.freshImages ? raw('checked') : raw('')} />
+              Make a new image for every scene
+            </label>
+            <div class="help">
+              Off, scenes are filmed from the article's own photos for nothing extra.
+            </div>
+          </div>
+          <div class="field">
+            <label>Shapes a storyboard can take</label>
+            ${data.formats.map(
+              (f) => html`<div>
+                <label class="inline-check">
+                  <input type="checkbox" name="reel_formats" value="${f.key}"
+                         ${data.allowed.includes(f.key) ? raw('checked') : raw('')} />
+                  <strong>${f.title}</strong>
+                  <span class="muted">&mdash; ${f.shape}</span>
+                </label>
+              </div>`,
+            )}
+            <div class="help">
+              A page never repeats a shape from its last four reels, so more ticked means
+              more variety.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <h2>Every reel</h2>
+      <div class="card">
+        <div class="field">
+          <label for="reel_cta_text">Call to action</label>
+          <input type="text" id="reel_cta_text" name="reel_cta_text" value="${data.cta}" />
+          <div class="help">
+            The last thing every reel says. The article link goes in the first comment.
+          </div>
+        </div>
+      </div>
+
+      <div class="save-bar">
+        <button class="primary" type="submit">Save</button>
+        <span class="muted small">Applies to the next reel.</span>
+      </div>
+    </form>
+
+    <script>
+      (function () {
+        var form = document.getElementById('reel-settings');
+        if (!form) return;
+        var radios = form.querySelectorAll('input[name="reel_mode"]');
+        var sections = form.querySelectorAll('[data-mode]');
+        function show() {
+          var picked = form.querySelector('input[name="reel_mode"]:checked');
+          var mode = picked ? picked.value : 'single';
+          for (var i = 0; i < sections.length; i++) {
+            sections[i].hidden = sections[i].dataset.mode !== mode;
+          }
+          for (var j = 0; j < radios.length; j++) {
+            radios[j].closest('.choice').classList.toggle('on', radios[j].checked);
+          }
+        }
+        for (var k = 0; k < radios.length; k++) radios[k].addEventListener('change', show);
+        show();
+      })();
+    </script>
+  `;
+}
+
+export function reelComposerPage(data: ReelComposerData): Html {
+  const shots: { key: keyof ReelImages; label: string }[] = [
+    { key: 'feature', label: 'Feature' },
+    { key: 'topShot', label: 'Top shot' },
+    { key: 'textureMacro', label: 'Texture macro' },
+    { key: 'beforeAfter', label: 'Before / after' },
+  ];
+
+  return html`
+    <h1>Make a reel</h1>
+    <p class="subtitle">
+      ${data.candidate.title || data.candidate.spy_title}
+      &middot; ${data.candidate.site_domain} &middot; ${data.candidate.seed_keyword}
+    </p>
+
+    <form method="post" action="/reels/new/${data.candidate.run_id}">
+      <div class="split">
+        <div class="card">
+          <h2>What it is made from</h2>
+          ${data.mode === 'single'
+            ? html`<p class="help">
+                  Tick up to ${MAX_REFERENCES} photos. Flow reads the dish from them together, so
+                  the clip shows this food and not a lookalike.
+                </p>
+                <div class="pick-grid">
+                  ${shots.map(
+                    (shot) => html`
+                      <label class="pick-tile">
+                        <input type="checkbox" name="reference" value="${shot.key}"
+                               ${data.references.includes(shot.key) ? raw('checked') : raw('')} />
+                        <img src="${onSite(data.candidate.site_domain, data.images[shot.key])}"
+                             alt="${shot.label}" loading="lazy">
+                        <span class="pick-label">${shot.label}</span>
+                      </label>`,
+                  )}
+                </div>
+                <div class="field">
+                  <label for="reel-prompt">Video prompt</label>
+                  <textarea id="reel-prompt" name="prompt" rows="14" class="mono"
+                            spellcheck="false">${data.prompt}</textarea>
+                  <div class="help">
+                    Sent as it is. The wording for every reel lives under Setup &rarr; Prompts
+                    (reel-video).
+                  </div>
+                </div>`
+            : html`<p class="help">
+                  The storyboard is written for this article and filmed from these
+                  photographs, scene by scene. Nothing to choose here.
+                </p>
+                <div class="pick-grid">
+                  ${shots.map(
+                    (shot) => html`
+                      <div class="pick-tile">
+                        <img src="${onSite(data.candidate.site_domain, data.images[shot.key])}"
+                             alt="${shot.label}" loading="lazy">
+                        <span class="pick-label">${shot.label}</span>
+                      </div>`,
+                  )}
+                </div>`}
+        </div>
+
+        <div>
+          <div class="card">
+            <h2>Where it goes</h2>
+            ${data.page
+              ? html`
+                  <p>
+                    <strong>${data.page.name || data.page.page_id}</strong>
+                  </p>
+                  <p class="help">
+                    The page for ${data.candidate.seed_keyword}.
+                    ${data.page.auto_publish === 1
+                      ? raw('It publishes automatically once the reel is ready.')
+                      : raw('It will be held for you to review.')}
+                  </p>`
+              : html`<div class="flash warn">
+                  No page has the niche <strong>${data.candidate.seed_keyword}</strong>. The
+                  reel will be made and then wait.
+                  <a href="/settings/facebook">Assign one</a> to send it somewhere.
+                </div>`}
+          </div>
+
+          <div class="card">
+            <div class="field">
+              <label for="reel-caption">Caption</label>
+              <textarea id="reel-caption" name="caption" rows="6"
+                        data-caption-url="/reels/new/${data.candidate.run_id}/caption">${data.caption}</textarea>
+              <p class="help" id="reel-caption-help">Writing a caption… the title is there meanwhile. The link goes in the first comment, not here.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="save-bar">
+        <button class="primary" type="submit">Make the reel</button>
+        <a class="button" href="/reels">Cancel</a>
+        <span class="muted small">
+          ${data.mode === 'single'
+            ? raw('One clip, a few minutes.')
+            : raw('The storyboard is written first, then each scene is filmed. Ten minutes or so.')}
+        </span>
+      </div>
+    </form>
+    ${raw(REEL_CAPTION_SCRIPT)}
+  `;
+}
+
+/**
+ * Fill the caption in once the model has written it.
+ *
+ * Fetched after the page is up rather than rendered into it: the model takes
+ * anywhere from two seconds to twenty and is sometimes down, and a page that
+ * waited on it sat past Cloudflare's hundred seconds and answered 524. Only the
+ * untouched box is replaced -- anyone who has started typing keeps what they
+ * wrote.
+ */
+const REEL_CAPTION_SCRIPT = `<script>
+(function () {
+  var box = document.getElementById('reel-caption');
+  var help = document.getElementById('reel-caption-help');
+  if (!box || !box.dataset.captionUrl) return;
+
+  var initial = box.value;
+  var done = function (text) {
+    if (help) help.textContent = text;
+  };
+
+  fetch(box.dataset.captionUrl, { credentials: 'same-origin' })
+    .then(function (r) { return r.ok ? r.json() : { caption: null }; })
+    .then(function (body) {
+      if (body && body.caption && box.value === initial) {
+        box.value = body.caption;
+        done('Written by the model. Edit it as you like. The link goes in the first comment, not here.');
+      } else if (body && body.caption) {
+        done('A caption was written, but you had already started typing, so yours was kept.');
+      } else {
+        done('The model did not answer, so the title is there to start from. The link goes in the first comment, not here.');
+      }
+    })
+    .catch(function () {
+      done('The model did not answer, so the title is there to start from. The link goes in the first comment, not here.');
+    });
+})();
+</script>`;
+
+/* =========================================================================
+ * Settings -> Facebook
+ * ====================================================================== */
+
+export interface FacebookSettingsData {
+  enabled: boolean;
+  tokens: FbTokenView[];
+  pages: FbPageRow[];
+  groups: string[];
+  presenters: PresenterRow[];
+}
+
+/**
+ * Two tables and nothing else.
+ *
+ * Tokens bring pages; a page takes a niche. The routing table this replaced
+ * asked three questions per row -- which site, which niche, which page --
+ * with a wildcard for two of them, and a person setting up one page for one
+ * niche had to work out which of the four combinations they meant. Now the
+ * page row asks one question, and the answer is in the row.
+ */
+
+export interface PresentersData {
+  presenters: PresenterRow[];
+  /** Page names per presenter id, for "used by". */
+  usedBy: Map<number, string[]>;
+}
+
+/** Setup → Presenters: the people who appear in reels. */
+export function presentersPage(data: PresentersData): Html {
+  return html`
+    <h1>Presenters</h1>
+    <p class="subtitle">
+      A presenter is a character you made in Google Flow, with a voice. Reels on a page
+      that has one show them on screen and let them speak. Make the character and the
+      voice in Flow first (Setup &rarr; Browser), then add them here.
+    </p>
+
+    <h2>Add a presenter</h2>
+    <div class="card">
+      <form method="post" action="/settings/presenters">
+        <div class="field-row">
+          <div class="field">
+            <label for="presenter-name">Name</label>
+            <input type="text" id="presenter-name" name="name" required placeholder="Rima" />
+            <div class="help">What you call them. It goes into the clip prompts as who is speaking.</div>
+          </div>
+          <div class="field">
+            <label for="presenter-voice-description">How they sound</label>
+            <input type="text" id="presenter-voice-description" name="voice_description"
+                   placeholder="warm, unhurried, mid-thirties" />
+            <div class="help">
+              A few words. The same words go into every scene so the delivery stays the same.
+            </div>
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label for="presenter-character">Character</label>
+            <input type="text" id="presenter-character" name="character" required
+                   placeholder="https://flow.google.com/u/0/project/…/character/…" />
+            <div class="help">
+              In Flow, open the character. The address bar ends in
+              <span class="mono">/character/&lt;id&gt;</span>: paste the whole address, or just the id.
+            </div>
+          </div>
+          <div class="field">
+            <label for="presenter-voice">Voice</label>
+            <input type="text" id="presenter-voice" name="voice"
+                   placeholder="paste the voice's address or id" />
+            <div class="help">
+              In Flow, open the voice you made for them and paste its address the same way.
+              Leave empty for a presenter who does not speak.
+            </div>
+          </div>
+        </div>
+        <button class="primary" type="submit">Add presenter</button>
+      </form>
+    </div>
+
+    <h2>Presenters</h2>
+    ${data.presenters.length === 0
+      ? html`<div class="card">${emptyState('No presenters yet. Reels show the dish only until there is one.')}</div>`
+      : html`<div class="card table-wrap">
+          <table>
+            <thead>
+              <tr><th>Name</th><th>How they sound</th><th>Character</th><th>Voice</th><th>Used by</th><th></th></tr>
+            </thead>
+            <tbody>
+              ${data.presenters.map((p) => {
+                const formId = `presenter-${p.id}`;
+                const pages = data.usedBy.get(p.id) ?? [];
+                return html`<tr>
+                  <td><input type="text" name="name" form="${formId}" value="${p.name}" /></td>
+                  <td><input type="text" name="voice_description" form="${formId}" value="${p.voice_description}" /></td>
+                  <td class="mono small">${p.flow_character_id}</td>
+                  <td class="mono small">${p.flow_voice_id || html`<span class="muted">none</span>`}</td>
+                  <td class="small">${pages.length ? pages.join(', ') : html`<span class="muted">no page yet</span>`}</td>
+                  <td class="nowrap">
+                    <form method="post" action="/settings/presenters/${p.id}" id="${formId}">
+                      <button type="submit" class="small">Save</button>
+                    </form>
+                    <form method="post" action="/settings/presenters/${p.id}/delete"
+                          onsubmit="return confirm('Remove ${p.name}? Pages using them go back to dish-only reels.')">
+                      <button type="submit" class="small danger">Remove</button>
+                    </form>
+                  </td>
+                </tr>`;
+              })}
+            </tbody>
+          </table>
+        </div>`}
+  `;
+}
+
+export function facebookSettingsPage(data: FacebookSettingsData): Html {
+  const tokenName = new Map(data.tokens.map((t) => [t.id, t.name]));
+
+  return html`
+    <h1>Facebook</h1>
+    <p class="subtitle">
+      Add a token, pick a niche for each page it brings, and every article in that niche
+      becomes a reel on that page.
+    </p>
+
+    ${data.enabled
+      ? raw('')
+      : html`<div class="flash warn">
+          Reels are switched off. Turn on <em>Publish reels to Facebook</em> under
+          <a href="/settings">Settings</a> when the pages below are ready.
+        </div>`}
+
+    <div class="card">
+      <h2>Tokens</h2>
+      <p class="help">
+        One per app. The platform reads every page the token can manage; you never type a
+        page id. A token from Business Settings &rarr; System Users does not expire.
+        Removing a token removes its pages.
+      </p>
+
+      ${data.tokens.length === 0
+        ? emptyState('No token yet. Add one below and its pages appear.')
+        : html`<div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>Name</th><th>Pages</th><th>Last checked</th><th></th></tr>
+              </thead>
+              <tbody>
+                ${data.tokens.map(
+                  (t) => html`<tr>
+                    <td>
+                      ${t.name}
+                      ${t.last_error
+                        ? html`<div class="small error">${t.last_error}</div>`
+                        : raw('')}
+                    </td>
+                    <td>${t.page_count}</td>
+                    <td class="small muted nowrap">
+                      ${t.last_synced_at ? timeAgo(t.last_synced_at) : 'never'}
+                    </td>
+                    <td class="nowrap">
+                      <form method="post" action="/settings/facebook/tokens/${t.id}/refresh"
+                            style="display:inline">
+                        <button type="submit" class="small">Refresh</button>
+                      </form>
+                      <form method="post" action="/settings/facebook/tokens/${t.id}/delete"
+                            style="display:inline"
+                            onsubmit="return confirm('Remove this token and its ${t.page_count} page(s)?')">
+                        <button type="submit" class="small danger">Remove</button>
+                      </form>
+                    </td>
+                  </tr>`,
+                )}
+              </tbody>
+            </table>
+          </div>`}
+
+      <form method="post" action="/settings/facebook/tokens" class="stack" style="margin-top:1rem">
+        <div class="grid two">
+          <div class="field">
+            <label for="fb-token-name">Name</label>
+            <input id="fb-token-name" name="name" placeholder="App 1" />
+          </div>
+          <div class="field">
+            <label for="fb-token">Token</label>
+            <input id="fb-token" name="token" type="password" required autocomplete="off" />
+          </div>
+        </div>
+        <div><button type="submit" class="primary">Add token</button></div>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2>Pages</h2>
+      <p class="help">
+        One niche per page. A page with no niche is left alone. Every page publishes its
+        reels as soon as they are ready; untick auto-publish to have them wait on the
+        <a href="/reels">Reels</a> page for you instead.
+      </p>
+
+      ${data.pages.length === 0
+        ? emptyState('No pages. They arrive with a token.')
+        : html`<form method="post" action="/settings/facebook/pages">
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Page</th><th>Niche</th><th>Presenter</th><th>Auto-publish</th><th>Enabled</th>
+                    <th>Last</th><th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${data.pages.map(
+                    (p) => html`<tr>
+                      <td>
+                        ${p.name || p.page_id}
+                        <div class="small muted">
+                          ${p.page_id}
+                          ${p.token_id && tokenName.get(p.token_id)
+                            ? html`&middot; ${tokenName.get(p.token_id)}`
+                            : raw('')}
+                        </div>
+                      </td>
+                      <td>
+                        <select name="niche_${p.id}">
+                          <option value="">not used</option>
+                          ${data.groups.map(
+                            (g) => html`<option value="${g}"
+                              ${p.niche && g.toLowerCase() === p.niche.toLowerCase()
+                                ? raw('selected')
+                                : raw('')}>${g}</option>`,
+                          )}
+                        </select>
+                        ${p.niche && !data.groups.some((g) => g.toLowerCase() === p.niche!.toLowerCase())
+                          ? html`<div class="small error">
+                              Set to &ldquo;${p.niche}&rdquo;, which no keyword has any more.
+                            </div>`
+                          : raw('')}
+                      </td>
+                      <td>
+                        <select name="presenter_${p.id}">
+                          <option value="">no presenter — dish only</option>
+                          ${data.presenters.map(
+                            (pr) => html`<option value="${pr.id}"
+                              ${p.presenter_id === pr.id ? raw('selected') : raw('')}>${pr.name}</option>`,
+                          )}
+                        </select>
+                      </td>
+                      <td>
+                        <input type="checkbox" name="auto_${p.id}"
+                               ${p.auto_publish === 1 ? raw('checked') : raw('')} />
+                      </td>
+                      <td>
+                        <input type="checkbox" name="enabled_${p.id}"
+                               ${p.enabled === 1 ? raw('checked') : raw('')} />
+                      </td>
+                      <td class="small">
+                        ${p.last_used_at
+                          ? html`<span class="muted nowrap">${timeAgo(p.last_used_at)}</span>`
+                          : html`<span class="muted">&mdash;</span>`}
+                        ${p.last_error ? html`<div class="error">${p.last_error}</div>` : raw('')}
+                      </td>
+                      <td class="nowrap">
+                        <button type="submit" class="small"
+                                formaction="/settings/facebook/pages/${p.id}">Save</button>
+                      </td>
+                    </tr>`,
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <div class="save-bar">
+              <button class="primary" type="submit">Save all pages</button>
+              <span class="muted small">Every row above, in one go.</span>
+            </div>
+          </form>`}
     </div>
   `;
 }

@@ -124,6 +124,8 @@ export const PROMPT_MODELS: Record<string, { model: string; format: 'json' | nul
   'pin-description': { model: 'gpt-oss:120b', format: null },
   'pick-board': { model: 'gpt-oss:120b', format: null },
   'repair-json': { model: 'gpt-oss:120b', format: null },
+  'reel-caption': { model: 'gpt-oss:120b', format: null },
+  'reel-plan': { model: 'gpt-oss:120b', format: 'json' },
 };
 
 /* -------------------------------------------------------------------------

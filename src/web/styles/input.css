@@ -204,6 +204,22 @@
     @apply mx-auto w-full max-w-[92rem] px-8 pb-16 pt-8;
   }
 
+  /* The section's pages, as tabs under the top of the page. */
+  .subnav {
+    @apply -mt-2 mb-6 flex flex-wrap gap-1 border-b border-edge;
+    @apply dark:border-edge-dark;
+  }
+
+  .subnav a {
+    @apply -mb-px border-b-2 border-transparent px-3 py-2 text-sm font-medium no-underline;
+    @apply text-slate-500 transition-colors hover:text-slate-900;
+    @apply dark:text-slate-400 dark:hover:text-white;
+  }
+
+  .subnav a.active {
+    @apply border-brand text-slate-900 dark:text-white;
+  }
+
   .pagebar {
     @apply mb-6 flex min-h-[34px] items-center justify-end gap-2.5;
   }
@@ -409,6 +425,11 @@
   .badge.brand {
     @apply border-brand/25 bg-brand-soft text-brand;
   }
+  /* A reel beside an article in the same list: its own hue, so the eye can
+     tell the two apart without reading. */
+  .badge.reel {
+    @apply border-violet-500/25 bg-violet-500/10 text-violet-600 dark:text-violet-300;
+  }
 
   .pill {
     @apply border-edge text-slate-500 dark:border-edge-dark dark:text-slate-400;
@@ -421,6 +442,48 @@
   }
 
   /* -------------------------------------------------------- alert banners */
+
+  /* ---------------------------------------------------------- home */
+
+  /* One line: is the automation on, and what is it doing right now. */
+  .statusbar {
+    @apply mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-edge bg-surface px-5 py-3 text-sm;
+    @apply dark:border-edge-dark dark:bg-surface-dark;
+  }
+
+  .statusbar .light {
+    @apply inline-block h-2.5 w-2.5 rounded-full bg-slate-400;
+  }
+
+  .statusbar .light.on {
+    @apply bg-emerald;
+  }
+
+  /* Things that need a person: one row, one button. */
+  .attention {
+    @apply mb-6 flex flex-col gap-2;
+  }
+
+  .attention-row {
+    @apply flex flex-wrap items-center justify-between gap-3 rounded-lg border border-edge bg-surface px-4 py-2.5 text-sm;
+    @apply dark:border-edge-dark dark:bg-surface-dark;
+  }
+
+  .attention-row.warn {
+    @apply border-amber/25 bg-amber-soft text-amber-700 dark:text-amber-200;
+  }
+
+  h2 .count {
+    @apply ml-2 inline-block rounded-full bg-brand-soft px-2 py-0.5 align-middle text-xs font-semibold text-brand;
+  }
+
+  .stat.bad .value {
+    @apply text-brand;
+  }
+
+  table.recent td {
+    @apply py-2.5;
+  }
 
   .flash {
     @apply mb-5 rounded-xl border p-4 text-sm;
@@ -481,6 +544,146 @@
 
   .inline-check input[type='checkbox'] {
     @apply m-0 h-4 w-4 flex-none;
+  }
+
+  /* ------------------------------------------------------------ Reels */
+  /* Tiles, not table rows. What is being judged on this page is a video and
+     four photographs; a table forces that into a column narrow enough to wrap
+     a title over four lines while a 9:16 preview stretches the row past the
+     height of the screen. .grid already lays out auto-fit columns -- .tiles
+     only widens the minimum, because a 200px tile crops a portrait video to
+     the point of uselessness. */
+  .tiles {
+    grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+  }
+
+  /* A column, so .tile-actions can be pushed to the bottom: grid stretches
+     tiles to equal height, and without this a tile carrying an error message
+     lands its buttons lower than the tiles either side of it. */
+  .tile {
+    @apply flex flex-col overflow-hidden rounded-xl border border-edge bg-surface shadow-sm;
+    @apply dark:border-edge-dark dark:bg-surface-dark dark:shadow-none;
+  }
+
+  /* Fixed aspect so a row of tiles lines up whatever the media is, and the
+     page does not reflow as each video reports its dimensions. */
+  .tile-media {
+    @apply flex items-center justify-center bg-fill dark:bg-fill-dark;
+    aspect-ratio: 9 / 16;
+    max-height: 17rem;
+  }
+
+  .tile-media video {
+    @apply h-full w-full object-cover;
+  }
+
+  .tile-placeholder {
+    @apply p-4 text-center text-xs text-slate-500 dark:text-slate-400;
+  }
+
+  /* The candidate's four images, side by side. Short, because they are here to
+     say which article this is, not to be examined -- that is the composer. */
+  .tile-strip {
+    @apply flex gap-px bg-fill dark:bg-fill-dark;
+  }
+
+  .tile-strip img {
+    @apply h-24 min-w-0 flex-1 object-cover;
+  }
+
+  .tile-body {
+    @apply flex flex-1 flex-col gap-1.5 p-4;
+  }
+
+  .tile-title {
+    @apply text-sm font-medium leading-snug text-slate-800 dark:text-slate-100;
+  }
+
+  .tile-error {
+    @apply rounded-md px-2 py-1.5 text-brand;
+    @apply bg-brand-soft dark:bg-transparent;
+  }
+
+  /* Pushed to the bottom edge of the tile and separated by a rule, so tiles of
+     different text lengths still line their buttons up with each other. */
+  .tile-actions {
+    @apply mt-auto gap-2 border-t pt-3;
+    @apply border-edge dark:border-edge-dark;
+  }
+  /* A page picker in the actions shares its line with the button beside it;
+     the full-width select default is for forms, not for a row of buttons. */
+  .tile-actions form.row {
+    @apply flex-1 min-w-0 flex-nowrap;
+  }
+  .tile-actions select {
+    @apply w-auto min-w-0 flex-1;
+  }
+
+  /* ------------------------------------------------- Reel image picker */
+  /* Wider minimum than .tiles: this is where the choice is actually made, and
+     a thumbnail too small to read the plating by is a thumbnail that gets
+     picked at random.
+
+     Named .pick-grid, not .picker, and the distinction is not cosmetic: the
+     manual-run dialog further down this file is already .picker, and a second
+     rule of the same name turned that dialog into a grid container. It never
+     declares display itself, so it inherited this one's, and the modal
+     rendered as a squeezed column with its text clipped. Same name, same
+     specificity, different component. */
+  .pick-grid {
+    @apply mt-3 gap-3;
+    /* Written out rather than @apply'd, for the reason .grid above gives: this
+       file defines a .grid *component*, so `@apply grid` pulls in that whole
+       rule -- its my-5 and its 200px columns -- instead of the display utility
+       the name suggests. */
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(8rem, 1fr));
+  }
+
+  .pick-tile {
+    @apply relative flex cursor-pointer flex-col gap-1 rounded-lg p-2 transition-shadow;
+    @apply border border-edge dark:border-edge-dark;
+  }
+
+  /* The whole tile reads as chosen, not just the box. At this size a checkbox
+     alone is easy to miss when scanning four of them at once. */
+  .pick-tile:has(input:checked) {
+    @apply border-brand ring-1 ring-brand;
+  }
+
+  .pick-tile input[type='checkbox'] {
+    @apply absolute right-3 top-3 m-0 w-auto;
+  }
+
+  .pick-tile img {
+    @apply w-full rounded object-cover;
+    aspect-ratio: 9 / 16;
+  }
+
+  .pick-label {
+    @apply text-xs font-medium text-slate-700 dark:text-slate-300;
+  }
+
+  /* -------------------------------------------------------- Disclosure */
+  /* Used for the token instructions and the published list: steps you follow
+     once, and work already finished, both of which are worth finding and worth
+     nothing in the space where current work is judged. */
+  summary {
+    @apply cursor-pointer select-none py-1 text-sm font-medium;
+    @apply text-slate-700 dark:text-slate-300;
+  }
+
+  details[open] > summary {
+    @apply mb-2;
+  }
+
+  details ol {
+    @apply list-decimal space-y-1 pl-5;
+  }
+
+  details code {
+    @apply rounded px-1 py-0.5 text-xs;
+    @apply bg-fill dark:bg-fill-dark;
   }
 
   /* -------------------------------------------------- Buffer account list */
@@ -809,6 +1012,15 @@
     @apply w-[min(28rem,calc(100vw-2rem))] p-6;
     @apply border border-edge bg-surface text-slate-900;
     @apply dark:border-edge-dark dark:bg-surface-dark dark:text-slate-100;
+  }
+
+  /* A closed <dialog> is hidden by the browser's own stylesheet, and any author
+     rule that sets display on it silently defeats that -- which is exactly what
+     happened when a second .picker existed. Stating it here, with a specificity
+     a bare class cannot match, means this dialog cannot be un-hidden by a rule
+     that merely shares its name. */
+  .picker:not([open]) {
+    @apply hidden;
   }
 
   .picker::backdrop {

@@ -17,6 +17,8 @@ export interface ImageJob {
   job_id: string;
   status: string;
   image_url: string | null;
+  /** Populated for video jobs; the same URL also arrives as image_url. */
+  video_url?: string | null;
   image_expires_at: string | null;
   error: string | null;
   prompt?: string;
@@ -69,14 +71,26 @@ export class ImageClient {
     return `${this.options.baseUrl.replace(/\/+$/, '')}${path}`;
   }
 
-  /** Submit a generation request and return the job id. */
-  async submit(prompt: string, orientation = 'VERTICAL'): Promise<string> {
+  /**
+   * Submit a generation request and return the job id.
+   *
+   * `referenceUrls` are public photos the image should follow -- the article's
+   * own feature image when a reel scene wants a fresh view of the same dish.
+   * Sent only when there are any, so an article image is the same request it
+   * always was.
+   */
+  async submit(
+    prompt: string,
+    orientation = 'VERTICAL',
+    options: { referenceUrls?: string[] } = {},
+  ): Promise<string> {
     const response = await fetch(this.url('/v1/generate'), {
       method: 'POST',
       headers: this.headers(),
       body: JSON.stringify({
         prompt,
         orientation,
+        ...(options.referenceUrls?.length ? { reference_urls: options.referenceUrls } : {}),
         // Omitted rather than sent empty, so the service falls back to its own
         // configured project instead of being told to use nothing.
         ...(this.options.projectId ? { project_id: this.options.projectId } : {}),
@@ -97,6 +111,54 @@ export class ImageClient {
     const json = (await response.json()) as { job_id?: string };
     if (!json.job_id) {
       throw new ImageGenerationError('Image service did not return a job_id');
+    }
+    return json.job_id;
+  }
+
+  /**
+   * Queue a video built from reference images.
+   *
+   * Same job table and the same `poll` as an image, so nothing downstream has
+   * to know which kind it is waiting on -- only that it takes minutes rather
+   * than seconds, which is the caller's business, not this method's.
+   *
+   * The reference URLs are ordinary public image URLs. The service uploads
+   * each one to Flow at generation time, which is what lets an article of any
+   * age become a video without having stored a Flow media id for it.
+   */
+  async submitVideo(input: {
+    prompt: string;
+    referenceUrls: string[];
+    /** The presenter's character and voice in the Flow project, when the scene has them. */
+    characterMediaId?: string;
+    voiceMediaId?: string;
+    projectId?: string;
+    orientation?: string;
+  }): Promise<string> {
+    const response = await fetch(this.url('/v1/generate-video'), {
+      method: 'POST',
+      headers: this.headers(),
+      body: JSON.stringify({
+        prompt: input.prompt,
+        reference_urls: input.referenceUrls,
+        ...(input.characterMediaId ? { character_media_id: input.characterMediaId } : {}),
+        ...(input.voiceMediaId ? { voice_media_id: input.voiceMediaId } : {}),
+        orientation: input.orientation ?? 'VERTICAL',
+        ...(input.projectId ? { project_id: input.projectId } : {}),
+      }),
+      signal: AbortSignal.timeout(60_000),
+    });
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      throw new ImageGenerationError(
+        `Video generation request failed: HTTP ${response.status} ${text.slice(0, 200)}`,
+      );
+    }
+
+    const json = (await response.json()) as { job_id?: string };
+    if (!json.job_id) {
+      throw new ImageGenerationError('Image service did not return a job_id for the video');
     }
     return json.job_id;
   }
@@ -184,13 +246,17 @@ export class ImageClient {
   }
 
   /** Submit, wait, and download in one call. */
-  async generate(prompt: string, orientation = 'VERTICAL'): Promise<{
+  async generate(
+    prompt: string,
+    orientation = 'VERTICAL',
+    options: { referenceUrls?: string[] } = {},
+  ): Promise<{
     jobId: string;
     imageUrl: string;
     data: Buffer;
     contentType: string;
   }> {
-    const jobId = await this.submit(prompt, orientation);
+    const jobId = await this.submit(prompt, orientation, options);
     const imageUrl = await this.waitForCompletion(jobId);
     const { data, contentType } = await this.download(imageUrl);
     return { jobId, imageUrl, data, contentType };

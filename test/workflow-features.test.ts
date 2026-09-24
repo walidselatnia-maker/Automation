@@ -220,9 +220,9 @@ describe('the new workflow features', () => {
       expect(failedToday).toBe(0);
     });
 
-    it('appears on the dashboard as work waiting for a person', async () => {
+    it('appears on Home as something that needs a person', async () => {
       const response = await get('/');
-      expect(response.body).toContain('Waiting for you');
+      expect(response.body).toContain('Needs you');
       expect(response.body).toContain('Baked Chicken Breast');
     });
 
@@ -526,19 +526,6 @@ describe('the new workflow features', () => {
 
       expect(response.headers.location).toContain('warn=');
       expect(response.headers.location).toContain('go');
-    });
-  });
-
-  /* -- the backup ----------------------------------------------------------- */
-
-  describe('backup', () => {
-    it('sends a database file', async () => {
-      const response = await get('/data/backup');
-
-      expect(response.statusCode).toBe(200);
-      expect(response.headers['content-disposition']).toContain('.db');
-      // SQLite's file magic, so this is a real database rather than an error page.
-      expect(response.rawPayload.subarray(0, 15).toString()).toBe('SQLite format 3');
     });
   });
 });

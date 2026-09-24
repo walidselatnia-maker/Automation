@@ -133,6 +133,38 @@ def test_fresh_processing_jobs_are_left_alone():
     assert asyncio.run(jobs.get(claimed[0]["id"]))["status"] == "PROCESSING"
 
 
+def test_a_job_that_is_still_being_polled_is_not_requeued():
+    """A video is polled for up to twenty minutes; the stale cutoff is ten.
+
+    Without a pulse, the job was handed back to the queue at ten minutes with
+    its poll loop still running, claimed again, and submitted again -- a second
+    video, paid for, exactly ten minutes after the first. Two submits ten
+    minutes apart in the extension's log is this bug and nothing else.
+    """
+    job = asyncio.run(jobs.create("one"))
+    asyncio.run(jobs.claim_pending(1))
+    backdate(job["id"], 3600)  # looks abandoned...
+
+    asyncio.run(jobs.touch(job["id"]))  # ...but the poll loop just checked in
+
+    assert asyncio.run(jobs.reset_stale(600)) == 0
+    assert asyncio.run(jobs.get(job["id"]))["status"] == "PROCESSING"
+
+
+def test_touching_a_finished_job_changes_nothing():
+    # Only a PROCESSING job has a pulse worth keeping. A completed one must not
+    # be dragged back into looking live.
+    job = asyncio.run(jobs.create("one"))
+    asyncio.run(jobs.claim_pending(1))
+    asyncio.run(jobs.complete(job["id"], "MEDIA", "https://example/v.mp4"))
+    backdate(job["id"], 3600)
+    before = asyncio.run(jobs.get(job["id"]))["updated_at"]
+
+    asyncio.run(jobs.touch(job["id"]))
+
+    assert asyncio.run(jobs.get(job["id"]))["updated_at"] == before
+
+
 def test_unknown_job_id_returns_nothing():
     assert asyncio.run(jobs.get("no-such-id")) is None
 
@@ -294,3 +326,13 @@ def test_a_failed_job_surfaces_its_error(monkeypatch):
     # took the false branch and polled a dead job forever.
     assert body["status"] == "FAILED"
     assert body["error"] == "quota exhausted"
+
+
+def test_a_video_job_keeps_the_presenter_it_was_asked_for(fresh_db):
+    job = asyncio.run(jobs.create_video("soup", ["https://a/1.jpg"], "P", "VERTICAL",
+                                        character_media_id="f346cb5a-ec29-4143-a87d-b13d70729bf5",
+                                        voice_media_id="509a1ad4-e08a-4a9d-87ba-afc4af20a0c1"))
+    assert job["character_media_id"] == "f346cb5a-ec29-4143-a87d-b13d70729bf5"
+    assert job["voice_media_id"] == "509a1ad4-e08a-4a9d-87ba-afc4af20a0c1"
+    plain = asyncio.run(jobs.create_video("soup", ["https://a/1.jpg"], "P", "VERTICAL"))
+    assert plain["character_media_id"] is None and plain["voice_media_id"] is None

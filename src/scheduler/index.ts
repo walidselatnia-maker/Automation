@@ -28,6 +28,7 @@ import type { Decision } from '../core/types.js';
 import { executePipeline, PipelineContext } from '../pipeline/index.js';
 import type { Settings } from '../settings.js';
 import { createLogger, errorMessage } from '../lib/logger.js';
+import { defaultDeps, tickReels } from '../reels/engine.js';
 
 const log = createLogger('scheduler');
 
@@ -585,9 +586,26 @@ export function stopRun(reason = 'Stopped by hand from the dashboard'): number |
 
 /* -- Loop ---------------------------------------------------------------- */
 
+/**
+ * How often reels are advanced, separately from articles.
+ *
+ * Reels used to move only on the article tick, which is tick_minutes -- fifteen
+ * on the deployed platform. A reel moves one state per tick, so a video that
+ * Google finished in two minutes sat there for up to fifteen before the
+ * platform noticed it was ready, and up to fifteen more before it published.
+ * Half an hour for a two-minute clip, all of it waiting on a timer that exists
+ * to pace article publishing and has nothing to say about video.
+ *
+ * A minute is about what one poll of the image service costs, and it is the
+ * granularity the wait is already measured in on the other side.
+ */
+const REEL_TICK_MS = 60_000;
+
 export class Scheduler {
   private timer: NodeJS.Timeout | null = null;
+  private reelTimer: NodeJS.Timeout | null = null;
   private running = false;
+  private reelsRunning = false;
   private stopped = false;
   private announcedMinutes = 0;
   private lastCheckEndedAt = 0;
@@ -605,6 +623,10 @@ export class Scheduler {
       if (result.outcome !== 'disabled' && result.outcome !== 'busy') {
         log.debug(`tick: ${result.outcome}`);
       }
+
+      // Reels are not advanced here any more; they have their own timer above.
+      // Doing it here as well would run two reel ticks against each other.
+
       this.maybePrune();
     },
   ) {}
@@ -614,6 +636,22 @@ export class Scheduler {
     log.info(`scheduler started, checking every ${this.minutes()} minute(s)`);
     // Give the web server a moment to come up before the first check.
     this.timer = setTimeout(() => void this.safeTick(), 10_000);
+
+    // Reels on their own clock. Not inside safeTick: that runs on the article
+    // cadence and holds the article lock, and a reel waiting on Google should
+    // depend on neither.
+    this.reelTimer = setInterval(() => void this.safeTickReels(), REEL_TICK_MS);
+  }
+
+  /** The reel tick, guarded so a slow publish is never overlapped by the next. */
+  private async safeTickReels(): Promise<void> {
+    if (this.reelsRunning) return;
+    this.reelsRunning = true;
+    try {
+      await this.tickReels();
+    } finally {
+      this.reelsRunning = false;
+    }
   }
 
   /**
@@ -673,6 +711,23 @@ export class Scheduler {
     }
   }
 
+  /**
+   * Advance any reels that are waiting on something.
+   *
+   * Isolated from the article tick: a reel that cannot publish must never be
+   * the reason an article does not.
+   */
+  private async tickReels(): Promise<void> {
+    try {
+      const reels = await tickReels(this.settings, defaultDeps(this.settings, this.encryptionKey));
+      if (reels.advanced > 0 || reels.failed > 0) {
+        log.info(`reels: ${reels.advanced} advanced, ${reels.failed} failed`);
+      }
+    } catch (err) {
+      log.error('the reel tick threw', errorMessage(err));
+    }
+  }
+
   private lastPrune = 0;
 
   private maybePrune(): void {
@@ -688,7 +743,9 @@ export class Scheduler {
   stop(): void {
     this.stopped = true;
     if (this.timer) clearTimeout(this.timer);
+    if (this.reelTimer) clearInterval(this.reelTimer);
     this.timer = null;
+    this.reelTimer = null;
     log.info('scheduler stopped');
   }
 }

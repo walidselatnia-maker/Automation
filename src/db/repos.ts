@@ -1897,3 +1897,633 @@ export const setAutoPublish = (id: number, auto: boolean): void => {
     id,
   );
 };
+
+/* -- Facebook tokens, pages and reels ------------------------------------- */
+
+/**
+ * A token this platform publishes with. One per Facebook app: the pages a
+ * token can manage are the pages that app was given, so more apps means more
+ * tokens, and every page hangs off the token it was found under.
+ *
+ * Encrypted with the platform key exactly as a secret setting is.
+ */
+export interface FbTokenRow {
+  id: number;
+  name: string;
+  token_encrypted: string;
+  last_synced_at: string | null;
+  last_error: string | null;
+  created_at: string;
+}
+
+export interface FbTokenView extends FbTokenRow {
+  page_count: number;
+}
+
+/**
+ * A Facebook Page this platform may publish Reels to.
+ *
+ * Rows are written only by a token sync; nobody types a page id. The three
+ * things a person sets -- niche, auto_publish, enabled -- are theirs, and a
+ * sync never touches them. No credential is stored on the page: its token is
+ * minted from the token it came from at publish time.
+ */
+export interface FbPageRow {
+  id: number;
+  page_id: string;
+  name: string;
+  token_id: number | null;
+  niche: string | null;
+  auto_publish: number;
+  enabled: number;
+  last_used_at: string | null;
+  last_error: string | null;
+  /** The presenter this page's reels are made with; NULL means dish only. */
+  presenter_id: number | null;
+  created_at: string;
+}
+
+/** Every distinct keyword group, for the niche picker. */
+export const keywordGroups = (): string[] =>
+  all<{ seed_keyword: string }>(
+    `SELECT DISTINCT seed_keyword FROM keywords
+      WHERE seed_keyword != '' ORDER BY seed_keyword COLLATE NOCASE`,
+  ).map((r) => r.seed_keyword);
+
+/* -- Tokens --------------------------------------------------------------- */
+
+export const listFbTokens = (): FbTokenView[] =>
+  all<FbTokenView>(
+    `SELECT t.*, (SELECT COUNT(*) FROM fb_pages p WHERE p.token_id = t.id) AS page_count
+       FROM fb_tokens t ORDER BY t.id`,
+  );
+
+export function insertFbToken(name: string, token: string, key: Buffer): number {
+  const secret = token.trim();
+  if (!secret) throw new Error('Paste the token.');
+
+  run(
+    'INSERT INTO fb_tokens (name, token_encrypted) VALUES (?, ?)',
+    name.trim() || `Token ${listFbTokens().length + 1}`,
+    encrypt(secret, key),
+  );
+  return get<{ id: number }>('SELECT last_insert_rowid() AS id')?.id ?? 0;
+}
+
+/** The token itself. Empty when there is none, or it was encrypted under another key. */
+export function fbTokenSecret(id: number, key: Buffer): string {
+  const row = get<FbTokenRow>('SELECT * FROM fb_tokens WHERE id = ?', id);
+  if (!row) return '';
+  try {
+    return decrypt(row.token_encrypted, key);
+  } catch {
+    // Same reasoning as siteSecrets: an unreadable credential should fail at
+    // call time as an auth error, not while rendering a page.
+    return '';
+  }
+}
+
+export const deleteFbToken = (id: number): void => {
+  // Pages cascade in a fresh database; an upgraded one gained token_id by
+  // ALTER TABLE, where SQLite does not enforce the reference. So both.
+  run('DELETE FROM fb_pages WHERE token_id = ?', id);
+  run('DELETE FROM fb_tokens WHERE id = ?', id);
+};
+
+export function markFbTokenSynced(id: number, error: string | null): void {
+  run(
+    "UPDATE fb_tokens SET last_synced_at = datetime('now'), last_error = ? WHERE id = ?",
+    error ? error.slice(0, 500) : null,
+    id,
+  );
+}
+
+/* -- Pages ---------------------------------------------------------------- */
+
+export const listFbPages = (): FbPageRow[] =>
+  all<FbPageRow>('SELECT * FROM fb_pages ORDER BY name, page_id');
+
+export const getFbPage = (id: number): FbPageRow | undefined =>
+  get<FbPageRow>('SELECT * FROM fb_pages WHERE id = ?', id);
+
+/**
+ * Insert a page, or rename one already here.
+ *
+ * Never touches niche, auto_publish or enabled: a sync that reset them would
+ * start posting to a page somebody had turned off. A new page arrives with
+ * auto-publish on, because the point of the platform is not to be asked.
+ */
+export function upsertFbPage(input: {
+  pageId: string;
+  name: string;
+  tokenId: number | null;
+}): number {
+  const pageId = input.pageId.trim();
+  if (!pageId) throw new Error('A page needs its Facebook page id.');
+
+  run(
+    `INSERT INTO fb_pages (page_id, name, token_id, auto_publish, enabled) VALUES (?, ?, ?, 1, 1)
+     ON CONFLICT (page_id) DO UPDATE SET name = excluded.name, token_id = excluded.token_id`,
+    pageId,
+    input.name.trim(),
+    input.tokenId,
+  );
+  return get<{ id: number }>('SELECT id FROM fb_pages WHERE page_id = ?', pageId)?.id ?? 0;
+}
+
+/**
+ * Make the pages under a token match what Graph just listed for it.
+ *
+ * A page Graph no longer returns is disabled, not deleted: its niche and its
+ * history stay, and if the token regains it the next sync re-enables nothing
+ * -- the person does, having seen why it stopped.
+ */
+export function syncFbPages(
+  tokenId: number,
+  pages: { id: string; name: string }[],
+): { added: number; renamed: number; dropped: number } {
+  const known = new Map(
+    all<FbPageRow>('SELECT * FROM fb_pages WHERE token_id = ?', tokenId).map((p) => [p.page_id, p]),
+  );
+  const seen = new Set<string>();
+  let added = 0;
+  let renamed = 0;
+
+  for (const page of pages) {
+    seen.add(page.id);
+    const existing =
+      known.get(page.id) ?? get<FbPageRow>('SELECT * FROM fb_pages WHERE page_id = ?', page.id);
+    upsertFbPage({ pageId: page.id, name: page.name, tokenId });
+    if (!existing) added++;
+    else if (existing.name !== page.name) renamed++;
+  }
+
+  let dropped = 0;
+  for (const [pageId, row] of known) {
+    if (seen.has(pageId) || row.enabled !== 1) continue;
+    run(
+      "UPDATE fb_pages SET enabled = 0, last_error = 'No longer under this token' WHERE id = ?",
+      row.id,
+    );
+    dropped++;
+  }
+
+  return { added, renamed, dropped };
+}
+
+/**
+ * What a person sets on a page. A blank niche is a page not posted to.
+ *
+ * One niche goes to one page, so a niche another enabled page holds is
+ * refused with that page's name -- silently moving it would take a page's
+ * reels away from it without anyone deciding to.
+ */
+export function setFbPageOptions(
+  id: number,
+  options: { niche: string | null; autoPublish: boolean; enabled: boolean },
+): void {
+  const niche = (options.niche ?? '').trim() || null;
+
+  if (niche && options.enabled) {
+    const holder = get<FbPageRow>(
+      'SELECT * FROM fb_pages WHERE id != ? AND enabled = 1 AND niche = ? COLLATE NOCASE',
+      id,
+      niche,
+    );
+    if (holder) {
+      throw new Error(
+        `“${niche}” is already on ${holder.name || holder.page_id}. One niche goes to one page.`,
+      );
+    }
+  }
+
+  run(
+    'UPDATE fb_pages SET niche = ?, auto_publish = ?, enabled = ? WHERE id = ?',
+    niche,
+    options.autoPublish ? 1 : 0,
+    options.enabled ? 1 : 0,
+    id,
+  );
+
+  // Reels made before this page had the niche were left with nowhere to go.
+  // They are this page's now, so the Reels page shows them under it and
+  // auto-publish can take them.
+  if (niche && options.enabled) {
+    run(
+      `UPDATE reels SET fb_page_id = ?
+       WHERE fb_page_id IS NULL AND status != 'published'
+         AND keyword_id IN (SELECT id FROM keywords WHERE seed_keyword = ? COLLATE NOCASE)`,
+      id,
+      niche,
+    );
+  }
+}
+
+export const deleteFbPage = (id: number): void => {
+  run('DELETE FROM fb_pages WHERE id = ?', id);
+};
+
+export function markFbPageUsed(id: number): void {
+  run(
+    "UPDATE fb_pages SET last_used_at = datetime('now'), last_error = NULL WHERE id = ?",
+    id,
+  );
+}
+
+export function markFbPageFailed(id: number, error: string): void {
+  run(
+    "UPDATE fb_pages SET last_used_at = datetime('now'), last_error = ? WHERE id = ?",
+    error.slice(0, 500),
+    id,
+  );
+}
+
+/**
+ * The page a reel for this niche goes to.
+ *
+ * The site does not come into it: a niche's audience is the same wherever
+ * the article was published. No page means no reel, and the run says so.
+ */
+export const pageForNiche = (seedKeyword: string): FbPageRow | undefined =>
+  get<FbPageRow>(
+    'SELECT * FROM fb_pages WHERE enabled = 1 AND niche = ? COLLATE NOCASE',
+    seedKeyword.trim(),
+  );
+
+/** The token this page was found under. Empty when the page has none. */
+export function fbPageToken(pageRowId: number, key: Buffer): string {
+  const page = getFbPage(pageRowId);
+  return page?.token_id ? fbTokenSecret(page.token_id, key) : '';
+}
+
+export type ReelStatus =
+  | 'draft'
+  | 'generating'
+  | 'ready'
+  | 'publishing'
+  | 'published'
+  | 'failed';
+
+export interface ReelRow {
+  id: number;
+  run_id: number | null;
+  site_id: number | null;
+  keyword_id: number | null;
+  fb_page_id: number | null;
+  status: ReelStatus;
+  prompt: string;
+  caption: string;
+  reference_json: string;
+  job_id: string | null;
+  video_url: string | null;
+  fb_video_id: string | null;
+  error: string | null;
+  /** Which of the studio's stages an in-flight reel is on; 'done' past them all. */
+  stage: ReelStage;
+  /** The article, its images, and once planned the storyboard, as JSON. */
+  plan_json: string;
+  format: string;
+  /** The assembled file, once there is one. */
+  output_path: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export type ReelStage = 'planning' | 'imaging' | 'filming' | 'assembling' | 'done';
+
+/** A reel with the names needed to render it, joined once rather than per row. */
+export interface ReelView extends ReelRow {
+  site_domain: string | null;
+  seed_keyword: string | null;
+  run_title: string | null;
+  post_url: string | null;
+  page_name: string | null;
+  page_external_id: string | null;
+}
+
+const REEL_VIEW_SQL = `
+  SELECT r.*, s.domain AS site_domain, k.seed_keyword,
+         run.title AS run_title, run.post_url,
+         p.name AS page_name, p.page_id AS page_external_id
+    FROM reels r
+    LEFT JOIN sites s     ON s.id = r.site_id
+    LEFT JOIN keywords k  ON k.id = r.keyword_id
+    LEFT JOIN runs run    ON run.id = r.run_id
+    LEFT JOIN fb_pages p  ON p.id = r.fb_page_id
+`;
+
+export const listReels = (limit = 100): ReelView[] =>
+  all<ReelView>(`${REEL_VIEW_SQL} ORDER BY r.created_at DESC LIMIT ?`, limit);
+
+export const getReel = (id: number): ReelView | undefined =>
+  get<ReelView>(`${REEL_VIEW_SQL} WHERE r.id = ?`, id);
+
+/** Reels the scheduler still has work to do on. */
+export const activeReels = (): ReelView[] =>
+  all<ReelView>(
+    `${REEL_VIEW_SQL} WHERE r.status IN ('generating', 'ready', 'publishing')
+      ORDER BY r.created_at`,
+  );
+
+export function createReel(input: {
+  runId: number | null;
+  siteId: number;
+  keywordId: number;
+  fbPageId: number | null;
+  prompt: string;
+  caption: string;
+  references: string[];
+  /** A studio reel starts on a stage; a one-shot reel has none and is a draft. */
+  stage?: ReelStage;
+}): number {
+  run(
+    `INSERT INTO reels (run_id, site_id, keyword_id, fb_page_id, prompt, caption, reference_json,
+                        status, stage)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    input.runId,
+    input.siteId,
+    input.keywordId,
+    input.fbPageId,
+    input.prompt,
+    input.caption,
+    JSON.stringify(input.references),
+    input.stage ? 'generating' : 'draft',
+    input.stage ?? 'done',
+  );
+  return get<{ id: number }>('SELECT last_insert_rowid() AS id')?.id ?? 0;
+}
+
+/**
+ * Move a reel along.
+ *
+ * One writer for every transition so `updated_at` cannot be forgotten -- the
+ * scheduler uses it to spot a reel that stopped moving.
+ */
+export function updateReel(
+  id: number,
+  fields: Partial<{
+    status: ReelStatus;
+    jobId: string | null;
+    videoUrl: string | null;
+    fbVideoId: string | null;
+    fbPageId: number | null;
+    caption: string;
+    error: string | null;
+  }>,
+): void {
+  const sets: string[] = [];
+  const values: (string | number | null)[] = [];
+
+  const column: Record<string, string> = {
+    status: 'status',
+    jobId: 'job_id',
+    videoUrl: 'video_url',
+    fbVideoId: 'fb_video_id',
+    fbPageId: 'fb_page_id',
+    caption: 'caption',
+    error: 'error',
+  };
+
+  for (const [key, value] of Object.entries(fields)) {
+    if (value === undefined) continue;
+    sets.push(`${column[key]} = ?`);
+    // Errors are truncated here rather than at every call site: a stack trace
+    // pasted into this column is worth reading, not worth storing whole.
+    values.push(key === 'error' && typeof value === 'string' ? value.slice(0, 1000) : value);
+  }
+
+  if (sets.length === 0) return;
+
+  sets.push("updated_at = datetime('now')");
+  run(`UPDATE reels SET ${sets.join(', ')} WHERE id = ?`, ...values, id);
+}
+
+export const deleteReel = (id: number): void => {
+  run('DELETE FROM reels WHERE id = ?', id);
+};
+
+/** Runs that could become a reel: published, with images, and not used yet. */
+export interface ReelCandidate {
+  run_id: number;
+  site_id: number;
+  keyword_id: number;
+  site_domain: string;
+  seed_keyword: string;
+  spy_title: string;
+  spy_description: string;
+  annotation: string;
+  title: string;
+  post_url: string | null;
+  published_at: string | null;
+  images_json: string | null;
+}
+
+/**
+ * Published articles with their four images still available.
+ *
+ * The images come from the generate-images checkpoint rather than from
+ * keyword_images, because the latter only holds a row when sharing is on --
+ * and a site that generated its own images has just as much to make a reel
+ * from. A run whose checkpoint is gone simply does not appear.
+ */
+export const reelCandidates = (limit = 50): ReelCandidate[] =>
+  all<ReelCandidate>(
+    `SELECT r.id AS run_id, r.site_id, r.keyword_id, s.domain AS site_domain,
+            k.seed_keyword, k.spy_title, k.spy_description, k.annotation,
+            r.title, r.post_url, r.published_at,
+            st.output_json AS images_json
+       FROM runs r
+       JOIN sites s     ON s.id = r.site_id
+       JOIN keywords k  ON k.id = r.keyword_id
+       JOIN run_steps st ON st.run_id = r.id
+                        AND st.step = 'generate-images'
+                        AND st.status = 'ok'
+      WHERE r.status = 'published'
+        AND NOT EXISTS (SELECT 1 FROM reels x WHERE x.run_id = r.id)
+      ORDER BY r.published_at DESC
+      LIMIT ?`,
+    limit,
+  );
+
+/* -- Presenters ------------------------------------------------------------ */
+
+export interface PresenterRow {
+  id: number;
+  name: string;
+  flow_character_id: string;
+  flow_voice_id: string;
+  voice_description: string;
+  portrait_url: string;
+  created_at: string;
+}
+
+export const listPresenters = (): PresenterRow[] =>
+  all<PresenterRow>('SELECT * FROM presenters ORDER BY name');
+
+export const getPresenter = (id: number): PresenterRow | undefined =>
+  get<PresenterRow>('SELECT * FROM presenters WHERE id = ?', id);
+
+export function insertPresenter(input: {
+  name: string;
+  flowCharacterId: string;
+  flowVoiceId: string;
+  voiceDescription: string;
+  portraitUrl: string;
+}): number {
+  const name = input.name.trim();
+  if (!name) throw new Error('A presenter needs a name.');
+  if (!input.flowCharacterId.trim()) throw new Error('A presenter needs a character.');
+  return run(
+    `INSERT INTO presenters (name, flow_character_id, flow_voice_id, voice_description, portrait_url)
+     VALUES (?, ?, ?, ?, ?)`,
+    name,
+    input.flowCharacterId.trim(),
+    input.flowVoiceId.trim(),
+    input.voiceDescription.trim(),
+    input.portraitUrl.trim(),
+  ).lastInsertRowid;
+}
+
+export function updatePresenter(
+  id: number,
+  fields: Partial<{ name: string; voiceDescription: string; portraitUrl: string }>,
+): void {
+  if (fields.name !== undefined) {
+    run('UPDATE presenters SET name = ? WHERE id = ?', fields.name.trim(), id);
+  }
+  if (fields.voiceDescription !== undefined) {
+    run('UPDATE presenters SET voice_description = ? WHERE id = ?', fields.voiceDescription.trim(), id);
+  }
+  if (fields.portraitUrl !== undefined) {
+    run('UPDATE presenters SET portrait_url = ? WHERE id = ?', fields.portraitUrl.trim(), id);
+  }
+}
+
+/** ALTER-added foreign keys are not enforced by SQLite, so the pages are cleared here. */
+export function deletePresenter(id: number): void {
+  run('UPDATE fb_pages SET presenter_id = NULL WHERE presenter_id = ?', id);
+  run('DELETE FROM presenters WHERE id = ?', id);
+}
+
+export const setFbPagePresenter = (pageRowId: number, presenterId: number | null): void => {
+  run('UPDATE fb_pages SET presenter_id = ? WHERE id = ?', presenterId, pageRowId);
+};
+
+export const presenterForPage = (pageRowId: number): PresenterRow | undefined =>
+  get<PresenterRow>(
+    'SELECT p.* FROM presenters p JOIN fb_pages f ON f.presenter_id = p.id WHERE f.id = ?',
+    pageRowId,
+  );
+
+/* -- Reel stages and scenes ------------------------------------------------ */
+
+export function setReelStage(
+  reelId: number,
+  stage: ReelStage,
+  fields: Partial<{ planJson: string; format: string; outputPath: string }> = {},
+): void {
+  run(
+    `UPDATE reels SET stage = ?, updated_at = datetime('now'),
+       plan_json   = COALESCE(?, plan_json),
+       format      = COALESCE(?, format),
+       output_path = COALESCE(?, output_path)
+     WHERE id = ?`,
+    stage,
+    fields.planJson ?? null,
+    fields.format ?? null,
+    fields.outputPath ?? null,
+    reelId,
+  );
+}
+
+export interface ReelSceneRow {
+  id: number;
+  reel_id: number;
+  position: number;
+  seconds: number;
+  presenter: 0 | 1;
+  sources_json: string;
+  image_prompt: string;
+  motion_prompt: string;
+  line: string;
+  image_job_id: string | null;
+  image_url: string | null;
+  clip_job_id: string | null;
+  clip_path: string | null;
+  status: 'pending' | 'working' | 'done' | 'failed';
+  error: string | null;
+}
+
+export const listScenes = (reelId: number): ReelSceneRow[] =>
+  all<ReelSceneRow>('SELECT * FROM reel_scenes WHERE reel_id = ? ORDER BY position', reelId);
+
+export const getScene = (id: number): ReelSceneRow | undefined =>
+  get<ReelSceneRow>('SELECT * FROM reel_scenes WHERE id = ?', id);
+
+export function replaceScenes(
+  reelId: number,
+  scenes: Array<{
+    seconds: number;
+    presenter: boolean;
+    sources: string[];
+    imagePrompt: string;
+    motionPrompt: string;
+    line: string;
+  }>,
+): void {
+  run('DELETE FROM reel_scenes WHERE reel_id = ?', reelId);
+  scenes.forEach((scene, index) => {
+    run(
+      `INSERT INTO reel_scenes
+         (reel_id, position, seconds, presenter, sources_json, image_prompt, motion_prompt, line)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      reelId,
+      index + 1,
+      scene.seconds,
+      scene.presenter ? 1 : 0,
+      JSON.stringify(scene.sources),
+      scene.imagePrompt,
+      scene.motionPrompt,
+      scene.line,
+    );
+  });
+}
+
+export function updateScene(
+  id: number,
+  fields: Partial<{
+    status: ReelSceneRow['status'];
+    error: string | null;
+    imageJobId: string | null;
+    imageUrl: string | null;
+    clipJobId: string | null;
+    clipPath: string | null;
+  }>,
+): void {
+  const column: Record<string, string> = {
+    status: 'status',
+    error: 'error',
+    imageJobId: 'image_job_id',
+    imageUrl: 'image_url',
+    clipJobId: 'clip_job_id',
+    clipPath: 'clip_path',
+  };
+  const sets: string[] = [];
+  const values: (string | null)[] = [];
+  for (const [key, value] of Object.entries(fields)) {
+    if (value === undefined) continue;
+    sets.push(`${column[key]} = ?`);
+    values.push(value as string | null);
+  }
+  if (sets.length === 0) return;
+  run(`UPDATE reel_scenes SET ${sets.join(', ')} WHERE id = ?`, ...values, id);
+}
+
+/** The formats this page's last reels used, newest first, for the rotation. */
+export const recentFormatsForPage = (pageRowId: number, limit = 4): string[] =>
+  all<{ format: string }>(
+    `SELECT format FROM reels WHERE fb_page_id = ? AND format != ''
+      ORDER BY id DESC LIMIT ?`,
+    pageRowId,
+    limit,
+  ).map((r) => r.format);

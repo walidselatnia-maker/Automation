@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { closeDatabase, openDatabase } from '../src/db/index.js';
 import { getSiteByDomain, listSites, siteSecrets, upsertSite } from '../src/db/repos.js';
-import { exportDataset, exportSitesWithCredentials } from '../src/db/maintenance.js';
+import { exportDataset, exportSitesWithCredentials } from '../src/db/exports.js';
 import { importSitesCsv } from '../src/web/import.js';
 import { setLogLevel } from '../src/lib/logger.js';
 

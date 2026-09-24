@@ -1,0 +1,17 @@
+Write a Facebook Reel caption for this recipe.
+
+Dish: {{seo.title}}
+Niche: {{spy.group}}
+What the research said: {{spy.description}}
+Notes: {{spy.annotation}}
+
+Rules:
+- Open with a hook of at most eight words that makes someone stop scrolling. It is the first line and it stands alone.
+- Then two or three short lines about the dish. Warm, plain, spoken -- not marketing copy.
+- Mention one concrete thing: a texture, a smell, how long it takes.
+- Then three to five hashtags on one line, lowercase, specific to the dish rather than generic food tags.
+- No links. No URLs. Do not mention a link, a website, a bio, or "recipe below" -- the link is posted separately as a comment and must not appear here in any form.
+- No emoji spam: at most two, and only if they earn their place.
+- Never use the words "delicious", "mouthwatering" or "game-changer".
+
+Return only the caption text.

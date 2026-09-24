@@ -44,17 +44,27 @@ export function html(strings: TemplateStringsArray, ...values: unknown[]): Html 
   return new Html(out);
 }
 
-export interface NavItem {
+export interface NavPage {
   href: string;
   label: string;
+  /** Opens in its own tab (the live browser). */
+  external?: boolean;
+}
+
+export interface NavSection {
+  label: string;
+  /** Where the rail link goes: the section's first page. */
+  href: string;
   /** Inline stroke icon, sized and coloured by CSS via `currentColor`. */
   icon: string;
+  /** Shown as tabs at the top of every page in the section. One page: no tabs. */
+  pages: NavPage[];
 }
 
 /**
  * Nav icons.
  *
- * Drawn inline rather than pulled from an icon font: six glyphs is not worth a
+ * Drawn inline rather than pulled from an icon font: five glyphs is not worth a
  * network request, and `currentColor` means they inherit the link's colour in
  * both themes and in the active state without a second rule.
  */
@@ -63,55 +73,104 @@ const ICON = (paths: string): string =>
   `stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
 
 /**
- * The rail holds destinations you navigate between and nothing else.
+ * The rail: five sections, in the order a person asks the questions.
  *
- * Prompts moved under Settings (it is configuration, not a place you visit
- * daily), Decisions became a section of the dashboard, and the live browser
- * became a button in the top-right corner because it opens its own tab.
+ *   What is happening?        Home
+ *   What do we publish?       Content   — articles, keywords, reels
+ *   Where does it go?         Channels  — sites, Facebook pages
+ *   Why did nothing happen?   Activity  — decisions, events
+ *   Setup                     Setup     — settings, keys, prompts, browser, data
  *
- * The order is the operator's, not alphabetical and not the order these pages
- * were built in: the ones opened daily sit at the top, and Runs is last
- * because it is where you go after something has already gone wrong.
+ * It used to list pages by table -- Sites, Keywords, Runs, Events, Reels --
+ * with Settings in the middle and Decisions hidden inside the dashboard, and
+ * a new person did not know where to start or where to look when something
+ * stopped. A page belongs to exactly one section, found from its URL by
+ * sectionFor(), so no route has to say which.
  */
-const NAV: NavItem[] = [
+export const SECTIONS: NavSection[] = [
   {
+    label: 'Home',
     href: '/',
-    label: 'Dashboard',
-    icon: ICON('<rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/>' +
-      '<rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/>'),
+    icon: ICON('<path d="M3 11 12 4l9 7"/><path d="M5 10v10h14V10"/>'),
+    pages: [{ href: '/', label: 'Home' }],
   },
   {
+    label: 'Content',
+    href: '/runs',
+    icon: ICON('<path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h6"/>'),
+    pages: [
+      { href: '/runs', label: 'Articles' },
+      { href: '/keywords', label: 'Keywords' },
+      { href: '/reels', label: 'Reels' },
+    ],
+  },
+  {
+    label: 'Channels',
     href: '/sites',
-    label: 'Sites',
     icon: ICON('<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/>' +
       '<path d="M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0-18z"/>'),
+    pages: [
+      { href: '/sites', label: 'Sites' },
+      { href: '/settings/facebook', label: 'Facebook' },
+    ],
   },
   {
+    label: 'Activity',
+    href: '/decisions',
+    icon: ICON('<path d="M3 12h4l3-8 4 16 3-8h4"/>'),
+    pages: [
+      { href: '/decisions', label: 'Decisions' },
+      { href: '/events', label: 'Events' },
+    ],
+  },
+  {
+    label: 'Setup',
     href: '/settings',
-    label: 'Settings',
     icon: ICON('<circle cx="12" cy="12" r="3"/>' +
       '<path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2' +
       'a2 2 0 1 1-4 0a1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 3 15' +
       'a2 2 0 1 1 0-4a1.7 1.7 0 0 0 1.5-2.6l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 10 4.6' +
       'a2 2 0 1 1 4 0a1.7 1.7 0 0 0 2.6 1.5l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1A1.7 1.7 0 0 0 21 11' +
       'a2 2 0 1 1 0 4a1.7 1.7 0 0 0-1.6 0z"/>'),
-  },
-  {
-    href: '/keywords',
-    label: 'Keywords',
-    icon: ICON('<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>'),
-  },
-  {
-    href: '/events',
-    label: 'Events',
-    icon: ICON('<path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h10"/>'),
-  },
-  {
-    href: '/runs',
-    label: 'Runs',
-    icon: ICON('<polygon points="6 4 20 12 6 20 6 4"/>'),
+    pages: [
+      { href: '/settings', label: 'General' },
+      { href: '/settings/keys', label: 'LLM keys' },
+      { href: '/settings/prompts', label: 'Prompts' },
+      { href: '/settings/reels', label: 'Reels' },
+      { href: '/settings/presenters', label: 'Presenters' },
+      { href: '/browser', label: 'Browser', external: true },
+      { href: '/settings/account', label: 'Password' },
+    ],
   },
 ];
+
+/** Whether `path` is `href` or a page under it. `/` matches only itself. */
+const under = (path: string, href: string): boolean =>
+  href === '/' ? path === '/' : path === href || path.startsWith(href + '/');
+
+/**
+ * The section a URL belongs to, by the longest page prefix that matches --
+ * longest, so /settings/facebook lands in Channels rather than in Setup
+ * under /settings.
+ */
+export function sectionFor(path: string): NavSection | undefined {
+  let best: { section: NavSection; length: number } | undefined;
+  for (const section of SECTIONS) {
+    for (const page of section.pages) {
+      if (under(path, page.href) && (!best || page.href.length > best.length)) {
+        best = { section, length: page.href.length };
+      }
+    }
+  }
+  return best?.section;
+}
+
+/** The page within a section that `path` is on, by the same longest-prefix rule. */
+export function pageFor(section: NavSection, path: string): NavPage | undefined {
+  return [...section.pages]
+    .sort((a, b) => b.href.length - a.href.length)
+    .find((page) => under(path, page.href));
+}
 
 /**
  * The theme, applied before the first paint.
@@ -156,12 +215,13 @@ export function head(title: string): string {
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap">
 <link rel="stylesheet" href="/static/style.css">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%23e63946'/><rect x='9' y='9' width='14' height='2.5' rx='1.25' fill='white'/><rect x='9' y='15' width='14' height='2.5' rx='1.25' fill='white' opacity='.75'/><rect x='9' y='21' width='8' height='2.5' rx='1.25' fill='white' opacity='.5'/></svg>">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%232563eb'/><rect x='9' y='9' width='14' height='2.5' rx='1.25' fill='white'/><rect x='9' y='15' width='14' height='2.5' rx='1.25' fill='white' opacity='.75'/><rect x='9' y='21' width='8' height='2.5' rx='1.25' fill='white' opacity='.5'/></svg>">
 ${THEME_BOOT}`;
 }
 
 export interface LayoutOptions {
   title: string;
+  /** The current URL path. Picks the rail section and the tab. */
   active: string;
   body: Html;
   flash?: { kind: 'ok' | 'error' | 'warn'; message: string } | null;
@@ -169,13 +229,28 @@ export interface LayoutOptions {
 }
 
 export function layout(options: LayoutOptions): string {
-  const nav = NAV.map(
+  const section = sectionFor(options.active);
+  const current = section ? pageFor(section, options.active) : undefined;
+
+  const nav = SECTIONS.map(
     (item) => html`
-      <a href="${item.href}" class="${item.href === options.active ? 'active' : ''}"
+      <a href="${item.href}" class="${item === section ? 'active' : ''}"
         >${raw(item.icon)}<span>${item.label}</span></a
       >
     `,
   );
+
+  // Tabs for the section's pages, when it has more than one.
+  const tabs =
+    section && section.pages.length > 1
+      ? html`<nav class="subnav" aria-label="${section.label}">
+          ${section.pages.map(
+            (p) => html`<a href="${p.href}" class="${p === current ? 'active' : ''}"
+              ${p.external ? raw('target="_blank" rel="noopener"') : raw('')}
+              >${p.label}</a>`,
+          )}
+        </nav>`
+      : raw('');
 
   const flash = options.flash
     ? html`<div class="flash ${options.flash.kind}">${options.flash.message}</div>`
@@ -211,6 +286,7 @@ ${head(options.title)}
 </header>
 <main>
   <div class="page">
+${tabs.value}
 ${flash.value}
 ${options.body.value}
   </div>

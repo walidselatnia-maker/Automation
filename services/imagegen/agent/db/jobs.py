@@ -4,6 +4,7 @@ Deliberately not a generic table-name-driven CRUD layer. There is one table and
 five things anyone does to it, so each of them is a named function whose SQL is
 visible at the call site.
 """
+import json
 import logging
 import uuid
 from typing import Optional
@@ -16,17 +17,59 @@ _NOW = "strftime('%Y-%m-%dT%H:%M:%SZ', 'now')"
 
 
 async def create(prompt: str, orientation: str = "VERTICAL", project_id: str = "",
-                 image_model: str = "auto") -> dict:
-    """Queue a generation. Returns the new row."""
+                 image_model: str = "auto",
+                 reference_urls: list[str] | None = None) -> dict:
+    """Queue a generation. Returns the new row.
+
+    reference_urls sit in the same column video jobs use: an image that
+    follows a photo and a clip that follows one are the same idea.
+    """
     job_id = str(uuid.uuid4())
     db = await get_db()
     await db.execute(
-        "INSERT INTO job (id, prompt, orientation, project_id, image_model) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (job_id, prompt, orientation, project_id, image_model or "auto"),
+        "INSERT INTO job (id, prompt, orientation, project_id, image_model, reference_urls) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (job_id, prompt, orientation, project_id, image_model or "auto",
+         json.dumps(list(reference_urls or []))),
     )
     await db.commit()
     return await get(job_id)
+
+
+async def create_video(
+    prompt: str,
+    reference_urls: list[str],
+    project_id: str = "",
+    orientation: str = "VERTICAL",
+    character_media_id: str | None = None,
+    voice_media_id: str | None = None,
+) -> dict:
+    """Queue one clip from reference images and, optionally, a presenter and voice."""
+    job_id = str(uuid.uuid4())
+    db = await get_db()
+    await db.execute(
+        """INSERT INTO job (id, prompt, orientation, project_id, kind, reference_urls,
+                            character_media_id, voice_media_id)
+                VALUES (?, ?, ?, ?, 'video', ?, ?, ?)""",
+        (job_id, prompt, orientation, project_id, json.dumps(reference_urls),
+         character_media_id or None, voice_media_id or None),
+    )
+    await db.commit()
+    return await get(job_id)
+
+
+async def set_operation(job_id: str, operation: dict) -> None:
+    """Record the Flow operation a submitted video is waiting on.
+
+    Stored rather than held in memory so a worker that restarts mid-generation
+    resumes polling the operation instead of paying for the video twice.
+    """
+    db = await get_db()
+    await db.execute(
+        f"UPDATE job SET operation_json = ?, updated_at = {_NOW} WHERE id = ?",
+        (json.dumps(operation), job_id),
+    )
+    await db.commit()
 
 
 async def get(job_id: str) -> Optional[dict]:
@@ -69,10 +112,18 @@ async def complete(job_id: str, media_id: Optional[str], output_url: str) -> Non
 
 
 async def fail(job_id: str, error: str) -> None:
+    """Record why a job died.
+
+    8000 characters, not 1000. A Flow response this service cannot read is the
+    single most expensive thing to diagnose here -- the generation is paid for
+    and the reply is the only evidence of what it did -- and 1000 characters
+    cut the one that mattered off mid-field. This column is the only copy that
+    reaches the platform.
+    """
     db = await get_db()
     await db.execute(
         f"UPDATE job SET status = 'FAILED', error_message = ?, updated_at = {_NOW} WHERE id = ?",
-        (error[:1000], job_id),
+        (error[:8000], job_id),
     )
     await db.commit()
 
@@ -82,7 +133,28 @@ async def requeue(job_id: str, error: str) -> None:
     db = await get_db()
     await db.execute(
         f"UPDATE job SET status = 'PENDING', error_message = ?, updated_at = {_NOW} WHERE id = ?",
-        (error[:1000], job_id),
+        (error[:8000], job_id),
+    )
+    await db.commit()
+
+
+async def touch(job_id: str) -> None:
+    """Say a PROCESSING job is still being worked on.
+
+    reset_stale reads updated_at as a pulse: a PROCESSING job that has not been
+    touched for the cutoff is taken for one whose process died, and put back in
+    the queue. That is right for an image, which is done in ninety seconds. A
+    video is polled for up to twenty minutes, and at ten it was being returned
+    to the queue mid-generation, claimed again, and submitted again -- a second
+    video, paid for, ten minutes after the first, every ten minutes.
+
+    So a poll loop touches its job each round. A job whose process really has
+    died stops being touched, and the reset still catches it.
+    """
+    db = await get_db()
+    await db.execute(
+        f"UPDATE job SET updated_at = {_NOW} WHERE id = ? AND status = 'PROCESSING'",
+        (job_id,),
     )
     await db.commit()
 
@@ -131,18 +203,29 @@ async def count_by_status() -> dict[str, int]:
     return {r["status"]: r["n"] for r in rows}
 
 
-async def recent_finished(limit: int = 10) -> list[dict]:
+async def recent_finished(limit: int = 10, within_seconds: int = 0) -> list[dict]:
     """Most recently finished jobs, newest first.
 
     The watchdog reads these to spot a Google sign-in wall: a run of failures
     whose messages name an auth problem means Chrome is sitting on a login
     page, and restarting it would only loop.
+
+    `within_seconds` bounds how far back that reaches, and the watchdog's
+    circuit breaker needs it. This table outlives the container, so without a
+    bound a run of failures is permanent evidence: five failed jobs would trip
+    the breaker thirty seconds after every start, for ever, long after whatever
+    caused them was fixed. 0 keeps the old behaviour for callers that want the
+    whole history.
     """
     db = await get_db()
-    async with db.execute(
-        """SELECT * FROM job WHERE status IN ('COMPLETED', 'FAILED')
-            ORDER BY updated_at DESC LIMIT ?""",
-        (limit,),
-    ) as cursor:
+    sql = """SELECT * FROM job WHERE status IN ('COMPLETED', 'FAILED')"""
+    params: list = []
+    if within_seconds > 0:
+        sql += " AND updated_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ?)"
+        params.append(f"-{int(within_seconds)} seconds")
+    sql += " ORDER BY updated_at DESC LIMIT ?"
+    params.append(limit)
+
+    async with db.execute(sql, tuple(params)) as cursor:
         rows = await cursor.fetchall()
     return [dict(r) for r in rows]

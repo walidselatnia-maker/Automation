@@ -39,12 +39,13 @@ const PAGES = [
   '/sites',
   '/keywords',
   '/keywords/add',
+  '/reels',
+  '/settings/facebook',
   '/events',
   '/settings',
   '/settings/keys',
   '/settings/prompts',
   '/settings/account',
-  '/settings/data',
 ];
 
 describe('every control points at a route that exists', () => {

@@ -1,0 +1,19 @@
+Create a 10-second vertical (9:16) recipe Reel. The attached reference photos are the visual source of truth for the finished dish: same food, same plate, same colours, same portion, same toppings. Nothing may be added, swapped or invented.
+
+Recipe name: {{seo.title}}
+
+SUBJECT: {{seo.title}}, exactly as in the reference photos. Name the textures the camera will see: the glossy sauce, the crisp golden edges, the soft crumb — whatever the photos show.
+
+ENVIRONMENT: a real home kitchen counter. A clean white marble or neutral countertop, a linen towel, one fork or spoon. Nothing that is not in the photos unless a hand brings it in.
+
+CAMERA: overhead or 45 degrees from the front, phone camera, a close-up or medium shot. One movement across the ten seconds at most: a slight handheld drift toward the dish, or locked off. No zooms, no cuts.
+
+LIGHTING: warm window light from one side, a soft shadow under the plate, a small reflection on the sauce. Uneven, like a real kitchen.
+
+ACTION, in order, at natural real-time speed: a hand enters with a fork or spoon, presses through the top, lifts one bite, tilts it toward the lens, steam rises from the opening. One hand, one tool, one action. Never slow motion, never "slowly".
+
+VOICE: {{presenter.name}} speaks in ENGLISH — {{presenter.voice}}. In the first 7–8 seconds she says one warm, first-person line about what makes this dish good. In the last 2 seconds she says, word for word: "{{cta}}"
+
+SOUND: real cooking sound under the voice — the crack of the crust, the scrape of the fork, the soft hiss of steam. No music.
+
+MOOD and STYLE: warm and hungry. Shot on a phone, natural colours, honest and slightly imperfect: a crumb on the counter, a touch of handheld shake. No logos, no watermarks, no on-screen text.

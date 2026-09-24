@@ -3,10 +3,26 @@
  * Injects injected.js into MAIN world to access window.grecaptcha
  */
 (function () {
-  const s = document.createElement('script');
-  s.src = chrome.runtime.getURL('injected.js');
-  s.onload = () => s.remove();
-  (document.head || document.documentElement).appendChild(s);
+  // reCAPTCHA preload, from upstream crisng95/flowkit@1eae10b. flow.google.com
+  // no longer ships grecaptcha at page load, and its Trusted Types CSP blocks a
+  // <script src> on google.com -- so the loader and the real client are shipped
+  // in the extension, whose chrome-extension:// URL the page CSP allows.
+  //
+  // The ?v= is the manifest version: Chrome has been seen to serve a stale
+  // injected.js out of its resource cache after the extension is reloaded.
+  function addExtScript(name) {
+    const s = document.createElement('script');
+    s.src = chrome.runtime.getURL(name) + '?v=' + chrome.runtime.getManifest().version;
+    s.onload = () => s.remove();
+    s.setAttribute('data-flowkit', name);
+    (document.head || document.documentElement).appendChild(s);
+  }
+
+  addExtScript('injected.js');
+  // The loader sets up ___grecaptcha_cfg; its own gstatic append is refused by
+  // the CSP, so the client it would have fetched follows from here.
+  addExtScript('recaptcha_enterprise.js');
+  setTimeout(() => addExtScript('recaptcha__en.js'), 50);
 })();
 
 /**

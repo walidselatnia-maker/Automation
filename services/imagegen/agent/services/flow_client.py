@@ -14,7 +14,8 @@ from typing import Optional
 
 from agent.config import (
     GOOGLE_FLOW_API, GOOGLE_API_KEY, ENDPOINTS,
-    IMAGE_MODELS,
+    IMAGE_MODELS, VIDEO_MODELS, VIDEO_MODEL_KEY, VIDEO_PAYGATE_TIER,
+    I2V_MODEL_KEY,
 )
 from agent.services import flow_batch as fb
 from agent.services.headers import random_headers
@@ -459,24 +460,163 @@ class FlowClient:
             "captchaAction": "IMAGE_GENERATION",
         })
 
-    # ─── batchexecute, the transport Flow moved to ──────────────
+    async def generate_video_from_references(
+        self,
+        reference_media_ids: list[str],
+        prompt: str,
+        project_id: str,
+        aspect_ratio: str = "VIDEO_ASPECT_RATIO_PORTRAIT",
+        model_key: str = "",
+    ) -> dict:
+        """Generate a video composed from reference images (r2v).
+
+        The request body is part of the frozen surface: it is what the Flow UI
+        sends, recovered from a working capture. Reshaping any of it -- the
+        nesting of textInput, the imageUsageType, the empty metadata -- produces
+        requests Google rejects with no useful detail.
+
+        reference_media_ids come from upload_image, not from anything we stored
+        earlier: uploading at generation time means an article from any date can
+        be turned into a video, and no media id has to outlive its job.
+        """
+        key = (
+            model_key
+            or VIDEO_MODEL_KEY
+            or VIDEO_MODELS.get(VIDEO_PAYGATE_TIER, {})
+            .get("reference_frame_2_video", {})
+            .get(aspect_ratio, "")
+        )
+
+        if not key:
+            return {"error": (
+                f"No video model for tier={VIDEO_PAYGATE_TIER} "
+                f"ratio={aspect_ratio}. Set VIDEO_MODEL_KEY."
+            )}
+
+        if not reference_media_ids:
+            return {"error": "No reference images to generate a video from"}
+
+        request = {
+            "aspectRatio": aspect_ratio,
+            "seed": int(time.time()) % 10000,
+            "textInput": {"structuredPrompt": {"parts": [{"text": prompt}]}},
+            "videoModelKey": key,
+            "referenceImages": [
+                {"mediaId": mid, "imageUsageType": "IMAGE_USAGE_TYPE_ASSET"}
+                for mid in reference_media_ids
+            ],
+            "metadata": {},
+        }
+
+        body = {
+            "mediaGenerationContext": {"batchId": f"{uuid.uuid4()}"},
+            "clientContext": self._client_context(project_id, VIDEO_PAYGATE_TIER),
+            "requests": [request],
+            "useV2ModelConfig": True,
+        }
+
+        url = self._build_url("generate_video_references")
+        return await self._send("api_request", {
+            "url": url,
+            "method": "POST",
+            "headers": random_headers(),
+            "body": body,
+            "captchaAction": "VIDEO_GENERATION",
+        }, timeout=60)  # Submit only -- polling is separate.
+
+    async def generate_video_from_image(
+        self,
+        start_image_media_id: str,
+        prompt: str,
+        project_id: str,
+        scene_id: str,
+        aspect_ratio: str = "VIDEO_ASPECT_RATIO_PORTRAIT",
+        model_key: str = "",
+    ) -> dict:
+        """Generate a video from one image (i2v).
+
+        The fallback for when reference-to-video is refused. Same frozen-surface
+        rule as the r2v call above, and this body is Flow Kit's own captured i2v
+        payload: `startImage` in place of `referenceImages`, a different endpoint,
+        and `metadata` carrying a scene id rather than being empty. The r2v
+        capture has an empty metadata object and this one does not -- that
+        difference is in the captures, so it is kept.
+
+        Why this exists at all: r2v is on its way out. Flow Kit's own model list
+        for the endpoint Google is migrating to accepts three video models and
+        every one of them is i2v, and its r2v method refuses outright with "its
+        payload was never captured off the new UI". i2v is the path that will
+        still be there.
+
+        `scene_id` has no scenes behind it here -- the job id is passed, because
+        the captured payload carries a unique id in that slot and inventing an
+        empty one is a change to a shape that is rejected without explanation.
+        """
+        key = (
+            model_key
+            or I2V_MODEL_KEY
+            or VIDEO_MODELS.get(VIDEO_PAYGATE_TIER, {})
+            .get("frame_2_video", {})
+            .get(aspect_ratio, "")
+        )
+
+        if not key:
+            return {"error": (
+                f"No i2v model for tier={VIDEO_PAYGATE_TIER} "
+                f"ratio={aspect_ratio}. Set VIDEO_I2V_MODEL_KEY."
+            )}
+
+        if not start_image_media_id:
+            return {"error": "No start image to generate a video from"}
+
+        request = {
+            "aspectRatio": aspect_ratio,
+            "seed": int(time.time()) % 10000,
+            "textInput": {"structuredPrompt": {"parts": [{"text": prompt}]}},
+            "videoModelKey": key,
+            "startImage": {"mediaId": start_image_media_id},
+            "metadata": {"sceneId": scene_id},
+        }
+
+        body = {
+            "mediaGenerationContext": {"batchId": f"{uuid.uuid4()}"},
+            "clientContext": self._client_context(project_id, VIDEO_PAYGATE_TIER),
+            "requests": [request],
+            "useV2ModelConfig": True,
+        }
+
+        url = self._build_url("generate_video")
+        return await self._send("api_request", {
+            "url": url,
+            "method": "POST",
+            "headers": random_headers(),
+            "body": body,
+            "captchaAction": "VIDEO_GENERATION",
+        }, timeout=60)  # Submit only -- polling is separate.
+
+    async def check_video_status(self, operations: list[dict]) -> dict:
+        """Poll asynchronous video operations. Consumes no captcha."""
+        url = self._build_url("check_video_status")
+        return await self._send("api_request", {
+            "url": url,
+            "method": "POST",
+            "headers": random_headers(),
+            "body": {"operations": operations},
+        }, timeout=30)
+
+    # ─── batchexecute, the transport Flow moved to ──────────
     #
-    # A second way of reaching Flow, beside the REST one rather than in place of
-    # it. REST carries a bearer token sniffed off the page to
-    # aisandbox-pa.googleapis.com; Flow moved to a batchexecute endpoint on
-    # flow.google.com in September 2026, the page stopped talking to
-    # aisandbox-pa, and the sniffed token stopped being good there:
+    # A second way of reaching Flow, beside the REST calls above rather than in
+    # place of them. Images still go the old way and still work. Video does not:
+    # it began answering INVALID_ARGUMENT, and Flow Kit's own client shows why --
+    # it no longer sends video over REST at all. Flow moved to a batchexecute
+    # endpoint on flow.google.com in September 2026, and those calls can only be
+    # signed by a page that is already signed in.
     #
-    #   401 UNAUTHENTICATED: Request had invalid authentication credentials.
-    #
-    # Nothing here sends anything. The agent builds an envelope and the extension
-    # runs it inside the Flow tab, where the three values the endpoint checks
-    # live -- SNlM0e as the `at` token, FdrFJe as f.sid, cfb2h as bl -- all read
-    # off WIZ_global_data at call time. The captcha is minted moments before the
-    # request leaves and substituted into the payload there.
-    #
-    # The envelope format and the readers are agent/services/flow_batch.py,
-    # vendored from Flow Kit unchanged.
+    # So nothing here touches the network. Each method builds a request envelope
+    # and hands it to the extension, which runs it inside the Flow tab; the
+    # envelope format and the readers are agent/services/flow_batch.py, vendored
+    # from Flow Kit unchanged.
 
     async def batch_rpc(self, rpcid: str, freq: str, captcha_action: str = None,
                         match: str = None, timeout: float = 180,
@@ -513,6 +653,45 @@ class FlowClient:
         except Exception as e:
             return {"error": f"{type(e).__name__}: {e}"}
 
+    async def upload_image_batch(self, image_base64: str, project_id: str,
+                                 mime_type: str = "image/jpeg",
+                                 file_name: str = "reference.jpg") -> dict:
+        """Put an image into the project on the batch path.
+
+        The media ids the two transports hand out are not interchangeable, so a
+        video generated this way has to reference an image uploaded this way.
+        """
+        freq = fb.upload_request(image_base64, project_id, mime_type, file_name)
+        out = await self._batch_payload(fb.RPC_UPLOAD_IMAGE, freq, timeout=180)
+        if "error" in out:
+            return out
+        try:
+            return {"media_id": fb.read_uploaded_media_id(out["payload"])}
+        except Exception as e:
+            return {"error": f"upload gave no media id: {type(e).__name__}: {e}"}
+
+    async def ui_generate_image(self, prompt: str, project_id: str) -> dict:
+        """Type the prompt into Flow's composer and press Generate.
+
+        Says only that the submit went in; what it made is read from the
+        project listing afterwards. Generous timeout: this drives a real page
+        and waits for the composer to clear.
+        """
+        return await self._send(
+            "ui_generate_image", {"projectId": project_id, "prompt": prompt}, timeout=180,
+        )
+
+    async def scan_flow_ui(self, project_id: str | None = None) -> dict:
+        """What Flow's generate controls look like on the live page.
+
+        The batch path builds Flow's requests for it, and a request that is
+        not quite Flow's own is what UNUSUAL_ACTIVITY is a verdict on. Driving
+        the page's controls instead needs to know what they are, and Flow's
+        markup is minified and unannounced, so it is read rather than assumed.
+        Read-only, and short: nothing generates while it runs.
+        """
+        return await self._send("scan_flow_ui", {"projectId": project_id}, timeout=60)
+
     async def discover_image_models(self, known: list[str]) -> dict:
         """The model names the Flow page's own source carries.
 
@@ -523,17 +702,88 @@ class FlowClient:
         """
         return await self._send("discover_image_models", {"known": known}, timeout=45)
 
+    async def project_images(self, project_id: str) -> list:
+        """Every image in the project, newest first, as GeneratedImage.
+
+        Carries no captcha, so it is the half of the image path that Google's
+        2026-09-22 change left working.
+        """
+        out = await self._batch_payload(
+            fb.RPC_PROJECT_MEDIA, fb.project_media_request(project_id),
+            timeout=120, project_id=project_id,
+        )
+        if "error" in out:
+            return out
+        try:
+            return fb.read_images(out["payload"])
+        except Exception as e:
+            return {"error": f"project listing unreadable: {type(e).__name__}: {e}"}
+
+    async def generate_images_ui(self, prompt: str, project_id: str,
+                                 poll_seconds: float = 180) -> dict:
+        """Generate by driving Flow's composer, and read the result back.
+
+        The captcha-gated call cannot be sent from here any more -- see
+        uiGenerateImage in the extension for the measurements -- so the app
+        sends it and this watches the project for what appeared.
+
+        Which image is ours is decided by what the project did not have before
+        the click. That is why the listing is read first and diffed after,
+        rather than trusting the newest entry: another job on the same project,
+        or a person in the Flow tab, can land an image in between, and taking
+        the newest would hand this job somebody else's picture.
+
+        Answers in the REST shape generate_images_batch answers in, so nothing
+        downstream knows which path ran.
+        """
+        before = await self.project_images(project_id)
+        if isinstance(before, dict):
+            return before
+        known = {image.media_id for image in before}
+
+        submitted = await self.ui_generate_image(prompt, project_id)
+        if submitted.get("error"):
+            return {"error": f"the composer would not take it: {submitted['error']}"}
+
+        # Flow's own UI decides how many variants a submit makes, so a submit
+        # can bring back more than one. The first new one is this job's; the
+        # rest stay in the project and cost nothing to leave there.
+        deadline = time.monotonic() + poll_seconds
+        while time.monotonic() < deadline:
+            await asyncio.sleep(5)
+            now = await self.project_images(project_id)
+            if isinstance(now, dict):
+                continue  # a listing that failed once is not the generation failing
+            fresh = [image for image in now if image.media_id not in known]
+            if fresh:
+                first = fresh[0]
+                return {
+                    "status": 200,
+                    "data": {
+                        "media": [{
+                            "name": first.media_id,
+                            "image": {"generatedImage": {
+                                "mediaId": first.media_id,
+                                "fifeUrl": first.url,
+                            }},
+                        }],
+                    },
+                }
+
+        return {"error": f"the composer took the prompt but no image appeared in {poll_seconds:.0f}s"}
+
     async def generate_images_batch(self, prompt: str, project_id: str,
                                     aspect_ratio: str = "IMAGE_ASPECT_RATIO_PORTRAIT",
-                                    image_model_name: str | None = None) -> dict:
+                                    image_model_name: str | None = None,
+                                    ref_media_ids: list[str] | None = None) -> dict:
         """Generate one image on the batch path.
 
         Answers in the REST shape on purpose. The worker reads
         data.media[0].image.generatedImage.fifeUrl and media[0].name, and
         _parsing.py has tests pinning exactly that, so the batch answer is folded
         into the shape the worker already knows rather than teaching it a second
-        one. Images come back inline on this call -- no operation to poll --
-        which is what makes the two shapes line up at all.
+        one. Images come back inline on this call -- no operation to poll, unlike
+        video -- which is what makes the two shapes line up at all.
 
         The media id is read off the CDN url and may not be a UUID; the worker's
         extractor UUID-checks it and will store null if not. The url is the thing
@@ -548,6 +798,7 @@ class FlowClient:
             aspect=aspect_ratio,
             model=fb.IMAGE_MODEL_BY_NICKNAME.get(image_model_name or "", image_model_name)
             or fb.IMAGE_MODEL,
+            ref_media_ids=ref_media_ids or None,
         )
         out = await self._batch_payload(
             fb.RPC_GEN_IMAGE, freq, fb.CAPTCHA_IMAGE, timeout=180, project_id=project_id)
@@ -573,6 +824,81 @@ class FlowClient:
                 }],
             },
         }
+
+    async def generate_reel_batch(self, prompt: str, project_id: str,
+                                  image_media_ids: list[str],
+                                  character_media_id: str | None = None,
+                                  voice_media_id: str | None = None,
+                                  aspect_ratio: str = "VIDEO_ASPECT_RATIO_PORTRAIT") -> dict:
+        """Submit one clip from ingredients. Returns {"operation_id": ...}.
+
+        The one way a reel clip is made. The images are uploaded media ids
+        from this project; the character and voice are the presenter's, read
+        from the project's assets. See flow_batch.reel_request for the shape.
+        """
+        freq = fb.reel_request(prompt, project_id, image_media_ids,
+                               character_media_id, voice_media_id, aspect=aspect_ratio)
+        out = await self._batch_payload(
+            fb.RPC_GEN_REEL, freq, fb.CAPTCHA_VIDEO, timeout=180, project_id=project_id)
+        if "error" in out:
+            return out
+        try:
+            operation = fb.read_operation(out["payload"])
+        except Exception as e:
+            return {"error": f"submit gave no operation: {type(e).__name__}: {e}"}
+        return {
+            "operation_id": operation.operation_id,
+            "project_id": operation.project_id or project_id,
+        }
+
+    async def check_operation_batch(self, operation_id: str) -> dict:
+        """Poll one operation. {"done": bool, "error": str|None}."""
+        out = await self._batch_payload(
+            fb.RPC_OPERATION, fb.operation_request(operation_id), timeout=60)
+        if "error" in out:
+            return out
+        try:
+            operation = fb.read_operation(out["payload"])
+        except Exception as e:
+            return {"error": f"poll unreadable: {type(e).__name__}: {e}"}
+        # `complained` is deliberately not treated as failure: Flow Kit measured
+        # an operation reporting "Media not found." and still delivering a clip.
+        state = {
+            "done": operation.done,
+            "status": operation.status,
+            "complaint": operation.error,
+        }
+        if not operation.status:
+            # No status in the slot we read. Keep the record so the log shows
+            # what Google actually sent instead of fifteen minutes of nothing.
+            state["raw"] = repr(out["payload"])[:600]
+        return state
+
+    async def find_operation_media_batch(self, operation_id: str, project_id: str) -> dict:
+        """The media id an operation produced, read out of the project listing.
+
+        `match` keeps the listing inside the tab: it is tens of megabytes and
+        grows with every generation, and only the one entry is ever wanted.
+        """
+        result = await self.batch_rpc(
+            fb.RPC_PROJECT_MEDIA, fb.project_media_request(project_id),
+            match=operation_id, timeout=120,
+        )
+        if result.get("error"):
+            return {"error": result["error"]}
+
+        text = result.get("data") or ""
+        media_id = fb.find_media_id_in_text(text, operation_id)
+        return {"media_id": media_id} if media_id else {"media_id": None}
+
+    async def get_media_urls_batch(self, media_id: str) -> dict:
+        """The signed URLs for a finished media id."""
+        out = await self._batch_payload(
+            fb.RPC_MEDIA, fb.media_request(media_id), timeout=60)
+        if "error" in out:
+            return out
+        urls = fb.read_media_urls(out["payload"], media_id)
+        return {"video_url": urls.video, "image_url": urls.image}
 
     async def get_credits(self) -> dict:
         """Get user credits and tier."""

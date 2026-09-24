@@ -4,8 +4,8 @@ import { ImageClient } from '../integrations/images.js';
 import { resolveProjectId, type ResolvedProjectId } from '../core/project-id.js';
 import { SiteApiClient } from '../integrations/site-api.js';
 import { TelegramClient } from '../integrations/telegram.js';
-import { chat, type ChatResult } from '../llm/client.js';
-import { loadPrompt, modelFor, PROMPT_MODELS } from './prompts.js';
+import type { ChatResult } from '../llm/client.js';
+import { askPrompt } from '../llm/ask.js';
 import {
   clearSharedImages,
   getSharedImages,
@@ -200,27 +200,7 @@ export class PipelineContext {
     variables: Record<string, unknown>,
     overrides: { model?: string; format?: 'json' | null } = {},
   ): Promise<ChatResult> {
-    const spec = PROMPT_MODELS[promptName];
-    const { system, user } = loadPrompt(promptName, variables);
-
-    const messages = system.trim()
-      ? ([
-          { role: 'system' as const, content: system },
-          { role: 'user' as const, content: user },
-        ])
-      : [{ role: 'user' as const, content: user }];
-
-    const result = await chat(
-      {
-        // modelFor applies any override set on the Prompts page; the shipped
-        // default underneath it is still PROMPT_MODELS.
-        model: overrides.model ?? modelFor(promptName),
-        messages,
-        format: overrides.format !== undefined ? overrides.format : (spec?.format ?? null),
-      },
-      this.encryptionKey,
-      this.settings.get('llm_base_url'),
-    );
+    const result = await askPrompt(this.settings, this.encryptionKey, promptName, variables, overrides);
 
     this.usage.tokensIn += result.tokensIn;
     this.usage.tokensOut += result.tokensOut;

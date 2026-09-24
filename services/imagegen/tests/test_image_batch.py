@@ -1,52 +1,30 @@
 """Images over the transport Flow actually uses.
 
-REST images started answering
+Three days after REST video started answering INVALID_ARGUMENT, REST images
+started answering
 
     {'code': 401, 'message': 'Request had invalid authentication credentials.
      Expected OAuth 2 access token, login cookie or other valid authentication
      credential.', 'status': 'UNAUTHENTICATED'}
 
-That is the bearer token being refused rather than the request: Flow moved to
-a batchexecute endpoint on flow.google.com in September 2026, the page stopped
-talking to aisandbox-pa, and the token sniffed off it stopped being good there.
-The batch path signs itself inside the Flow tab and needs no sniffed token at
-all.
+That is the bearer token being refused rather than the request: the page no
+longer talks to aisandbox-pa, so the token sniffed off it is no longer good
+there. The batch path signs itself inside the Flow tab and needs no sniffed
+token at all -- the same move video made, one endpoint later.
 
-The envelope builder and readers are Flow Kit's flow_batch.py, vendored
-unchanged and not tested here -- it is their code and their captures. What
-these pin is the seam this service owns: that an image goes out as a batch RPC
-asking for the image captcha, and -- the part that matters most -- that the
-answer comes back in the REST shape the worker already reads, so nothing
-downstream had to learn a second one.
+As with test_video_batch.py, the envelope builder and readers are Flow Kit's
+code and not tested here. What these pin is the seam this service owns: that an
+image goes out as a batch RPC asking for the image captcha, and -- the part
+that matters most -- that the answer comes back in the REST shape the worker
+already reads, so nothing downstream had to learn a second one.
 """
 import asyncio
-import json
 
 from agent.services import flow_batch as fb
 from agent.services.flow_client import FlowClient
 from agent.worker._parsing import extract_output_url, is_error
 
-
-def client_with(reply):
-    """A client whose transport returns `reply` and records what was sent."""
-    client = FlowClient()
-    sent: dict = {}
-
-    async def fake_send(method, params, timeout=300):
-        # Its own key: the REST params carry a "method": "POST" of their own,
-        # which would otherwise overwrite the transport method being recorded.
-        sent["ws_method"] = method
-        sent.update(params)
-        return reply
-
-    client._send = fake_send
-    return client, sent
-
-
-def envelope(rpcid: str, inner) -> str:
-    """A reply shaped like batchexecute's, for the reader to unwrap."""
-    payload = json.dumps(inner, separators=(",", ":"))
-    return ")]}'\n\n" + json.dumps([["wrb.fr", rpcid, payload, None, None, None, "generic"]])
+from tests.test_video_batch import client_with, envelope
 
 
 IMAGE_URL = f"https://{fb.MEDIA_HOST}/image/abc123def?sig=xyz"
@@ -65,7 +43,7 @@ def test_an_image_goes_out_as_a_batch_rpc_not_a_rest_call():
 
     asyncio.run(client.generate_images_batch("soup", "PROJ-1"))
 
-    assert sent["ws_method"] == "batch_rpc"
+    assert sent["method"] == "batch_rpc"
     assert sent["rpcid"] == fb.RPC_GEN_IMAGE
     # No URL at all: nothing here talks to aisandbox-pa any more, so there is
     # no bearer token to be refused.
@@ -93,7 +71,7 @@ def test_the_image_submit_asks_for_the_image_captcha():
 def test_the_answer_is_in_the_shape_the_worker_already_reads():
     """The whole point of folding the batch reply into the REST shape.
 
-    _run calls extract_output_url() on whatever comes back and has done so
+    _run_image calls extract_output_url() on whatever comes back and has done so
     since before the batch path existed. If this stops holding, images complete
     with no url and the platform gets nothing, and the failure looks like Flow
     returning empty rather than like this adapter drifting.
