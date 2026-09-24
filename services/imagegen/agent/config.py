@@ -50,11 +50,11 @@ TOKEN_MAX_AGE_BEFORE_BATCH = int(os.environ.get("TOKEN_MAX_AGE_BEFORE_BATCH", "0
 
 # Generate images by driving Flow's composer instead of sending the call.
 #
-# Google's frontend build of 2026-09-22 answers PUBLIC_ERROR_UNUSUAL_ACTIVITY to
-# every captcha-gated RPC sent from the extension, while the same account
-# generates normally when the button is clicked. Off restores the old path for a
-# build that honours it again.
-IMAGE_USE_UI = os.environ.get("IMAGE_USE_UI", "1") not in ("", "0", "false", "False")
+# Off. It was the first answer to Google's 2026-09-22 build refusing our
+# captcha-gated calls, and it misses things in practice; upstream also found it
+# refused again after a cold Chrome restart (crisng95/flowkit#58). The widget
+# mint in extension/injected.js is the fix. This stays for trying by hand.
+IMAGE_USE_UI = os.environ.get("IMAGE_USE_UI", "0") not in ("", "0", "false", "False")
 
 # Send images over Flow's batchexecute transport instead of the REST API.
 #

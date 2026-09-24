@@ -119,15 +119,8 @@ def test_the_answer_matches_the_shape_the_old_path_returned(monkeypatch):
     assert list(out["data"]["media"][0]["image"]["generatedImage"]) == ["mediaId", "fifeUrl"]
 
 
-def test_the_composer_path_is_the_default():
-    """The switch exists and is on.
-
-    Worth pinning on its own: conftest turns it off for every test that
-    predates the change, so without this the default could be inverted and the
-    suite would still pass while production went on sending the refused call.
-    """
+def test_the_composer_path_is_off_by_default():
+    """The widget mint is the fix; the composer path is kept for trying by hand."""
     import agent.config as config
-    from agent.worker import processor
 
-    assert config.IMAGE_USE_UI is True
-    assert hasattr(processor, "IMAGE_USE_UI")
+    assert config.IMAGE_USE_UI is False
