@@ -100,6 +100,7 @@ export const SECTIONS: NavSection[] = [
     icon: ICON('<path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h6"/>'),
     pages: [
       { href: '/runs', label: 'Articles' },
+      { href: '/flow', label: 'Flow' },
       { href: '/keywords', label: 'Keywords' },
       { href: '/reels', label: 'Reels' },
     ],

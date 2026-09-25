@@ -183,6 +183,10 @@ import { TelegramClient } from '../integrations/telegram.js';
 import { syncToken, type SyncResult } from '../reels/tokens.js';
 import { defaultDeps, publishReel, startGeneration } from '../reels/engine.js';
 import { reelBufferChannels, reelPublisher } from '../reels/buffer.js';
+import { ImageClient } from '../integrations/images.js';
+import { flowPage } from './views/flow.js';
+import { FLOW_EDGES, flowNode } from '../core/flow-graph.js';
+import { flowCells } from '../core/flow-run.js';
 import { presenterFor } from '../reels/presenter.js';
 import { loadPrompt } from '../pipeline/prompts.js';
 import {
@@ -2133,6 +2137,105 @@ export function buildServer(
 
     const data = exportDataset(name);
     return csvFile(reply, data.filename, data.rows);
+  });
+
+
+  /* -- Flow ---------------------------------------------------------------- */
+
+  /**
+   * The pipeline as a canvas, with one run poured into it.
+   *
+   * Every step already stored what it was given and what it made; this is the
+   * first place that shows it joined up, so a picture that came out wrong can
+   * be followed back to the words that described it.
+   */
+  app.get('/flow', async (request, reply) => {
+    const query = request.query as { run?: string };
+    const recent = listRuns(30, 0);
+    const wanted = asNumber(query.run, 0);
+    const run = wanted > 0 ? getRun(wanted) : recent[0] ? getRun(recent[0].id) : undefined;
+
+    if (!run) {
+      return page(reply, 'Flow', '/flow',
+        flowPage({ cells: [], edges: FLOW_EDGES, run: null, runs: [], prompts: [] }),
+        readFlash(request.query));
+    }
+
+    const site = run.site_id ? getSite(run.site_id) : undefined;
+    const keyword = run.keyword_id ? getKeyword(run.keyword_id) : undefined;
+    const enriched = {
+      ...run,
+      site_domain: site?.domain ?? null,
+      seed_keyword: keyword?.seed_keyword ?? null,
+    };
+
+    return page(
+      reply,
+      'Flow',
+      '/flow',
+      flowPage({
+        cells: flowCells(enriched, listSteps(run.id)),
+        edges: FLOW_EDGES,
+        run: {
+          id: run.id,
+          title: run.title ?? '',
+          status: run.status,
+          site: site?.domain ?? '—',
+          keyword: keyword?.seed_keyword ?? '',
+          startedAt: run.started_at,
+          postUrl: run.post_url,
+        },
+        runs: recent.map((r: RunListRow) => ({
+          id: r.id,
+          label: `${r.seed_keyword ?? r.title ?? '—'} · ${r.site_domain ?? ''}`.trim(),
+          status: r.status,
+        })),
+        prompts: listPromptFiles(),
+      }),
+      readFlash(request.query),
+    );
+  });
+
+  /**
+   * Generate one picture from a brief, and hand back its url.
+   *
+   * The point of the page is testing a prompt change without paying for a
+   * whole article, so this deliberately does the smallest possible thing: one
+   * image, nothing written to the run, nothing uploaded to the site, the
+   * article untouched. What comes back is Flow's own url, shown on the card
+   * for as long as that url lives, which is long enough to judge it.
+   */
+  app.post('/flow/:run/try/:step', async (request, reply) => {
+    const runId = asNumber((request.params as { run: string }).run, 0);
+    const step = asString((request.params as { step: string }).step);
+    const run = getRun(runId);
+    if (!run) return reply.code(404).send({ error: 'That run is gone.' });
+
+    const node = flowNode(step);
+    if (!node || node.kind !== 'image' || !step.startsWith('generate-image-')) {
+      return reply.code(400).send({ error: 'Only a picture can be tried again from here.' });
+    }
+
+    const body = request.body as { prompt?: string };
+    const prompt = asString(body?.prompt).trim();
+    if (!prompt) return reply.code(400).send({ error: 'The brief is empty.' });
+
+    const site = run.site_id ? getSite(run.site_id) : undefined;
+    const images = new ImageClient({
+      baseUrl: settings.get('image_base_url'),
+      apiKey: settings.get('image_api_key'),
+      pollIntervalMs: settings.getNumber('image_poll_interval_seconds') * 1000,
+      maxAttempts: settings.getNumber('image_poll_max_attempts'),
+      projectId: site?.project_id || settings.get('flow_project_id'),
+    });
+
+    try {
+      const result = await images.generate(prompt, 'VERTICAL');
+      log.info(`flow: tried "${step}" again for run ${runId}`);
+      return reply.send({ url: result.imageUrl });
+    } catch (err) {
+      return reply.code(502).send({ error: errorMessage(err) });
+    }
   });
 
   /* -- Prompts ----------------------------------------------------------- */

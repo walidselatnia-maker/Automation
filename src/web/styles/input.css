@@ -441,6 +441,125 @@
     @apply border-edge text-slate-400 dark:border-edge-dark dark:text-slate-500;
   }
 
+  /* ------------------------------------------------------------- the flow */
+  /* A node canvas: cards absolutely placed inside one transformed plane, with
+     an SVG of the same size behind them carrying the wires. The plane moves,
+     not the cards, so panning and zooming are one transform rather than a
+     hundred. */
+
+  .fx-bar {
+    @apply mb-3 flex flex-wrap items-center justify-between gap-3 py-3;
+  }
+
+  .fx-stage {
+    @apply relative overflow-hidden rounded-xl border;
+    @apply border-edge bg-fill dark:border-edge-dark dark:bg-page-dark;
+    height: min(72vh, 780px);
+    touch-action: none;
+    cursor: grab;
+    background-image: radial-gradient(currentColor 1px, transparent 1px);
+    background-size: 22px 22px;
+    color: rgb(148 163 184 / 0.25);
+  }
+  .fx-stage:active { cursor: grabbing; }
+
+  .fx-plane {
+    @apply absolute left-0 top-0;
+    transform-origin: 0 0;
+    width: 4000px;
+    height: 1400px;
+  }
+
+  .fx-wires {
+    @apply pointer-events-none absolute left-0 top-0;
+  }
+  .fx-wires path {
+    fill: none;
+    stroke: rgb(148 163 184 / 0.55);
+    stroke-width: 2;
+  }
+
+  .fx-card {
+    @apply absolute flex w-[280px] flex-col gap-1.5 rounded-xl border p-3;
+    @apply border-edge bg-surface text-slate-900 shadow-sm;
+    @apply dark:border-edge-dark dark:bg-surface-dark dark:text-slate-100;
+    cursor: grab;
+    color: inherit;
+  }
+  .fx-card.fx-dragging {
+    @apply shadow-lg;
+    cursor: grabbing;
+    z-index: 20;
+  }
+  .fx-card.fx-failed { @apply border-brand/50; }
+  .fx-card.fx-pending { @apply opacity-60; }
+  .fx-card.fx-running { @apply border-amber/50; }
+
+  .fx-head {
+    @apply flex items-center gap-2 text-sm;
+  }
+  .fx-head strong { @apply flex-1 truncate; }
+
+  .fx-kind {
+    @apply h-2.5 w-2.5 flex-none rounded-full bg-slate-400;
+  }
+  .fx-kind-text { @apply bg-sky-500; }
+  .fx-kind-image { @apply bg-violet-500; }
+  .fx-kind-video { @apply bg-brand; }
+  .fx-kind-publish { @apply bg-emerald; }
+  .fx-kind-source { @apply bg-amber; }
+
+  .fx-status {
+    @apply text-[10px] uppercase tracking-wide text-slate-500 dark:text-slate-400;
+  }
+
+  .fx-shot {
+    @apply h-28 w-full rounded-lg object-cover;
+  }
+
+  .fx-label {
+    @apply mt-1 text-[10px] font-semibold uppercase tracking-wide;
+    @apply text-slate-500 dark:text-slate-400;
+  }
+  .fx-text {
+    @apply m-0 text-xs leading-snug text-slate-600 dark:text-slate-300;
+  }
+  .fx-err {
+    @apply m-0 text-xs leading-snug text-brand;
+  }
+
+  .fx-foot {
+    @apply mt-auto flex items-center gap-2 pt-1;
+  }
+  .fx-foot .fx-open {
+    @apply rounded-md border px-2 py-1 text-[11px];
+    @apply border-edge bg-transparent dark:border-edge-dark;
+  }
+  .fx-meta { @apply ml-auto text-[10px] text-slate-500 dark:text-slate-400; }
+
+  .fx-hint {
+    @apply pointer-events-none absolute bottom-2 left-3;
+  }
+
+  .fx-panel {
+    @apply fixed right-0 top-0 z-40 h-full w-[min(30rem,100vw)] overflow-y-auto p-5;
+    @apply border-l border-edge bg-surface shadow-xl;
+    @apply dark:border-edge-dark dark:bg-surface-dark;
+  }
+  .fx-panel-head {
+    @apply mb-3 flex items-center justify-between gap-3;
+  }
+  .fx-panel-shot {
+    @apply my-2 w-full rounded-lg;
+  }
+  .fx-pre {
+    @apply max-h-64 overflow-auto whitespace-pre-wrap rounded-lg p-2 text-xs;
+    @apply bg-fill dark:bg-fill-dark;
+  }
+  .fx-try {
+    @apply w-full font-mono text-xs;
+  }
+
   /* -------------------------------------------------------- alert banners */
 
   /* ---------------------------------------------------------- home */
