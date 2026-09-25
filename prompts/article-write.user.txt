@@ -1,0 +1,14 @@
+Write this article in full.
+
+TITLE: {{title}}
+NICHE: {{niche}}
+FOCUS KEYWORD: {{focusKeyword}}
+
+THE PLAN:
+{{planJson}}
+
+The markers to place, each exactly once and in this order: {{markers}}
+
+Write every section in the plan, in order, under its own <h2>. Aim for {{words}}
+words in total. Start with the first section's heading — the title is printed by
+the site, so do not repeat it.

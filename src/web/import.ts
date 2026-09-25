@@ -1,5 +1,6 @@
 import { parseCsvTable } from '../lib/csv.js';
 import {
+  asContentType,
   findKeywordRow,
   getSiteByDomain,
   insertKeyword,
@@ -32,6 +33,8 @@ const KEYWORD_FIELDS = new Set([
   'spy_pin_image',
   'annotation',
   'status',
+  'content_type',
+  'niche',
   'row_number',
 ]);
 
@@ -45,6 +48,9 @@ const ALIASES: Record<string, string> = {
   'spy pin image': 'spy_pin_image',
   row: 'status',
   keyword: 'seed_keyword',
+  type: 'content_type',
+  'content type': 'content_type',
+  topic: 'niche',
 };
 
 const normaliseHeader = (header: string): string => {
@@ -142,6 +148,10 @@ export function importKeywordsCsv(csv: string): ImportReport {
           spy_pin_image: value('spy_pin_image'),
           annotation: value('annotation'),
           status: normaliseStatus(value('status') || 'go'),
+          // A sheet written before content types says nothing here, and
+          // everything that came from one is a recipe.
+          content_type: asContentType(value('content_type')),
+          niche: value('niche').trim(),
         };
 
         // Importing the same file twice is normal — the first attempt is often

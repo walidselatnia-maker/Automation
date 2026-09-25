@@ -1,0 +1,35 @@
+Plan a long article.
+
+TOPIC: {{keyword}}
+NICHE: {{niche}}
+{{spyNote}}
+The categories this site offers, one of which you must pick by its exact title:
+{{categoryTitles}}
+
+Answer with this JSON:
+
+{
+  "title": "<the headline, under 70 characters>",
+  "slug": "<lowercase-words-with-dashes>",
+  "excerpt": "<one sentence, about 160 characters, that makes the case for reading>",
+  "metaTitle": "<at most 60 characters>",
+  "metaDescription": "<at most 160 characters>",
+  "focusKeyword": "<the one phrase this article should rank for>",
+  "tags": ["<three to six topic tags>"],
+  "category": "<one title, copied exactly from the list above>",
+  "sections": [
+    {
+      "heading": "<what the reader sees as an h2>",
+      "covers": "<what this section must say: the facts, names, numbers and steps, 30 to 60 words>"
+    }
+  ],
+  "images": [
+    {
+      "after": "<the heading this photograph appears under, or \"top\" for the one at the top>",
+      "alt": "<what the picture shows, as alt text, under 120 characters>",
+      "brief": "<the photograph: subject, setting, camera, light. 40 to 70 words>"
+    }
+  ]
+}
+
+Six to ten sections. Four to seven images, the first one \"top\".

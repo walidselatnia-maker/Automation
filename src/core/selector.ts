@@ -219,6 +219,11 @@ export function selectTask(
       .filter((link) => link.status === 'go' && !link.blocked)
       .map((link) => eligibleById.get(link.siteId))
       .filter((site): site is SiteView => site !== undefined)
+      // A recipe keyword on an article site would be written by the wrong
+      // pipeline and posted to an endpoint that does not want it. The link
+      // may exist -- the matrix predates content types -- but the pair does
+      // not run.
+      .filter((site) => site.contentType === keyword.contentType)
       .sort(longestWaiting);
 
     if (candidates.length === 0) {

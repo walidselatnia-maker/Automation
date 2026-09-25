@@ -1091,6 +1091,21 @@ function siteForm(site: SiteRow | null): Html {
           "The Buffer account that schedules this site's Pinterest pins. The Pinterest channel is found automatically.",
         )}
       </div>
+      <div class="field">
+        <label>What this site publishes</label>
+        <select name="content_type">
+          <option value="recipe" ${site?.content_type !== 'article' ? raw('selected') : raw('')}>
+            Recipes &mdash; posted to /api/recipe
+          </option>
+          <option value="article" ${site?.content_type === 'article' ? raw('selected') : raw('')}>
+            Articles &mdash; long posts, posted to /api/articles
+          </option>
+        </select>
+        <div class="help">
+          Decides which pipeline writes for it. A keyword only runs on a site that
+          publishes its own kind.
+        </div>
+      </div>
       <div class="field-row">
         <div class="field">
           <label>Pinterest username</label>
@@ -2333,6 +2348,34 @@ export function keywordDetailPage(
             : '—'}
         </dd>
       </dl>
+      <form method="post" action="/keywords/${keyword.id}/kind" class="stack" style="margin-top:14px">
+        <div class="field-row">
+          <div class="field">
+            <label for="kw-type">What this writes</label>
+            <select id="kw-type" name="content_type">
+              <option value="recipe" ${keyword.content_type !== 'article' ? raw('selected') : raw('')}>
+                A recipe
+              </option>
+              <option value="article" ${keyword.content_type === 'article' ? raw('selected') : raw('')}>
+                An article
+              </option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="kw-niche">Niche</label>
+            <input type="text" id="kw-niche" name="niche" value="${keyword.niche}"
+                   placeholder="travel, DIY, health…" />
+          </div>
+          <div class="field field-action">
+            <button type="submit" class="small">Save</button>
+          </div>
+        </div>
+        <div class="help">
+          It only runs on a site that publishes the same kind. The niche steers how an
+          article is written, and is ignored for a recipe.
+        </div>
+      </form>
+
       <form method="post" action="/keywords/${keyword.id}/delete" style="margin-top:14px"
             onsubmit="return confirm('Delete this keyword? Its run history stays but is detached.')">
         <button class="danger small" type="submit">Delete this keyword</button>

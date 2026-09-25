@@ -138,6 +138,8 @@ import {
   deletePresenter,
   setFbPagePresenter,
   setFbPageBufferChannel,
+  setKeywordKind,
+  asContentType,
   type ReelCandidate,
 } from '../db/repos.js';
 import { get } from '../db/index.js';
@@ -1014,6 +1016,8 @@ export function buildServer(
         status: asString(body.status) === 'active' ? 'active' : 'paused',
         pin_username: asString(body.pin_username).trim(),
         project_id: asString(body.project_id).trim(),
+        content_type:
+          'content_type' in body ? asContentType(body.content_type) : undefined,
         daily_target: Math.max(0, asNumber(body.daily_target, 0)),
         interval_minutes: readIntervalMinutes(body),
         // Absent, not blank. The site form no longer carries these — pausing
@@ -2049,6 +2053,16 @@ export function buildServer(
     } catch (err) {
       return redirect(reply, `/keywords/${id}`, { kind: 'error', message: errorMessage(err) });
     }
+  });
+
+  app.post('/keywords/:id/kind', async (request, reply) => {
+    const id = asNumber((request.params as { id: string }).id, 0);
+    const keyword = getKeyword(id);
+    if (!keyword) return redirect(reply, '/keywords', { kind: 'error', message: 'Keyword not found' });
+
+    const body = formBody(request);
+    setKeywordKind(id, asContentType(body.content_type), asString(body.niche).trim());
+    return redirect(reply, `/keywords/${id}`, { kind: 'ok', message: 'Saved.' });
   });
 
   app.post('/keywords/:id/delete', async (request, reply) => {

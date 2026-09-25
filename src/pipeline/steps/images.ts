@@ -34,16 +34,38 @@ async function upload(
   ctx: import('../context.js').PipelineContext,
   data: Buffer,
   contentType: string,
+  category = 'recipes',
 ): Promise<Uploaded> {
   const extension = contentType.includes('png') ? 'png' : contentType.includes('jpeg') ? 'jpg' : 'webp';
   const result = await ctx.siteApi.uploadImage(
     data,
     `${randomUUID()}.${extension}`,
     contentType,
-    'recipes',
+    category,
   );
 
   return { path: result.url, absolute: ctx.siteApi.absoluteUrl(result.url) };
+}
+
+/**
+ * One photograph for a blog article, generated and uploaded.
+ *
+ * Its own step per picture, like the recipe images, so a failure at the fifth
+ * does not regenerate the first four. Filed under `articles` rather than
+ * `recipes`, which is the folder the site's own guide names.
+ */
+export function blogImageStep(index: number, total: number): Step<string, Uploaded> {
+  return {
+    name: `generate-blog-image-${index + 1}`,
+    title: `Generate article image ${index + 1} of ${total}`,
+    async run(ctx, brief) {
+      await waitOutImageGap(ctx, `article image ${index + 1}`);
+      const { data, contentType } = await ctx.images.generate(brief, 'LANDSCAPE');
+      ctx.lastImageGeneratedAt = ctx.now();
+      ctx.countImages(1);
+      return upload(ctx, data, contentType, 'articles');
+    },
+  };
 }
 
 /**

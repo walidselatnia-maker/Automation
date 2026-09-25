@@ -45,6 +45,20 @@ export const STEP_CONTEXTS: Record<string, Record<string, unknown>> = {
   },
   'recipe-generator': { seo: SEO, spy: SPY },
   'image-prompts': { seo: SEO, spy: SPY, recipe: { raw: '{}' }, recipeJson: '{}' },
+  'article-outline': {
+    keyword: 'kyoto in autumn',
+    niche: 'travel',
+    spyNote: '',
+    categoryTitles: '[]',
+  },
+  'article-write': {
+    title: 'A Week in Kyoto',
+    niche: 'travel',
+    focusKeyword: 'kyoto in autumn',
+    planJson: '{}',
+    markers: '[IMAGE_1]',
+    words: '1600',
+  },
   'pin-description': {
     seo: SEO,
     cta: 'Try it!',

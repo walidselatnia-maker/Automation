@@ -36,7 +36,8 @@ export function exportDataset(dataset: Dataset): Export {
         ).map((l) => [`${l.keyword_id}:${l.site_id}`, l.status] as const),
       );
       const keywords = all<Record<string, unknown>>(
-        `SELECT id, seed_keyword, spy_title, spy_description, annotation, status
+        `SELECT id, seed_keyword, spy_title, spy_description, annotation, status,
+                content_type, niche
            FROM keywords ORDER BY id`,
       );
 
@@ -44,10 +45,12 @@ export function exportDataset(dataset: Dataset): Export {
         filename: 'keywords.csv',
         rows: [
           ['seed_keyword', 'spy_title', 'spy_description', 'annotation', 'status',
+            'content_type', 'niche',
             ...domains.map((d) => d.domain)],
           ...keywords.map((k) => [
             text(k.seed_keyword), text(k.spy_title), text(k.spy_description),
             text(k.annotation), text(k.status),
+            text(k.content_type), text(k.niche),
             ...domains.map((d) => links.get(`${Number(k.id)}:${d.id}`) ?? ''),
           ]),
         ],
@@ -64,7 +67,7 @@ export function exportDataset(dataset: Dataset): Export {
       // spreadsheet and imported back without erasing the secrets it omits.
       const rows = all<Record<string, unknown>>(
         `SELECT name, domain, status, daily_target, interval_minutes,
-                pin_username, project_id, auto_publish, paused_reason
+                pin_username, project_id, auto_publish, paused_reason, content_type
            FROM sites ORDER BY id`,
       );
       return {
@@ -72,11 +75,12 @@ export function exportDataset(dataset: Dataset): Export {
         rows: [
           ['name', 'domain', 'status', 'daily_target', 'interval_minutes',
             'pin_username', 'project_id', 'auto_publish', 'paused_reason',
-            'api_token', 'buffer_token'],
+            'content_type', 'api_token', 'buffer_token'],
           ...rows.map((r) => [
             text(r.name), text(r.domain), text(r.status), text(r.daily_target),
             text(r.interval_minutes), text(r.pin_username), text(r.project_id),
             r.auto_publish === 1 ? 'yes' : 'no', text(r.paused_reason),
+            text(r.content_type),
             // Present but empty, so the shape matches the credential export and
             // the columns are there to fill in by hand.
             '', '',

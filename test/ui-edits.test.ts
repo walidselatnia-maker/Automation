@@ -534,6 +534,7 @@ describe('web UI after the layout changes', () => {
       const data = exportDataset('keywords');
       expect(data.rows[0]).toEqual([
         'seed_keyword', 'spy_title', 'spy_description', 'annotation', 'status',
+        'content_type', 'niche',
         'bitespoon.com',
       ]);
     });

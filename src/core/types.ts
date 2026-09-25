@@ -4,11 +4,15 @@ export type SiteStatus = 'active' | 'paused';
 export type LinkStatus = 'go' | 'done' | 'no';
 
 /** A site as the selector sees it: config plus derived runtime facts. */
+export type ContentType = 'recipe' | 'article';
+
 export interface SiteView {
   id: number;
   name: string;
   domain: string;
   status: SiteStatus;
+  /** Which pipeline this site's runs take, and which endpoint they post to. */
+  contentType: ContentType;
   dailyTarget: number;
   /** Minimum gap between posts, in minutes. */
   intervalMinutes: number;
@@ -33,6 +37,8 @@ export interface KeywordView {
   seedKeyword: string;
   spyTitle: string;
   status: LinkStatus;
+  /** 'recipe' or 'article'. Only paired with a site that writes the same. */
+  contentType: ContentType;
 }
 
 /** One cell of the keyword x site matrix. */

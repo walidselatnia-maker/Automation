@@ -1,4 +1,5 @@
 import { runStep, StepFailedError } from './engine.js';
+import { runBlogArticle } from './blog-run.js';
 import { PipelineContext } from './context.js';
 import {
   fetchCategories,
@@ -87,6 +88,27 @@ export async function executePipeline(ctx: PipelineContext): Promise<PipelineOut
   const host = ctx.site.domain.replace(/^https?:\/\//, '').replace(/\/+$/, '');
 
   try {
+    // Two kinds of content, and the site says which. An article is planned,
+    // written as one HTML document and posted to a different endpoint, so it
+    // is a different pipeline rather than a branch inside this one -- only
+    // the categories at the start and Pinterest at the end are shared.
+    if (ctx.site.content_type === 'article') {
+      const blog = await runBlogArticle(ctx);
+      markRunPublished(ctx.runId, blog.slug, blog.postUrl, blog.title);
+      setRunTitle(ctx.runId, blog.title);
+      markPairDone(ctx);
+
+      await pinTheArticle(ctx, {
+        title: blog.title,
+        description: blog.excerpt,
+        href: blog.postUrl,
+        image: blog.featuredImage,
+      });
+
+      log.info(`run ${ctx.runId}: article complete — ${blog.postUrl}`);
+      return { status: 'published', postId: blog.slug, postUrl: blog.postUrl };
+    }
+
     const categories = await runStep(ctx, fetchCategories, undefined);
     const seo = await runStep(ctx, validateSpy, categories);
     const recipe = await runStep(ctx, generateRecipe, seo);
@@ -165,6 +187,51 @@ export async function executePipeline(ctx: PipelineContext): Promise<PipelineOut
     log.error(`run ${ctx.runId}: failed at "${failedStep}"`, message);
 
     return { status: 'failed', error: message, failedStep };
+  }
+}
+
+/**
+ * Queue the Pinterest pin for a published article.
+ *
+ * The recipe path generates a pin graphic of its own from the image briefs.
+ * An article already has a featured photograph chosen for the top of the page,
+ * and that is the picture the pin wants -- so this reuses it rather than
+ * paying for a second one.
+ *
+ * Skipped wholesale when Buffer is off, and never the reason a run fails: the
+ * article is live by the time this runs.
+ */
+async function pinTheArticle(
+  ctx: PipelineContext,
+  article: { title: string; description: string; href: string; image: string },
+): Promise<void> {
+  if (!ctx.settings.getBool('buffer_enabled')) {
+    log.info(`run ${ctx.runId}: Buffer disabled, skipping the pin`);
+    return;
+  }
+  if (!article.image) {
+    log.warn(`run ${ctx.runId}: no featured image, so there is nothing to pin`);
+    return;
+  }
+
+  try {
+    const seo = {
+      keyword: ctx.keyword.seed_keyword,
+      title: article.title,
+      description: article.description,
+      category: '',
+    };
+    const pin = {
+      seo,
+      posted: { id: article.href, title: article.title, href: article.href, categoryId: '' },
+      pinImageUrl: article.image,
+      cta: 'Read the full article',
+    };
+    const description = await runStep(ctx, generatePinDescription, pin);
+    const target = await runStep(ctx, resolveBufferTarget, seo);
+    await runStep(ctx, publishToBuffer, { pin, description, target });
+  } catch (err) {
+    log.warn(`run ${ctx.runId}: the article published but the pin did not queue`, errorMessage(err));
   }
 }
 

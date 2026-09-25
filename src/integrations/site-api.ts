@@ -21,6 +21,18 @@ export interface Category {
   recipeCount?: number;
 }
 
+/** What /api/articles answers with, inside its `data`. */
+export interface PostedArticle {
+  id: string;
+  slug: string;
+  title?: string;
+  status?: string;
+  [key: string]: unknown;
+}
+
+/** How many slugs to try before giving up: the wanted one, then -2 and -3. */
+const SLUG_ATTEMPTS = 3;
+
 export interface UploadResult {
   success: boolean;
   url: string;
@@ -183,6 +195,85 @@ export class SiteApiClient {
         text,
       );
     }
+  }
+
+  /**
+   * Publish a blog article.
+   *
+   * A different endpoint and a different shape from postRecipe -- the body is
+   * one HTML string rather than a structured recipe -- so it is its own call
+   * rather than a flag on that one.
+   *
+   * The slug has to be unique and the site says so with a 400 naming it. That
+   * is not a failure worth losing an article over, so a taken slug is suffixed
+   * and sent again: "guide-to-kyoto", then "-2", then "-3". Any other 400 is
+   * a real rejection and is raised.
+   */
+  async postArticle(article: Record<string, unknown>): Promise<PostedArticle> {
+    const wanted = String(article.slug ?? '').trim();
+
+    for (let attempt = 1; attempt <= SLUG_ATTEMPTS; attempt++) {
+      const slug = attempt === 1 || !wanted ? wanted : `${wanted}-${attempt}`;
+      const body = slug ? { ...article, slug } : article;
+
+      const response = await fetch(this.url('/api/articles'), {
+        method: 'POST',
+        headers: { ...this.authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(120_000),
+      });
+
+      const text = await response.text();
+
+      if (response.ok) {
+        try {
+          const parsed = JSON.parse(text) as { data?: PostedArticle };
+          const data = parsed.data ?? (JSON.parse(text) as PostedArticle);
+          if (!data?.slug && !data?.id) {
+            throw new Error('no id or slug');
+          }
+          return data;
+        } catch {
+          throw new SiteApiError(
+            `POST /api/articles returned unparseable JSON from ${this.domain}`,
+            response.status,
+            text,
+          );
+        }
+      }
+
+      // Only the slug is retried, and only while there is another name to try.
+      if (response.status === 400 && /slug already exists/i.test(text) && wanted) {
+        continue;
+      }
+
+      throw new SiteApiError(
+        `POST /api/articles rejected by ${this.domain}: HTTP ${response.status}` +
+          `${describeStatus(response.status)} — ${text.slice(0, 400)}`,
+        response.status,
+        text,
+      );
+    }
+
+    throw new SiteApiError(
+      `Every slug from "${wanted}" to "${wanted}-${SLUG_ATTEMPTS}" is taken on ${this.domain}`,
+      400,
+      '',
+    );
+  }
+
+  /** The authors this site knows, for the article payload's authorId. */
+  async getAuthors(): Promise<{ id: string; name?: string }[]> {
+    const response = await fetch(this.url('/api/admin/authors'), {
+      headers: this.authHeaders(),
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!response.ok) return [];
+
+    const json: unknown = await response.json().catch(() => null);
+    if (Array.isArray(json)) return json as { id: string }[];
+    const wrapped = json as { authors?: { id: string }[]; data?: { id: string }[] } | null;
+    return wrapped?.authors ?? wrapped?.data ?? [];
   }
 
   async getRecipe(id: string): Promise<PostedRecipe> {

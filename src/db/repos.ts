@@ -6,11 +6,19 @@ import { decrypt, encrypt } from '../lib/crypto.js';
  * Sites
  * ====================================================================== */
 
+/** Which pipeline writes for this site, and which endpoint it posts to. */
+export type ContentType = 'recipe' | 'article';
+
+export const asContentType = (value: unknown): ContentType =>
+  String(value ?? '').trim().toLowerCase() === 'article' ? 'article' : 'recipe';
+
 export interface SiteRow {
   id: number;
   name: string;
   domain: string;
   status: 'active' | 'paused';
+  /** 'recipe' posts to /api/recipe; 'article' to /api/articles. */
+  content_type: ContentType;
   pin_username: string;
   project_id: string;
   /** Why it is paused, written down so it is still knowable next week. */
@@ -236,6 +244,8 @@ export interface SiteInput {
   paused_reason?: string;
   paused_until?: string | null;
   auto_publish?: boolean;
+  /** Undefined keeps what the site already is; a sheet may not carry it. */
+  content_type?: ContentType;
   /** Plaintext. Blank on update means "keep the stored one". */
   apiToken?: string;
   bufferToken?: string;
@@ -258,7 +268,7 @@ export function upsertSite(input: SiteInput, key: Buffer, id?: number): number {
       `UPDATE sites SET name = ?, domain = ?, status = ?, pin_username = ?,
          project_id = ?, daily_target = ?, interval_minutes = ?,
          paused_reason = ?, paused_until = ?, auto_publish = ?,
-         api_token_encrypted = ?, buffer_token_encrypted = ?,
+         content_type = ?, api_token_encrypted = ?, buffer_token_encrypted = ?,
          updated_at = datetime('now')
        WHERE id = ?`,
       input.name,
@@ -275,6 +285,11 @@ export function upsertSite(input: SiteInput, key: Buffer, id?: number): number {
       input.auto_publish === undefined
         ? existing.auto_publish
         : fromBool(input.auto_publish),
+      // A sheet that says nothing keeps what the site already is, rather than
+      // turning an article site back into a recipe one on every import.
+      input.content_type === undefined
+        ? existing.content_type
+        : asContentType(input.content_type),
       encryptOrKeep(input.apiToken, existing.api_token_encrypted),
       encryptOrKeep(input.bufferToken, existing.buffer_token_encrypted),
       existing.id,
@@ -285,8 +300,8 @@ export function upsertSite(input: SiteInput, key: Buffer, id?: number): number {
   return run(
     `INSERT INTO sites (name, domain, status, pin_username, project_id,
        daily_target, interval_minutes, paused_reason, paused_until, auto_publish,
-       api_token_encrypted, buffer_token_encrypted)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       content_type, api_token_encrypted, buffer_token_encrypted)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     input.name,
     input.domain,
     input.status,
@@ -297,6 +312,7 @@ export function upsertSite(input: SiteInput, key: Buffer, id?: number): number {
     input.status === 'active' ? '' : (input.paused_reason ?? ''),
     input.status === 'active' ? null : (input.paused_until ?? null),
     fromBool(input.auto_publish ?? true),
+    asContentType(input.content_type),
     encryptOrKeep(input.apiToken, ''),
     encryptOrKeep(input.bufferToken, ''),
   ).lastInsertRowid;
@@ -345,6 +361,7 @@ export function loadSiteViews(dayKey: string, timezone: string): SiteView[] {
     name: r.name,
     domain: r.domain,
     status: r.status,
+    contentType: asContentType(r.content_type),
     dailyTarget: r.daily_target,
     intervalMinutes: r.interval_minutes,
     publishedToday: Number(r.published_today ?? 0),
@@ -383,6 +400,10 @@ export interface KeywordRow {
   spy_pin_image: string;
   annotation: string;
   status: 'go' | 'done' | 'no';
+  /** Which pipeline writes it. Only paired with a site of the same type. */
+  content_type: ContentType;
+  /** Travel, DIY, health… what an article is about. Empty for a recipe. */
+  niche: string;
   created_at: string;
   updated_at: string;
 }
@@ -399,8 +420,8 @@ export const getKeyword = (id: number): KeywordRow | undefined =>
 export function insertKeyword(k: Partial<KeywordRow> & { seed_keyword: string }): number {
   return run(
     `INSERT INTO keywords (seed_keyword, spy_title, spy_description, spy_image_url,
-       spy_article_url, spy_pin_image, annotation, status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+       spy_article_url, spy_pin_image, annotation, status, content_type, niche)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     k.seed_keyword,
     k.spy_title ?? '',
     k.spy_description ?? '',
@@ -409,11 +430,23 @@ export function insertKeyword(k: Partial<KeywordRow> & { seed_keyword: string })
     k.spy_pin_image ?? '',
     k.annotation ?? '',
     k.status ?? 'go',
+    asContentType(k.content_type),
+    (k.niche ?? '').trim(),
   ).lastInsertRowid;
 }
 
 export const setKeywordStatus = (id: number, status: 'go' | 'done' | 'no'): void => {
   run("UPDATE keywords SET status = ?, updated_at = datetime('now') WHERE id = ?", status, id);
+};
+
+/** What this keyword writes, and what it is about. */
+export const setKeywordKind = (id: number, type: ContentType, niche: string): void => {
+  run(
+    "UPDATE keywords SET content_type = ?, niche = ?, updated_at = datetime('now') WHERE id = ?",
+    type,
+    niche.trim(),
+    id,
+  );
 };
 
 export const deleteKeyword = (id: number): void => {
@@ -426,6 +459,7 @@ export const loadKeywordViews = (): KeywordView[] =>
     seedKeyword: r.seed_keyword,
     spyTitle: r.spy_title,
     status: r.status,
+    contentType: asContentType(r.content_type),
   }));
 
 export const loadLinkViews = (): LinkView[] =>
@@ -1148,7 +1182,7 @@ export function updateKeywordFields(
   run(
     `UPDATE keywords SET spy_title = ?, spy_description = ?, spy_image_url = ?,
        spy_article_url = ?, spy_pin_image = ?, annotation = ?, status = ?,
-       updated_at = datetime('now')
+       content_type = ?, niche = ?, updated_at = datetime('now')
      WHERE id = ?`,
     fields.spy_title ?? '',
     fields.spy_description ?? '',
@@ -1157,6 +1191,8 @@ export function updateKeywordFields(
     fields.spy_pin_image ?? '',
     fields.annotation ?? '',
     fields.status ?? 'go',
+    asContentType(fields.content_type),
+    (fields.niche ?? '').trim(),
     id,
   );
 }
