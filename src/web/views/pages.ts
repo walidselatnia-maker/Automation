@@ -40,6 +40,7 @@ const ROLE_LABEL: Record<ArticleRole, string> = {
   beforeAfter: 'Before / after',
 };
 import type { ReelFormat } from '../../reels/formats.js';
+import type { ReelPublisher } from '../../reels/buffer.js';
 import type { Endpoint } from '../../llm/pool.js';
 import type { SettingSpec } from '../../settings.js';
 import type { Supply } from '../../core/supply.js';
@@ -2727,6 +2728,12 @@ export interface ReelComposerData {
 
 /** What Setup → Reels shows and saves. */
 export interface ReelSettingsData {
+  /** Straight to the page, or handed to Buffer's queue. */
+  publisher: ReelPublisher;
+  bufferTokenSet: boolean;
+  bufferLinkInText: boolean;
+  /** How many pages still have no channel, when Buffer is the way out. */
+  pagesWithoutChannel: number;
   mode: ReelMode;
   singleReferences: readonly ArticleRole[];
   lengthSeconds: number;
@@ -2840,6 +2847,61 @@ export function reelSettingsPage(data: ReelSettingsData): Html {
         </div>
       </div>
 
+      <h2>Where reels are published</h2>
+      <div class="card">
+        <div class="row wrap">
+          <label class="choice ${data.publisher === 'facebook' ? 'on' : ''}">
+            <input type="radio" name="reel_publisher" value="facebook"
+                   ${data.publisher === 'facebook' ? raw('checked') : raw('')} />
+            <span><strong>Straight to the page</strong><span class="muted small">
+              The platform uploads the video to Facebook itself. It is live at once, and the
+              article link goes in the first comment.</span></span>
+          </label>
+          <label class="choice ${data.publisher === 'buffer' ? 'on' : ''}">
+            <input type="radio" name="reel_publisher" value="buffer"
+                   ${data.publisher === 'buffer' ? raw('checked') : raw('')} />
+            <span><strong>Through Buffer</strong><span class="muted small">
+              The video is handed to Buffer, which posts it on its own schedule to the channel
+              each page names. Nothing is live until Buffer sends it.</span></span>
+          </label>
+        </div>
+
+        <div data-publisher="buffer" ${data.publisher === 'buffer' ? raw('') : raw('hidden')}>
+          <div class="field">
+            <label for="reel_buffer_token">Buffer token for reels</label>
+            <input type="password" id="reel_buffer_token" name="reel_buffer_token"
+                   autocomplete="off"
+                   placeholder="${data.bufferTokenSet ? '•••••••• — leave blank to keep it' : 'paste the token'}" />
+            <div class="help">
+              The account whose channels the pages post to. Not the per-site tokens that
+              schedule pins &mdash; those belong to a site, and a reel belongs to a page.
+            </div>
+          </div>
+          <div class="field">
+            <label class="inline-check">
+              <input type="checkbox" name="reel_buffer_link_in_text" value="1"
+                     ${data.bufferLinkInText ? raw('checked') : raw('')} />
+              Put the article link at the end of the caption
+            </label>
+            <div class="help">
+              A queued post has no comments yet, so there is no first comment to put it in.
+            </div>
+          </div>
+          ${data.bufferTokenSet && data.pagesWithoutChannel > 0
+            ? html`<div class="flash warn">
+                ${data.pagesWithoutChannel} page(s) have no Buffer channel yet, and their reels
+                cannot go anywhere. Pick one for each under
+                <a href="/settings/facebook">Channels &rarr; Facebook</a>.
+              </div>`
+            : raw('')}
+          ${!data.bufferTokenSet
+            ? html`<div class="flash warn">
+                No Buffer token yet, so no reel can be published this way.
+              </div>`
+            : raw('')}
+        </div>
+      </div>
+
       <h2>Every reel</h2>
       <div class="card">
         <div class="field">
@@ -2861,20 +2923,27 @@ export function reelSettingsPage(data: ReelSettingsData): Html {
       (function () {
         var form = document.getElementById('reel-settings');
         if (!form) return;
-        var radios = form.querySelectorAll('input[name="reel_mode"]');
-        var sections = form.querySelectorAll('[data-mode]');
-        function show() {
-          var picked = form.querySelector('input[name="reel_mode"]:checked');
-          var mode = picked ? picked.value : 'single';
-          for (var i = 0; i < sections.length; i++) {
-            sections[i].hidden = sections[i].dataset.mode !== mode;
+        // Two independent radio groups on one form, each revealing its own
+        // blocks: how a reel is made, and where it is published.
+        function wire(name, attr, fallback) {
+          var radios = form.querySelectorAll('input[name="' + name + '"]');
+          var sections = form.querySelectorAll('[data-' + attr + ']');
+          function show() {
+            var picked = form.querySelector('input[name="' + name + '"]:checked');
+            var value = picked ? picked.value : fallback;
+            for (var i = 0; i < sections.length; i++) {
+              sections[i].hidden = sections[i].dataset[attr] !== value;
+            }
+            for (var j = 0; j < radios.length; j++) {
+              var choice = radios[j].closest('.choice');
+              if (choice) choice.classList.toggle('on', radios[j].checked);
+            }
           }
-          for (var j = 0; j < radios.length; j++) {
-            radios[j].closest('.choice').classList.toggle('on', radios[j].checked);
-          }
+          for (var k = 0; k < radios.length; k++) radios[k].addEventListener('change', show);
+          show();
         }
-        for (var k = 0; k < radios.length; k++) radios[k].addEventListener('change', show);
-        show();
+        wire('reel_mode', 'mode', 'single');
+        wire('reel_publisher', 'publisher', 'facebook');
       })();
     </script>
   `;
@@ -3030,6 +3099,10 @@ const REEL_CAPTION_SCRIPT = `<script>
  * ====================================================================== */
 
 export interface FacebookSettingsData {
+  /** Buffer's channels, when reels go that way and a token was set. */
+  bufferChannels: { id: string; name: string; service: string }[];
+  bufferError: string | null;
+  publisher: ReelPublisher;
   enabled: boolean;
   tokens: FbTokenView[];
   pages: FbPageRow[];
@@ -3224,6 +3297,22 @@ export function facebookSettingsPage(data: FacebookSettingsData): Html {
         reels as soon as they are ready; untick auto-publish to have them wait on the
         <a href="/reels">Reels</a> page for you instead.
       </p>
+      ${data.publisher === 'buffer'
+        ? html`<div class="row wrap" style="margin-bottom:.75rem">
+              <form method="post" action="/settings/facebook/buffer/refresh">
+                <button type="submit" class="small">Refresh Buffer channels</button>
+              </form>
+              <span class="muted small">
+                ${data.bufferChannels.length} channel(s) on the reel Buffer account.
+              </span>
+            </div>
+            ${data.bufferError
+              ? html`<div class="flash warn">
+                  Buffer's channels could not be read, so the picker is empty:
+                  ${data.bufferError}
+                </div>`
+              : raw('')}`
+        : raw('')}
 
       ${data.pages.length === 0
         ? emptyState('No pages. They arrive with a token.')
@@ -3232,7 +3321,9 @@ export function facebookSettingsPage(data: FacebookSettingsData): Html {
               <table>
                 <thead>
                   <tr>
-                    <th>Page</th><th>Niche</th><th>Presenter</th><th>Auto-publish</th><th>Enabled</th>
+                    <th>Page</th><th>Niche</th><th>Presenter</th>
+                    ${data.publisher === 'buffer' ? html`<th>Buffer channel</th>` : raw('')}
+                    <th>Auto-publish</th><th>Enabled</th>
                     <th>Last</th><th></th>
                   </tr>
                 </thead>
@@ -3273,6 +3364,24 @@ export function facebookSettingsPage(data: FacebookSettingsData): Html {
                           )}
                         </select>
                       </td>
+                      ${data.publisher === 'buffer'
+                        ? html`<td>
+                            <select name="buffer_channel_${p.id}">
+                              <option value="">not set &mdash; reels wait</option>
+                              ${data.bufferChannels.map(
+                                (c) => html`<option value="${c.id}"
+                                  ${p.buffer_channel_id === c.id ? raw('selected') : raw('')}
+                                  >${c.name}${c.service ? ` (${c.service})` : ''}</option>`,
+                              )}
+                              ${p.buffer_channel_id &&
+                              !data.bufferChannels.some((c) => c.id === p.buffer_channel_id)
+                                ? html`<option value="${p.buffer_channel_id}" selected>
+                                    ${p.buffer_channel_name || p.buffer_channel_id} — not on this account
+                                  </option>`
+                                : raw('')}
+                            </select>
+                          </td>`
+                        : raw('')}
                       <td>
                         <input type="checkbox" name="auto_${p.id}"
                                ${p.auto_publish === 1 ? raw('checked') : raw('')} />

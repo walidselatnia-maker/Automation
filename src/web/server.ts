@@ -137,6 +137,7 @@ import {
   updatePresenter,
   deletePresenter,
   setFbPagePresenter,
+  setFbPageBufferChannel,
   type ReelCandidate,
 } from '../db/repos.js';
 import { get } from '../db/index.js';
@@ -181,6 +182,7 @@ import { createLogger, errorMessage } from '../lib/logger.js';
 import { TelegramClient } from '../integrations/telegram.js';
 import { syncToken, type SyncResult } from '../reels/tokens.js';
 import { defaultDeps, publishReel, startGeneration } from '../reels/engine.js';
+import { reelBufferChannels, reelPublisher } from '../reels/buffer.js';
 import { presenterFor } from '../reels/presenter.js';
 import { loadPrompt } from '../pipeline/prompts.js';
 import {
@@ -1436,7 +1438,7 @@ export function buildServer(
     }
 
     try {
-      await publishReel(reel, defaultDeps(settings, encryptionKey));
+      await publishReel(reel, defaultDeps(settings, encryptionKey), settings);
     } catch (err) {
       updateReel(id, { status: 'failed', error: errorMessage(err) });
       return redirect(reply, '/reels', { kind: 'error', message: errorMessage(err) });
@@ -1485,6 +1487,36 @@ export function buildServer(
 
   /* -- Settings -> Facebook ------------------------------------------------ */
 
+  /**
+   * Buffer's channel list, remembered between renders.
+   *
+   * Asked for once and kept, because this page is rendered on every save and
+   * Buffer is a network call that can be slow -- the same reason the Facebook
+   * pages themselves are read from the database rather than from Graph. The
+   * Refresh button below is how it gets asked again.
+   */
+  let bufferChannels: { id: string; name: string; service: string }[] = [];
+  let bufferChannelsError: string | null = null;
+
+  const loadBufferChannels = async (): Promise<void> => {
+    if (reelPublisher(settings) !== 'buffer') return;
+    if (!settings.get('reel_buffer_token').trim()) {
+      bufferChannels = [];
+      bufferChannelsError = 'no Buffer token for reels yet';
+      return;
+    }
+    try {
+      bufferChannels = (await reelBufferChannels(settings)).map((c) => ({
+        id: c.id,
+        name: c.name,
+        service: c.service,
+      }));
+      bufferChannelsError = null;
+    } catch (err) {
+      bufferChannelsError = errorMessage(err);
+    }
+  };
+
   const facebookPage = (reply: FastifyReply, flash: Flash) =>
     page(
       reply,
@@ -1496,6 +1528,9 @@ export function buildServer(
         pages: listFbPages(),
         groups: keywordGroups(),
         presenters: listPresenters(),
+        publisher: reelPublisher(settings),
+        bufferChannels,
+        bufferError: bufferChannelsError,
       }),
       flash,
     );
@@ -1503,9 +1538,21 @@ export function buildServer(
   // Rendered from the database alone. Graph is asked only when a token is
   // added or refreshed; a page that waited on it would sit past Cloudflare's
   // hundred seconds whenever Facebook was slow.
-  app.get('/settings/facebook', async (request, reply) =>
-    facebookPage(reply, readFlash(request.query)),
-  );
+  app.get('/settings/facebook', async (request, reply) => {
+    // Only when the list is not there yet: a render should not wait on Buffer
+    // every time, and Refresh is the deliberate way to ask again.
+    if (bufferChannels.length === 0 && bufferChannelsError === null) await loadBufferChannels();
+    return facebookPage(reply, readFlash(request.query));
+  });
+
+  app.post('/settings/facebook/buffer/refresh', async (_request, reply) => {
+    bufferChannels = [];
+    bufferChannelsError = null;
+    await loadBufferChannels();
+    return redirect(reply, '/settings/facebook', bufferChannelsError
+      ? { kind: 'error', message: `Buffer: ${bufferChannelsError}` }
+      : { kind: 'ok', message: `Buffer has ${bufferChannels.length} channel(s).` });
+  });
 
   const describeSync = (name: string, result: SyncResult): Flash => {
     if (!result.ok) return { kind: 'error', message: `${name}: ${result.error}` };
@@ -1592,6 +1639,10 @@ export function buildServer(
     presenterId: asNumber(body[`presenter_${id}`], 0),
     autoPublish: asString(body[`auto_${id}`]) === 'on',
     enabled: asString(body[`enabled_${id}`]) === 'on',
+    // Absent when the column is not on screen -- publishing straight to the
+    // page -- and a page's channel must survive a save made from that view.
+    bufferChannelId:
+      `buffer_channel_${id}` in body ? asString(body[`buffer_channel_${id}`]).trim() : undefined,
   });
 
   const savePage = (id: number, fields: ReturnType<typeof pageFields>): void => {
@@ -1608,6 +1659,15 @@ export function buildServer(
       );
     }
     setFbPagePresenter(id, fields.presenterId > 0 ? fields.presenterId : null);
+    if (fields.bufferChannelId !== undefined) {
+      const picked = bufferChannels.find((c) => c.id === fields.bufferChannelId);
+      setFbPageBufferChannel(
+        id,
+        fields.bufferChannelId
+          ? { id: fields.bufferChannelId, name: picked?.name ?? fields.bufferChannelId }
+          : null,
+      );
+    }
     setFbPageOptions(id, {
       niche: fields.niche,
       autoPublish: fields.autoPublish,
@@ -2633,6 +2693,12 @@ export function buildServer(
       'Reels',
       '/settings/reels',
       reelSettingsPage({
+        publisher: reelPublisher(settings),
+        bufferTokenSet: settings.get('reel_buffer_token').trim() !== '',
+        bufferLinkInText: settings.getBool('reel_buffer_link_in_text'),
+        pagesWithoutChannel: listFbPages().filter(
+          (p) => p.enabled === 1 && p.niche && !p.buffer_channel_id.trim(),
+        ).length,
         mode: reelMode(settings),
         singleReferences: singleReferenceRoles(settings),
         lengthSeconds: settings.getNumber('reel_length_seconds') || 30,
@@ -2672,6 +2738,17 @@ export function buildServer(
     settings.set('reel_formats', JSON.stringify(chosen));
     settings.set('reel_fresh_images', asString(body.reel_fresh_images) === '1' ? 'true' : 'false');
     settings.set('reel_cta_text', asString(body.reel_cta_text).trim() || 'Full recipe in the comments');
+
+    settings.set('reel_publisher', asString(body.reel_publisher) === 'buffer' ? 'buffer' : 'facebook');
+    settings.set(
+      'reel_buffer_link_in_text',
+      asString(body.reel_buffer_link_in_text) === '1' ? 'true' : 'false',
+    );
+    // Blank keeps the stored token, the rule every secret field here follows:
+    // the form cannot show it, so an empty box means "unchanged", not "clear".
+    const bufferToken = asString(body.reel_buffer_token).trim();
+    if (bufferToken) settings.set('reel_buffer_token', bufferToken);
+
     return redirect(reply, '/settings/reels', { kind: 'ok', message: 'Saved. Applies to the next reel.' });
   });
 

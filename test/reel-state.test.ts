@@ -233,7 +233,7 @@ describe('a reel moving through its states', () => {
     updateReel(reelId, { status: 'ready', videoUrl: 'https://cdn/video.mp4' });
 
     const deps = fakeDeps();
-    await publishReel(getReel(reelId) as ReelView, deps);
+    await publishReel(getReel(reelId) as ReelView, deps, settingsWith(true));
 
     expect(getReel(reelId)!.status).toBe('published');
   });
@@ -247,7 +247,7 @@ describe('a reel moving through its states', () => {
     const deps = fakeDeps();
     const commentOnReel = vi.fn(async () => ({ commentId: 'C1' }));
     deps.facebook.commentOnReel = commentOnReel;
-    await publishReel(getReel(reelId) as ReelView, deps);
+    await publishReel(getReel(reelId) as ReelView, deps, settingsWith(true));
 
     expect(commentOnReel).toHaveBeenCalledOnce();
     expect(commentOnReel).toHaveBeenCalledWith({
@@ -271,7 +271,7 @@ describe('a reel moving through its states', () => {
     deps.facebook.commentOnReel = vi.fn(async () => {
       throw new Error('(#200) Requires pages_manage_engagement');
     });
-    await publishReel(getReel(reelId) as ReelView, deps);
+    await publishReel(getReel(reelId) as ReelView, deps, settingsWith(true));
 
     expect(getReel(reelId)!.status).toBe('published');
     expect(getReel(reelId)!.fb_video_id).toBe('VID1');

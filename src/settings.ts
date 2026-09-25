@@ -315,6 +315,42 @@ export const SETTING_SPECS: SettingSpec[] = [
     help: 'The last thing every reel says and shows. The article link goes in the first comment.',
   },
   {
+    key: 'reel_publisher',
+    label: 'Where reels are published',
+    group: 'reels',
+    secret: false,
+    hidden: true,
+    default: 'facebook',
+    help:
+      'facebook: the platform uploads the video to the page itself. buffer: the ' +
+      'video is handed to Buffer, which posts it on its own schedule to the ' +
+      'channel the page names.',
+  },
+  {
+    key: 'reel_buffer_token',
+    label: 'Buffer token for reels',
+    group: 'reels',
+    secret: true,
+    hidden: true,
+    default: '',
+    help:
+      'The Buffer account whose channels the pages post to. Separate from the ' +
+      'per-site tokens that schedule pins: those belong to a site, and a reel ' +
+      'belongs to a page.',
+  },
+  {
+    key: 'reel_buffer_link_in_text',
+    label: 'Put the article link in the reel text',
+    group: 'reels',
+    secret: false,
+    hidden: true,
+    default: 'true',
+    help:
+      'Buffer posts on its own later, so nothing here can add a first comment ' +
+      'the way publishing to the page directly does. On: the link goes at the ' +
+      'end of the caption instead, which is the only place left for it.',
+  },
+  {
     key: 'buffer_enabled',
     label: 'Publish to Buffer',
     group: 'buffer',

@@ -1940,6 +1940,10 @@ export interface FbPageRow {
   last_error: string | null;
   /** The presenter this page's reels are made with; NULL means dish only. */
   presenter_id: number | null;
+  /** Where this page's reels go when reels are published through Buffer. */
+  buffer_channel_id: string;
+  /** What that channel is called, so the table can say it without asking Buffer. */
+  buffer_channel_name: string;
   created_at: string;
 }
 
@@ -2072,6 +2076,25 @@ export function syncFbPages(
 }
 
 /**
+ * Which Buffer channel this page's reels go to.
+ *
+ * The name is stored beside the id so the table can show where a page posts
+ * without asking Buffer on every render -- the same reason page names are
+ * stored rather than looked up.
+ */
+export function setFbPageBufferChannel(
+  id: number,
+  channel: { id: string; name: string } | null,
+): void {
+  run(
+    'UPDATE fb_pages SET buffer_channel_id = ?, buffer_channel_name = ? WHERE id = ?',
+    channel?.id ?? '',
+    channel?.name ?? '',
+    id,
+  );
+}
+
+/**
  * What a person sets on a page. A blank niche is a page not posted to.
  *
  * One niche goes to one page, so a niche another enabled page holds is
@@ -2177,6 +2200,8 @@ export interface ReelRow {
   job_id: string | null;
   video_url: string | null;
   fb_video_id: string | null;
+  /** Buffer's id for the queued post, when a reel went out through Buffer. */
+  buffer_post_id: string | null;
   error: string | null;
   /** Which of the studio's stages an in-flight reel is on; 'done' past them all. */
   stage: ReelStage;
@@ -2266,6 +2291,7 @@ export function updateReel(
     jobId: string | null;
     videoUrl: string | null;
     fbVideoId: string | null;
+    bufferPostId: string | null;
     fbPageId: number | null;
     caption: string;
     error: string | null;
@@ -2279,6 +2305,7 @@ export function updateReel(
     jobId: 'job_id',
     videoUrl: 'video_url',
     fbVideoId: 'fb_video_id',
+    bufferPostId: 'buffer_post_id',
     fbPageId: 'fb_page_id',
     caption: 'caption',
     error: 'error',

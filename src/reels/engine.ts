@@ -11,6 +11,12 @@ import { resolveDataDir } from '../config.js';
 import { askPrompt } from '../llm/ask.js';
 import type { Settings } from '../settings.js';
 import {
+  bufferReelDeps,
+  reelPublisher,
+  sendReelToBuffer,
+  type BufferReelDeps,
+} from './buffer.js';
+import {
   activeReels,
   fbPageToken,
   getFbPage,
@@ -26,6 +32,7 @@ import {
   updateReel,
   updateScene,
   type ReelView,
+  type FbPageRow,
 } from '../db/repos.js';
 import { pickFormat } from './formats.js';
 import { planReel, type SourceRole } from './plan.js';
@@ -85,6 +92,10 @@ export interface ReelDeps {
   uploadImage(siteId: number, data: Buffer, contentType: string): Promise<string>;
   /** Wait between fresh images, the same breath the article pipeline takes. */
   pause(ms: number): Promise<void>;
+  /** For reading the site token when a reel is hosted for Buffer to fetch. */
+  encryptionKey: Buffer;
+  /** Buffer's side, injectable so a test needs neither Buffer nor a site. */
+  buffer?: BufferReelDeps;
 }
 
 export function defaultDeps(settings: Settings, key: Buffer): ReelDeps {
@@ -120,6 +131,7 @@ export function defaultDeps(settings: Settings, key: Buffer): ReelDeps {
       return api.absoluteUrl(uploaded.url);
     },
     pause: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    encryptionKey: key,
   };
 }
 
@@ -354,7 +366,7 @@ async function publishIfAllowed(
   if (!page || page.enabled !== 1) return false;
   if (page.auto_publish !== 1) return false;
 
-  await publishReel(reel, deps);
+  await publishReel(reel, deps, settings);
   return true;
 }
 
@@ -364,7 +376,11 @@ async function publishIfAllowed(
  * Shared by the scheduler and the Publish button, so a reel released by hand
  * goes out the same way an automatic one does.
  */
-export async function publishReel(reel: ReelView, deps: ReelDeps): Promise<void> {
+export async function publishReel(
+  reel: ReelView,
+  deps: ReelDeps,
+  settings: Settings,
+): Promise<void> {
   if (!reel.fb_page_id) throw new Error('This reel has no Facebook page to publish to.');
   if (!reel.output_path && !reel.video_url) throw new Error('This reel has no video to publish.');
 
@@ -372,6 +388,11 @@ export async function publishReel(reel: ReelView, deps: ReelDeps): Promise<void>
   if (!page) throw new Error('The Facebook page for this reel no longer exists.');
 
   updateReel(reel.id, { status: 'publishing', error: null });
+
+  if (reelPublisher(settings) === 'buffer') {
+    await publishThroughBuffer(reel, deps, settings, page);
+    return;
+  }
 
   const facebook = deps.facebookFor(page.id);
   // A studio reel is a file the platform assembled; a one-shot reel is a url
@@ -422,6 +443,44 @@ export async function publishReel(reel: ReelView, deps: ReelDeps): Promise<void>
     deps,
     `<b>Reel published</b>\n${escapeHtml(reel.run_title ?? '')}\n\n` +
       `Page: ${escapeHtml(page.name || page.page_id)}\n${published.permalink}${linkNote}`,
+  );
+}
+
+/**
+ * Hand the reel to Buffer, which posts it on its own schedule.
+ *
+ * Recorded as published, because for this platform it is done: the video is
+ * out of our hands and Buffer owns what happens next. The Buffer post id is
+ * stored instead of a Facebook video id -- there is no video on a page yet to
+ * have one -- and the message says where it went and that it is queued rather
+ * than live, so nobody goes looking for it on the page straight away.
+ */
+async function publishThroughBuffer(
+  reel: ReelView,
+  deps: ReelDeps,
+  settings: Settings,
+  page: FbPageRow,
+): Promise<void> {
+  const { postId } = await sendReelToBuffer(
+    reel,
+    settings,
+    deps.buffer ??
+      bufferReelDeps(settings, deps.encryptionKey, (r) =>
+        r.output_path ? readFile(r.output_path) : deps.download(r.video_url!),
+      ),
+  );
+
+  updateReel(reel.id, { status: 'published', bufferPostId: postId, error: null });
+  markFbPageUsed(page.id);
+
+  const where = page.buffer_channel_name || page.buffer_channel_id;
+  log.info(`reel ${reel.id} queued in Buffer for ${where} (post ${postId})`);
+
+  await notify(
+    deps,
+    `<b>Reel queued in Buffer</b>\n${escapeHtml(reel.run_title ?? '')}\n\n` +
+      `Channel: ${escapeHtml(where)}\n` +
+      'Buffer posts it on its own schedule.',
   );
 }
 

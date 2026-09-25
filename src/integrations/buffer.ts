@@ -15,6 +15,8 @@ export interface BufferBoard {
 export interface BufferChannel {
   id: string;
   name: string;
+  /** 'facebook', 'pinterest', 'instagram' ... — what Buffer posts it through. */
+  service: string;
   boards: BufferBoard[];
 }
 
@@ -80,16 +82,18 @@ export class BufferClient {
       channels: {
         id: string;
         name: string;
+        service?: string;
         metadata?: { boards?: BufferBoard[] };
       }[];
     }>(
-      'query GetChannelsWithBoards($orgId: OrganizationId!) { channels(input: { organizationId: $orgId }) { id name metadata { ... on PinterestMetadata { boards {  serviceId name  } } } } }',
+      'query GetChannelsWithBoards($orgId: OrganizationId!) { channels(input: { organizationId: $orgId }) { id name service metadata { ... on PinterestMetadata { boards {  serviceId name  } } } } }',
       { orgId: organizationId },
     );
 
     return (data.channels ?? []).map((c) => ({
       id: c.id,
       name: c.name,
+      service: c.service ?? '',
       boards: c.metadata?.boards ?? [],
     }));
   }
@@ -160,6 +164,69 @@ export class BufferClient {
 
     const id = data.createPost?.post?.id;
     if (!id) throw new BufferError('Buffer did not return a post id');
+
+    return id;
+  }
+
+  /**
+   * Queue a video post -- a reel, on a channel that takes one.
+   *
+   * Buffer fetches the video from `videoUrl` itself rather than taking bytes,
+   * which is why the reel is uploaded to its own site first: Flow's urls are
+   * signed and expire, and a queued post may not go out for hours.
+   *
+   * Built as a string literal the way createPost is, because it is the same
+   * endpoint and the same escaping rule, not because a variables map would not
+   * be nicer.
+   */
+  async createVideoPost(input: {
+    text: string;
+    channelId: string;
+    videoUrl: string;
+    thumbnailUrl?: string;
+  }): Promise<string> {
+    const q = (value: string): string => JSON.stringify(value ?? '');
+    const thumbnail = input.thumbnailUrl
+      ? `\n              thumbnail: ${q(input.thumbnailUrl)}`
+      : '';
+
+    const mutation = `mutation CreateVideoPost {
+  createPost(
+    input: {
+      text: ${q(input.text)}
+      channelId: ${q(input.channelId)}
+      schedulingType: automatic
+      mode: addToQueue
+      assets: [
+        {
+          video: {
+            url: ${q(input.videoUrl)}${thumbnail}
+          }
+        }
+      ]
+    }
+  ) {
+    ... on PostActionSuccess {
+      post {
+        id
+      }
+    }
+    ... on MutationError {
+      message
+    }
+  }
+}`;
+
+    const data = await this.graphql<{
+      createPost: { post?: { id: string }; message?: string };
+    }>(mutation);
+
+    if (data.createPost?.message) {
+      throw new BufferError(`Buffer rejected the reel: ${data.createPost.message}`);
+    }
+
+    const id = data.createPost?.post?.id;
+    if (!id) throw new BufferError('Buffer did not return a post id for the reel');
 
     return id;
   }

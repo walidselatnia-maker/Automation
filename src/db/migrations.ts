@@ -431,6 +431,23 @@ export const MIGRATIONS: Migration[] = [
       db.exec('UPDATE fb_pages SET auto_publish = 1');
     },
   },
+  {
+    id: '013-reels-through-buffer',
+    description: 'A Buffer channel per page, and the post id a reel got back',
+    up(db) {
+      // Which Buffer channel a page's reels go to, when reels are published
+      // through Buffer rather than straight to Graph. On the page and not in
+      // settings because the routing is already per page: a niche picks a
+      // page, and the page decides where its reels land.
+      addColumn(db, 'fb_pages', 'buffer_channel_id', "TEXT NOT NULL DEFAULT ''");
+      addColumn(db, 'fb_pages', 'buffer_channel_name', "TEXT NOT NULL DEFAULT ''");
+
+      // Buffer answers with its own post id, not a Facebook video id, and the
+      // two are not interchangeable: one addresses a queued post, the other a
+      // video that exists. Kept apart so a reel says which it has.
+      addColumn(db, 'reels', 'buffer_post_id', 'TEXT');
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */
