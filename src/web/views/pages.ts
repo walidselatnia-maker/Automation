@@ -411,6 +411,7 @@ export function runDetailPage(data: RunDetailData): Html {
     ${data.article ? articlePreview(data.article, Boolean(run.hold), run.id) : raw('')}
 
     <h2>Steps</h2>
+    <div id="run-steps" data-status="${run.status}">
     ${steps.length === 0
       ? html`<div class="card">${emptyState('No steps recorded yet.')}</div>`
       : html`${steps.map(
@@ -444,8 +445,74 @@ export function runDetailPage(data: RunDetailData): Html {
             </div>
           `,
         )}`}
+    </div>
+    ${run.status === 'running' ? raw(RUN_LIVE_SCRIPT) : raw('')}
   `;
 }
+
+/**
+ * Watch a running run without reloading the page.
+ *
+ * The steps are the thing that changes while a run is going, and until now
+ * nothing showed a new one until the page was fetched again -- so the honest
+ * way to follow a run was to keep pressing refresh.
+ *
+ * It re-fetches this same page and lifts the steps out of it, rather than
+ * asking a JSON endpoint and rendering them a second time in the browser.
+ * There is one renderer, so the live view cannot drift from the real one.
+ *
+ * Only the steps are swapped. The rest of the page carries an editor and an
+ * approval form, and replacing those under someone mid-sentence would throw
+ * away what they had typed. When the run ends the whole page is reloaded once
+ * -- unless a field has focus, in which case a bar offers it instead.
+ */
+const RUN_LIVE_SCRIPT = `<script>
+(function () {
+  var host = document.getElementById('run-steps');
+  if (!host || host.dataset.status !== 'running') return;
+
+  var EVERY_MS = 4000;
+  var stopped = false;
+
+  function typing() {
+    var el = document.activeElement;
+    return !!el && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName);
+  }
+
+  function finished(status) {
+    stopped = true;
+    if (!typing()) { location.reload(); return; }
+    // Their work first: say it is done and let them press it.
+    var bar = document.createElement('div');
+    bar.className = 'flash ok';
+    bar.innerHTML = 'This run has finished. <a href="">Reload</a> to see the result.';
+    host.parentNode.insertBefore(bar, host);
+  }
+
+  function poll() {
+    if (stopped) return;
+    fetch(location.pathname, { credentials: 'same-origin' })
+      .then(function (r) { return r.ok ? r.text() : null; })
+      .then(function (text) {
+        if (!text || stopped) return;
+        var fresh = new DOMParser()
+          .parseFromString(text, 'text/html')
+          .getElementById('run-steps');
+        if (!fresh) return;
+
+        if (fresh.innerHTML !== host.innerHTML) host.innerHTML = fresh.innerHTML;
+
+        var status = fresh.dataset.status;
+        host.dataset.status = status;
+        if (status !== 'running') finished(status);
+      })
+      .catch(function () { /* a blip is not a reason to stop watching */ })
+      .then(function () { if (!stopped) setTimeout(poll, EVERY_MS); });
+  }
+
+  setTimeout(poll, EVERY_MS);
+})();
+</script>`;
 
 /**
  * The decision bar on a held run.
