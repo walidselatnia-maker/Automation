@@ -60,7 +60,7 @@ export function blogImageStep(index: number, total: number): Step<string, Upload
     title: `Generate article image ${index + 1} of ${total}`,
     async run(ctx, brief) {
       await waitOutImageGap(ctx, `article image ${index + 1}`);
-      const { data, contentType } = await ctx.images.generate(brief, 'LANDSCAPE');
+      const { data, contentType } = await ctx.images.generate(brief, 'HORIZONTAL');
       ctx.lastImageGeneratedAt = ctx.now();
       ctx.countImages(1);
       return upload(ctx, data, contentType, 'articles');

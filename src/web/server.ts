@@ -656,28 +656,6 @@ export function buildServer(
       });
     }
 
-    // Checked here as well as in the pipeline. A hand-picked pair skips the
-    // selector, so this is the only thing between "run" and a run that
-    // cannot finish -- and refusing before it starts costs nothing, where
-    // finding out inside costs a keyword's slot and a failed run on the page.
-    if (pick) {
-      const pickedSite = getSite(siteId);
-      const pickedKeyword = getKeyword(keywordId);
-      if (
-        pickedSite &&
-        pickedKeyword &&
-        pickedSite.content_type !== pickedKeyword.content_type
-      ) {
-        return redirect(reply, '/', {
-          kind: 'error',
-          message:
-            `"${pickedKeyword.seed_keyword}" writes ${pickedKeyword.content_type}s and ` +
-            `${pickedSite.domain} publishes ${pickedSite.content_type}s, so that pair ` +
-            'cannot run.',
-        });
-      }
-    }
-
     try {
       const result = await tick(settings, encryptionKey, { mode, pick });
       const flash = describeTick(result);
@@ -1038,8 +1016,6 @@ export function buildServer(
         status: asString(body.status) === 'active' ? 'active' : 'paused',
         pin_username: asString(body.pin_username).trim(),
         project_id: asString(body.project_id).trim(),
-        content_type:
-          'content_type' in body ? asContentType(body.content_type) : undefined,
         daily_target: Math.max(0, asNumber(body.daily_target, 0)),
         interval_minutes: readIntervalMinutes(body),
         // Absent, not blank. The site form no longer carries these — pausing
@@ -1926,7 +1902,7 @@ export function buildServer(
         for (const id of ids) setKeywordKind(id, type, niche);
         return done(
           `${ids.length} keyword(s) now write ${type === 'article' ? 'articles' : 'recipes'}` +
-            `${niche ? ` in ${niche}` : ''}. They run only on sites that publish that.`,
+            `${niche ? ` in ${niche}` : ''}.`,
         );
       }
 
@@ -2180,14 +2156,11 @@ export function buildServer(
   app.get('/sites/template.csv', async (_request, reply) =>
     csvFile(reply, 'sites-template.csv', [
       ['name', 'domain', 'status', 'daily_target', 'interval_minutes', 'pin_username',
-        'project_id', 'auto_publish', 'paused_reason', 'content_type',
-        'api_token', 'buffer_token'],
+        'project_id', 'auto_publish', 'paused_reason', 'api_token', 'buffer_token'],
       ['bitespoon', 'bitespoon.com', 'active', '3', '480', 'cookwithbitespoon', '',
-        'yes', '', 'recipe', 'paste-the-site-token', 'paste-the-buffer-token'],
+        'yes', '', 'paste-the-site-token', 'paste-the-buffer-token'],
       ['longlivo', 'longlivo.com', 'paused', '0', '480', 'prepplat', '',
-        'no', 'waiting on their API', 'recipe', '', ''],
-      ['the-blog', 'the-blog.com', 'active', '2', '480', '', '',
-        'yes', '', 'article', 'paste-the-site-token', ''],
+        'no', 'waiting on their API', '', ''],
     ]),
   );
 

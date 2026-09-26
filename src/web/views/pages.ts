@@ -1091,21 +1091,6 @@ function siteForm(site: SiteRow | null): Html {
           "The Buffer account that schedules this site's Pinterest pins. The Pinterest channel is found automatically.",
         )}
       </div>
-      <div class="field">
-        <label>What this site publishes</label>
-        <select name="content_type">
-          <option value="recipe" ${site?.content_type !== 'article' ? raw('selected') : raw('')}>
-            Recipes &mdash; posted to /api/recipe
-          </option>
-          <option value="article" ${site?.content_type === 'article' ? raw('selected') : raw('')}>
-            Articles &mdash; long posts, posted to /api/articles
-          </option>
-        </select>
-        <div class="help">
-          Decides which pipeline writes for it. A keyword only runs on a site that
-          publishes its own kind.
-        </div>
-      </div>
       <div class="field-row">
         <div class="field">
           <label>Pinterest username</label>
@@ -1461,7 +1446,7 @@ export function keywordAddPage(): Html {
         <span class="mono">article</span>, and is <span class="mono">recipe</span> when the
         column is missing &mdash; so older sheets import unchanged. An article also takes a
         <span class="mono">niche</span> (travel, DIY, health&hellip;), which steers how it is
-        written. A keyword only runs on a site that publishes the same kind.
+        written.
       </p>
       <form method="post" action="/keywords/import" enctype="multipart/form-data">
         <div class="field"><input type="file" name="file" accept=".csv,text/csv" required /></div>
@@ -2386,8 +2371,8 @@ export function keywordDetailPage(
           </div>
         </div>
         <div class="help">
-          It only runs on a site that publishes the same kind. The niche steers how an
-          article is written, and is ignored for a recipe.
+          Decides which pipeline writes it, whichever site it runs on. The niche steers
+          how an article is written, and is ignored for a recipe.
         </div>
       </form>
 

@@ -17,8 +17,6 @@ export interface SiteRow {
   name: string;
   domain: string;
   status: 'active' | 'paused';
-  /** 'recipe' posts to /api/recipe; 'article' to /api/articles. */
-  content_type: ContentType;
   pin_username: string;
   project_id: string;
   /** Why it is paused, written down so it is still knowable next week. */
@@ -244,8 +242,6 @@ export interface SiteInput {
   paused_reason?: string;
   paused_until?: string | null;
   auto_publish?: boolean;
-  /** Undefined keeps what the site already is; a sheet may not carry it. */
-  content_type?: ContentType;
   /** Plaintext. Blank on update means "keep the stored one". */
   apiToken?: string;
   bufferToken?: string;
@@ -268,7 +264,7 @@ export function upsertSite(input: SiteInput, key: Buffer, id?: number): number {
       `UPDATE sites SET name = ?, domain = ?, status = ?, pin_username = ?,
          project_id = ?, daily_target = ?, interval_minutes = ?,
          paused_reason = ?, paused_until = ?, auto_publish = ?,
-         content_type = ?, api_token_encrypted = ?, buffer_token_encrypted = ?,
+         api_token_encrypted = ?, buffer_token_encrypted = ?,
          updated_at = datetime('now')
        WHERE id = ?`,
       input.name,
@@ -285,11 +281,6 @@ export function upsertSite(input: SiteInput, key: Buffer, id?: number): number {
       input.auto_publish === undefined
         ? existing.auto_publish
         : fromBool(input.auto_publish),
-      // A sheet that says nothing keeps what the site already is, rather than
-      // turning an article site back into a recipe one on every import.
-      input.content_type === undefined
-        ? existing.content_type
-        : asContentType(input.content_type),
       encryptOrKeep(input.apiToken, existing.api_token_encrypted),
       encryptOrKeep(input.bufferToken, existing.buffer_token_encrypted),
       existing.id,
@@ -300,8 +291,8 @@ export function upsertSite(input: SiteInput, key: Buffer, id?: number): number {
   return run(
     `INSERT INTO sites (name, domain, status, pin_username, project_id,
        daily_target, interval_minutes, paused_reason, paused_until, auto_publish,
-       content_type, api_token_encrypted, buffer_token_encrypted)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       api_token_encrypted, buffer_token_encrypted)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     input.name,
     input.domain,
     input.status,
@@ -312,7 +303,6 @@ export function upsertSite(input: SiteInput, key: Buffer, id?: number): number {
     input.status === 'active' ? '' : (input.paused_reason ?? ''),
     input.status === 'active' ? null : (input.paused_until ?? null),
     fromBool(input.auto_publish ?? true),
-    asContentType(input.content_type),
     encryptOrKeep(input.apiToken, ''),
     encryptOrKeep(input.bufferToken, ''),
   ).lastInsertRowid;
@@ -361,7 +351,6 @@ export function loadSiteViews(dayKey: string, timezone: string): SiteView[] {
     name: r.name,
     domain: r.domain,
     status: r.status,
-    contentType: asContentType(r.content_type),
     dailyTarget: r.daily_target,
     intervalMinutes: r.interval_minutes,
     publishedToday: Number(r.published_today ?? 0),

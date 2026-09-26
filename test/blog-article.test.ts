@@ -154,74 +154,45 @@ describe('how many photographs', () => {
   });
 });
 
-describe('a keyword only runs where its kind is published', () => {
-  it('refuses to pair an article keyword with a recipe site', async () => {
-    // The link may exist -- the keyword x site matrix predates content types --
-    // but running it would write a recipe pipeline's output at /api/articles.
-    const { selectTask } = await import('../src/core/selector.js');
-
-    const site = {
-      id: 1, name: 'bitespoon', domain: 'bitespoon.com', status: 'active' as const,
-      contentType: 'recipe' as const, dailyTarget: 5, intervalMinutes: 0,
-      publishedToday: 0, lastPublishAt: null, lastAttemptAt: null,
-    };
-    const keyword = {
-      id: 1, seedKeyword: 'kyoto', spyTitle: 'Kyoto', status: 'go' as const,
-      contentType: 'article' as const,
-    };
-    const links = [{ keywordId: 1, siteId: 1, status: 'go' as const, blocked: false }];
-
-    const both = { now: new Date('2026-09-25T10:00:00Z'), timezone: 'UTC' };
-    expect(selectTask([site], [keyword], links, both).task).toBeFalsy();
-
-    // The same pair runs the moment the site publishes that kind.
-    const asArticles = { ...site, contentType: 'article' as const };
-    expect(selectTask([asArticles], [keyword], links, both).task).toMatchObject({
-      keywordId: 1,
-      siteId: 1,
-    });
-  });
-});
-
 describe('what decides which pipeline runs', () => {
-  it('is the keyword, and a site that disagrees stops the run', async () => {
-    // The first version read only the site, so a keyword marked as an article
-    // ran the recipe pipeline and posted a recipe. Silently, which is worse
-    // than failing: the wrong thing went live on a real site. A hand-picked
-    // run skips the selector, so this guard is the only one it meets.
+  it('is the keyword, whichever site it runs on', async () => {
+    // The site serves both endpoints, so it has no say. The first version
+    // read only the site's kind, which meant a keyword marked as an article
+    // ran the recipe pipeline and posted a recipe -- silently, on a live site.
     const { randomBytes } = await import('node:crypto');
     const { closeDatabase, openDatabase } = await import('../src/db/index.js');
     const repos = await import('../src/db/repos.js');
-    const { executePipeline } = await import('../src/pipeline/index.js');
     const { setLogLevel } = await import('../src/lib/logger.js');
 
     setLogLevel('error');
     openDatabase(':memory:');
     try {
       const key = randomBytes(32);
-      const siteId = repos.upsertSite(
+      repos.upsertSite(
         { name: 'bitespoon', domain: 'bitespoon.com', status: 'active', daily_target: 1,
-          interval_minutes: 0, pin_username: '', project_id: '', paused_reason: '',
-          content_type: 'recipe' },
+          interval_minutes: 0, pin_username: '', project_id: '', paused_reason: '' },
         key,
       );
-      const keywordId = repos.insertKeyword({
+      const id = repos.insertKeyword({
         seed_keyword: 'pizza dough', content_type: 'article', niche: 'food',
       });
-      const runId = repos.createRun(keywordId, siteId);
 
-      const outcome = await executePipeline({
-        runId,
-        site: repos.getSite(siteId)!,
-        keyword: repos.getKeyword(keywordId)!,
-        settings: { getBool: () => false, getNumber: () => 0, get: () => '' },
-      } as never);
+      // What the pipeline branches on, and nothing about the site is read.
+      expect(repos.getKeyword(id)!.content_type).toBe('article');
+      expect(repos.loadKeywordViews()[0]!.contentType).toBe('article');
+    } finally {
+      closeDatabase();
+    }
+  });
 
-      expect(outcome.status).toBe('failed');
-      expect(outcome.error).toMatch(/writes articles/i);
-      expect(outcome.error).toMatch(/publishes recipes/i);
-      // Nothing was written: it stopped before the first step.
-      expect(repos.listSteps(runId)).toHaveLength(0);
+  it('keeps a keyword that says nothing writing recipes', async () => {
+    const { closeDatabase, openDatabase } = await import('../src/db/index.js');
+    const repos = await import('../src/db/repos.js');
+
+    openDatabase(':memory:');
+    try {
+      const id = repos.insertKeyword({ seed_keyword: 'oven chicken' });
+      expect(repos.getKeyword(id)!.content_type).toBe('recipe');
     } finally {
       closeDatabase();
     }

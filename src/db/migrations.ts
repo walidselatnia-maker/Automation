@@ -453,12 +453,9 @@ export const MIGRATIONS: Migration[] = [
     description: 'A site and a keyword each say whether they are recipes or articles',
     up(db) {
       // Two kinds of content now, written by two different pipelines and
-      // posted to two different endpoints. The type is on the site because
-      // that is what decides the endpoint, and on the keyword because that is
-      // what decides the writing -- and the selector only pairs the two when
-      // they agree. Everything that exists is a recipe, which is what the
-      // default says.
-      addColumn(db, 'sites', 'content_type', "TEXT NOT NULL DEFAULT 'recipe'");
+      // posted to two different endpoints. The keyword alone says which: one
+      // site serves both, so there is nothing on the site to decide.
+      // Everything that exists is a recipe, which is what the default says.
       addColumn(db, 'keywords', 'content_type', "TEXT NOT NULL DEFAULT 'recipe'");
 
       // The niche an article is written in -- travel, DIY, health. Empty for a

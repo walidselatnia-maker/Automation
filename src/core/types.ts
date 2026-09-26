@@ -11,8 +11,6 @@ export interface SiteView {
   name: string;
   domain: string;
   status: SiteStatus;
-  /** Which pipeline this site's runs take, and which endpoint they post to. */
-  contentType: ContentType;
   dailyTarget: number;
   /** Minimum gap between posts, in minutes. */
   intervalMinutes: number;
