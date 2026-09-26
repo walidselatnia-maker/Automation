@@ -1259,6 +1259,14 @@ export function keywordsPage(
               </div>
 
               <div class="bulk-group">
+                <span class="muted small">Writes</span>
+                <input type="text" name="niche" placeholder="niche, for articles"
+                       aria-label="The niche an article is written in" style="width:11rem" />
+                <button type="submit" name="action" value="as-recipe" formnovalidate>Recipes</button>
+                <button type="submit" name="action" value="as-article" formnovalidate>Articles</button>
+              </div>
+
+              <div class="bulk-group">
                 <span class="muted small">Article images</span>
                 <button type="submit" name="action" value="share-on"
                         title="Reuse one set of images across the sites this keyword runs on">
@@ -1444,9 +1452,16 @@ export function keywordAddPage(): Html {
     <div class="card">
       <p class="muted small" style="margin-top:0">
         Columns: <span class="mono">seed_keyword, spy_title, spy_description, annotation,
-        status</span>, then one column per site domain holding
+        status, content_type, niche</span>, then one column per site domain holding
         <span class="mono">go</span>, <span class="mono">done</span> or
         <span class="mono">no</span>. Only <span class="mono">seed_keyword</span> is required.
+      </p>
+      <p class="muted small">
+        <span class="mono">content_type</span> is <span class="mono">recipe</span> or
+        <span class="mono">article</span>, and is <span class="mono">recipe</span> when the
+        column is missing &mdash; so older sheets import unchanged. An article also takes a
+        <span class="mono">niche</span> (travel, DIY, health&hellip;), which steers how it is
+        written. A keyword only runs on a site that publishes the same kind.
       </p>
       <form method="post" action="/keywords/import" enctype="multipart/form-data">
         <div class="field"><input type="file" name="file" accept=".csv,text/csv" required /></div>

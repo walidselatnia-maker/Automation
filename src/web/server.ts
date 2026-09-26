@@ -1894,6 +1894,20 @@ export function buildServer(
         bulkSetKeywordStatus(ids, 'done');
         return done(`${ids.length} keyword(s) marked finished.`);
 
+      // Which pipeline writes these, set for a whole selection: a sheet of
+      // article topics arrives as recipes otherwise, and fixing them one at a
+      // time is the kind of chore that stops a feature being used.
+      case 'as-recipe':
+      case 'as-article': {
+        const type = action === 'as-article' ? 'article' : 'recipe';
+        const niche = type === 'article' ? asString(body.niche).trim() : '';
+        for (const id of ids) setKeywordKind(id, type, niche);
+        return done(
+          `${ids.length} keyword(s) now write ${type === 'article' ? 'articles' : 'recipes'}` +
+            `${niche ? ` in ${niche}` : ''}. They run only on sites that publish that.`,
+        );
+      }
+
       case 'off':
         bulkSetKeywordStatus(ids, 'no');
         return done(`${ids.length} keyword(s) turned off.`);
@@ -2110,7 +2124,8 @@ export function buildServer(
   app.get('/keywords/template.csv', async (_request, reply) => {
     const domains = listSites().map((s) => s.domain);
     const headers = [
-      'seed_keyword', 'spy_title', 'spy_description', 'annotation', 'status', ...domains,
+      'seed_keyword', 'spy_title', 'spy_description', 'annotation', 'status',
+      'content_type', 'niche', ...domains,
     ];
 
     const example = (
@@ -2118,9 +2133,13 @@ export function buildServer(
       title: string,
       status: string,
       per: (i: number) => string,
+      // A sheet that leaves these out still imports: everything is a recipe
+      // unless it says otherwise, which is what every older sheet meant.
+      kind: { type: string; niche: string } = { type: 'recipe', niche: '' },
     ): string[] => [
       keyword, title, 'Short description of the source article.',
       'Comma, separated, pinterest, annotations', status,
+      kind.type, kind.niche,
       ...domains.map((_, i) => per(i)),
     ];
 
@@ -2128,6 +2147,10 @@ export function buildServer(
       headers,
       example('Chicken Breast Recipe', 'Oven Baked Chicken Breast', 'go', (i) => (i === 0 ? 'go' : 'no')),
       example('Slow Cooker Beef', 'Slow Cooker Beef Stew', 'go', () => 'go'),
+      // An article names its niche, and needs no spy title: the topic is
+      // enough to plan from.
+      example('Two Days In Kyoto', '', 'go', () => 'go', { type: 'article', niche: 'travel' }),
+      example('Fix A Dripping Tap', '', 'go', () => 'go', { type: 'article', niche: 'DIY' }),
       example('Already Published', 'A keyword that is finished', 'done', () => 'done'),
     ]);
   });
@@ -2135,11 +2158,14 @@ export function buildServer(
   app.get('/sites/template.csv', async (_request, reply) =>
     csvFile(reply, 'sites-template.csv', [
       ['name', 'domain', 'status', 'daily_target', 'interval_minutes', 'pin_username',
-        'project_id', 'auto_publish', 'paused_reason', 'api_token', 'buffer_token'],
+        'project_id', 'auto_publish', 'paused_reason', 'content_type',
+        'api_token', 'buffer_token'],
       ['bitespoon', 'bitespoon.com', 'active', '3', '480', 'cookwithbitespoon', '',
-        'yes', '', 'paste-the-site-token', 'paste-the-buffer-token'],
+        'yes', '', 'recipe', 'paste-the-site-token', 'paste-the-buffer-token'],
       ['longlivo', 'longlivo.com', 'paused', '0', '480', 'prepplat', '',
-        'no', 'waiting on their API', '', ''],
+        'no', 'waiting on their API', 'recipe', '', ''],
+      ['the-blog', 'the-blog.com', 'active', '2', '480', '', '',
+        'yes', '', 'article', 'paste-the-site-token', ''],
     ]),
   );
 
