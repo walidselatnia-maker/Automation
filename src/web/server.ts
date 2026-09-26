@@ -656,6 +656,28 @@ export function buildServer(
       });
     }
 
+    // Checked here as well as in the pipeline. A hand-picked pair skips the
+    // selector, so this is the only thing between "run" and a run that
+    // cannot finish -- and refusing before it starts costs nothing, where
+    // finding out inside costs a keyword's slot and a failed run on the page.
+    if (pick) {
+      const pickedSite = getSite(siteId);
+      const pickedKeyword = getKeyword(keywordId);
+      if (
+        pickedSite &&
+        pickedKeyword &&
+        pickedSite.content_type !== pickedKeyword.content_type
+      ) {
+        return redirect(reply, '/', {
+          kind: 'error',
+          message:
+            `"${pickedKeyword.seed_keyword}" writes ${pickedKeyword.content_type}s and ` +
+            `${pickedSite.domain} publishes ${pickedSite.content_type}s, so that pair ` +
+            'cannot run.',
+        });
+      }
+    }
+
     try {
       const result = await tick(settings, encryptionKey, { mode, pick });
       const flash = describeTick(result);

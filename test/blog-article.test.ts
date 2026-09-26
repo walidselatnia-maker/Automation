@@ -182,3 +182,48 @@ describe('a keyword only runs where its kind is published', () => {
     });
   });
 });
+
+describe('what decides which pipeline runs', () => {
+  it('is the keyword, and a site that disagrees stops the run', async () => {
+    // The first version read only the site, so a keyword marked as an article
+    // ran the recipe pipeline and posted a recipe. Silently, which is worse
+    // than failing: the wrong thing went live on a real site. A hand-picked
+    // run skips the selector, so this guard is the only one it meets.
+    const { randomBytes } = await import('node:crypto');
+    const { closeDatabase, openDatabase } = await import('../src/db/index.js');
+    const repos = await import('../src/db/repos.js');
+    const { executePipeline } = await import('../src/pipeline/index.js');
+    const { setLogLevel } = await import('../src/lib/logger.js');
+
+    setLogLevel('error');
+    openDatabase(':memory:');
+    try {
+      const key = randomBytes(32);
+      const siteId = repos.upsertSite(
+        { name: 'bitespoon', domain: 'bitespoon.com', status: 'active', daily_target: 1,
+          interval_minutes: 0, pin_username: '', project_id: '', paused_reason: '',
+          content_type: 'recipe' },
+        key,
+      );
+      const keywordId = repos.insertKeyword({
+        seed_keyword: 'pizza dough', content_type: 'article', niche: 'food',
+      });
+      const runId = repos.createRun(keywordId, siteId);
+
+      const outcome = await executePipeline({
+        runId,
+        site: repos.getSite(siteId)!,
+        keyword: repos.getKeyword(keywordId)!,
+        settings: { getBool: () => false, getNumber: () => 0, get: () => '' },
+      } as never);
+
+      expect(outcome.status).toBe('failed');
+      expect(outcome.error).toMatch(/writes articles/i);
+      expect(outcome.error).toMatch(/publishes recipes/i);
+      // Nothing was written: it stopped before the first step.
+      expect(repos.listSteps(runId)).toHaveLength(0);
+    } finally {
+      closeDatabase();
+    }
+  });
+});

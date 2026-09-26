@@ -88,11 +88,25 @@ export async function executePipeline(ctx: PipelineContext): Promise<PipelineOut
   const host = ctx.site.domain.replace(/^https?:\/\//, '').replace(/\/+$/, '');
 
   try {
-    // Two kinds of content, and the site says which. An article is planned,
-    // written as one HTML document and posted to a different endpoint, so it
-    // is a different pipeline rather than a branch inside this one -- only
-    // the categories at the start and Pinterest at the end are shared.
-    if (ctx.site.content_type === 'article') {
+    // What to write is the keyword's to say; where it can go is the site's.
+    // They have to agree, and when they do not this stops rather than
+    // guessing -- the first version read only the site, so a keyword marked
+    // as an article ran the recipe pipeline and posted a recipe, silently.
+    // The selector never pairs a mismatch, but a hand-picked run skips the
+    // selector, which is exactly how that was found.
+    if (ctx.keyword.content_type !== ctx.site.content_type) {
+      throw new Error(
+        `"${ctx.keyword.seed_keyword}" writes ${ctx.keyword.content_type}s and ` +
+          `${ctx.site.domain} publishes ${ctx.site.content_type}s. Change one of them: the ` +
+          "keyword's kind is on its own page, the site's is on the site form.",
+      );
+    }
+
+    // An article is planned, written as one HTML document and posted to a
+    // different endpoint, so it is a different pipeline rather than a branch
+    // inside this one -- only the categories at the start and Pinterest at
+    // the end are shared.
+    if (ctx.keyword.content_type === 'article') {
       const blog = await runBlogArticle(ctx);
       markRunPublished(ctx.runId, blog.slug, blog.postUrl, blog.title);
       setRunTitle(ctx.runId, blog.title);
