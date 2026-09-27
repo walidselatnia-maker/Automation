@@ -339,6 +339,31 @@ export const SETTING_SPECS: SettingSpec[] = [
       'belongs to a page.',
   },
   {
+    key: 'public_base_url',
+    label: 'Public address of this platform',
+    group: 'reels',
+    secret: false,
+    hidden: true,
+    default: process.env.PUBLIC_BASE_URL?.trim() ?? '',
+    help:
+      'Where this platform answers from on the open internet, like ' +
+      'https://reels.example.com. Buffer fetches a reel video from here when ' +
+      'the queued post goes out, so it has to be an address Buffer can reach. ' +
+      'Left blank, the video is copied to the site instead.',
+  },
+  {
+    key: 'reel_media_link_days',
+    label: 'How long a reel video link lasts',
+    group: 'reels',
+    secret: false,
+    hidden: true,
+    default: '14',
+    help:
+      'A link has to outlive the Buffer queue it is waiting in. Too short and ' +
+      'the post goes out with nothing to publish; there is no cost to it being ' +
+      'generous, because the link points at one video and nothing else.',
+  },
+  {
     key: 'reel_buffer_link_in_text',
     label: 'Put the article link in the reel text',
     group: 'reels',

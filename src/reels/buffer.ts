@@ -12,17 +12,29 @@
  *
  *   Buffer fetches the video from a url when the post goes out, so it cannot
  *   be handed bytes and it cannot be handed one of Flow's urls, which are
- *   signed and expire. The video is uploaded to the reel's own site first and
- *   Buffer is given that address.
+ *   signed by Google and expire in minutes. It is given a signed link to this
+ *   platform instead -- the video is already on disk here, and copying it to
+ *   another host first was a round trip for bytes we hold. The link carries
+ *   its own expiry and signature; see core/media-links.ts.
+ *
+ *   Copying it to the reel's own site remains the fallback, for a deployment
+ *   with no public address of its own. It costs an upload and leaves the file
+ *   on the site forever, which is why it is no longer the default.
  *
  *   There is no first comment to post. Nothing is live yet, so there is
  *   nothing to comment on, and by the time there is, this process is long
  *   gone. The article link goes at the end of the caption instead.
  */
+import { mkdir, stat, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { BufferClient, type BufferChannel } from '../integrations/buffer.js';
 import { SiteApiClient } from '../integrations/site-api.js';
 import { getFbPage, getSite, siteSecrets, type ReelView } from '../db/repos.js';
+import { reelMediaUrl } from '../core/media-links.js';
+import { createLogger } from '../lib/logger.js';
 import type { Settings } from '../settings.js';
+
+const log = createLogger('reel-buffer');
 
 export type ReelPublisher = 'facebook' | 'buffer';
 
@@ -67,7 +79,7 @@ export interface BufferReelDeps {
   /** The video bytes, however the reel stored them. */
   readVideo(reel: ReelView): Promise<Buffer>;
   /** Put the video somewhere Buffer can fetch it, and give back the address. */
-  hostVideo(siteId: number, video: Buffer): Promise<string>;
+  hostVideo(reel: ReelView, video: Buffer): Promise<string>;
   client(): BufferClient | null;
 }
 
@@ -99,12 +111,8 @@ export async function sendReelToBuffer(
   const client = deps.client();
   if (!client) throw new Error('No Buffer token for reels yet — add one under Setup → Reels.');
 
-  if (!reel.site_id) {
-    throw new Error('This reel has no site, so the video has nowhere to be hosted.');
-  }
-
   const video = await deps.readVideo(reel);
-  const videoUrl = await deps.hostVideo(reel.site_id, video);
+  const videoUrl = await deps.hostVideo(reel, video);
 
   const postId = await client.createVideoPost({
     text: bufferCaption(reel, settings),
@@ -115,28 +123,69 @@ export async function sendReelToBuffer(
   return { postId, channelId };
 }
 
-/** The production deps: the reel's own file, hosted on the reel's own site. */
+/**
+ * The production deps: the reel's own file, served by this platform.
+ *
+ * `key` is the platform secret, and signs the link. It is the same value the
+ * web server verifies with, which is what makes a link made here openable
+ * there and nowhere else.
+ */
 export function bufferReelDeps(
   settings: Settings,
   key: Buffer,
   readVideo: (reel: ReelView) => Promise<Buffer>,
+  clipsDir: string,
 ): BufferReelDeps {
   return {
     readVideo,
-    async hostVideo(siteId, video) {
-      const site = getSite(siteId);
-      if (!site) throw new Error('The site this reel belongs to no longer exists.');
-      const api = new SiteApiClient(site.domain, siteSecrets(site, key).apiToken);
-      // The upload endpoint takes any file; the content type is what makes it
-      // a video rather than a picture.
-      const uploaded = await api.uploadImage(
-        video,
-        `reel-${Date.now()}.mp4`,
-        'video/mp4',
-        'reels',
-      );
-      return api.absoluteUrl(uploaded.url);
+    async hostVideo(reel, video) {
+      const base = settings.get('public_base_url').trim();
+      if (base) {
+        await keepOnDisk(clipsDir, reel.id, video);
+        const url = reelMediaUrl(base, reel.id, Number(settings.get('reel_media_link_days')), key);
+        log.info(`reel ${reel.id}: Buffer will fetch the video from this platform`);
+        return url;
+      }
+
+      // No public address for this platform, so Buffer has nowhere here to
+      // fetch from and the video goes to the site the old way.
+      if (!reel.site_id) {
+        throw new Error(
+          'This reel has no site, and this platform has no public address, so ' +
+            'there is nowhere Buffer could fetch the video from. Set the public ' +
+            'address under Setup → Reels.',
+        );
+      }
+      return hostOnSite(reel.site_id, video, key);
     },
     client: () => reelBufferClient(settings),
   };
+}
+
+/**
+ * Make sure the video is where the media route will look for it.
+ *
+ * Usually it already is -- this is the same file the assembler wrote. It is
+ * not when the reel's video came from a url rather than from here, and the
+ * link would then point at a file that does not exist.
+ */
+async function keepOnDisk(clipsDir: string, reelId: number, video: Buffer): Promise<void> {
+  const file = join(clipsDir, `${reelId}.mp4`);
+  const existing = await stat(file).catch(() => null);
+  if (existing?.isFile() && existing.size === video.byteLength) return;
+
+  await mkdir(clipsDir, { recursive: true });
+  await writeFile(file, video);
+}
+
+/** The fallback: a copy on the reel's own site, at an address that never expires. */
+async function hostOnSite(siteId: number, video: Buffer, key: Buffer): Promise<string> {
+  const site = getSite(siteId);
+  if (!site) throw new Error('The site this reel belongs to no longer exists.');
+
+  const api = new SiteApiClient(site.domain, siteSecrets(site, key).apiToken);
+  // The upload endpoint takes any file; the content type is what makes it a
+  // video rather than a picture.
+  const uploaded = await api.uploadImage(video, `reel-${Date.now()}.mp4`, 'video/mp4', 'reels');
+  return api.absoluteUrl(uploaded.url);
 }

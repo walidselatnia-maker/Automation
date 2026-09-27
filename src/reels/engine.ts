@@ -465,8 +465,11 @@ async function publishThroughBuffer(
     reel,
     settings,
     deps.buffer ??
-      bufferReelDeps(settings, deps.encryptionKey, (r) =>
-        r.output_path ? readFile(r.output_path) : deps.download(r.video_url!),
+      bufferReelDeps(
+        settings,
+        deps.encryptionKey,
+        (r) => (r.output_path ? readFile(r.output_path) : deps.download(r.video_url!)),
+        deps.clipsDir,
       ),
   );
 

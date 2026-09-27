@@ -30,6 +30,7 @@ import type {
 import type { KeywordView, LinkView, SiteView } from '../../core/types.js';
 import type { PresenterRow } from '../../db/repos.js';
 import { formatMinutes } from '../../core/selector.js';
+import { MAX_LINK_DAYS, MIN_LINK_DAYS } from '../../core/media-links.js';
 import { scenesFor } from '../../reels/plan.js';
 import { ARTICLE_ROLES, MAX_REFERENCES, type ArticleRole, type ReelMode } from '../../reels/compose.js';
 
@@ -2858,6 +2859,10 @@ export interface ReelSettingsData {
   publisher: ReelPublisher;
   bufferTokenSet: boolean;
   bufferLinkInText: boolean;
+  /** Where Buffer fetches a reel video from, or blank to copy it to the site. */
+  publicBaseUrl: string;
+  /** How long one of those links lasts. */
+  mediaLinkDays: number;
   /** How many pages still have no channel, when Buffer is the way out. */
   pagesWithoutChannel: number;
   mode: ReelMode;
@@ -3013,6 +3018,34 @@ export function reelSettingsPage(data: ReelSettingsData): Html {
               A queued post has no comments yet, so there is no first comment to put it in.
             </div>
           </div>
+          <div class="field">
+            <label for="public_base_url">Where Buffer fetches the video from</label>
+            <input type="url" id="public_base_url" name="public_base_url"
+                   value="${data.publicBaseUrl}" placeholder="https://reels.example.com" />
+            <div class="help">
+              This platform's own public address. Buffer downloads the video from here when
+              the queued post goes out, using a signed link that works for that one video
+              and nothing else. Must be https, and must be reachable from the internet
+              &mdash; Buffer fetches it from its own servers, not from your browser.
+            </div>
+          </div>
+          <div class="field">
+            <label for="reel_media_link_days">How long that link lasts</label>
+            <input type="number" id="reel_media_link_days" name="reel_media_link_days"
+                   min="${MIN_LINK_DAYS}" max="${MAX_LINK_DAYS}" value="${data.mediaLinkDays}" />
+            <div class="help">
+              Days. It has to outlast the Buffer queue the post is waiting in: if the link
+              dies first, Buffer publishes nothing and says nothing. Being generous costs
+              nothing, because the link points at one video.
+            </div>
+          </div>
+          ${!data.publicBaseUrl
+            ? html`<div class="flash warn">
+                No public address set, so each reel is copied to its site first and Buffer
+                fetches it from there. That works, but it uploads the video twice and leaves
+                a copy on the site for good.
+              </div>`
+            : raw('')}
           ${data.bufferTokenSet && data.pagesWithoutChannel > 0
             ? html`<div class="flash warn">
                 ${data.pagesWithoutChannel} page(s) have no Buffer channel yet, and their reels

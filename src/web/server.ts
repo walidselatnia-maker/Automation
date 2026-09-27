@@ -20,6 +20,9 @@ import { homePage, mergeRecent, type Attention, type Running } from './views/hom
 import { passwordAccepted, registerAuth, type AuthOptions } from './auth.js';
 import { rejectionReason, storePassword, storedPasswordHash } from './password.js';
 import { registerBrowserProxy } from './browser-proxy.js';
+import { registerMedia } from './media.js';
+import { linkDays, publicBaseUrlProblem } from '../core/media-links.js';
+import { resolveDataDir } from '../config.js';
 import {
   decisionsPage,
   runPicker,
@@ -347,6 +350,14 @@ export function buildServer(
 
   // Must come after formbody so the login form body is parsed.
   registerAuth(app, auth);
+
+  // Reel videos, for the fetchers that cannot log in. Registered after the
+  // auth hook on purpose: the hook still runs, and still refuses anything
+  // under /media that is not a signed read.
+  registerMedia(app, {
+    secret: auth.secret,
+    clipsDir: join(resolveDataDir(), 'reels'),
+  });
 
   // The live Chrome session, behind the same login as everything else.
   registerBrowserProxy(app, {
@@ -2834,6 +2845,8 @@ export function buildServer(
         publisher: reelPublisher(settings),
         bufferTokenSet: settings.get('reel_buffer_token').trim() !== '',
         bufferLinkInText: settings.getBool('reel_buffer_link_in_text'),
+        publicBaseUrl: settings.get('public_base_url').trim(),
+        mediaLinkDays: linkDays(settings.get('reel_media_link_days')),
         pagesWithoutChannel: listFbPages().filter(
           (p) => p.enabled === 1 && p.niche && !p.buffer_channel_id.trim(),
         ).length,
@@ -2886,6 +2899,15 @@ export function buildServer(
     // the form cannot show it, so an empty box means "unchanged", not "clear".
     const bufferToken = asString(body.reel_buffer_token).trim();
     if (bufferToken) settings.set('reel_buffer_token', bufferToken);
+
+    // Checked here rather than at publishing time, because the failure it
+    // prevents is silent: Buffer accepts a post whose video it cannot fetch,
+    // and the reel simply never appears.
+    const baseUrl = asString(body.public_base_url).trim();
+    const problem = publicBaseUrlProblem(baseUrl);
+    if (problem) return redirect(reply, '/settings/reels', { kind: 'error', message: problem });
+    settings.set('public_base_url', baseUrl.replace(/\/+$/, ''));
+    settings.set('reel_media_link_days', String(linkDays(asNumber(body.reel_media_link_days, 14))));
 
     return redirect(reply, '/settings/reels', { kind: 'ok', message: 'Saved. Applies to the next reel.' });
   });

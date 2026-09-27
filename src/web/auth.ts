@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual, randomBytes } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { escapeHtml, head } from './views/layout.js';
+import { isSignedMediaRequest } from './media.js';
 import { storedPasswordHash, verifyPassword } from './password.js';
 
 /**
@@ -156,6 +157,13 @@ export function registerAuth(app: FastifyInstance, options: AuthOptions): void {
     const path = request.url.split('?')[0] ?? '';
 
     if (PUBLIC_PATHS.has(path) || path.startsWith('/static/')) return;
+
+    // A signed media link carries its own proof -- an expiry and an HMAC over
+    // the one file it names -- because Buffer and Facebook fetch a reel's
+    // video themselves, from their own servers, with no cookie to send. The
+    // exemption is on the url shape only; the route still checks the
+    // signature, and anything that fails it is a 404.
+    if (isSignedMediaRequest(request.method, path)) return;
 
     const token = readCookie(request, COOKIE);
     if (token && verifyToken(token, options.secret)) return;
