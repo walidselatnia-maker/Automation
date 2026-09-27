@@ -136,7 +136,7 @@ export function homePage(data: HomeData): Html {
                   <td><a href="${r.href}">${r.what}</a></td>
                   <td>${statusBadge(r.status)}</td>
                   <td class="nowrap">
-                    <span class="badge ${r.kind === 'reel' ? 'reel' : 'muted'}">${r.kind}</span>
+                    <span class="badge kind kind-${r.kind}">${r.kind}</span>
                     ${r.detail ? html`<span class="small muted"> ${r.detail}</span>` : raw('')}
                   </td>
                 </tr>`,

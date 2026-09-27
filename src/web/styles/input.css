@@ -427,8 +427,21 @@
   }
   /* A reel beside an article in the same list: its own hue, so the eye can
      tell the two apart without reading. */
-  .badge.reel {
-    @apply border-violet-500/25 bg-violet-500/10 text-violet-600 dark:text-violet-300;
+  /* What a row is -- recipe, article or reel -- as opposed to how it went.
+     One width for all three so a column of them lines up instead of ragging
+     with the length of the word, and three hues kept apart from the status
+     colours beside them, which are green, amber and red. */
+  .badge.kind {
+    @apply min-w-[4.75rem] text-center;
+  }
+  .badge.kind-recipe {
+    @apply border-amber/30 bg-amber-soft text-amber;
+  }
+  .badge.kind-article {
+    @apply border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-300;
+  }
+  .badge.kind-reel {
+    @apply border-violet-500/30 bg-violet-500/10 text-violet-600 dark:text-violet-300;
   }
 
   .pill {

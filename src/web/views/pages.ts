@@ -298,9 +298,8 @@ function decisionsSection(
  * leaving it that way would have made every recipe look like the new thing.
  */
 function kindBadge(type: ContentType | null): Html {
-  return type === 'article'
-    ? html`<span class="badge reel">article</span>`
-    : html`<span class="badge muted">recipe</span>`;
+  const kind = type === 'article' ? 'article' : 'recipe';
+  return html`<span class="badge kind kind-${kind}">${kind}</span>`;
 }
 
 function runTable(runs: RunListRow[]): Html {
