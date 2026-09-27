@@ -205,7 +205,11 @@ describe('exporting sites', () => {
     expect(page.body).toContain('/sites/export/credentials');
     expect(page.body).toContain('confirm(');
     expect(page.body).toContain('button danger');
-  });
+    // Generous on purpose: this one builds the whole web server, and the
+    // import of that module graph happens inside the test rather than at the
+    // top of the file, so a cold run spends most of the default five seconds
+    // loading before it asserts anything.
+  }, 20_000);
 
   it('puts them in the one that says it does', () => {
     const csv = asCsv(exportSitesWithCredentials(KEY).rows);

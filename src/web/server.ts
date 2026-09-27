@@ -140,6 +140,7 @@ import {
   updatePresenter,
   deletePresenter,
   setFbPagePresenter,
+  setFbPagePublisher,
   setFbPageBufferChannel,
   setKeywordKind,
   asContentType,
@@ -187,7 +188,7 @@ import { createLogger, errorMessage } from '../lib/logger.js';
 import { TelegramClient } from '../integrations/telegram.js';
 import { syncToken, type SyncResult } from '../reels/tokens.js';
 import { defaultDeps, publishReel, startGeneration } from '../reels/engine.js';
-import { reelBufferChannels, reelPublisher } from '../reels/buffer.js';
+import { pagePublisher, reelBufferChannels, reelPublisher } from '../reels/buffer.js';
 import { ImageClient } from '../integrations/images.js';
 import { flowPage } from './views/flow.js';
 import { FLOW_EDGES, flowNode } from '../core/flow-graph.js';
@@ -1516,7 +1517,10 @@ export function buildServer(
   let bufferChannelsError: string | null = null;
 
   const loadBufferChannels = async (): Promise<void> => {
-    if (reelPublisher(settings) !== 'buffer') return;
+    // Gated on the token alone. Any page may choose Buffer now, so the list
+    // has to be there whatever the platform default says -- without it the
+    // channel picker is empty on exactly the page where someone is trying to
+    // move their first page across.
     if (!settings.get('reel_buffer_token').trim()) {
       bufferChannels = [];
       bufferChannelsError = 'no Buffer token for reels yet';
@@ -1660,6 +1664,9 @@ export function buildServer(
     // page -- and a page's channel must survive a save made from that view.
     bufferChannelId:
       `buffer_channel_${id}` in body ? asString(body[`buffer_channel_${id}`]).trim() : undefined,
+    publisher: `publisher_${id}` in body
+      ? (asString(body[`publisher_${id}`]) === 'buffer' ? 'buffer' : 'facebook')
+      : undefined,
   });
 
   const savePage = (id: number, fields: ReturnType<typeof pageFields>): void => {
@@ -1676,6 +1683,7 @@ export function buildServer(
       );
     }
     setFbPagePresenter(id, fields.presenterId > 0 ? fields.presenterId : null);
+    if (fields.publisher !== undefined) setFbPagePublisher(id, fields.publisher);
     if (fields.bufferChannelId !== undefined) {
       const picked = bufferChannels.find((c) => c.id === fields.bufferChannelId);
       setFbPageBufferChannel(
@@ -2845,10 +2853,20 @@ export function buildServer(
         publisher: reelPublisher(settings),
         bufferTokenSet: settings.get('reel_buffer_token').trim() !== '',
         bufferLinkInText: settings.getBool('reel_buffer_link_in_text'),
+        anyPageOnBuffer: listFbPages().some(
+          (p) => pagePublisher(p, reelPublisher(settings)) === 'buffer',
+        ),
         publicBaseUrl: settings.get('public_base_url').trim(),
         mediaLinkDays: linkDays(settings.get('reel_media_link_days')),
+        // Only the pages that actually go that way. Counting every page made
+        // the warning fire on a platform where one page queues and the rest
+        // publish straight to Graph, which is now an ordinary setup.
         pagesWithoutChannel: listFbPages().filter(
-          (p) => p.enabled === 1 && p.niche && !p.buffer_channel_id.trim(),
+          (p) =>
+            p.enabled === 1 &&
+            p.niche &&
+            pagePublisher(p, reelPublisher(settings)) === 'buffer' &&
+            !p.buffer_channel_id.trim(),
         ).length,
         mode: reelMode(settings),
         singleReferences: singleReferenceRoles(settings),

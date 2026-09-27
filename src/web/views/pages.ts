@@ -41,7 +41,7 @@ const ROLE_LABEL: Record<ArticleRole, string> = {
   beforeAfter: 'Before / after',
 };
 import type { ReelFormat } from '../../reels/formats.js';
-import type { ReelPublisher } from '../../reels/buffer.js';
+import { pagePublisher, type ReelPublisher } from '../../reels/buffer.js';
 import type { ContentType } from '../../db/repos.js';
 import type { Endpoint } from '../../llm/pool.js';
 import type { SettingSpec } from '../../settings.js';
@@ -2859,6 +2859,8 @@ export interface ReelSettingsData {
   publisher: ReelPublisher;
   bufferTokenSet: boolean;
   bufferLinkInText: boolean;
+  /** Whether any page goes that way, whatever the default here says. */
+  anyPageOnBuffer: boolean;
   /** Where Buffer fetches a reel video from, or blank to copy it to the site. */
   publicBaseUrl: string;
   /** How long one of those links lasts. */
@@ -2980,6 +2982,12 @@ export function reelSettingsPage(data: ReelSettingsData): Html {
 
       <h2>Where reels are published</h2>
       <div class="card">
+        <p class="help">
+          The default for a page that has not been told otherwise. Each page picks its own
+          way out under <a href="/settings/facebook">Channels &rarr; Facebook</a>, and that
+          is what the automation follows &mdash; so one page can queue in Buffer while
+          another publishes straight to Facebook.
+        </p>
         <div class="row wrap">
           <label class="choice ${data.publisher === 'facebook' ? 'on' : ''}">
             <input type="radio" name="reel_publisher" value="facebook"
@@ -2997,7 +3005,12 @@ export function reelSettingsPage(data: ReelSettingsData): Html {
           </label>
         </div>
 
-        <div data-publisher="buffer" ${data.publisher === 'buffer' ? raw('') : raw('hidden')}>
+        <!-- Shown when any page goes through Buffer and not only when it is
+             the default, or the token and address behind it would be
+             unreachable for a platform with one queued page and the rest
+             straight to Graph. -->
+        <div data-publisher="buffer"
+             ${data.publisher === 'buffer' || data.anyPageOnBuffer ? raw('') : raw('hidden')}>
           <div class="field">
             <label for="reel_buffer_token">Buffer token for reels</label>
             <input type="password" id="reel_buffer_token" name="reel_buffer_token"
@@ -3375,6 +3388,16 @@ export function presentersPage(data: PresentersData): Html {
 export function facebookSettingsPage(data: FacebookSettingsData): Html {
   const tokenName = new Map(data.tokens.map((t) => [t.id, t.name]));
 
+  // Each page's own answer, falling back to the platform default for a page
+  // that has never been asked.
+  const wayOut = (p: FbPageRow): ReelPublisher => pagePublisher(p, data.publisher);
+  const anyBuffer = data.pages.some((p) => wayOut(p) === 'buffer');
+
+  // The channel column is shown as soon as there is anything to put in it, so
+  // a page can be moved to Buffer and given a channel in the same save rather
+  // than one save to make the column appear and another to fill it.
+  const showChannels = anyBuffer || data.bufferChannels.length > 0;
+
   return html`
     <h1>Facebook</h1>
     <p class="subtitle">
@@ -3456,7 +3479,14 @@ export function facebookSettingsPage(data: FacebookSettingsData): Html {
         reels as soon as they are ready; untick auto-publish to have them wait on the
         <a href="/reels">Reels</a> page for you instead.
       </p>
-      ${data.publisher === 'buffer'
+      <p class="help">
+        <strong>Publishes via</strong> is per page, and it is what the automation follows.
+        <em>Facebook Graph</em> uploads the video to the page and it is live at once, with
+        the article link in the first comment. <em>Buffer</em> hands the video to the
+        channel named beside it, and Buffer posts it on its own schedule &mdash; nothing is
+        live until it does, and the link goes at the end of the caption instead.
+      </p>
+      ${showChannels
         ? html`<div class="row wrap" style="margin-bottom:.75rem">
               <form method="post" action="/settings/facebook/buffer/refresh">
                 <button type="submit" class="small">Refresh Buffer channels</button>
@@ -3481,7 +3511,8 @@ export function facebookSettingsPage(data: FacebookSettingsData): Html {
                 <thead>
                   <tr>
                     <th>Page</th><th>Niche</th><th>Presenter</th>
-                    ${data.publisher === 'buffer' ? html`<th>Buffer channel</th>` : raw('')}
+                    <th>Publishes via</th>
+                    ${showChannels ? html`<th>Buffer channel</th>` : raw('')}
                     <th>Auto-publish</th><th>Enabled</th>
                     <th>Last</th><th></th>
                   </tr>
@@ -3523,7 +3554,17 @@ export function facebookSettingsPage(data: FacebookSettingsData): Html {
                           )}
                         </select>
                       </td>
-                      ${data.publisher === 'buffer'
+                      <td>
+                        <select name="publisher_${p.id}">
+                          <option value="facebook"
+                            ${wayOut(p) === 'facebook' ? raw('selected') : raw('')}
+                            >Facebook Graph &mdash; live at once</option>
+                          <option value="buffer"
+                            ${wayOut(p) === 'buffer' ? raw('selected') : raw('')}
+                            >Buffer &mdash; queued</option>
+                        </select>
+                      </td>
+                      ${showChannels
                         ? html`<td>
                             <select name="buffer_channel_${p.id}">
                               <option value="">not set &mdash; reels wait</option>
@@ -3539,6 +3580,11 @@ export function facebookSettingsPage(data: FacebookSettingsData): Html {
                                   </option>`
                                 : raw('')}
                             </select>
+                            ${wayOut(p) === 'buffer' && !p.buffer_channel_id
+                              ? html`<div class="small error">
+                                  No channel, so this page's reels cannot go anywhere.
+                                </div>`
+                              : raw('')}
                           </td>`
                         : raw('')}
                       <td>

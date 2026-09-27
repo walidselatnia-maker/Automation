@@ -12,6 +12,7 @@ import { askPrompt } from '../llm/ask.js';
 import type { Settings } from '../settings.js';
 import {
   bufferReelDeps,
+  pagePublisher,
   reelPublisher,
   sendReelToBuffer,
   type BufferReelDeps,
@@ -389,7 +390,9 @@ export async function publishReel(
 
   updateReel(reel.id, { status: 'publishing', error: null });
 
-  if (reelPublisher(settings) === 'buffer') {
+  // The page decides, not the platform: a niche picks the page, and the page
+  // knows whether it has a Buffer channel to queue into.
+  if (pagePublisher(page, reelPublisher(settings)) === 'buffer') {
     await publishThroughBuffer(reel, deps, settings, page);
     return;
   }

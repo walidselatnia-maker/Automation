@@ -1967,6 +1967,8 @@ export interface FbPageRow {
   last_error: string | null;
   /** The presenter this page's reels are made with; NULL means dish only. */
   presenter_id: number | null;
+  /** Which way out this page's reels take: 'facebook' (Graph) or 'buffer'. */
+  publisher: string;
   /** Where this page's reels go when reels are published through Buffer. */
   buffer_channel_id: string;
   /** What that channel is called, so the table can say it without asking Buffer. */
@@ -2119,6 +2121,17 @@ export function setFbPageBufferChannel(
     channel?.name ?? '',
     id,
   );
+}
+
+/**
+ * Which way out a page's reels take.
+ *
+ * Stored as typed rather than validated here: the one caller is a select, and
+ * `pagePublisher` treats anything it does not recognise as Graph, which is
+ * the old behaviour and the safe one.
+ */
+export function setFbPagePublisher(id: number, publisher: string): void {
+  run('UPDATE fb_pages SET publisher = ? WHERE id = ?', publisher, id);
 }
 
 /**

@@ -156,7 +156,11 @@ describe('every control points at a route that exists', () => {
     }
 
     expect(dead, 'controls pointing at routes that do not exist').toEqual([]);
-  });
+    // Generous on purpose: this renders every page in the app and then asks
+    // for every control it found, which lands within a second of the default
+    // five on its own and over it whenever the rest of the suite is running
+    // alongside. The slowness is the point of the test, not a symptom.
+  }, 30_000);
 
   it('serves the import endpoints the CSV buttons post to', async () => {
     // Named explicitly as well as crawled: these two are the whole of bulk

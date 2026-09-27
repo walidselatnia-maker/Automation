@@ -9,6 +9,7 @@ import {
   insertKeyword,
   setFbPageBufferChannel,
   setFbPageOptions,
+  setFbPagePublisher,
   updateReel,
   upsertFbPage,
   upsertSite,
@@ -17,6 +18,7 @@ import {
 import { publishReel, type ReelDeps } from '../src/reels/engine.js';
 import {
   bufferCaption,
+  pagePublisher,
   reelPublisher,
   sendReelToBuffer,
   type BufferReelDeps,
@@ -206,5 +208,73 @@ describe('which way out is taken', () => {
     expect(reelPublisher(new Settings(KEY))).toBe('facebook');
     expect(reelPublisher(settingsWith({ reel_publisher: 'something-else' }))).toBe('facebook');
     expect(reelPublisher(settingsWith())).toBe('buffer');
+  });
+
+  it('is whatever the page says, whatever the platform default is', () => {
+    // The point of the per-page choice: one page queues in Buffer while the
+    // next publishes straight to Facebook, on the same platform.
+    expect(pagePublisher({ publisher: 'buffer' }, 'facebook')).toBe('buffer');
+    expect(pagePublisher({ publisher: 'facebook' }, 'buffer')).toBe('facebook');
+  });
+
+  it('follows the default for a page that has never been asked', () => {
+    // What a page carries before anyone opens the dropdown, and what every
+    // page brought in by a new token carries. It has to mean "the default",
+    // or the default would decide nothing.
+    expect(pagePublisher({ publisher: '' }, 'buffer')).toBe('buffer');
+    expect(pagePublisher({ publisher: '' }, 'facebook')).toBe('facebook');
+    expect(pagePublisher({}, 'buffer')).toBe('buffer');
+    expect(pagePublisher({ publisher: null }, 'buffer')).toBe('buffer');
+  });
+
+  it('treats a value it cannot read as not asked, not as a third way out', () => {
+    expect(pagePublisher({ publisher: 'telegram' }, 'buffer')).toBe('buffer');
+    expect(pagePublisher({ publisher: 'telegram' }, 'facebook')).toBe('facebook');
+  });
+});
+
+describe('the page, not the platform, decides where a reel goes', () => {
+  it('sends a Buffer page through Buffer although the default is Graph', async () => {
+    const { reelId, pageId } = seed();
+    setFbPagePublisher(pageId, 'buffer');
+    const { deps, createVideoPost } = bufferDeps();
+    const engine = engineDeps(deps) as ReelDeps & {
+      facebook: { publishReel: ReturnType<typeof vi.fn> };
+    };
+
+    await publishReel(
+      getReel(reelId) as ReelView,
+      engine,
+      settingsWith({ reel_publisher: 'facebook' }),
+    );
+
+    expect(createVideoPost).toHaveBeenCalled();
+    expect(engine.facebook.publishReel).not.toHaveBeenCalled();
+    expect(getReel(reelId)).toMatchObject({ status: 'published', buffer_post_id: 'BUF-1' });
+  });
+
+  it('sends a Graph page straight to the page although the default is Buffer', async () => {
+    // The failure this prevents is the quiet one: a page with no Buffer
+    // channel would otherwise be refused, or queued somewhere nobody meant.
+    const { reelId, pageId } = seed();
+    setFbPagePublisher(pageId, 'facebook');
+    const { deps, createVideoPost } = bufferDeps();
+    const engine = engineDeps(deps) as ReelDeps & {
+      facebook: { publishReel: ReturnType<typeof vi.fn> };
+    };
+
+    await publishReel(getReel(reelId) as ReelView, engine, settingsWith());
+
+    expect(engine.facebook.publishReel).toHaveBeenCalled();
+    expect(createVideoPost).not.toHaveBeenCalled();
+    expect(getReel(reelId)).toMatchObject({ status: 'published', fb_video_id: 'VID1' });
+  });
+
+  it('starts a page off on the default rather than pinned to one way out', () => {
+    // A page arrives with a token and nobody has opened the dropdown yet.
+    const { pageId } = seed();
+
+    expect(getFbPage(pageId)!.publisher).toBe('');
+    expect(pagePublisher(getFbPage(pageId)!, 'buffer')).toBe('buffer');
   });
 });

@@ -38,9 +38,41 @@ const log = createLogger('reel-buffer');
 
 export type ReelPublisher = 'facebook' | 'buffer';
 
-/** Where reels go. Anything unrecognised is Graph, which is the old behaviour. */
+/**
+ * The way out a page takes when it has not been told otherwise.
+ *
+ * Still a setting, because a new page has to start somewhere and a platform
+ * that publishes everything through Buffer should not have to say so once per
+ * page. It no longer decides anything for a page that has an answer of its
+ * own -- see `pagePublisher`.
+ */
 export function reelPublisher(settings: Settings): ReelPublisher {
   return settings.get('reel_publisher') === 'buffer' ? 'buffer' : 'facebook';
+}
+
+/**
+ * Where this page's reels go.
+ *
+ * Per page rather than per platform: the routing already is -- a niche picks
+ * a page -- and which way out is right is a fact about the page, not a
+ * preference. A page connected to a Buffer channel can queue; one that is not
+ * has to go straight to Graph, and on a platform with both, one switch for
+ * all of them means one of the two is always wrong.
+ *
+ * Anything this does not recognise -- the empty string a page carries before
+ * anyone opens the dropdown, or a value someone wrote into the database by
+ * hand -- means "not asked", and the platform default answers. Reading it as
+ * Graph instead would leave the default with nothing to decide, because every
+ * page starts out unasked.
+ */
+export function pagePublisher(
+  page: { publisher?: string | null },
+  fallback: ReelPublisher,
+): ReelPublisher {
+  const own = (page.publisher ?? '').trim();
+  if (own === 'buffer') return 'buffer';
+  if (own === 'facebook') return 'facebook';
+  return fallback;
 }
 
 /** The Buffer account the pages post to, or null when none is configured. */

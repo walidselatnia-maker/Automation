@@ -463,6 +463,24 @@ export const MIGRATIONS: Migration[] = [
       addColumn(db, 'keywords', 'niche', "TEXT NOT NULL DEFAULT ''");
     },
   },
+  {
+    id: '015-page-publisher',
+    description: 'Each Facebook page says whether its reels go through Graph or Buffer',
+    up(db) {
+      // Decided per page rather than once for the whole platform. The routing
+      // is already per page -- a niche picks a page -- and the two ways out
+      // are not a preference but a fact about the page: some are connected to
+      // a Buffer channel and some are not.
+      //
+      // Empty, and not 'facebook', is what "not asked yet" has to look like.
+      // A page carrying an explicit answer overrides the platform default, so
+      // defaulting the column to a real value would pin every existing page,
+      // and every page a token brings in later, to Graph -- silently moving a
+      // Buffer platform's reels on upgrade and leaving the default switch
+      // with nothing to decide.
+      addColumn(db, 'fb_pages', 'publisher', "TEXT NOT NULL DEFAULT ''");
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */
