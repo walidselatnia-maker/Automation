@@ -41,7 +41,7 @@ export interface RecentItem {
   status: string;
   detail: string;
   /** Which of the two the row is, shown as a badge in the last column. */
-  kind: 'article' | 'reel';
+  kind: 'recipe' | 'article' | 'reel';
 }
 
 export interface HomeData {
@@ -71,7 +71,7 @@ export function homePage(data: HomeData): Html {
         <form method="post" action="/run-now">
           <input type="hidden" name="mode" value="dry" />
           <button type="submit" ${data.running ? raw('disabled') : raw('')}
-                  title="Run the whole pipeline and stop before publishing, so you can read the article first">
+                  title="Run the whole pipeline and stop before publishing, so you can read it first">
             Dry run
           </button>
         </form>
@@ -104,7 +104,7 @@ export function homePage(data: HomeData): Html {
       <div class="stat">
         <div class="value">${data.today.published}
           <span class="muted small">/ ${data.today.target}</span></div>
-        <div class="label">Articles</div>
+        <div class="label">Posts</div>
       </div>
       <div class="stat"><div class="value">${data.today.reels}</div><div class="label">Reels</div></div>
       <div class="stat ${data.today.failed ? 'bad' : ''}">
@@ -123,11 +123,11 @@ export function homePage(data: HomeData): Html {
       </div>
     </div>
 
-    <h2>Recent <a class="button small" href="/runs">All articles</a>
+    <h2>Recent <a class="button small" href="/runs">All posts</a>
       <a class="button small" href="/reels">All reels</a></h2>
     <div class="card table-wrap">
       ${data.recent.length === 0
-        ? html`<div class="muted">Nothing yet. The first article appears here.</div>`
+        ? html`<div class="muted">Nothing yet. The first post appears here.</div>`
         : html`<table class="recent">
             <tbody>
               ${data.recent.map(
@@ -194,7 +194,7 @@ export function mergeRecent(runs: RunListRow[], reels: ReelView[], limit = 12): 
       href: `/runs/${r.id}`,
       what: `${r.site_domain ?? '—'} · ${r.seed_keyword ?? r.title ?? '—'}`,
       status: r.status,
-      kind: 'article',
+      kind: r.content_type === 'article' ? 'article' : 'recipe',
       detail:
         r.status === 'failed'
           ? `failed at ${r.failed_step ?? '?'}`

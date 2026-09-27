@@ -776,7 +776,7 @@ export const markRunHeld = (id: number, hold: 'awaiting' | 'dry', title: string)
 /** Runs stopped for a person to look at, newest first. */
 export const listHeldRuns = (limit = 50): RunListRow[] =>
   all<RunListRow>(
-    `SELECT r.*, s.domain AS site_domain, k.seed_keyword
+    `SELECT r.*, s.domain AS site_domain, k.seed_keyword, k.content_type
        FROM runs r
        LEFT JOIN sites s ON s.id = r.site_id
        LEFT JOIN keywords k ON k.id = r.keyword_id
@@ -850,11 +850,13 @@ export const markRunFailed = (id: number, error: string, failedStep: string): vo
 export interface RunListRow extends RunRow {
   site_domain: string | null;
   seed_keyword: string | null;
+  /** Which kind the keyword asked for. Null for a run whose keyword is gone. */
+  content_type: ContentType | null;
 }
 
 export const listRuns = (limit = 50, offset = 0): RunListRow[] =>
   all<RunListRow>(
-    `SELECT r.*, s.domain AS site_domain, k.seed_keyword
+    `SELECT r.*, s.domain AS site_domain, k.seed_keyword, k.content_type
        FROM runs r
        LEFT JOIN sites s ON s.id = r.site_id
        LEFT JOIN keywords k ON k.id = r.keyword_id
@@ -1752,7 +1754,7 @@ export const discardRun = (id: number): void => {
 /** Every run for one keyword, newest first — the keyword's own history. */
 export const listRunsForKeyword = (keywordId: number, limit = 25): RunListRow[] =>
   all<RunListRow>(
-    `SELECT r.*, s.domain AS site_domain, k.seed_keyword
+    `SELECT r.*, s.domain AS site_domain, k.seed_keyword, k.content_type
        FROM runs r
        LEFT JOIN sites s ON s.id = r.site_id
        LEFT JOIN keywords k ON k.id = r.keyword_id

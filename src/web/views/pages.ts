@@ -41,6 +41,7 @@ const ROLE_LABEL: Record<ArticleRole, string> = {
 };
 import type { ReelFormat } from '../../reels/formats.js';
 import type { ReelPublisher } from '../../reels/buffer.js';
+import type { ContentType } from '../../db/repos.js';
 import type { Endpoint } from '../../llm/pool.js';
 import type { SettingSpec } from '../../settings.js';
 import type { Supply } from '../../core/supply.js';
@@ -289,21 +290,37 @@ function decisionsSection(
  * Runs
  * ====================================================================== */
 
+/**
+ * Which of the two a row is.
+ *
+ * Worth a column of its own now that both land in the same list: before
+ * articles existed the word "article" in this interface meant a recipe, and
+ * leaving it that way would have made every recipe look like the new thing.
+ */
+function kindBadge(type: ContentType | null): Html {
+  return type === 'article'
+    ? html`<span class="badge reel">article</span>`
+    : html`<span class="badge muted">recipe</span>`;
+}
+
 function runTable(runs: RunListRow[]): Html {
   return html`<table>
     <thead>
-      <tr><th>Started</th><th>Site</th><th>Keyword</th><th>Status</th><th>Detail</th><th></th></tr>
+      <tr><th>Started</th><th>Kind</th><th>Site</th><th>Keyword</th><th>Status</th><th>Detail</th><th></th></tr>
     </thead>
     <tbody>
       ${runs.map(
         (r) => html`<tr>
           <td class="nowrap muted">${timeAgo(r.started_at)}</td>
+          <td>${kindBadge(r.content_type)}</td>
           <td>${r.site_domain ?? '—'}</td>
           <td>${r.seed_keyword ?? '—'}</td>
           <td>${runBadge(r)}</td>
           <td class="small">
             ${r.status === 'published'
-              ? html`<a href="${r.post_url ?? '#'}" target="_blank" rel="noopener">view article</a>`
+              ? html`<a href="${r.post_url ?? '#'}" target="_blank" rel="noopener">
+                  view ${r.content_type === 'article' ? 'article' : 'recipe'}
+                </a>`
               : r.hold
                 ? html`<span class="muted">${r.title || 'written, not published'}</span>`
                 : html`<span class="muted"
@@ -325,10 +342,10 @@ export function runsPage(runs: RunListRow[], page: number, total: number): Html 
   return html`
     <div class="spread">
       <div>
-        <h1>Articles</h1>
+        <h1>Posts</h1>
         <p class="subtitle">
-          ${total} article(s) so far. Open one to see every step, what it cost, and
-          why it failed if it did.
+          ${total} recipe(s) and article(s) so far. Open one to see every step, what it
+          cost, and why it failed if it did.
         </p>
       </div>
       <a class="button" href="/data/export/articles" download>Export CSV</a>
@@ -1319,7 +1336,7 @@ export function keywordsPage(
               </div>
 
               <div class="bulk-group">
-                <span class="muted small">Article images</span>
+                <span class="muted small">Recipe images</span>
                 <button type="submit" name="action" value="share-on"
                         title="Reuse one set of images across the sites this keyword runs on">
                   Reuse
@@ -1366,7 +1383,7 @@ export function keywordsPage(
                         </span>
                         ${k.spy_title
                           ? raw('')
-                          : html`<span class="badge error">no article title</span>`}
+                          : html`<span class="badge error">no recipe title</span>`}
                       </div>
                     </td>
                     <td>
@@ -2281,7 +2298,7 @@ export function keywordDetailPage(
     ${keyword.spy_title.trim()
       ? raw('')
       : html`<div class="flash error">
-          <strong>This keyword has no article title</strong>
+          <strong>This keyword has no recipe title</strong>
           <div class="small" style="margin-top:6px">
             Only the topic group describes it, and a topic group covers many different
             recipes &mdash; so there is nothing here to say which dish to write. Runs for this
@@ -2363,7 +2380,7 @@ export function keywordDetailPage(
                           <input type="hidden" name="site_id" value="${verdict.siteId}" />
                           <input type="hidden" name="status" value="${verdict.link}" />
                           <label class="muted small"
-                                 title="Reuse the article images another site already made for this keyword. The Pinterest graphic is always made fresh.">
+                                 title="Reuse the recipe images another site already made for this keyword. The Pinterest graphic is always made fresh.">
                             <input type="checkbox" name="share_images" value="1"
                                    ${shared ? raw('checked') : raw('')}
                                    onchange="this.form.submit()" />
@@ -2519,7 +2536,7 @@ function imagesSection(
     <div class="grid">
       <div class="stat">
         <div class="value">${counts.articleGenerated}</div>
-        <div class="label">Article images made</div>
+        <div class="label">Recipe images made</div>
         <div class="muted small">
           ${counts.generatedRuns === 0
             ? 'none yet'

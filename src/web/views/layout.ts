@@ -76,7 +76,7 @@ const ICON = (paths: string): string =>
  * The rail: five sections, in the order a person asks the questions.
  *
  *   What is happening?        Home
- *   What do we publish?       Content   — articles, keywords, reels
+ *   What do we publish?       Content   — posts, keywords, reels
  *   Where does it go?         Channels  — sites, Facebook pages
  *   Why did nothing happen?   Activity  — decisions, events
  *   Setup                     Setup     — settings, keys, prompts, browser, data
@@ -99,7 +99,7 @@ export const SECTIONS: NavSection[] = [
     href: '/runs',
     icon: ICON('<path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h6"/>'),
     pages: [
-      { href: '/runs', label: 'Articles' },
+      { href: '/runs', label: 'Posts' },
       { href: '/flow', label: 'Flow' },
       { href: '/keywords', label: 'Keywords' },
       { href: '/reels', label: 'Reels' },

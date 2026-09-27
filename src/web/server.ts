@@ -927,7 +927,7 @@ export function buildServer(
 
       case 'target': {
         const target = Math.max(0, asNumber(body.daily_target, 0));
-        return done(bulkSetDailyTarget(ids, target), `set to ${target} article(s) a day`);
+        return done(bulkSetDailyTarget(ids, target), `set to ${target} post(s) a day`);
       }
 
       case 'interval': {

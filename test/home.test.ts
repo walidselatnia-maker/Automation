@@ -122,7 +122,7 @@ describe('the home page', () => {
 });
 
 describe('the recent list', () => {
-  it('merges articles and reels newest first', () => {
+  it('merges posts and reels newest first', () => {
     const runs = [
       { id: 1, started_at: '2026-09-15 10:00:00', status: 'published', site_domain: 'a.com',
         seed_keyword: 'soup', title: 'Soup', failed_step: null, hold: '' },
@@ -138,6 +138,8 @@ describe('the recent list', () => {
     expect(items.map((i) => i.href)).toEqual(['/runs/2', '/reels/7', '/runs/1']);
     expect(items[0]!.detail).toBe('failed at generate-image-feature');
     expect(items[1]).toMatchObject({ kind: 'reel', what: 'Sweet · soup' });
-    expect(items[2]).toMatchObject({ kind: 'article', detail: '' });
+    // A run's kind is its keyword's. These carry none, which is a recipe --
+    // and calling every recipe an article is the confusion this fixed.
+    expect(items[2]).toMatchObject({ kind: 'recipe', detail: '' });
   });
 });

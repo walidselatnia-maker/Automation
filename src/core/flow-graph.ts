@@ -119,7 +119,7 @@ export const FLOW_NODES: readonly FlowNode[] = [
   },
   {
     step: 'generate-article',
-    title: 'Article',
+    title: 'Recipe post',
     kind: 'text',
     blurb: 'Writes the post in three parts, around the images.',
     promptFile: 'part-1',
