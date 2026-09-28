@@ -2308,8 +2308,6 @@ export function keywordDetailPage(
           </div>
         </div>`}
 
-    ${groupCard(keyword, siblings)}
-
     <div class="flash ${diagnosis.readyCount > 0 ? 'ok' : 'warn'}">${diagnosis.summary}</div>
 
     <h2>Is this keyword in use?</h2>
@@ -2465,6 +2463,8 @@ export function keywordDetailPage(
         <button class="danger small" type="submit">Delete this keyword</button>
       </form>
     </div>
+
+    ${groupCard(keyword, siblings)}
   `;
 }
 
@@ -2478,9 +2478,9 @@ export function keywordDetailPage(
  */
 function groupCard(keyword: KeywordRow, siblings: KeywordRow[]): Html {
   return html`
+    <h2>Topic group</h2>
     <div class="card groupcard">
       <div>
-        <span class="muted small">Topic group</span>
         <div>
           <span class="group-chip big">${keyword.seed_keyword}</span>
           <span class="muted small">
@@ -2491,11 +2491,13 @@ function groupCard(keyword: KeywordRow, siblings: KeywordRow[]): Html {
       </div>
 
       ${siblings.length > 0
-        ? html`<div style="margin-top:12px">
-            <span class="muted small">
-              ${siblings.length} other recipe(s) found under the same label. Each is its own
-              keyword with its own article and its own images:
-            </span>
+        ? html`<details style="margin-top:12px">
+            <summary class="muted small" style="cursor:pointer">
+              Show ${siblings.length} other recipe(s) found under the same label
+            </summary>
+            <div class="muted small" style="margin-top:8px">
+              Each is its own keyword with its own article and its own images:
+            </div>
             <div class="row wrap" style="margin-top:8px">
               ${siblings.map(
                 (other) => html`<a class="button small" href="/keywords/${other.id}"
@@ -2503,7 +2505,7 @@ function groupCard(keyword: KeywordRow, siblings: KeywordRow[]): Html {
                 >`,
               )}
             </div>
-          </div>`
+          </details>`
         : html`<div class="muted small" style="margin-top:10px">
             The only recipe under this label so far.
           </div>`}
