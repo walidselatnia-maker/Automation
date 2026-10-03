@@ -37,6 +37,20 @@ const ARTICLE_CONTEXT = {
   images: { feature: '/a.webp', topShot: '/b.webp', textureMacro: '/c.webp', beforeAfter: '/d.webp' },
 };
 
+/** Every guide prompt gets the same variables; `extra` carries step-specific data as JSON. */
+const GUIDE_CONTEXT = {
+  site_name: 's',
+  site_domain: 'd',
+  identity: 'i',
+  pillars: 'p',
+  current_pillar: 'c',
+  step_title: 't',
+  step_goal: 'g',
+  user_text: 'u',
+  history: 'h',
+  extra: {},
+};
+
 export const STEP_CONTEXTS: Record<string, Record<string, unknown>> = {
   'spy-validation': {
     spy: SPY,
@@ -80,6 +94,11 @@ export const STEP_CONTEXTS: Record<string, Record<string, unknown>> = {
     cta: 'c',
     note: '',
   },
+  'guide-identity': GUIDE_CONTEXT,
+  'guide-pillars': GUIDE_CONTEXT,
+  'guide-search-console': GUIDE_CONTEXT,
+  'guide-keywords': GUIDE_CONTEXT,
+  'guide-shortlist': GUIDE_CONTEXT,
 };
 
 for (const part of ['part-1', 'part-2', 'part-3']) {

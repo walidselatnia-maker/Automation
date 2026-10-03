@@ -1,0 +1,17 @@
+Site: {{site_name}} ({{site_domain}})
+Who the site is for: {{identity}}
+Pillar topics: {{pillars}}
+Current pillar: {{current_pillar}}
+
+Step: {{step_title}}
+Goal of this step: {{step_goal}}
+
+Extra data for this step (JSON): {{extra}}
+
+Conversation so far:
+{{history}}
+
+What they just said: {{user_text}}
+
+If "What they just said" is empty, this is the start of the step: greet them in one short line and ask your first question.
+Answer with the JSON object only.

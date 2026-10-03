@@ -126,6 +126,13 @@ export const PROMPT_MODELS: Record<string, { model: string; format: 'json' | nul
   'repair-json': { model: 'gpt-oss:120b', format: null },
   'reel-caption': { model: 'gpt-oss:120b', format: null },
   'reel-plan': { model: 'gpt-oss:120b', format: 'json' },
+  // The content guide's assistant, one prompt per step. JSON because every
+  // reply carries chips and maybe a draft alongside the message.
+  'guide-identity': { model: 'gpt-oss:120b', format: 'json' },
+  'guide-pillars': { model: 'gpt-oss:120b', format: 'json' },
+  'guide-search-console': { model: 'gpt-oss:120b', format: 'json' },
+  'guide-keywords': { model: 'gpt-oss:120b', format: 'json' },
+  'guide-shortlist': { model: 'gpt-oss:120b', format: 'json' },
 };
 
 /* -------------------------------------------------------------------------
