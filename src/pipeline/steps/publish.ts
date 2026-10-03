@@ -2,7 +2,7 @@ import type { Step } from '../engine.js';
 import { createLogger, errorMessage } from '../../lib/logger.js';
 import { parseJson } from '../json.js';
 import type { PostedRecipe } from '../../integrations/site-api.js';
-import type { SeoData } from './content.js';
+import { stripMachineTags, type SeoData } from './content.js';
 
 const log = createLogger('publish');
 
@@ -26,7 +26,7 @@ export const generatePinDescription: Step<PinContext, string> = {
       spy: {
         title: ctx.keyword.spy_title,
         description: ctx.keyword.spy_description,
-        annotation: ctx.keyword.annotation,
+        annotation: stripMachineTags(ctx.keyword.annotation),
       },
     });
 

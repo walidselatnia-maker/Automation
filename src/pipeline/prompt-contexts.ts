@@ -58,6 +58,7 @@ export const STEP_CONTEXTS: Record<string, Record<string, unknown>> = {
     site: { domain: 'example.com' },
     seoRules: 'r',
     seoFeedback: '',
+    targetSection: '',
   },
   'recipe-generator': { seo: SEO, spy: SPY },
   'image-prompts': { seo: SEO, spy: SPY, recipe: { raw: '{}' }, recipeJson: '{}' },

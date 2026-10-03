@@ -3,7 +3,7 @@ import { parseJson, requireFields } from '../json.js';
 import { parseJsonOrRepair } from '../parse-with-repair.js';
 import type { Category } from '../../integrations/site-api.js';
 import { createLogger, errorMessage } from '../../lib/logger.js';
-import { checkDescription, checkTitle, rulesPrompt } from '../../seo/rules.js';
+import { checkDescription, checkTitle, rulesPrompt, words } from '../../seo/rules.js';
 import { feedbackFor, refineOnce } from '../../seo/refine.js';
 
 const log = createLogger('content');
@@ -32,9 +32,46 @@ function spyContext(ctx: import('../context.js').PipelineContext) {
     group: ctx.keyword.seed_keyword,
     title: ctx.keyword.spy_title,
     description: ctx.keyword.spy_description,
-    annotation: ctx.keyword.annotation,
+    annotation: stripMachineTags(ctx.keyword.annotation),
     articleUrl: ctx.keyword.spy_article_url,
   };
+}
+
+/** A keyword the guide added, whose seed is the exact keyword the operator chose. */
+export const isGuideRow = (annotation: string): boolean => annotation.trim().startsWith('guide:');
+
+/**
+ * The annotation without the tags the platform writes into it ("guide:Dinners",
+ * "seo:fallback"). They are bookkeeping for the Keywords page; shown to a model
+ * they read like part of the dish's notes. The operator's own notes are kept.
+ */
+export function stripMachineTags(annotation: string): string {
+  return annotation
+    .split(' | ')
+    .map((part) => part.trim())
+    .filter((part) => part && !part.startsWith('guide:') && part !== 'seo:fallback')
+    .join(' | ');
+}
+
+/** The prompt section for a guide row; empty for any other row. */
+export const targetSectionFor = (seed: string): string =>
+  seed.trim()
+    ? `TARGET KEYWORD: ${seed.trim()}
+` +
+      'This is the exact keyword the page must be found for: the output keyword must be it, ' +
+      'and the title and description must be about that dish.'
+    : '';
+
+/**
+ * Keep the derived keyword on the operator's chosen one.
+ *
+ * The prompt asks for this, but a model drifts, and the keyword drives the
+ * title checks and every later step. A keyword that does not contain every
+ * word of the seed is replaced by the seed.
+ */
+export function holdToTarget(keyword: string, seed: string): string {
+  const have = new Set(words(keyword));
+  return words(seed).every((w) => have.has(w)) ? keyword : seed.trim().toLowerCase();
 }
 
 export interface SeoData {
@@ -95,9 +132,15 @@ export const validateSpy: Step<Category[], SeoData> = {
       );
     }
 
+    // For a guide row the seed is the long-tail keyword itself, not a topic
+    // group shared by several recipes, so it is the target and there is no group.
+    const guide = isGuideRow(ctx.keyword.annotation);
+    const seed = ctx.keyword.seed_keyword;
+
     const ask = (feedback: string) =>
       ctx.prompt('spy-validation', {
-        spy: spyContext(ctx),
+        spy: guide ? { ...spyContext(ctx), group: '' } : spyContext(ctx),
+        targetSection: guide ? targetSectionFor(seed) : '',
         categoryTitles: JSON.stringify(categories.map((c) => c.title)),
         site: { domain: ctx.site.domain },
         seoRules: rulesPrompt(),
@@ -114,7 +157,7 @@ export const validateSpy: Step<Category[], SeoData> = {
       );
       requireFields(parsed, ['keyword', 'title', 'description', 'category'], 'Spy validation');
       return {
-        keyword: parsed.keyword!,
+        keyword: guide ? holdToTarget(parsed.keyword!, seed) : parsed.keyword!,
         title: parsed.title!,
         description: parsed.description!,
         category: parsed.category!,
@@ -151,7 +194,7 @@ export const validateSpy: Step<Category[], SeoData> = {
     // rather than three steps later in a photograph. Not fatal: a genuinely
     // one-recipe topic will trip it, and refusing to write that article would
     // be worse than writing it.
-    if (collapsedToGroup(seo.keyword, ctx.keyword.seed_keyword)) {
+    if (!guide && collapsedToGroup(seo.keyword, ctx.keyword.seed_keyword)) {
       log.warn(
         `run ${ctx.runId}: "${ctx.keyword.spy_title}" produced the keyword ` +
           `"${seo.keyword}", which is just the topic group "${ctx.keyword.seed_keyword}". ` +

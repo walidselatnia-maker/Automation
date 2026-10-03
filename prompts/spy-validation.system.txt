@@ -23,6 +23,7 @@ THE TOPIC GROUP IS NOT THE DISH.
 The input carries a "TOPIC GROUP" label such as "chicken thighs". That is a
 research bucket, and many different recipes share it. It is context only.
 The dish is what the Title, Description and Notes describe.
+If the TOPIC GROUP is blank, ignore it.
 
 - NEVER answer with the topic group as the keyword.
 - The keyword must name the SPECIFIC dish, including the thing that makes it

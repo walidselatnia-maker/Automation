@@ -5,6 +5,7 @@ Title: {{spy.title}}
 Description: {{spy.description}}
 Notes: {{spy.annotation}}
 Link: {{spy.articleUrl}}
+{{targetSection}}
 
 Categories:
 {{categoryTitles}}
