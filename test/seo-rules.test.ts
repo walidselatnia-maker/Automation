@@ -46,6 +46,39 @@ describe('restrictedWords', () => {
   it('does not match inside other words', () => {
     expect(restrictedWords('eastern hamburger')).toEqual([]);
   });
+
+  it('flags plural forms of pork and alcohol words', () => {
+    expect(restrictedWords('hams and wines and beers')).toEqual(['hams', 'wines', 'beers']);
+    expect(restrictedWords('rums, vodkas, brandies, liqueurs, tequilas')).toEqual(
+      expect.arrayContaining(['rums', 'vodkas', 'liqueurs', 'tequilas']),
+    );
+    expect(restrictedWords('whiskeys whiskies bourbons champagnes')).toHaveLength(4);
+    expect(restrictedWords('proscIuttos pancettas')).toHaveLength(2);
+    expect(restrictedWords('lards')).toEqual(['lards']);
+    expect(restrictedWords('beer')).toEqual(['beer']);
+  });
+
+  it('lets root beer, ginger beer, rum extract and red wine vinegar through', () => {
+    expect(restrictedWords('root beer')).toEqual([]);
+    expect(restrictedWords('ginger beer')).toEqual([]);
+    expect(restrictedWords('rum extract')).toEqual([]);
+    expect(restrictedWords('red wine vinegar')).toEqual([]);
+    expect(restrictedWords('turkey hams and beef bacons')).toEqual([]);
+  });
+});
+
+describe('possessives and accents', () => {
+  it('normalises apostrophes and accents when tokenising', () => {
+    expect(words("Mom's Jalapeño")).toEqual(['mom', 'jalapeno']);
+    expect(words('Mom’s')).toEqual(['mom']);
+  });
+
+  it('matches possessive and accented keywords in titles, both ways', () => {
+    expect(checkTitle('Moms Chicken Soup For Busy Weeknights', { keyword: "mom's chicken soup" })).toEqual([]);
+    expect(checkTitle("Mom's Chicken Soup For Busy Weeknights", { keyword: 'moms chicken soup' })).toEqual([]);
+    expect(checkTitle('Jalapeno Poppers For Game Day Snacking', { keyword: 'jalapeño poppers' })).toEqual([]);
+    expect(checkTitle('Jalapeño Poppers For Game Day Snacking', { keyword: 'jalapeno poppers' })).toEqual([]);
+  });
 });
 
 describe('checkTitle', () => {
@@ -124,6 +157,12 @@ describe('checkDescription', () => {
         { keyword },
       ),
     ).toEqual(expect.arrayContaining([expect.stringContaining('list')]));
+  });
+
+  it('words the ending rule as a sentence that may end in ! or ?', () => {
+    const problems = checkDescription(goodDescription.slice(0, -1), { keyword });
+    expect(problems).toEqual(expect.arrayContaining([expect.stringContaining('sentence')]));
+    expect(problems.join(' ')).toContain('full stop, ! or ?');
   });
 
   it('rejects a description too like another one', () => {

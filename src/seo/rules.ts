@@ -35,10 +35,17 @@ const STOP_WORDS = new Set([
 
 const clean = (text: string): string => text.replace(/\s+/g, ' ').trim();
 
+/** Lower-case, accent-free text with apostrophes removed, so "Mom's" is "moms" and "Jalapeño" is "jalapeno". */
+const normalise = (text: string): string =>
+  text
+    .normalize('NFKD')
+    .replace(/\p{M}/gu, '')
+    .replace(/['‘’]/g, '')
+    .toLowerCase();
+
 /** Lower-case content words, so "Thighs" and "thigh" count as the same word. */
 export function words(text: string): string[] {
-  return text
-    .toLowerCase()
+  return normalise(text)
     .replace(/[^a-z0-9\s]/g, ' ')
     .split(/\s+/)
     .filter((w) => w && !STOP_WORDS.has(w))
@@ -60,8 +67,8 @@ export function similarity(a: string, b: string): number {
 // substitutes and so are allowed.
 const RESTRICTED: RegExp[] = [
   /\bvalentine(?:['’]?s)?\b|\b(?:christmas|thanksgiving|halloween|easter)\b/gi,
-  /\b(?:pork|prosciutto|pancetta|lard)\b|(?<!turkey )(?<!beef )\b(?:bacon|ham)\b/gi,
-  /\b(?:beer|vodka|rum|whisk(?:e)?y|bourbon|brandy|liqueur|tequila|champagne)\b|\bwine\b(?! vinegar)/gi,
+  /\b(?:porks?|prosciuttos?|pancettas?|lards?)\b|(?<!turkey )(?<!beef )\b(?:bacons?|hams?)\b/gi,
+  /(?<!root )(?<!ginger )\bbeers?\b|\b(?:vodkas?|whiskeys?|whiskies|whisky|bourbons?|brandy|brandies|liqueurs?|tequilas?|champagnes?)\b|\brums?\b(?! extract)|\bwines?\b(?! vinegar)/gi,
 ];
 
 export function restrictedWords(text: string): string[] {
@@ -100,7 +107,7 @@ export function checkTitle(title: string, ctx: CheckContext): string[] {
     problems.push(`The title is missing the keyword words: ${missing.join(', ')}.`);
   } else {
     const first = words(ctx.keyword)[0];
-    if (first && text.toLowerCase().indexOf(first) > 40) {
+    if (first && normalise(text).indexOf(first) > 40) {
       problems.push('Put the keyword nearer the start of the title.');
     }
   }
@@ -140,15 +147,15 @@ export function checkDescription(description: string, ctx: CheckContext): string
     );
   }
   if (!/[.!?]$/.test(text)) {
-    problems.push('Write the description as a sentence that ends with a full stop.');
+    problems.push('Write the description as a sentence that ends with a full stop, ! or ?.');
   }
 
   const missing = missingWords(ctx.keyword, text);
   if (missing.length) {
     problems.push(`The description is missing the keyword words: ${missing.join(', ')}.`);
   }
-  const phrase = clean(ctx.keyword).toLowerCase();
-  if (phrase && text.toLowerCase().split(phrase).length - 1 > 1) {
+  const phrase = normalise(clean(ctx.keyword));
+  if (phrase && normalise(text).split(phrase).length - 1 > 1) {
     problems.push('Use the keyword phrase once, naturally, not repeated.');
   }
 
