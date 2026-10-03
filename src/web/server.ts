@@ -209,6 +209,27 @@ import {
 import { FORMATS } from '../reels/formats.js';
 import { idFromFlowUrl } from '../reels/ids.js';
 import { chat } from '../llm/client.js';
+import { askPrompt } from '../llm/ask.js';
+import { guideCardPage, guideListPage } from './views/guide.js';
+import { respond, type AssistantDeps } from '../guide/assistant.js';
+import { importShortlist } from '../guide/import.js';
+import {
+  canOpen,
+  getCursor,
+  getResult,
+  getStatus,
+  goBack,
+  goTo,
+  isRoundFinished,
+  listMessages,
+  markDone,
+  progressFor,
+  saveResult,
+  siteContext,
+  startNextPillar,
+} from '../guide/state.js';
+import { isStepKey, manualResult, stepDef, stepIndex, STEPS, type ShortlistResult } from '../guide/steps.js';
+import { expandSeeds } from '../integrations/google-suggest.js';
 import { normaliseDomain } from '../lib/domain.js';
 
 const log = createLogger('web');
@@ -1749,6 +1770,180 @@ export function buildServer(
       kind: 'ok',
       message: `${pages.length} page(s) saved.`,
     });
+  });
+
+  /* -- Guide --------------------------------------------------------------- */
+
+  // The assistant reaches the model the same way the pipeline does: the prompt
+  // page's model choice, the endpoint pool, its failover.
+  const guideDeps: AssistantDeps = {
+    ask: async (promptName, variables) =>
+      (await askPrompt(settings, encryptionKey, promptName, variables)).content,
+    suggest: (seeds) => expandSeeds(seeds),
+  };
+
+  const guideSite = (request: FastifyRequest) => {
+    const id = asNumber((request.params as { siteId: string }).siteId, 0);
+    return getSite(id) ?? null;
+  };
+
+  const renderCard = (reply: FastifyReply, siteId: number, flash: Flash) => {
+    const site = getSite(siteId)!;
+    const cursor = getCursor(siteId);
+    const def = stepDef(cursor.step);
+    // The import card shows the shortlist; every other card shows its own result.
+    const result =
+      cursor.step === 'import' && !isRoundFinished(siteId)
+        ? getResult<ShortlistResult>(siteId, 'shortlist', cursor.round)
+        : getResult(siteId, cursor.step, cursor.round);
+    const map = STEPS.map((s) => ({
+      def: s,
+      state:
+        s.key === cursor.step
+          ? ('current' as const)
+          : getStatus(siteId, s.key, cursor.round) === 'done'
+            ? ('done' as const)
+            : canOpen(siteId, s.key)
+              ? ('open' as const)
+              : ('locked' as const),
+    }));
+    return page(
+      reply,
+      `Guide · ${site.domain}`,
+      '/guide',
+      guideCardPage({
+        site: { id: site.id, name: site.name, domain: site.domain },
+        step: def,
+        index: stepIndex(cursor.step) + 1,
+        total: STEPS.length,
+        round: cursor.round,
+        currentPillar: siteContext(siteId, cursor.round).currentPillar,
+        messages: listMessages(siteId, cursor.step, cursor.round),
+        result,
+        map,
+        finished: isRoundFinished(siteId),
+      }),
+      flash,
+    );
+  };
+
+  app.get('/guide', async (request, reply) => {
+    const rows = listSites().map((site) => {
+      const progress = progressFor(site.id);
+      return {
+        site: { id: site.id, name: site.name, domain: site.domain },
+        progress,
+        stepTitle: stepDef(progress.step).title,
+      };
+    });
+    return page(reply, 'Guide', '/guide', guideListPage(rows), readFlash(request.query));
+  });
+
+  app.get('/guide/:siteId', async (request, reply) => {
+    const site = guideSite(request);
+    if (!site) return reply.status(404).send('No such site.');
+    return renderCard(reply, site.id, readFlash(request.query));
+  });
+
+  app.get('/guide/:siteId/step/:key', async (request, reply) => {
+    const site = guideSite(request);
+    if (!site) return reply.status(404).send('No such site.');
+    const key = (request.params as { key: string }).key;
+    if (!isStepKey(key) || !goTo(site.id, key)) {
+      return redirect(reply, `/guide/${site.id}`, { kind: 'warn', message: 'That step is not open yet.' });
+    }
+    return redirect(reply, `/guide/${site.id}`);
+  });
+
+  app.post('/guide/:siteId/chat', async (request, reply) => {
+    const site = guideSite(request);
+    if (!site) return reply.status(404).send({ message: 'No such site.', choices: [], multi: false, draft: null });
+    const body = formBody(request);
+    const text = typeof body.text === 'string' ? body.text.slice(0, 2000) : null;
+    return reply.send(await respond(guideDeps, site.id, text));
+  });
+
+  app.post('/guide/:siteId/save', async (request, reply) => {
+    const site = guideSite(request);
+    if (!site) return reply.status(404).send('No such site.');
+    const back = `/guide/${site.id}`;
+    const body = formBody(request);
+    const cursor = getCursor(site.id);
+
+    let value: unknown;
+    const draftJson = asString(body.draft_json);
+    if (draftJson) {
+      try {
+        value = JSON.parse(draftJson);
+      } catch {
+        return redirect(reply, back, { kind: 'error', message: 'That draft could not be read.' });
+      }
+    } else if (cursor.step === 'search-console') {
+      value = { confirmed: asString(body.confirmed) === '1' };
+    } else {
+      value = manualResult(
+        cursor.step,
+        asString(body.manual),
+        siteContext(site.id, cursor.round).currentPillar,
+      );
+    }
+
+    // saveResult runs validateResult, so a draft of the wrong shape (the browser
+    // and the model both feed this) is refused here, never stored.
+    const saved = saveResult(site.id, cursor.step, cursor.round, value);
+    return saved.ok
+      ? redirect(reply, back, { kind: 'ok', message: 'Saved. Press Done when you are happy with it.' })
+      : redirect(reply, back, { kind: 'warn', message: saved.problem });
+  });
+
+  app.post('/guide/:siteId/done', async (request, reply) => {
+    const site = guideSite(request);
+    if (!site) return reply.status(404).send('No such site.');
+    const done = markDone(site.id);
+    return done.ok
+      ? redirect(reply, `/guide/${site.id}`)
+      : redirect(reply, `/guide/${site.id}`, { kind: 'warn', message: done.problem });
+  });
+
+  app.post('/guide/:siteId/back', async (request, reply) => {
+    const site = guideSite(request);
+    if (!site) return reply.status(404).send('No such site.');
+    goBack(site.id);
+    return redirect(reply, `/guide/${site.id}`);
+  });
+
+  app.post('/guide/:siteId/import', async (request, reply) => {
+    const site = guideSite(request);
+    if (!site) return reply.status(404).send('No such site.');
+    const back = `/guide/${site.id}`;
+    const cursor = getCursor(site.id);
+    const shortlist = getResult<ShortlistResult>(site.id, 'shortlist', cursor.round);
+    if (cursor.step !== 'import' || !shortlist) {
+      return redirect(reply, back, { kind: 'warn', message: 'Finish the shortlist first.' });
+    }
+
+    const picked = formBody(request).pick;
+    const indexes = new Set(
+      (Array.isArray(picked) ? picked : picked === undefined ? [] : [picked]).map((v) => asNumber(v, -1)),
+    );
+    const items = shortlist.items.filter((_, i) => indexes.has(i));
+    if (!items.length) return redirect(reply, back, { kind: 'warn', message: 'Nothing was ticked.' });
+
+    const ids = importShortlist(site.id, shortlist.pillar, items);
+    saveResult(site.id, 'import', cursor.round, { imported_ids: ids });
+    markDone(site.id);
+    return redirect(reply, back, {
+      kind: 'ok',
+      message: `${ids.length} keyword(s) added — they’ll be written on the site’s normal schedule.`,
+    });
+  });
+
+  app.post('/guide/:siteId/next-pillar', async (request, reply) => {
+    const site = guideSite(request);
+    if (!site) return reply.status(404).send('No such site.');
+    return startNextPillar(site.id)
+      ? redirect(reply, `/guide/${site.id}`)
+      : redirect(reply, `/guide/${site.id}`, { kind: 'warn', message: 'Finish this pillar first.' });
   });
 
   app.get('/keywords', async (request, reply) => {
