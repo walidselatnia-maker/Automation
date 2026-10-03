@@ -157,7 +157,12 @@ export async function respond(
     // Step 4: the model proposes seeds, Google says what people really type,
     // and the model picks only from that. The "checking…" reply is not kept.
     if (parsed && cursor.step === 'keywords' && parsed.seeds.length) {
-      const suggestions = await deps.suggest(parsed.seeds);
+      let suggestions: string[] = [];
+      try {
+        suggestions = await deps.suggest(parsed.seeds);
+      } catch {
+        // If Google check fails, degrade to unverified keywords rather than stopping the step
+      }
       extra = {
         phase: 'pick',
         pillar: parsed.pillar || ctx.currentPillar,

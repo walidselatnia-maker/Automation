@@ -167,6 +167,21 @@ describe('respond', () => {
     expect(out.draft).toMatchObject({ verified: false });
   });
 
+  it('step 4: marks the list unverified when Google check throws', async () => {
+    reachStep('keywords');
+    const ten = Array.from({ length: 10 }, (_, i) => `easy chicken dinner ${i}`);
+    const ask: Ask = async (_name, vars) =>
+      (vars.extra as { phase: string }).phase === 'start'
+        ? reply({ seeds: ['chicken'], pillar: 'Chicken' })
+        : reply({ draft: { pillar: 'Chicken', keywords: ten } });
+    const throwingSuggest = async () => {
+      throw new Error('Google service error');
+    };
+    const out = await respond({ ask, suggest: throwingSuggest }, siteId, 'Chicken');
+    expect(out.message).not.toMatch(/confused/);
+    expect(out.draft).toMatchObject({ verified: false });
+  });
+
   it('step 5: leaves out keywords the site already has', async () => {
     reachStep('shortlist');
     const id = insertKeyword({ seed_keyword: 'honey garlic chicken thighs' });
