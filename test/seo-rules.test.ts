@@ -219,6 +219,25 @@ describe('rulesPrompt', () => {
   });
 });
 
+describe('rulesPrompt options', () => {
+  it('lists every rule by default', () => {
+    const text = rulesPrompt();
+    expect(text).toMatch(/Slug:/);
+    expect(text).toMatch(/Focus keyword/);
+    expect(text).toMatch(/No pork/);
+  });
+
+  it('leaves out the rules a prompt is not checked for', () => {
+    expect(rulesPrompt({ restricted: false })).not.toMatch(/No pork/);
+    expect(rulesPrompt({ restricted: false })).toMatch(/Slug:/);
+    const plain = rulesPrompt({ slug: false, focus: false });
+    expect(plain).not.toMatch(/Slug:/);
+    expect(plain).not.toMatch(/Focus keyword/);
+    expect(plain).toMatch(/No pork/);
+    expect(plain).toMatch(/Title:/);
+  });
+});
+
 describe('satisfiable rules outside the recipe niche', () => {
   it('skips restricted words when the site is not a recipe site', () => {
     const title = 'Best Wine Regions in Italy to Visit';

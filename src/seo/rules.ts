@@ -212,15 +212,37 @@ export function checkAlt(alt: string): string[] {
   return [];
 }
 
-/** The rules above, as text for a prompt, so the model is told what will be checked. */
-export function rulesPrompt(): string {
+export interface RulesPromptOptions {
+  /** Include the recipe-site word policy (no pork, alcohol or holiday words). Default true. */
+  restricted?: boolean;
+  /** Include the slug rule. Default true. */
+  slug?: boolean;
+  /** Include the focus-keyword rule. Default true. */
+  focus?: boolean;
+}
+
+/**
+ * The rules above, as text for a prompt, so the model is told what will be checked.
+ *
+ * A prompt must list only what its own answer is checked for: telling the
+ * model to write a slug it is never asked for, or to avoid wine in an article
+ * about wine regions, is an instruction the program does not enforce.
+ */
+export function rulesPrompt(options: RulesPromptOptions = {}): string {
+  const { restricted = true, slug = true, focus = true } = options;
   return [
     'SEO RULES (your answer is checked by a program against these):',
     `- Title: ${TITLE_MIN}-${TITLE_MAX} characters, includes every word of the keyword with the keyword near the start, no word used more than twice, no lists or "|", normal title case, different from every other title.`,
     `- Description: ${DESCRIPTION_MIN}-${DESCRIPTION_MAX} characters, one natural sentence that ends with a full stop, includes the keyword once, no lists, different from every other description. Say what the page really delivers.`,
-    `- Slug: lower-case words joined by single dashes, at most ${SLUG_MAX_WORDS} words, includes the first ${SLUG_KEYWORD_WORDS} words of the keyword, no year.`,
-    '- Focus keyword (when you are asked for one): a specific phrase of 3 or more words.',
+    slug
+      ? `- Slug: lower-case words joined by single dashes, at most ${SLUG_MAX_WORDS} words, includes the first ${SLUG_KEYWORD_WORDS} words of the keyword, no year.`
+      : '',
+    focus ? '- Focus keyword (when you are asked for one): a specific phrase of 3 or more words.' : '',
     '- Never stuff keywords. Write for the person searching, not for a robot.',
-    '- No pork, no alcohol, no holiday words (Christmas, Thanksgiving, Valentine\'s, Easter, Halloween).',
-  ].join('\n');
+    restricted
+      ? "- No pork, no alcohol, no holiday words (Christmas, Thanksgiving, Valentine's, Easter, Halloween)."
+      : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
 }

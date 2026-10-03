@@ -44,6 +44,12 @@ export interface WriterContext {
   others: string[];
 }
 
+/**
+ * How many taken titles the prompt shows. A large site would otherwise send
+ * thousands of titles with every ask; the rule checks still see all of them.
+ */
+export const RECENT_TITLES = 200;
+
 /** The first ask plus two corrections. */
 const ROUNDS = 3;
 
@@ -52,9 +58,17 @@ const clean = (value: unknown): string =>
 
 const titleCase = (text: string): string => text.replace(/(^|\s)[a-z]/g, (m) => m.toUpperCase());
 
-/** Plain, honest text from the keyword alone. It says nothing the keyword does not. */
+/**
+ * Plain, honest text from the keyword alone. It says nothing the keyword does not.
+ *
+ * It is a safety net, not a guarantee: a very short keyword makes a title under
+ * the minimum length and a very long one a description over the maximum, so it
+ * can still fail the checker. It is saved anyway, marked seo:fallback, because
+ * a plain title is better than a recipe that cannot run.
+ */
 export function fallbackFor(keyword: string): SeoDraft {
-  // A restricted word (pork, alcohol, holidays) is dropped, never written out.
+  // Defensive: writeSeoFor never sends a restricted keyword here, but this is
+  // exported, and a restricted word (pork, alcohol, holidays) is never written out.
   const phrase =
     clean(keyword)
       .toLowerCase()
@@ -116,8 +130,8 @@ export async function draftSeo(
           itemsJson: JSON.stringify(
             pending.map((p) => ({ n: p.n, keyword: p.keyword, fix: problems.get(p.n) ?? [] })),
           ),
-          takenJson: JSON.stringify(takenTitles),
-          rules: rulesPrompt(),
+          takenJson: JSON.stringify(takenTitles.slice(-RECENT_TITLES)),
+          rules: rulesPrompt({ slug: false, focus: false }),
         }),
       );
     } catch (err) {

@@ -68,6 +68,34 @@ export function toSlug(value: string): string {
 /** The marker the writer leaves where a photograph belongs. */
 export const marker = (index: number): string => `[IMAGE_${index + 1}]`;
 
+const hasBrief = (entry: unknown): entry is ArticleImageBrief =>
+  !!entry && typeof (entry as ArticleImageBrief).brief === 'string' && (entry as ArticleImageBrief).brief.trim() !== '';
+
+/** How many pictures before position `index` have a usable brief. */
+const keptBefore = (images: unknown[], index: number): number => images.slice(0, index).filter(hasBrief).length;
+
+/**
+ * The sections and pictures of a plan that the rest of the step will use:
+ * sections with a heading, pictures with a brief, at most MAX_IMAGES of them.
+ * One definition, so a second plan is judged by exactly what the step keeps.
+ */
+export function keptParts(plan: Record<string, unknown>): { sections: ArticleSection[]; images: ArticleImageBrief[] } {
+  const sections = (Array.isArray(plan.sections) ? plan.sections : [])
+    .map((entry) => entry as ArticleSection)
+    .filter((entry) => entry && typeof entry.heading === 'string' && entry.heading.trim());
+  // Clamped rather than trusted: the count drives how many generations this
+  // article costs, and a model that answers "images": [] or lists twenty is
+  // deciding the bill.
+  const images = (Array.isArray(plan.images) ? plan.images : []).filter(hasBrief).slice(0, MAX_IMAGES);
+  return { sections, images };
+}
+
+/** True when a plan has what the step needs: a section and enough pictures. */
+export const planIsUsable = (plan: Record<string, unknown>): boolean => {
+  const { sections, images } = keptParts(plan);
+  return sections.length > 0 && images.length >= MIN_IMAGES;
+};
+
 /**
  * What is wrong with a plan's search text, each problem labelled with its
  * field so the model can be told exactly what to fix. Empty means it passes.
@@ -84,8 +112,12 @@ export function planSeoProblems(plan: Record<string, unknown>, keyword: string):
     ...label('metaTitle', checkTitle(String(plan.metaTitle ?? ''), { keyword: focus, restricted: false })),
     ...label('metaDescription', checkDescription(String(plan.metaDescription ?? ''), { keyword: focus, restricted: false })),
     ...label('slug', checkSlug(String(plan.slug ?? ''), { keyword: focus })),
+    // Only pictures the step will keep: an empty brief or one past the cap is
+    // dropped later, so its alt text can never reach the page.
     ...images.flatMap((image, i) =>
-      label(`images[${i}].alt`, checkAlt(String((image as { alt?: unknown })?.alt ?? ''))),
+      hasBrief(image) && keptBefore(images, i) < MAX_IMAGES
+        ? label(`images[${i}].alt`, checkAlt(String((image as { alt?: unknown })?.alt ?? '')))
+        : [],
     ),
   ];
 }
@@ -112,7 +144,7 @@ export const planArticle: Step<Category[], ArticlePlan> = {
           ? `It was found from a page titled "${spy}". Cover the same ground, better.`
           : '',
         categoryTitles: JSON.stringify(categories.map((c) => c.title)),
-        seoRules: rulesPrompt(),
+        seoRules: rulesPrompt({ restricted: false }),
         seoFeedback: feedback,
       });
 
@@ -134,7 +166,14 @@ export const planArticle: Step<Category[], ArticlePlan> = {
       (p) => planSeoProblems(p, ctx.keyword.seed_keyword),
       async (problems) => {
         try {
-          return await read((await ask(feedbackFor(problems))).content);
+          const second = await read((await ask(feedbackFor(problems))).content);
+          // Better search text is no use if the plan can no longer be built:
+          // keep the first plan unless this one has what the step requires.
+          if (!planIsUsable(second)) {
+            log.warn(`run ${ctx.runId}: second article plan is missing sections or pictures; keeping the first`);
+            return null;
+          }
+          return second;
         } catch (err) {
           log.warn(`run ${ctx.runId}: second attempt at the article plan failed: ${errorMessage(err)}`);
           return null;
@@ -146,18 +185,9 @@ export const planArticle: Step<Category[], ArticlePlan> = {
     }
     const parsed = refined.value;
 
-    const sections = (Array.isArray(parsed.sections) ? parsed.sections : [])
-      .map((entry) => entry as ArticleSection)
-      .filter((entry) => entry && typeof entry.heading === 'string' && entry.heading.trim());
+    const { sections, images } = keptParts(parsed);
     if (sections.length === 0) throw new Error('The plan has no sections.');
 
-    // Clamped rather than trusted: the count drives how many generations this
-    // article costs, and a model that answers "images": [] or lists twenty is
-    // deciding the bill.
-    const images = (Array.isArray(parsed.images) ? parsed.images : [])
-      .map((entry) => entry as ArticleImageBrief)
-      .filter((entry) => entry && typeof entry.brief === 'string' && entry.brief.trim())
-      .slice(0, MAX_IMAGES);
     if (images.length < MIN_IMAGES) {
       throw new Error(
         `The plan asks for ${images.length} photographs; an article needs at least ${MIN_IMAGES}.`,

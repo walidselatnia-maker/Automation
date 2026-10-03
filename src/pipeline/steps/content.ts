@@ -56,8 +56,7 @@ export function stripMachineTags(annotation: string): string {
 /** The prompt section for a guide row; empty for any other row. */
 export const targetSectionFor = (seed: string): string =>
   seed.trim()
-    ? `TARGET KEYWORD: ${seed.trim()}
-` +
+    ? `TARGET KEYWORD: ${seed.trim()}\n` +
       'This is the exact keyword the page must be found for: the output keyword must be it, ' +
       'and the title and description must be about that dish.'
     : '';
@@ -143,7 +142,7 @@ export const validateSpy: Step<Category[], SeoData> = {
         targetSection: guide ? targetSectionFor(seed) : '',
         categoryTitles: JSON.stringify(categories.map((c) => c.title)),
         site: { domain: ctx.site.domain },
-        seoRules: rulesPrompt(),
+        seoRules: rulesPrompt({ slug: false, focus: false }),
         seoFeedback: feedback,
       });
 

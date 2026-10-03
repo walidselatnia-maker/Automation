@@ -4,7 +4,7 @@ import { randomBytes } from 'node:crypto';
 import { getKeyword, insertKeyword, setKeywordStatus, setLink, updateKeywordFields, upsertSite } from '../src/db/repos.js';
 import { setLogLevel } from '../src/lib/logger.js';
 import { checkDescription, checkTitle, restrictedWords } from '../src/seo/rules.js';
-import { draftSeo, fallbackFor, writeSeoFor, writeSeoWithin } from '../src/seo/writer.js';
+import { RECENT_TITLES, draftSeo, fallbackFor, writeSeoFor, writeSeoWithin } from '../src/seo/writer.js';
 import { importShortlistReport } from '../src/guide/import.js';
 import { readSupply } from '../src/core/supply.js';
 import { all } from '../src/db/index.js';
@@ -60,6 +60,40 @@ describe('fallbackFor restricted words', () => {
     const f = fallbackFor('pork chops with wine');
     expect(restrictedWords(f.title + ' ' + f.description)).toEqual([]);
     expect(f.title.length).toBeGreaterThan(0);
+  });
+});
+
+describe('draftSeo prompt size', () => {
+  it('shows only the most recent titles, but still checks against all of them', async () => {
+    const others = Array.from({ length: RECENT_TITLES + 50 }, (_, i) => `Old Recipe Number ${i} For Dinner`);
+    const shown: string[][] = [];
+    const ask = async (_n: string, vars: Record<string, unknown>) => {
+      shown.push(JSON.parse(String(vars.takenJson)) as string[]);
+      return reply(ONE);
+    };
+    // The oldest title is hidden from the prompt but still blocks a copy of itself.
+    const copyOfOldest = { ...ONE, title: others[0]! };
+    const answers = [reply(copyOfOldest), reply(ONE)];
+    const out = await draftSeo(
+      { ask: async (n, v) => { await ask(n, v); return answers.shift()!; } },
+      [{ id: 11, keyword: 'honey garlic chicken thighs' }],
+      { identity: 'x', pillar: 'y', others },
+    );
+    expect(shown[0]).toHaveLength(RECENT_TITLES);
+    expect(shown[0]).not.toContain(others[0]);
+    expect(shown[0]).toContain(others[others.length - 1]);
+    expect(out.get(11)).toMatchObject({ title: ONE.title, fallback: false });
+  });
+
+  it('leaves slug and focus-keyword rules out of its prompt', async () => {
+    let rules = '';
+    await draftSeo(
+      { ask: async (_n, v) => { rules = String(v.rules); return reply(ONE); } },
+      [{ id: 11, keyword: 'honey garlic chicken thighs' }],
+      { identity: 'x', pillar: 'y', others: [] },
+    );
+    expect(rules).not.toMatch(/Slug:/);
+    expect(rules).not.toMatch(/Focus keyword/);
   });
 });
 

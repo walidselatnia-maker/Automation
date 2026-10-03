@@ -84,7 +84,8 @@ display limits.
    exact problems, up to 2 more rounds.
 4. Whatever still fails after that gets a **safe fallback** built from the
    keyword itself (title-cased keyword; a plain one-sentence description
-   template), which passes the checker by construction. The import never
+   template), which is a safety net rather than a guarantee (a very short or very long
+   keyword can still fail the checker). The import never
    fails because of the writer, and the fallback is recorded in the notes
    (`seo:fallback`) so it can be found and redone.
 5. Saves `spy_title`, `spy_description`, `annotation` (`guide:<pillar> | <notes>`)
