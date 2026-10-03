@@ -4,6 +4,8 @@ import type { FastifyInstance } from 'fastify';
 import { closeDatabase, openDatabase } from '../src/db/index.js';
 import { upsertSite } from '../src/db/repos.js';
 import { Settings } from '../src/settings.js';
+import { getCursor, markDone, saveResult } from '../src/guide/state.js';
+import { all } from '../src/db/index.js';
 import { buildServer } from '../src/web/server.js';
 import { setLogLevel } from '../src/lib/logger.js';
 
@@ -100,6 +102,62 @@ describe('guide routes', () => {
     // Nothing was stored, so Done is still refused.
     const done = await app.inject({ method: 'POST', url: `/guide/${siteId}/done`, headers: form, payload: '' });
     expect(done.headers.location).toContain('warn=');
+  });
+
+  /** Walk the cursor to the import step with a valid shortlist saved. */
+  const reachImport = (siteId: number): void => {
+    const items = [
+      { keyword: 'Pillar guide', type: 'article' },
+      ...Array.from({ length: 5 }, (_, i) => ({ keyword: `recipe ${i}`, type: 'recipe' })),
+    ];
+    const steps: Array<[string, unknown]> = [
+      ['identity', { identity: 'Quick dinners for busy parents' }],
+      ['pillars', { pillars: ['a', 'b', 'c'] }],
+      ['search-console', { confirmed: true }],
+      ['keywords', { pillar: 'a', keywords: Array.from({ length: 10 }, (_, i) => `kw ${i}`) }],
+      ['shortlist', { pillar: 'a', items }],
+    ];
+    for (const [step, value] of steps) {
+      const cursor = getCursor(siteId);
+      expect(saveResult(siteId, step as never, cursor.round, value).ok).toBe(true);
+      expect(markDone(siteId).ok).toBe(true);
+    }
+    expect(getCursor(siteId).step).toBe('import');
+  };
+
+  it('does not let a saved draft finish the import step', async () => {
+    const siteId = addSite();
+    const cookie = await loginCookie();
+    const form = { 'content-type': 'application/x-www-form-urlencoded', cookie };
+    reachImport(siteId);
+
+    const save = await app.inject({
+      method: 'POST',
+      url: `/guide/${siteId}/save`,
+      headers: form,
+      payload: 'draft_json=' + encodeURIComponent(JSON.stringify({ imported_ids: [1] })),
+    });
+    expect(save.headers.location).toContain('warn=');
+
+    const done = await app.inject({ method: 'POST', url: `/guide/${siteId}/done`, headers: form, payload: '' });
+    expect(done.headers.location).toContain('warn=');
+  });
+
+  it('imports once even if the button is submitted twice', async () => {
+    const siteId = addSite();
+    const cookie = await loginCookie();
+    const form = { 'content-type': 'application/x-www-form-urlencoded', cookie };
+    reachImport(siteId);
+
+    const payload = 'pick=0&pick=1&pick=2';
+    const first = await app.inject({ method: 'POST', url: `/guide/${siteId}/import`, headers: form, payload });
+    expect(first.headers.location).not.toContain('warn=');
+    const count = () => all<{ id: number }>('SELECT id FROM keywords').length;
+    expect(count()).toBe(3);
+
+    const second = await app.inject({ method: 'POST', url: `/guide/${siteId}/import`, headers: form, payload });
+    expect(second.headers.location).not.toContain('warn=');
+    expect(count()).toBe(3);
   });
 
   it('answers 404 for a site that does not exist', async () => {

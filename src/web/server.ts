@@ -1870,6 +1870,13 @@ export function buildServer(
     const body = formBody(request);
     const cursor = getCursor(site.id);
 
+    // The import step is finished only by the Add to Keywords button (the
+    // /import route), never by a saved draft -- else Done could be satisfied
+    // without anything having been imported.
+    if (cursor.step === 'import') {
+      return redirect(reply, back, { kind: 'warn', message: 'Use the Add to Keywords button for this step.' });
+    }
+
     let value: unknown;
     const draftJson = asString(body.draft_json);
     if (draftJson) {
@@ -1917,6 +1924,8 @@ export function buildServer(
     if (!site) return reply.status(404).send('No such site.');
     const back = `/guide/${site.id}`;
     const cursor = getCursor(site.id);
+    // A repeat or double submit: already imported, so do it only once.
+    if (getStatus(site.id, 'import', cursor.round) === 'done') return redirect(reply, back);
     const shortlist = getResult<ShortlistResult>(site.id, 'shortlist', cursor.round);
     if (cursor.step !== 'import' || !shortlist) {
       return redirect(reply, back, { kind: 'warn', message: 'Finish the shortlist first.' });
