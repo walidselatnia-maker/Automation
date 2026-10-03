@@ -1,9 +1,9 @@
 import { randomBytes } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { all, closeDatabase, openDatabase } from '../src/db/index.js';
-import { getKeyword, insertKeyword, setKeywordStatus, upsertSite } from '../src/db/repos.js';
+import { getKeyword, insertKeyword, setKeywordStatus, setLink, upsertSite } from '../src/db/repos.js';
 import { setLogLevel } from '../src/lib/logger.js';
-import { importShortlist } from '../src/guide/import.js';
+import { importShortlist, importShortlistReport } from '../src/guide/import.js';
 
 /**
  * The last step of a pillar round: the shortlist becomes ordinary keywords,
@@ -65,5 +65,51 @@ describe('importShortlist', () => {
     expect(ids).toEqual([existing]);
     expect(getKeyword(existing)?.status).toBe('go');
     expect(all('SELECT id FROM keywords')).toHaveLength(1);
+    expect(linkOf(existing)).toBe('go');
+  });
+
+  it('leaves a keyword already published on this site alone', () => {
+    const existing = insertKeyword({ seed_keyword: 'crispy chicken thighs' });
+    setLink(existing, siteId, 'done');
+
+    const report = importShortlistReport(siteId, 'Chicken', [{ keyword: 'crispy chicken thighs', type: 'recipe' }]);
+
+    expect(linkOf(existing)).toBe('done');
+    expect(report.ids).toEqual([existing]);
+    expect(report.alreadyOnSite).toEqual([existing]);
+    expect(report.switchedOff).toEqual([]);
+  });
+
+  it('does not switch a keyword back on that was turned off everywhere', () => {
+    const existing = insertKeyword({ seed_keyword: 'crispy chicken thighs' });
+    setKeywordStatus(existing, 'no');
+
+    const report = importShortlistReport(siteId, 'Chicken', [{ keyword: 'crispy chicken thighs', type: 'recipe' }]);
+
+    expect(getKeyword(existing)?.status).toBe('no');
+    expect(linkOf(existing)).toBe('go');
+    expect(report.ids).toEqual([existing]);
+    expect(report.switchedOff).toEqual([existing]);
+    expect(report.alreadyOnSite).toEqual([]);
+  });
+
+  it('reports nothing skipped for new and plainly reused keywords', () => {
+    const existing = insertKeyword({ seed_keyword: 'a b c' });
+    const report = importShortlistReport(siteId, 'Chicken', [
+      { keyword: 'a b c', type: 'recipe' },
+      { keyword: 'x y z', type: 'recipe' },
+    ]);
+    expect(report.ids).toHaveLength(2);
+    expect(report.ids[0]).toBe(existing);
+    expect(report.alreadyOnSite).toEqual([]);
+    expect(report.switchedOff).toEqual([]);
   });
 });
+
+function linkOf(keywordId: number): string | undefined {
+  return all<{ status: string }>(
+    'SELECT status FROM keyword_sites WHERE keyword_id = ? AND site_id = ?',
+    keywordId,
+    siteId,
+  )[0]?.status;
+}

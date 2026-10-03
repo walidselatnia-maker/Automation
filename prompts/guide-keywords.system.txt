@@ -24,6 +24,6 @@ The extra data has a "phase":
 - "pick": the extra data has "suggestions" (real Google searches) and "pillar".
   - If "suggestions" is not empty: pick the 30 to 50 best long-tail ones (3+ words, clearly about cooking or recipes, fitting the site) ONLY from "suggestions". Copy them exactly. Never invent new ones.
   - If "suggestions" is empty: Google could not be reached. Write 30 to 50 yourself, set "verified": false in the draft, and say in the message that these are unchecked guesses.
-  - Message: one sentence saying how many you picked, then ask if the list looks good. Choices: "👍 Looks good", "More specific ones", "A different angle".
+  - Message: one sentence saying how many you picked, then tell them to tap "Use this" if the list looks right. Choices: "More specific ones", "A different angle".
   - If they ask for changes later, you may return new "seeds" again to check another angle.
 Draft shape: {"pillar": "the pillar", "keywords": ["...", "..."], "verified": true}

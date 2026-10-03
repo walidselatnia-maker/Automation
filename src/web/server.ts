@@ -212,7 +212,7 @@ import { chat } from '../llm/client.js';
 import { askPrompt } from '../llm/ask.js';
 import { guideCardPage, guideListPage } from './views/guide.js';
 import { respond, type AssistantDeps } from '../guide/assistant.js';
-import { importShortlist } from '../guide/import.js';
+import { importShortlistReport } from '../guide/import.js';
 import {
   canOpen,
   getCursor,
@@ -1938,12 +1938,22 @@ export function buildServer(
     const items = shortlist.items.filter((_, i) => indexes.has(i));
     if (!items.length) return redirect(reply, back, { kind: 'warn', message: 'Nothing was ticked.' });
 
-    const ids = importShortlist(site.id, shortlist.pillar, items);
+    const { ids, alreadyOnSite, switchedOff } = importShortlistReport(site.id, shortlist.pillar, items);
     saveResult(site.id, 'import', cursor.round, { imported_ids: ids });
     markDone(site.id);
+
+    // Say plainly what was held back, so a smaller number than they ticked
+    // does not look like a mistake.
+    const notes = [
+      alreadyOnSite.length ? `${alreadyOnSite.length} already on the site` : '',
+      switchedOff.length ? `${switchedOff.length} are switched off in Keywords` : '',
+    ].filter(Boolean);
+    const added = ids.length - alreadyOnSite.length - switchedOff.length;
     return redirect(reply, back, {
-      kind: 'ok',
-      message: `${ids.length} keyword(s) added — they’ll be written on the site’s normal schedule.`,
+      kind: notes.length ? 'warn' : 'ok',
+      message:
+        `${added} keyword(s) queued — they’ll be written on the site’s normal schedule.` +
+        (notes.length ? ` Not queued: ${notes.join(', ')}.` : ''),
     });
   });
 
