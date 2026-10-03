@@ -230,10 +230,13 @@ import {
 } from '../guide/state.js';
 import { isStepKey, manualResult, stepDef, stepIndex, STEPS, type ShortlistResult } from '../guide/steps.js';
 import { expandSeeds } from '../integrations/google-suggest.js';
-import { writeSeoFor } from '../seo/writer.js';
+import { writeSeoFor, type WriterReport } from '../seo/writer.js';
 import { normaliseDomain } from '../lib/domain.js';
 
 const log = createLogger('web');
+
+/** How long a guide import waits for the SEO writer before carrying on. */
+const SEO_STEP_LIMIT_MS = 120_000;
 
 /* -- Reels ---------------------------------------------------------------- */
 
@@ -1940,18 +1943,38 @@ export function buildServer(
     if (!items.length) return redirect(reply, back, { kind: 'warn', message: 'Nothing was ticked.' });
 
     const { ids, alreadyOnSite, switchedOff } = importShortlistReport(site.id, shortlist.pillar, items);
-    // Recipes are written from a source title and description, which a guide
-    // keyword does not have. Write them now, checked against the SEO rules;
-    // it falls back to plain text rather than ever failing the import.
-    const seo = await writeSeoFor(
-      guideDeps,
-      site.id,
-      shortlist.pillar,
-      siteContext(site.id, cursor.round).identity,
-      ids,
-    );
     saveResult(site.id, 'import', cursor.round, { imported_ids: ids });
     markDone(site.id);
+
+    // Recipes are written from a source title and description, which a guide
+    // keyword does not have. Write them now, checked against the SEO rules.
+    // The import is already saved, so this step can never fail or stall it:
+    // an error is logged, and a slow model is left to finish in the background
+    // (the writer re-reads each row before writing, so that is safe).
+    const noSeo: WriterReport = { written: 0, fallbacks: 0, skipped: 0 };
+    let seoPending = false;
+    let seo = noSeo;
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      const writing = writeSeoFor(
+        guideDeps,
+        site.id,
+        shortlist.pillar,
+        siteContext(site.id, cursor.round).identity,
+        ids,
+      );
+      writing.catch(() => undefined);
+      const timedOut = new Promise<'timeout'>((resolve) => {
+        timer = setTimeout(() => resolve('timeout'), SEO_STEP_LIMIT_MS);
+      });
+      const outcome = await Promise.race([writing, timedOut]);
+      if (outcome === 'timeout') seoPending = true;
+      else seo = outcome;
+    } catch (err) {
+      log.warn(`SEO text for guide import on site ${site.id} not written: ${errorMessage(err)}`);
+    } finally {
+      clearTimeout(timer);
+    }
 
     // Say plainly what was held back, so a smaller number than they ticked
     // does not look like a mistake.
@@ -1966,8 +1989,9 @@ export function buildServer(
           (seo.fallbacks ? `; ${seo.fallbacks} used a simple default you can improve in Keywords.` : '.')
         : '') +
       (seo.skipped
-        ? ` ${seo.skipped} skipped because the keyword has a word this site doesn't publish — rename it in Keywords.`
-        : '');
+        ? ` ${seo.skipped} recipe(s) got no search title because the keyword has a word this site doesn't publish — rename them in Keywords.`
+        : '') +
+      (seoPending ? ' Search text is still being written in the background.' : '');
     return redirect(reply, back, {
       kind: notes.length > 0 || seo.skipped > 0 ? 'warn' : 'ok',
       message:

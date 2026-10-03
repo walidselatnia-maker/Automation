@@ -105,10 +105,10 @@ describe('guide routes', () => {
   });
 
   /** Walk the cursor to the import step with a valid shortlist saved. */
-  const reachImport = (siteId: number): void => {
+  const reachImport = (siteId: number, recipeNames?: string[]): void => {
     const items = [
       { keyword: 'Pillar guide', type: 'article' },
-      ...Array.from({ length: 5 }, (_, i) => ({ keyword: `recipe ${i}`, type: 'recipe' })),
+      ...(recipeNames ?? Array.from({ length: 5 }, (_, i) => `recipe ${i}`)).map((keyword) => ({ keyword, type: 'recipe' })),
     ];
     const steps: Array<[string, unknown]> = [
       ['identity', { identity: 'Quick dinners for busy parents' }],
@@ -190,6 +190,26 @@ describe('guide routes', () => {
       expect(r.annotation).toContain('guide:a');
       expect(r.annotation).toContain('seo:fallback');
     }
+  });
+
+  it('leaves a recipe with a word the site does not publish untouched, and says so', async () => {
+    const siteId = addSite();
+    const cookie = await loginCookie();
+    const form = { 'content-type': 'application/x-www-form-urlencoded', cookie };
+    reachImport(siteId, ['slow cooker pork chops', 'easy chicken soup', 'recipe 2', 'recipe 3', 'recipe 4']);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/guide/${siteId}/import`,
+      headers: form,
+      payload: 'pick=1&pick=2',
+    });
+    expect(res.headers.location).toContain('warn=');
+    expect(decodeURIComponent(String(res.headers.location))).toContain('1 recipe(s) got no search title');
+
+    const rows = all<{ seed_keyword: string; spy_title: string }>('SELECT seed_keyword, spy_title FROM keywords');
+    expect(rows.find((r) => r.seed_keyword.includes('pork'))!.spy_title).toBe('');
+    expect(rows.find((r) => r.seed_keyword.includes('chicken'))!.spy_title.length).toBeGreaterThan(0);
   });
 
   it('answers 404 for a site that does not exist', async () => {
