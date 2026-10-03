@@ -160,6 +160,38 @@ describe('guide routes', () => {
     expect(count()).toBe(3);
   });
 
+  it('gives imported recipes a title and description, and leaves the article alone', async () => {
+    const siteId = addSite();
+    const cookie = await loginCookie();
+    const form = { 'content-type': 'application/x-www-form-urlencoded', cookie };
+    reachImport(siteId);
+
+    // pick=0 is the pillar article; 1 and 2 are recipes.
+    const res = await app.inject({
+      method: 'POST',
+      url: `/guide/${siteId}/import`,
+      headers: form,
+      payload: 'pick=0&pick=1&pick=2',
+    });
+    // Falling back to plain text is not a problem worth a warning.
+    expect(res.headers.location).not.toContain('warn=');
+
+    const rows = all<{ seed_keyword: string; content_type: string; spy_title: string; spy_description: string; annotation: string }>(
+      'SELECT seed_keyword, content_type, spy_title, spy_description, annotation FROM keywords ORDER BY id',
+    );
+    const article = rows.find((r) => r.content_type === 'article')!;
+    expect(article.spy_title).toBe('');
+
+    const recipes = rows.filter((r) => r.content_type === 'recipe');
+    expect(recipes).toHaveLength(2);
+    for (const r of recipes) {
+      expect(r.spy_title.length).toBeGreaterThan(0);
+      expect(r.spy_description.length).toBeGreaterThan(0);
+      expect(r.annotation).toContain('guide:a');
+      expect(r.annotation).toContain('seo:fallback');
+    }
+  });
+
   it('answers 404 for a site that does not exist', async () => {
     const cookie = await loginCookie();
     const res = await app.inject({ method: 'GET', url: '/guide/999', headers: { cookie } });

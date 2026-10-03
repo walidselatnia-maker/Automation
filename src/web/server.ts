@@ -230,6 +230,7 @@ import {
 } from '../guide/state.js';
 import { isStepKey, manualResult, stepDef, stepIndex, STEPS, type ShortlistResult } from '../guide/steps.js';
 import { expandSeeds } from '../integrations/google-suggest.js';
+import { writeSeoFor } from '../seo/writer.js';
 import { normaliseDomain } from '../lib/domain.js';
 
 const log = createLogger('web');
@@ -1939,6 +1940,16 @@ export function buildServer(
     if (!items.length) return redirect(reply, back, { kind: 'warn', message: 'Nothing was ticked.' });
 
     const { ids, alreadyOnSite, switchedOff } = importShortlistReport(site.id, shortlist.pillar, items);
+    // Recipes are written from a source title and description, which a guide
+    // keyword does not have. Write them now, checked against the SEO rules;
+    // it falls back to plain text rather than ever failing the import.
+    const seo = await writeSeoFor(
+      guideDeps,
+      site.id,
+      shortlist.pillar,
+      siteContext(site.id, cursor.round).identity,
+      ids,
+    );
     saveResult(site.id, 'import', cursor.round, { imported_ids: ids });
     markDone(site.id);
 
@@ -1949,11 +1960,20 @@ export function buildServer(
       switchedOff.length ? `${switchedOff.length} are switched off in Keywords` : '',
     ].filter(Boolean);
     const added = ids.length - alreadyOnSite.length - switchedOff.length;
+    const seoNote =
+      (seo.written
+        ? ` Search title and description written for ${seo.written} recipe(s)` +
+          (seo.fallbacks ? `; ${seo.fallbacks} used a simple default you can improve in Keywords.` : '.')
+        : '') +
+      (seo.skipped
+        ? ` ${seo.skipped} skipped because the keyword has a word this site doesn't publish — rename it in Keywords.`
+        : '');
     return redirect(reply, back, {
-      kind: notes.length ? 'warn' : 'ok',
+      kind: notes.length > 0 || seo.skipped > 0 ? 'warn' : 'ok',
       message:
         `${added} keyword(s) queued — they’ll be written on the site’s normal schedule.` +
-        (notes.length ? ` Not queued: ${notes.join(', ')}.` : ''),
+        (notes.length ? ` Not queued: ${notes.join(', ')}.` : '') +
+        seoNote,
     });
   });
 
