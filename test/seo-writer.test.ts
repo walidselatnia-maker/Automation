@@ -4,7 +4,10 @@ import { randomBytes } from 'node:crypto';
 import { getKeyword, insertKeyword, setKeywordStatus, setLink, updateKeywordFields, upsertSite } from '../src/db/repos.js';
 import { setLogLevel } from '../src/lib/logger.js';
 import { checkDescription, checkTitle, restrictedWords } from '../src/seo/rules.js';
-import { draftSeo, fallbackFor, writeSeoFor } from '../src/seo/writer.js';
+import { draftSeo, fallbackFor, writeSeoFor, writeSeoWithin } from '../src/seo/writer.js';
+import { importShortlistReport } from '../src/guide/import.js';
+import { readSupply } from '../src/core/supply.js';
+import { all } from '../src/db/index.js';
 
 /**
  * The writer fills in what a guide keyword is missing -- a specific dish
@@ -224,5 +227,89 @@ describe('writeSeoFor', () => {
     await writeSeoFor({ ask: async (_n, v) => { seen = v; return reply(ONE); } }, siteId, 'Din"ners', 'Quick "x"', [a]);
     expect(seen.pillar).toBe(JSON.stringify('Din"ners'));
     expect(seen.identity).toBe(JSON.stringify('Quick "x"'));
+  });
+});
+
+describe('held recipes from the guide import', () => {
+  const linkStatus = (id: number): string | undefined =>
+    all<{ status: string }>('SELECT status FROM keyword_sites WHERE keyword_id = ? AND site_id = ?', id, siteId)[0]?.status;
+  const ids = ['honey garlic chicken thighs', 'slow cooker pork chops'];
+  const importBoth = () =>
+    importShortlistReport(siteId, 'Dinners', ids.map((keyword) => ({ keyword, type: 'recipe' as const }))).newIds;
+
+  it('cannot be picked for work before the writer runs, and can after', async () => {
+    const [chicken] = importBoth();
+    expect(readSupply().readyPairs).toBe(0);
+    expect(linkStatus(chicken!)).toBe('no');
+
+    await writeSeoFor({ ask: async () => reply(ONE) }, siteId, 'Dinners', 'Quick dinners', [chicken!]);
+
+    expect(readSupply().readyPairs).toBe(1);
+    expect(getKeyword(chicken!)).toMatchObject({ status: 'go', spy_title: ONE.title });
+    expect(linkStatus(chicken!)).toBe('go');
+  });
+
+  it('releases a row with plain text when the model is down', async () => {
+    const [chicken] = importBoth();
+    await writeSeoFor({ ask: async () => { throw new Error('offline'); } }, siteId, 'Dinners', 'Quick dinners', [chicken!]);
+    expect(linkStatus(chicken!)).toBe('go');
+    expect(getKeyword(chicken!)!.annotation).toContain('seo:fallback');
+  });
+
+  it('keeps a restricted recipe held until it is renamed', async () => {
+    const [chicken, pork] = importBoth();
+    const report = await writeSeoFor({ ask: async () => reply(ONE) }, siteId, 'Dinners', 'Quick dinners', [chicken!, pork!]);
+    expect(report.skipped).toBe(1);
+    expect(linkStatus(pork!)).toBe('no');
+    expect(readSupply().readyPairs).toBe(1);
+  });
+});
+
+describe('writeSeoWithin', () => {
+  const held = (keyword: string): number =>
+    importShortlistReport(siteId, 'Dinners', [{ keyword, type: 'recipe' }]).newIds[0]!;
+  const linkStatus = (id: number): string | undefined =>
+    all<{ status: string }>('SELECT status FROM keyword_sites WHERE keyword_id = ?', id)[0]?.status;
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  it('reports not pending after a normal run', async () => {
+    const a = held('honey garlic chicken thighs');
+    const out = await writeSeoWithin({ ask: async () => reply(ONE) }, siteId, 'Dinners', 'Quick dinners', [a], 2000);
+    expect(out).toEqual({ written: 1, fallbacks: 0, skipped: 0, pending: false });
+    expect(linkStatus(a)).toBe('go');
+  });
+
+  it('answers at the cap with pending, and the writer still finishes the row afterwards', async () => {
+    const a = held('honey garlic chicken thighs');
+    const ask = async () => {
+      await sleep(80);
+      return reply(ONE);
+    };
+    const out = await writeSeoWithin({ ask }, siteId, 'Dinners', 'Quick dinners', [a], 20);
+    expect(out).toEqual({ written: 0, fallbacks: 0, skipped: 0, pending: true });
+    expect(linkStatus(a)).toBe('no');
+
+    await sleep(200);
+    expect(getKeyword(a)!.spy_title).toBe(ONE.title);
+    expect(linkStatus(a)).toBe('go');
+  });
+
+  it('never throws; a writer that blows up gives zeros and the rows are released with plain text', async () => {
+    const a = held('honey garlic chicken thighs');
+    // A poisoned id list makes writeSeoFor itself throw, which draftSeo's own net cannot catch.
+    let poisoned = true;
+    const ids = {
+      [Symbol.iterator]() {
+        if (poisoned) {
+          poisoned = false;
+          throw new Error('boom');
+        }
+        return [a][Symbol.iterator]();
+      },
+    } as unknown as number[];
+    const out = await writeSeoWithin({ ask: async () => reply(ONE) }, siteId, 'Dinners', 'Quick dinners', ids, 2000);
+    expect(out).toEqual({ written: 0, fallbacks: 0, skipped: 0, pending: false });
+    expect(linkStatus(a)).toBe('go');
+    expect(getKeyword(a)!.annotation).toContain('seo:fallback');
   });
 });

@@ -1,5 +1,5 @@
-import { all } from '../db/index.js';
-import { getKeyword, updateKeywordFields, type KeywordRow } from '../db/repos.js';
+import { all, get, transaction } from '../db/index.js';
+import { getKeyword, setLink, updateKeywordFields, type KeywordRow } from '../db/repos.js';
 import { createLogger, errorMessage } from '../lib/logger.js';
 import { checkDescription, checkTitle, restrictedWords, rulesPrompt, TITLE_MAX } from './rules.js';
 
@@ -155,6 +155,7 @@ export async function draftSeo(
   return done;
 }
 
+
 export interface WriterReport {
   written: number;
   fallbacks: number;
@@ -162,11 +163,50 @@ export interface WriterReport {
 }
 
 /**
- * Fill in the recipes among `ids` that have no source title yet.
+ * Save a row's text (when there is some) and let the site's scheduler have it,
+ * in one write.
+ *
+ * The guide import holds a new recipe's link at 'no' until it has a title,
+ * because a recipe without one is rejected by the pipeline and switched off
+ * for good. Saving the title and lifting the hold together means there is no
+ * moment where the row is runnable without its text, or has its text and is
+ * still held. Only a held link ('no') is lifted: a link that is already 'go'
+ * or published is left as it is.
+ */
+function saveAndRelease(siteId: number, row: KeywordRow, draft: Drafted | null): void {
+  transaction(() => {
+    if (draft) {
+      const { id, seed_keyword: _seed, ...fields } = row;
+      updateKeywordFields(id, {
+        ...fields,
+        spy_title: draft.title,
+        spy_description: draft.description,
+        annotation: [row.annotation, draft.notes, draft.fallback ? 'seo:fallback' : '']
+          .filter(Boolean)
+          .join(' | '),
+      });
+    }
+    const link = get<{ status: string }>(
+      'SELECT status FROM keyword_sites WHERE keyword_id = ? AND site_id = ?',
+      row.id,
+      siteId,
+    );
+    if (link?.status === 'no') setLink(row.id, siteId, 'go');
+  });
+}
+
+const isRecipe = (row: KeywordRow | undefined): row is KeywordRow => !!row && row.content_type === 'recipe';
+
+/**
+ * Fill in the recipes among `ids` that have no source title yet, and release
+ * every recipe it looked at.
  *
  * Articles are left alone (the article pipeline plans its own metadata, and a
  * source title would make it write "the same ground, better"), and so is any
- * recipe that already has research -- the operator's own words win.
+ * recipe that already has research -- the operator's own words win. A recipe
+ * that already has a title is still released, because the hold exists only to
+ * wait for text. The one exception is a keyword with a word this site does not
+ * publish: it stays held for the operator to rename.
  */
 export async function writeSeoFor(
   deps: WriterDeps,
@@ -175,24 +215,26 @@ export async function writeSeoFor(
   identity: string,
   ids: number[],
 ): Promise<WriterReport> {
-  const rows = [...new Set(ids)]
-    .map((id) => getKeyword(id))
-    .filter((row): row is KeywordRow => !!row && row.content_type === 'recipe' && row.spy_title.trim() === '');
+  const recipes = [...new Set(ids)].map((id) => getKeyword(id)).filter(isRecipe);
   // A restricted word can never pass the title rules, so the plain version
-  // would have to write it. Leave those for the operator.
-  const skipped = rows.filter((row) => restrictedWords(row.seed_keyword).length > 0).length;
-  const usable = rows.filter((row) => restrictedWords(row.seed_keyword).length === 0);
-  if (usable.length === 0) return { written: 0, fallbacks: 0, skipped };
+  // would have to write it. Leave those held for the operator.
+  const restricted = (row: KeywordRow): boolean => restrictedWords(row.seed_keyword).length > 0;
+  const skipped = recipes.filter((row) => row.spy_title.trim() === '' && restricted(row)).length;
 
-  const others = all<{ spy_title: string }>(
-    `SELECT k.spy_title FROM keywords k
-     JOIN keyword_sites ks ON ks.keyword_id = k.id
-     WHERE ks.site_id = ? AND k.spy_title != ''`,
-    siteId,
-  ).map((r) => r.spy_title);
+  // Rows that already have a title only need the hold lifted.
+  for (const row of recipes.filter((r) => r.spy_title.trim() !== '')) saveAndRelease(siteId, row, null);
+
+  const usable = recipes.filter((row) => row.spy_title.trim() === '' && !restricted(row));
+  if (usable.length === 0) return { written: 0, fallbacks: 0, skipped };
 
   let drafts: Map<number, Drafted>;
   try {
+    const others = all<{ spy_title: string }>(
+      `SELECT k.spy_title FROM keywords k
+       JOIN keyword_sites ks ON ks.keyword_id = k.id
+       WHERE ks.site_id = ? AND k.spy_title != ''`,
+      siteId,
+    ).map((r) => r.spy_title);
     drafts = await draftSeo(
       deps,
       usable.map((row) => ({ id: row.id, keyword: row.seed_keyword })),
@@ -211,19 +253,76 @@ export async function writeSeoFor(
   for (const stale of usable) {
     // The model call took a while; work from the row as it is now.
     const row = getKeyword(stale.id);
-    if (!row || row.spy_title.trim() !== '') continue;
+    if (!row) continue;
+    if (row.spy_title.trim() !== '') {
+      // Someone filled it in meanwhile: keep their words, still lift the hold.
+      saveAndRelease(siteId, row, null);
+      continue;
+    }
     const draft = drafts.get(row.id) ?? { ...fallbackFor(row.seed_keyword), fallback: true };
+    saveAndRelease(siteId, row, draft);
     if (draft.fallback) fallbacks += 1;
     written += 1;
-    const { id, seed_keyword: _seed, ...fields } = row;
-    updateKeywordFields(id, {
-      ...fields,
-      spy_title: draft.title,
-      spy_description: draft.description,
-      annotation: [row.annotation, draft.notes, draft.fallback ? 'seo:fallback' : '']
-        .filter(Boolean)
-        .join(' | '),
-    });
   }
   return { written, fallbacks, skipped };
+}
+
+/** Plain text for every recipe among `ids` still waiting, and lift its hold. Never throws. */
+function releaseWithPlainText(siteId: number, ids: number[]): void {
+  for (const id of new Set(ids)) {
+    try {
+      const row = getKeyword(id);
+      if (!isRecipe(row)) continue;
+      if (row.spy_title.trim() !== '') saveAndRelease(siteId, row, null);
+      else if (restrictedWords(row.seed_keyword).length === 0) {
+        saveAndRelease(siteId, row, { ...fallbackFor(row.seed_keyword), fallback: true });
+      }
+    } catch (err) {
+      log.warn(`Could not release keyword ${id} after the SEO writer failed: ${errorMessage(err)}`);
+    }
+  }
+}
+
+/**
+ * writeSeoFor with a time cap, for a web request that must not hang.
+ *
+ * It never throws. If the writer fails, the recipes get plain text so none is
+ * left held for ever. If it is merely slow, `pending` is true and the writer
+ * carries on in the background; when it ends, that is logged (and a failure
+ * there is cleaned up the same way) so it is never silent.
+ */
+export async function writeSeoWithin(
+  deps: WriterDeps,
+  siteId: number,
+  pillar: string,
+  identity: string,
+  ids: number[],
+  limitMs: number,
+): Promise<WriterReport & { pending: boolean }> {
+  const none = { written: 0, fallbacks: 0, skipped: 0 };
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    const writing = writeSeoFor(deps, siteId, pillar, identity, ids);
+    const timedOut = new Promise<'timeout'>((resolve) => {
+      timer = setTimeout(() => resolve('timeout'), limitMs);
+    });
+    const outcome = await Promise.race([writing, timedOut]);
+    if (outcome === 'timeout') {
+      writing.then(
+        (report) => log.info(`SEO writer for site ${siteId} finished in the background: ${JSON.stringify(report)}`),
+        (err) => {
+          log.warn(`SEO writer for site ${siteId} failed in the background: ${errorMessage(err)}`);
+          releaseWithPlainText(siteId, ids);
+        },
+      );
+      return { ...none, pending: true };
+    }
+    return { ...outcome, pending: false };
+  } catch (err) {
+    log.warn(`SEO text for site ${siteId} not written: ${errorMessage(err)}`);
+    releaseWithPlainText(siteId, ids);
+    return { ...none, pending: false };
+  } finally {
+    clearTimeout(timer);
+  }
 }

@@ -230,7 +230,7 @@ import {
 } from '../guide/state.js';
 import { isStepKey, manualResult, stepDef, stepIndex, STEPS, type ShortlistResult } from '../guide/steps.js';
 import { expandSeeds } from '../integrations/google-suggest.js';
-import { writeSeoFor, type WriterReport } from '../seo/writer.js';
+import { writeSeoWithin } from '../seo/writer.js';
 import { normaliseDomain } from '../lib/domain.js';
 
 const log = createLogger('web');
@@ -1942,39 +1942,23 @@ export function buildServer(
     const items = shortlist.items.filter((_, i) => indexes.has(i));
     if (!items.length) return redirect(reply, back, { kind: 'warn', message: 'Nothing was ticked.' });
 
-    const { ids, alreadyOnSite, switchedOff } = importShortlistReport(site.id, shortlist.pillar, items);
+    const { ids, newIds, alreadyOnSite, switchedOff } = importShortlistReport(site.id, shortlist.pillar, items);
     saveResult(site.id, 'import', cursor.round, { imported_ids: ids });
     markDone(site.id);
 
-    // Recipes are written from a source title and description, which a guide
-    // keyword does not have. Write them now, checked against the SEO rules.
-    // The import is already saved, so this step can never fail or stall it:
-    // an error is logged, and a slow model is left to finish in the background
-    // (the writer re-reads each row before writing, so that is safe).
-    const noSeo: WriterReport = { written: 0, fallbacks: 0, skipped: 0 };
-    let seoPending = false;
-    let seo = noSeo;
-    let timer: NodeJS.Timeout | undefined;
-    try {
-      const writing = writeSeoFor(
-        guideDeps,
-        site.id,
-        shortlist.pillar,
-        siteContext(site.id, cursor.round).identity,
-        ids,
-      );
-      writing.catch(() => undefined);
-      const timedOut = new Promise<'timeout'>((resolve) => {
-        timer = setTimeout(() => resolve('timeout'), SEO_STEP_LIMIT_MS);
-      });
-      const outcome = await Promise.race([writing, timedOut]);
-      if (outcome === 'timeout') seoPending = true;
-      else seo = outcome;
-    } catch (err) {
-      log.warn(`SEO text for guide import on site ${site.id} not written: ${errorMessage(err)}`);
-    } finally {
-      clearTimeout(timer);
-    }
+    // New recipes arrive held, without a source title or description. Write
+    // them now, checked against the SEO rules; saving each title is also what
+    // releases the recipe to the scheduler. The import is already saved, so
+    // this can never fail or stall it: writeSeoWithin does not throw, and a
+    // slow model is left to finish in the background.
+    const seo = await writeSeoWithin(
+      guideDeps,
+      site.id,
+      shortlist.pillar,
+      siteContext(site.id, cursor.round).identity,
+      newIds,
+      SEO_STEP_LIMIT_MS,
+    );
 
     // Say plainly what was held back, so a smaller number than they ticked
     // does not look like a mistake.
@@ -1989,9 +1973,9 @@ export function buildServer(
           (seo.fallbacks ? `; ${seo.fallbacks} used a simple default you can improve in Keywords.` : '.')
         : '') +
       (seo.skipped
-        ? ` ${seo.skipped} recipe(s) got no search title because the keyword has a word this site doesn't publish — rename them in Keywords.`
+        ? ` ${seo.skipped} recipe(s) are held, with no search title, because the keyword has a word this site doesn't publish. They stay held until you rename them in Keywords.`
         : '') +
-      (seoPending ? ' Search text is still being written in the background.' : '');
+      (seo.pending ? ' Search text is still being written in the background.' : '');
     return redirect(reply, back, {
       kind: notes.length > 0 || seo.skipped > 0 ? 'warn' : 'ok',
       message:

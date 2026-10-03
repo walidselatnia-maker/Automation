@@ -53,7 +53,22 @@ describe('importShortlist', () => {
       'SELECT keyword_id, status FROM keyword_sites WHERE site_id = ? ORDER BY keyword_id',
       siteId,
     );
-    expect(links).toEqual(ids.map((keyword_id) => ({ keyword_id, status: 'go' })));
+    // The article is ready at once; the recipe waits, held, for its search text.
+    expect(links).toEqual([
+      { keyword_id: ids[0], status: 'go' },
+      { keyword_id: ids[1], status: 'no' },
+    ]);
+    expect(getKeyword(ids[1])!.status).toBe('go');
+  });
+
+  it('reports which ids it inserted, not the reused ones', () => {
+    const existing = insertKeyword({ seed_keyword: 'a b c' });
+    const report = importShortlistReport(siteId, 'Chicken', [
+      { keyword: 'a b c', type: 'recipe' },
+      { keyword: 'x y z', type: 'recipe' },
+    ]);
+    expect(report.newIds).toEqual([report.ids[1]]);
+    expect(report.newIds).not.toContain(existing);
   });
 
   it('links an exact existing keyword instead of adding it twice', () => {

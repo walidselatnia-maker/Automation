@@ -205,11 +205,18 @@ describe('guide routes', () => {
       payload: 'pick=1&pick=2',
     });
     expect(res.headers.location).toContain('warn=');
-    expect(decodeURIComponent(String(res.headers.location))).toContain('1 recipe(s) got no search title');
+    expect(decodeURIComponent(String(res.headers.location))).toContain('1 recipe(s) are held, with no search title');
 
     const rows = all<{ seed_keyword: string; spy_title: string }>('SELECT seed_keyword, spy_title FROM keywords');
     expect(rows.find((r) => r.seed_keyword.includes('pork'))!.spy_title).toBe('');
     expect(rows.find((r) => r.seed_keyword.includes('chicken'))!.spy_title.length).toBeGreaterThan(0);
+
+    // The skipped one stays held (link off); the written one is released.
+    const links = all<{ seed_keyword: string; status: string }>(
+      'SELECT k.seed_keyword, ks.status FROM keyword_sites ks JOIN keywords k ON k.id = ks.keyword_id',
+    );
+    expect(links.find((l) => l.seed_keyword.includes('pork'))!.status).toBe('no');
+    expect(links.find((l) => l.seed_keyword.includes('chicken'))!.status).toBe('go');
   });
 
   it('answers 404 for a site that does not exist', async () => {
