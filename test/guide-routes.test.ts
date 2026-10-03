@@ -206,6 +206,7 @@ describe('guide routes', () => {
     });
     expect(res.headers.location).toContain('warn=');
     expect(decodeURIComponent(String(res.headers.location))).toContain('1 recipe(s) are held, with no search title');
+    expect(decodeURIComponent(String(res.headers.location))).toContain('delete them in Keywords');
 
     const rows = all<{ seed_keyword: string; spy_title: string }>('SELECT seed_keyword, spy_title FROM keywords');
     expect(rows.find((r) => r.seed_keyword.includes('pork'))!.spy_title).toBe('');

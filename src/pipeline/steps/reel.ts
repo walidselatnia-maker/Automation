@@ -1,5 +1,5 @@
 import type { Step } from '../engine.js';
-import type { SeoData } from './content.js';
+import { stripMachineTags, type SeoData } from './content.js';
 import type { ArticleImages } from './images.js';
 import type { PostedRecipe } from '../../integrations/site-api.js';
 import { createLogger, errorMessage } from '../../lib/logger.js';
@@ -71,7 +71,7 @@ export const createReelStep: Step<CreateReelInput, CreateReelOutput> = {
         spy: {
           group: ctx.keyword.seed_keyword,
           description: ctx.keyword.spy_description,
-          annotation: ctx.keyword.annotation,
+          annotation: stripMachineTags(ctx.keyword.annotation),
         },
       });
       caption = withoutLinks(result.content) || title;

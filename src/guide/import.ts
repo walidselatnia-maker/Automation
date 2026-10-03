@@ -7,6 +7,8 @@ export interface ImportReport {
   ids: number[];
   /** The ids this import inserted, as opposed to reused. Only these need search text written. */
   newIds: number[];
+  /** Recipes linked held that still need search text: the new ones plus reused ones with no title. */
+  writeIds: number[];
   /** Already published on this site, so left exactly as it was. */
   alreadyOnSite: number[];
   /** Turned off everywhere in Keywords: linked here, but not switched back on. */
@@ -29,11 +31,11 @@ export interface ImportReport {
  */
 export function importShortlistReport(siteId: number, pillar: string, items: ShortlistItem[]): ImportReport {
   return transaction(() => {
-    const report: ImportReport = { ids: [], newIds: [], alreadyOnSite: [], switchedOff: [] };
+    const report: ImportReport = { ids: [], newIds: [], writeIds: [], alreadyOnSite: [], switchedOff: [] };
 
     for (const item of items) {
-      const existing = get<{ id: number; status: string }>(
-        'SELECT id, status FROM keywords WHERE lower(trim(seed_keyword)) = lower(trim(?)) ORDER BY id LIMIT 1',
+      const existing = get<{ id: number; status: string; content_type: string; spy_title: string }>(
+        'SELECT id, status, content_type, spy_title FROM keywords WHERE lower(trim(seed_keyword)) = lower(trim(?)) ORDER BY id LIMIT 1',
         item.keyword,
       );
 
@@ -55,6 +57,7 @@ export function importShortlistReport(siteId: number, pillar: string, items: Sho
         setLink(id, siteId, item.type === 'recipe' ? 'no' : 'go');
         report.ids.push(id);
         report.newIds.push(id);
+        if (item.type === 'recipe') report.writeIds.push(id);
         continue;
       }
 
@@ -71,7 +74,12 @@ export function importShortlistReport(siteId: number, pillar: string, items: Sho
         continue;
       }
 
-      setLink(id, siteId, 'go');
+      // A reused recipe with no title would be rejected by the pipeline and
+      // switched off everywhere, so it is held for the writer like a new one.
+      const needsText =
+        existing.status !== 'no' && existing.content_type === 'recipe' && existing.spy_title.trim() === '';
+      setLink(id, siteId, needsText ? 'no' : 'go');
+      if (needsText) report.writeIds.push(id);
       if (existing.status === 'no') report.switchedOff.push(id);
       else setKeywordStatus(id, 'go');
     }

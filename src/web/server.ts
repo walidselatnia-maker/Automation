@@ -230,7 +230,7 @@ import {
 } from '../guide/state.js';
 import { isStepKey, manualResult, stepDef, stepIndex, STEPS, type ShortlistResult } from '../guide/steps.js';
 import { expandSeeds } from '../integrations/google-suggest.js';
-import { writeSeoWithin } from '../seo/writer.js';
+import { leftoverHeldIds, writeSeoWithin } from '../seo/writer.js';
 import { normaliseDomain } from '../lib/domain.js';
 
 const log = createLogger('web');
@@ -1942,7 +1942,7 @@ export function buildServer(
     const items = shortlist.items.filter((_, i) => indexes.has(i));
     if (!items.length) return redirect(reply, back, { kind: 'warn', message: 'Nothing was ticked.' });
 
-    const { ids, newIds, alreadyOnSite, switchedOff } = importShortlistReport(site.id, shortlist.pillar, items);
+    const { ids, writeIds, alreadyOnSite, switchedOff } = importShortlistReport(site.id, shortlist.pillar, items);
     saveResult(site.id, 'import', cursor.round, { imported_ids: ids });
     markDone(site.id);
 
@@ -1951,14 +1951,17 @@ export function buildServer(
     // releases the recipe to the scheduler. The import is already saved, so
     // this can never fail or stall it: writeSeoWithin does not throw, and a
     // slow model is left to finish in the background.
-    const seo = await writeSeoWithin(
-      guideDeps,
-      site.id,
-      shortlist.pillar,
-      siteContext(site.id, cursor.round).identity,
-      newIds,
-      SEO_STEP_LIMIT_MS,
-    );
+    // Rows an earlier import left held (a restart mid-write) go along too. The
+    // lookups sit inside this guard so they cannot fail the saved import.
+    let identity = '';
+    let toWrite = writeIds;
+    try {
+      identity = siteContext(site.id, cursor.round).identity;
+      toWrite = [...new Set([...writeIds, ...leftoverHeldIds(site.id)])];
+    } catch (err) {
+      log.warn(`SEO writer setup for site ${site.id} failed: ${errorMessage(err)}`);
+    }
+    const seo = await writeSeoWithin(guideDeps, site.id, shortlist.pillar, identity, toWrite, SEO_STEP_LIMIT_MS);
 
     // Say plainly what was held back, so a smaller number than they ticked
     // does not look like a mistake.
@@ -1973,7 +1976,7 @@ export function buildServer(
           (seo.fallbacks ? `; ${seo.fallbacks} used a simple default you can improve in Keywords.` : '.')
         : '') +
       (seo.skipped
-        ? ` ${seo.skipped} recipe(s) are held, with no search title, because the keyword has a word this site doesn't publish. They stay held until you rename them in Keywords.`
+        ? ` ${seo.skipped} recipe(s) are held, with no search title, because the keyword has a word this site doesn't publish. They are kept out of the schedule: delete them in Keywords, or import them again with a different keyword.`
         : '') +
       (seo.pending ? ' Search text is still being written in the background.' : '');
     return redirect(reply, back, {

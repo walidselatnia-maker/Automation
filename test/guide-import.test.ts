@@ -80,7 +80,23 @@ describe('importShortlist', () => {
     expect(ids).toEqual([existing]);
     expect(getKeyword(existing)?.status).toBe('go');
     expect(all('SELECT id FROM keywords')).toHaveLength(1);
+    // No title yet, so held for the writer rather than runnable.
+    expect(linkOf(existing)).toBe('no');
+  });
+
+  it('links a reused recipe that already has a title as go', () => {
+    const existing = insertKeyword({ seed_keyword: 'crispy chicken thighs', spy_title: 'Crispy Chicken Thighs Recipe' });
+    const report = importShortlistReport(siteId, 'Chicken', [{ keyword: 'crispy chicken thighs', type: 'recipe' }]);
     expect(linkOf(existing)).toBe('go');
+    expect(report.writeIds).toEqual([]);
+  });
+
+  it('holds a reused blank-title recipe and hands it to the writer', () => {
+    const existing = insertKeyword({ seed_keyword: 'crispy chicken thighs' });
+    const report = importShortlistReport(siteId, 'Chicken', [{ keyword: 'crispy chicken thighs', type: 'recipe' }]);
+    expect(linkOf(existing)).toBe('no');
+    expect(report.writeIds).toEqual([existing]);
+    expect(report.newIds).toEqual([]);
   });
 
   it('leaves a keyword already published on this site alone', () => {

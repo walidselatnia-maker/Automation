@@ -340,3 +340,18 @@ export async function writeSeoWithin(
     clearTimeout(timer);
   }
 }
+
+/**
+ * Recipes the guide added to this site that are still held with no title: what
+ * a restart or crash in the middle of a write leaves behind. Handing them to
+ * the next import's writer repairs them. Restricted keywords are included
+ * here and skipped by the writer, so they stay held.
+ */
+export const leftoverHeldIds = (siteId: number): number[] =>
+  all<{ id: number }>(
+    `SELECT k.id FROM keywords k
+     JOIN keyword_sites ks ON ks.keyword_id = k.id
+     WHERE ks.site_id = ? AND ks.status = 'no' AND k.content_type = 'recipe'
+       AND k.annotation LIKE 'guide:%' AND trim(k.spy_title) = ''`,
+    siteId,
+  ).map((r) => r.id);

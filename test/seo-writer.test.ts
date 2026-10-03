@@ -4,7 +4,7 @@ import { randomBytes } from 'node:crypto';
 import { getKeyword, insertKeyword, setKeywordStatus, setLink, updateKeywordFields, upsertSite } from '../src/db/repos.js';
 import { setLogLevel } from '../src/lib/logger.js';
 import { checkDescription, checkTitle, restrictedWords } from '../src/seo/rules.js';
-import { RECENT_TITLES, draftSeo, fallbackFor, writeSeoFor, writeSeoWithin } from '../src/seo/writer.js';
+import { RECENT_TITLES, leftoverHeldIds, draftSeo, fallbackFor, writeSeoFor, writeSeoWithin } from '../src/seo/writer.js';
 import { importShortlistReport } from '../src/guide/import.js';
 import { readSupply } from '../src/core/supply.js';
 import { all } from '../src/db/index.js';
@@ -345,5 +345,31 @@ describe('writeSeoWithin', () => {
     expect(out).toEqual({ written: 0, fallbacks: 0, skipped: 0, pending: false });
     expect(linkStatus(a)).toBe('go');
     expect(getKeyword(a)!.annotation).toContain('seo:fallback');
+  });
+});
+
+describe('reused and leftover held recipes', () => {
+  const linkStatus = (id: number): string | undefined =>
+    all<{ status: string }>('SELECT status FROM keyword_sites WHERE keyword_id = ? AND site_id = ?', id, siteId)[0]?.status;
+
+  it('releases a reused blank-title recipe once it has a title', async () => {
+    const existing = insertKeyword({ seed_keyword: 'honey garlic chicken thighs', content_type: 'recipe' });
+    const { writeIds } = importShortlistReport(siteId, 'Dinners', [{ keyword: 'honey garlic chicken thighs', type: 'recipe' }]);
+    expect(readSupply().readyPairs).toBe(0);
+    await writeSeoFor({ ask: async () => reply(ONE) }, siteId, 'Dinners', 'Quick dinners', writeIds);
+    expect(getKeyword(existing)!.spy_title).toBe(ONE.title);
+    expect(linkStatus(existing)).toBe('go');
+  });
+
+  it('finds a row an earlier import left held, so a later import can release it', async () => {
+    const left = importShortlistReport(siteId, 'Dinners', [{ keyword: 'honey garlic chicken thighs', type: 'recipe' }]).newIds[0]!;
+    // Simulated crash: the writer never ran. A hand-made, non-guide row is not picked up.
+    const other = insertKeyword({ seed_keyword: 'plain blank recipe', content_type: 'recipe' });
+    setLink(other, siteId, 'no');
+    expect(leftoverHeldIds(siteId)).toEqual([left]);
+
+    await writeSeoFor({ ask: async () => reply(ONE) }, siteId, 'Dinners', 'Quick dinners', leftoverHeldIds(siteId));
+    expect(linkStatus(left)).toBe('go');
+    expect(leftoverHeldIds(siteId)).toEqual([]);
   });
 });
