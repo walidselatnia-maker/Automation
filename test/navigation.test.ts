@@ -18,6 +18,8 @@ describe('navigation', () => {
     ['/runs', 'Content'],
     ['/runs/42', 'Content'],
     ['/keywords/7', 'Content'],
+    ['/guide', 'Content'],
+    ['/guide/3', 'Content'],
     ['/reels/new/3/caption', 'Content'],
     ['/sites', 'Channels'],
     ['/sites/2', 'Channels'],
