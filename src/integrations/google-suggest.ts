@@ -42,11 +42,15 @@ export interface ExpandOptions extends SuggestOptions {
   maxRequests?: number;
   /** Pause between requests, so a step run does not look like a flood. */
   delayMs?: number;
+  /** Overall time limit; past it no new request is sent and what we have is returned. */
+  deadlineMs?: number;
 }
 
 export async function expandSeeds(seeds: string[], options: ExpandOptions = {}): Promise<string[]> {
   const maxRequests = options.maxRequests ?? 100;
   const delayMs = options.delayMs ?? 200;
+  // A slow or throttled endpoint must not hold the guide's reply for minutes.
+  const deadline = Date.now() + (options.deadlineMs ?? 30_000);
 
   const queries: string[] = [];
   for (const raw of seeds) {
@@ -59,6 +63,7 @@ export async function expandSeeds(seeds: string[], options: ExpandOptions = {}):
   const out: string[] = [];
   for (const [i, query] of queries.slice(0, maxRequests).entries()) {
     if (i > 0 && delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+    if (Date.now() >= deadline) break;
     for (const s of await suggest(query, options)) {
       const key = s.toLowerCase();
       if (seen.has(key)) continue;

@@ -42,7 +42,7 @@ export function guideListPage(rows: GuideListRow[]): Html {
                       : 'Not started'}
                   </div>
                 </div>
-                <a class="btn primary" href="/guide/${r.site.id}">${r.progress.started ? 'Continue' : 'Start'}</a>
+                <a class="button primary" href="/guide/${r.site.id}">${r.progress.started ? 'Continue' : 'Start'}</a>
               </div>
             `,
           )
@@ -121,7 +121,7 @@ function manualForm(data: GuideCardData): Html {
     return html`
       <form method="post" action="/guide/${id}/save" class="guide-manual">
         <label><input type="checkbox" name="confirmed" value="1" required /> I’ve done this</label>
-        <button class="btn" type="submit">Save</button>
+        <button type="submit">Save</button>
       </form>
     `;
   }
@@ -132,7 +132,7 @@ function manualForm(data: GuideCardData): Html {
       <form method="post" action="/guide/${id}/save">
         <p class="muted">${MANUAL_HINT[data.step.key]}</p>
         <textarea name="manual" rows="5"></textarea>
-        <button class="btn" type="submit">Save</button>
+        <button type="submit">Save</button>
       </form>
     </details>
   `;
@@ -145,7 +145,7 @@ function importBlock(data: GuideCardData): Html {
       <div class="guide-finished">
         <p><strong>Done!</strong> These keywords are in Keywords and will be written on the site’s normal schedule.</p>
         <form method="post" action="/guide/${id}/next-pillar">
-          <button class="btn primary" type="submit">Start next pillar →</button>
+          <button class="primary" type="submit">Start next pillar →</button>
         </form>
       </div>
     `;
@@ -161,7 +161,7 @@ function importBlock(data: GuideCardData): Html {
           </label></li>`,
         )}
       </ul>
-      <button class="btn primary" type="submit">Add to Keywords</button>
+      <button class="primary" type="submit">Add to Keywords</button>
     </form>`;
 }
 
@@ -200,11 +200,11 @@ export function guideCardPage(data: GuideCardData): Html {
                     <div class="guide-controls" id="guide-controls"></div>
                     <form class="guide-send" id="guide-send">
                       <input type="text" name="text" placeholder="Type here if you want…" autocomplete="off" />
-                      <button class="btn" type="submit">Send</button>
+                      <button type="submit">Send</button>
                     </form>
                     <div class="guide-quick">
-                      <button class="btn" type="button" data-say="Give me other ideas.">🔄 Other ideas</button>
-                      <button class="btn" type="button" data-stuck-button>😵 I’m stuck</button>
+                      <button type="button" data-say="Give me other ideas.">🔄 Other ideas</button>
+                      <button type="button" data-stuck-button>😵 I’m stuck</button>
                     </div>
                   </div>
                 `
@@ -213,12 +213,12 @@ export function guideCardPage(data: GuideCardData): Html {
 
       <div class="guide-nav">
         <form method="post" action="/guide/${id}/back">
-          <button class="btn" type="submit" ${data.index === 1 ? raw('disabled') : raw('')}>← Back</button>
+          <button type="submit" ${data.index === 1 ? raw('disabled') : raw('')}>← Back</button>
         </form>
         ${data.step.key === 'import'
           ? html``
           : html`<form method="post" action="/guide/${id}/done">
-              <button class="btn primary" type="submit" ${data.result ? raw('') : raw('disabled')}>Done →</button>
+              <button class="primary" type="submit" ${data.result ? raw('') : raw('disabled')}>Done →</button>
             </form>`}
       </div>
     </div>
@@ -272,7 +272,7 @@ const GUIDE_SCRIPT = `<script>
   function button(label, cls, onClick) {
     var b = document.createElement('button');
     b.type = 'button';
-    b.className = 'btn ' + (cls || '');
+    b.className = cls || '';
     b.textContent = label;
     b.addEventListener('click', onClick);
     return b;

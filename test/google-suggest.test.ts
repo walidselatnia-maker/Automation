@@ -60,4 +60,16 @@ describe('google suggest', () => {
     await expandSeeds(['a', 'b', 'c'], { fetchImpl, delayMs: 0, maxRequests: 5 });
     expect(calls).toBe(5);
   });
+
+  it('stops asking once the overall deadline has passed', async () => {
+    let calls = 0;
+    const fetchImpl = (async () => {
+      calls += 1;
+      return answer(['q', [`found ${calls}`]]);
+    }) as unknown as typeof fetch;
+    const out = await expandSeeds(['a', 'b', 'c'], { fetchImpl, delayMs: 20, deadlineMs: 50 });
+    expect(calls).toBeLessThan(6);
+    expect(calls).toBeGreaterThan(0);
+    expect(out.length).toBe(calls);
+  });
 });

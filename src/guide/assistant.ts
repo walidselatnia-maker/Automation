@@ -69,6 +69,8 @@ const strings = (value: unknown): string[] =>
     ? value.filter((s): s is string => typeof s === 'string' && s.trim() !== '').map((s) => s.trim())
     : [];
 
+const normalise = (s: string): string => s.trim().toLowerCase();
+
 export function parseReply(raw: string, step: StepKey): ParsedReply | null {
   const parsed = tryParseJson<Record<string, unknown>>(raw);
   if (!parsed) return null;
@@ -98,6 +100,17 @@ function historyText(siteId: number, step: StepKey, round: number): string {
     .slice(-20)
     .map((m) => `${m.role === 'user' ? 'THEM' : 'YOU'}: ${m.content}`);
   return lines.length ? lines.join('\n') : '(nothing yet)';
+}
+
+/**
+ * The newest draft this assistant proposed on the step. The chat history sent
+ * to the model is text only, so without this a "swap one" or "make it shorter"
+ * request would not know what it is changing.
+ */
+function lastDraft(siteId: number, step: StepKey, round: number): unknown {
+  const messages = listMessages(siteId, step, round);
+  const found = [...messages].reverse().find((m) => m.role === 'assistant' && m.payload.draft);
+  return found ? found.payload.draft : null;
 }
 
 /** Step-specific data the prompt needs, computed fresh each call. */
@@ -132,6 +145,7 @@ export async function respond(
   const text = (userText ?? '').trim();
   // History first, so it holds what came before this message, not the message itself.
   const history = historyText(siteId, cursor.step, cursor.round);
+  const currentDraft = lastDraft(siteId, cursor.step, cursor.round);
   if (text) addMessage(siteId, cursor.step, cursor.round, 'user', text);
 
   const ctx = siteContext(siteId, cursor.round);
@@ -152,6 +166,7 @@ export async function respond(
 
   try {
     let extra = initialExtra(siteId, cursor.step, cursor.round);
+    if (currentDraft) extra = { ...extra, current_draft: currentDraft };
     let parsed = await call(extra);
 
     // Step 4: the model proposes seeds, Google says what people really type,
@@ -168,6 +183,7 @@ export async function respond(
         pillar: parsed.pillar || ctx.currentPillar,
         suggestions,
         verified: suggestions.length > 0,
+        ...(currentDraft ? { current_draft: currentDraft } : {}),
       };
       parsed = await call(extra);
     }
@@ -181,8 +197,13 @@ export async function respond(
     if (!parsed) return CONFUSED;
 
     const out = parsed.reply;
-    if (cursor.step === 'keywords' && out.draft && extra.verified === false) {
-      (out.draft as KeywordsResult).verified = false;
+    if (cursor.step === 'keywords' && out.draft) {
+      // "Verified" is a claim to the operator, so it is earned here, not taken
+      // from the model: only a pick, made entirely of Google's own suggestions.
+      const draft = out.draft as KeywordsResult;
+      const offered = new Set(((extra.suggestions as string[] | undefined) ?? []).map(normalise));
+      draft.verified =
+        extra.phase === 'pick' && offered.size > 0 && draft.keywords.every((k) => offered.has(normalise(k)));
     }
 
     addMessage(siteId, cursor.step, cursor.round, 'assistant', out.message, {

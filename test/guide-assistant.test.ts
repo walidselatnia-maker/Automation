@@ -182,6 +182,50 @@ describe('respond', () => {
     expect(out.draft).toMatchObject({ verified: false });
   });
 
+  it('step 4: a start-phase draft with no seeds is never verified', async () => {
+    reachStep('keywords');
+    const ten = Array.from({ length: 10 }, (_, i) => `easy chicken dinner ${i}`);
+    const ask: Ask = async () => reply({ draft: { pillar: 'Chicken', keywords: ten } });
+    const out = await respond({ ask, suggest: async () => ten }, siteId, 'Chicken');
+    expect(out.draft).toMatchObject({ verified: false });
+  });
+
+  it('step 4: one invented keyword makes the whole draft unverified', async () => {
+    reachStep('keywords');
+    const suggestions = Array.from({ length: 10 }, (_, i) => `crispy chicken thighs ${i}`);
+    const ask: Ask = async (_name, vars) =>
+      (vars.extra as { phase: string }).phase === 'start'
+        ? reply({ seeds: ['chicken'], pillar: 'Chicken' })
+        : reply({ draft: { pillar: 'Chicken', keywords: [...suggestions.slice(0, 9), 'made up phrase'] } });
+    const out = await respond({ ask, suggest: async () => suggestions }, siteId, 'Chicken');
+    expect(out.draft).toMatchObject({ verified: false });
+  });
+
+  it('step 4: a pick made only from suggestions is verified, ignoring case and spacing', async () => {
+    reachStep('keywords');
+    const suggestions = Array.from({ length: 10 }, (_, i) => `crispy chicken thighs ${i}`);
+    const ask: Ask = async (_name, vars) =>
+      (vars.extra as { phase: string }).phase === 'start'
+        ? reply({ seeds: ['chicken'], pillar: 'Chicken' })
+        : reply({ draft: { pillar: 'Chicken', keywords: suggestions.map((s) => ` ${s.toUpperCase()} `) } });
+    const out = await respond({ ask, suggest: async () => suggestions }, siteId, 'Chicken');
+    expect(out.draft).toMatchObject({ verified: true });
+  });
+
+  it('passes the last draft back to the model on a follow-up', async () => {
+    reachStep('keywords');
+    const ten = Array.from({ length: 10 }, (_, i) => `easy chicken dinner ${i}`);
+    const extras: Record<string, unknown>[] = [];
+    const ask: Ask = async (_name, vars) => {
+      extras.push(vars.extra as Record<string, unknown>);
+      return reply({ draft: { pillar: 'Chicken', keywords: ten } });
+    };
+    await respond({ ask, suggest: noSuggest }, siteId, 'Chicken');
+    expect(extras[0]).not.toHaveProperty('current_draft');
+    await respond({ ask, suggest: noSuggest }, siteId, 'swap the first one');
+    expect(extras[1].current_draft).toMatchObject({ pillar: 'Chicken', keywords: ten });
+  });
+
   it('step 5: leaves out keywords the site already has', async () => {
     reachStep('shortlist');
     const id = insertKeyword({ seed_keyword: 'honey garlic chicken thighs' });
