@@ -481,6 +481,55 @@ export const MIGRATIONS: Migration[] = [
       addColumn(db, 'fb_pages', 'publisher', "TEXT NOT NULL DEFAULT ''");
     },
   },
+  {
+    id: '016-content-guide',
+    description: 'A step-by-step guide per site, with the assistant chat for each step',
+    up(db) {
+      // Where each site is in the guide. One row per site, made the first time
+      // the guide is opened for it. `round` counts pillars: steps 4–6 run once
+      // per pillar, and the pillar itself is only chosen inside step 4, so the
+      // round number is what can be known in advance.
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS guide_sites (
+          site_id      INTEGER PRIMARY KEY REFERENCES sites (id) ON DELETE CASCADE,
+          current_step TEXT    NOT NULL DEFAULT 'identity',
+          round        INTEGER NOT NULL DEFAULT 1
+        );
+      `);
+
+      // What the operator settled on for each step. round = 0 for the
+      // site-wide steps, so a site's identity is not asked again per pillar.
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS guide_steps (
+          site_id     INTEGER NOT NULL REFERENCES sites (id) ON DELETE CASCADE,
+          round       INTEGER NOT NULL DEFAULT 0,
+          step_key    TEXT    NOT NULL,
+          status      TEXT    NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'done')),
+          result_json TEXT    NOT NULL DEFAULT 'null',
+          updated_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+          PRIMARY KEY (site_id, round, step_key)
+        );
+      `);
+
+      // The chat, kept so leaving and coming back picks up where it was --
+      // the whole point for someone who gets pulled away mid-step.
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS guide_messages (
+          id         INTEGER PRIMARY KEY AUTOINCREMENT,
+          site_id    INTEGER NOT NULL REFERENCES sites (id) ON DELETE CASCADE,
+          round      INTEGER NOT NULL DEFAULT 0,
+          step_key   TEXT    NOT NULL,
+          role       TEXT    NOT NULL CHECK (role IN ('user', 'assistant')),
+          content    TEXT    NOT NULL,
+          payload    TEXT    NOT NULL DEFAULT '{}',
+          created_at TEXT    NOT NULL DEFAULT (datetime('now'))
+        );
+      `);
+      db.exec(
+        'CREATE INDEX IF NOT EXISTS idx_guide_messages ON guide_messages (site_id, round, step_key, id)',
+      );
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */
