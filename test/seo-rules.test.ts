@@ -218,3 +218,24 @@ describe('rulesPrompt', () => {
     expect(text).toContain('keyword');
   });
 });
+
+describe('satisfiable rules outside the recipe niche', () => {
+  it('skips restricted words when the site is not a recipe site', () => {
+    const title = 'Best Wine Regions in Italy to Visit';
+    const keyword = 'best wine regions in italy';
+    expect(checkTitle(title, { keyword, restricted: false })).toEqual([]);
+    expect(checkTitle(title, { keyword }).some((p) => /wine/i.test(p))).toBe(true);
+  });
+
+  it('asks the slug for only the first four keyword words', () => {
+    expect(
+      checkSlug('easy-slow-cooker-chicken-thighs', {
+        keyword: 'easy slow cooker chicken thigh recipes for busy weeknights',
+      }),
+    ).toEqual([]);
+  });
+
+  it('tells the model the focus keyword needs three words', () => {
+    expect(rulesPrompt()).toMatch(/focus keyword.*3 or more words/i);
+  });
+});

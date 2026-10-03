@@ -14,7 +14,7 @@
  * -- generating first and asking the model to paste long urls into prose --
  * fails the moment it mistypes one, and mistyping one is silent.
  */
-import { createLogger } from '../../lib/logger.js';
+import { createLogger, errorMessage } from '../../lib/logger.js';
 import { requireFields } from '../json.js';
 import { parseJsonOrRepair } from '../parse-with-repair.js';
 import type { Category } from '../../integrations/site-api.js';
@@ -73,13 +73,16 @@ export const marker = (index: number): string => `[IMAGE_${index + 1}]`;
  * field so the model can be told exactly what to fix. Empty means it passes.
  */
 export function planSeoProblems(plan: Record<string, unknown>, keyword: string): string[] {
-  const focus = String(plan.focusKeyword ?? '').trim() || keyword;
+  const supplied = String(plan.focusKeyword ?? '').trim();
+  const focus = supplied || keyword;
   const label = (field: string, problems: string[]): string[] => problems.map((p) => `${field}: ${p}`);
   const images = Array.isArray(plan.images) ? plan.images : [];
   return [
-    ...label('focusKeyword', checkFocusKeyword(focus)),
-    ...label('metaTitle', checkTitle(String(plan.metaTitle ?? ''), { keyword: focus })),
-    ...label('metaDescription', checkDescription(String(plan.metaDescription ?? ''), { keyword: focus })),
+    // Only a focus keyword the plan actually supplied is held to the 3-word rule.
+    ...(supplied ? label('focusKeyword', checkFocusKeyword(focus)) : []),
+    // Articles can be in any niche, so the recipe-site word policy does not apply.
+    ...label('metaTitle', checkTitle(String(plan.metaTitle ?? ''), { keyword: focus, restricted: false })),
+    ...label('metaDescription', checkDescription(String(plan.metaDescription ?? ''), { keyword: focus, restricted: false })),
     ...label('slug', checkSlug(String(plan.slug ?? ''), { keyword: focus })),
     ...images.flatMap((image, i) =>
       label(`images[${i}].alt`, checkAlt(String((image as { alt?: unknown })?.alt ?? ''))),
@@ -132,7 +135,8 @@ export const planArticle: Step<Category[], ArticlePlan> = {
       async (problems) => {
         try {
           return await read((await ask(feedbackFor(problems))).content);
-        } catch {
+        } catch (err) {
+          log.warn(`run ${ctx.runId}: second attempt at the article plan failed: ${errorMessage(err)}`);
           return null;
         }
       },

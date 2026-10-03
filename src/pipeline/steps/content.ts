@@ -2,7 +2,7 @@ import type { Step } from '../engine.js';
 import { parseJson, requireFields } from '../json.js';
 import { parseJsonOrRepair } from '../parse-with-repair.js';
 import type { Category } from '../../integrations/site-api.js';
-import { createLogger } from '../../lib/logger.js';
+import { createLogger, errorMessage } from '../../lib/logger.js';
 import { checkDescription, checkTitle, rulesPrompt } from '../../seo/rules.js';
 import { feedbackFor, refineOnce } from '../../seo/refine.js';
 
@@ -136,7 +136,8 @@ export const validateSpy: Step<Category[], SeoData> = {
       async (problems) => {
         try {
           return await derive((await ask(feedbackFor(problems))).content);
-        } catch {
+        } catch (err) {
+          log.warn(`run ${ctx.runId}: second attempt at the SEO text failed: ${errorMessage(err)}`);
           return null;
         }
       },

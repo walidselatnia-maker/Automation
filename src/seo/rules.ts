@@ -16,6 +16,8 @@ export const DESCRIPTION_MIN = 70;
 export const DESCRIPTION_MAX = 160;
 export const SLUG_MAX_WORDS = 6;
 export const SLUG_MAX_CHARS = 60;
+/** A slug must carry the first this-many keyword words; the rest would not fit. */
+export const SLUG_KEYWORD_WORDS = 4;
 export const ALT_MIN = 10;
 export const ALT_MAX = 125;
 /** At or above this word overlap, two texts read as the same page. */
@@ -26,6 +28,8 @@ export interface CheckContext {
   keyword: string;
   /** Texts already in use on the site (titles, descriptions or slugs). */
   others?: string[];
+  /** Apply the recipe-site content policy (no pork, alcohol or holiday words). Default true. */
+  restricted?: boolean;
 }
 
 const STOP_WORDS = new Set([
@@ -86,9 +90,9 @@ function tooSimilar(text: string, others: string[] | undefined): string | null {
   return null;
 }
 
-const missingWords = (keyword: string, text: string): string[] => {
+const missingWords = (keyword: string, text: string, limit?: number): string[] => {
   const have = new Set(words(text));
-  return words(keyword).filter((w) => !have.has(w));
+  return words(keyword).slice(0, limit).filter((w) => !have.has(w));
 };
 
 export function checkTitle(title: string, ctx: CheckContext): string[] {
@@ -127,7 +131,7 @@ export function checkTitle(title: string, ctx: CheckContext): string[] {
     problems.push('The title is all capitals; use normal title case.');
   }
 
-  for (const word of restrictedWords(text)) {
+  for (const word of ctx.restricted === false ? [] : restrictedWords(text)) {
     problems.push(`The title contains "${word}", which this site does not publish.`);
   }
 
@@ -163,7 +167,7 @@ export function checkDescription(description: string, ctx: CheckContext): string
     problems.push('The description reads like a list; write it as a sentence a person would say.');
   }
 
-  for (const word of restrictedWords(text)) {
+  for (const word of ctx.restricted === false ? [] : restrictedWords(text)) {
     problems.push(`The description contains "${word}", which this site does not publish.`);
   }
 
@@ -187,7 +191,7 @@ export function checkSlug(slug: string, ctx: CheckContext): string[] {
     problems.push('Leave the year out of the slug so it does not date the page.');
   }
 
-  const missing = missingWords(ctx.keyword, slug.replace(/-/g, ' '));
+  const missing = missingWords(ctx.keyword, slug.replace(/-/g, ' '), SLUG_KEYWORD_WORDS);
   if (missing.length) problems.push(`The slug is missing the keyword words: ${missing.join(', ')}.`);
 
   if ((ctx.others ?? []).includes(slug)) problems.push('Another page already has this slug.');
@@ -214,7 +218,8 @@ export function rulesPrompt(): string {
     'SEO RULES (your answer is checked by a program against these):',
     `- Title: ${TITLE_MIN}-${TITLE_MAX} characters, includes every word of the keyword with the keyword near the start, no word used more than twice, no lists or "|", normal title case, different from every other title.`,
     `- Description: ${DESCRIPTION_MIN}-${DESCRIPTION_MAX} characters, one natural sentence that ends with a full stop, includes the keyword once, no lists, different from every other description. Say what the page really delivers.`,
-    `- Slug: lower-case words joined by single dashes, at most ${SLUG_MAX_WORDS} words, includes the keyword words, no year.`,
+    `- Slug: lower-case words joined by single dashes, at most ${SLUG_MAX_WORDS} words, includes the first ${SLUG_KEYWORD_WORDS} words of the keyword, no year.`,
+    '- Focus keyword (when you are asked for one): a specific phrase of 3 or more words.',
     '- Never stuff keywords. Write for the person searching, not for a robot.',
     '- No pork, no alcohol, no holiday words (Christmas, Thanksgiving, Valentine\'s, Easter, Halloween).',
   ].join('\n');
