@@ -43,7 +43,7 @@ data model has room for it; it gets its own spec once Search Console data
 exists, because steps 9–10 depend on a Search Console integration that is
 out of scope here.
 
-Steps 4–6 belong to a **pillar**, not to the site: after step 6 the operator
+Steps 4–6 belong to a **pillar round**, not to the site: after step 6 the operator
 can start steps 4–6 again for the next pillar (step 11 will automate that
 loop later; in round 1 a "Start next pillar" button on the finished step 6
 card does it).
@@ -85,6 +85,10 @@ step's title, and a **Continue** button. A site never started shows
   Its replies may carry **choice chips** (tap to send that text, or toggle when
   the step asks for several) and a **draft** (the proposed result of the step).
 - **Saved:** the step's current result. "👍 Use this" on a draft saves it.
+  Under it, a plain textarea **"Or type it yourself"** saves a result without
+  the AI: identity = the text; pillars = 3 lines; keywords = first line the
+  pillar, then one keyword per line; shortlist = first line the article, then
+  one recipe per line.
 - **Done →** is enabled only when the step has a saved result (step 3 needs
   only the checkbox "I've done this"). It marks the step done and opens the
   next one.
@@ -110,8 +114,9 @@ Every guide prompt receives the same variables:
 
 - `site_name`, `site_domain`
 - `identity` (step 1 result or empty), `pillars` (step 2 result or empty),
-  `current_pillar` (for steps 4–6)
+  `current_pillar` (the round's pillar from step 4, for steps 5–6; empty before)
 - `step_title`, `step_goal`
+- `user_text` — what the operator just sent (empty on the opening message)
 - `history` — the step's chat so far, as `ROLE: text` lines (last 20 messages)
 - `extra` — step-specific data (below)
 
@@ -137,8 +142,8 @@ draft.
 | 1 identity | `guide-identity` | Interviews with multiple-choice questions, one at a time (audience, skill level, time, diet/style). After 2–4 answers, offers 3 one-line versions as choices. | `{ "identity": "one line" }` |
 | 2 pillars | `guide-pillars` | Proposes 6–8 pillars that fit the identity as multi-select chips; drafts once 3 are chosen. | `{ "pillars": ["a","b","c"] }` (exactly 3) |
 | 3 search-console | `guide-search-console` | Explains setup one action per message ("Open search.google.com/search-console", "Choose Domain", …), asking "Done?" each time. No draft; the step completes by checkbox. | none |
-| 4 keywords | `guide-keywords` | Asks which pillar (chips from step 2), then generates seed phrases; the server expands and verifies them (below) and the AI presents the verified list. | `{ "pillar": "…", "keywords": ["…", …] }` (30–50) |
-| 5 shortlist | `guide-shortlist` | Groups step 4's keywords, marks near-duplicates, proposes 1 pillar article + 10 recipes with a type each. Operator can swap items via chips. | `{ "pillar": "…", "items": [{ "keyword": "…", "type": "article" \| "recipe" }] }` (11 items, exactly one article marked as pillar) |
+| 4 keywords | `guide-keywords` | Asks which pillar (chips from step 2), then generates seed phrases; the server expands and verifies them (below) and the AI presents the verified list. | `{ "pillar": "…", "keywords": ["…", …], "verified": true }` (asks for 30–50; accepts 10–60 so a thin niche never blocks the operator) |
+| 5 shortlist | `guide-shortlist` | Groups step 4's keywords, marks near-duplicates, proposes 1 pillar article + 10 recipes with a type each. Operator can swap items via chips. | `{ "pillar": "…", "items": [{ "keyword": "…", "type": "article" \| "recipe" }] }` (exactly 1 article — the pillar article — and 5–15 recipes; 1 + 10 is what the prompt asks for) |
 | 6 import | — (no AI) | Shows the shortlist with checkboxes (all ticked) and one **Add to Keywords** button. | `{ "imported_ids": [ … ] }` |
 
 ### Step 4: grounding keywords in real searches
@@ -155,7 +160,10 @@ parts:
    step run, 200 ms apart, 5 s timeout each.
 3. Suggestions are de-duplicated (lowercase, trimmed) and passed back to
    `guide-keywords` with `extra.phase = "pick"` and
-   `extra.suggestions = [...]`. The AI picks the 30–50 best long-tail ones
+   `extra.suggestions = [...]`. (Mechanically: when a step 4 reply carries a
+   non-empty `"seeds": [...]` field, the server runs the expansion and calls
+   the prompt again with phase `pick`; only that second reply is stored.)
+   The AI picks the 30–50 best long-tail ones
    (3+ words) **only from that list** and returns them as the draft.
 
 If autocomplete fails entirely (blocked, offline), the AI's own list is used
@@ -186,42 +194,44 @@ Migration `016-content-guide`:
 ```sql
 CREATE TABLE IF NOT EXISTS guide_steps (
   site_id     INTEGER NOT NULL REFERENCES sites (id) ON DELETE CASCADE,
-  pillar      TEXT    NOT NULL DEFAULT '',   -- '' for site-wide steps 1–3
+  round       INTEGER NOT NULL DEFAULT 0,    -- 0 for site-wide steps 1–3, else the pillar round
   step_key    TEXT    NOT NULL,
   status      TEXT    NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'done')),
   result_json TEXT    NOT NULL DEFAULT 'null',
   updated_at  TEXT    NOT NULL DEFAULT (datetime('now')),
-  PRIMARY KEY (site_id, pillar, step_key)
+  PRIMARY KEY (site_id, round, step_key)
 );
 
 CREATE TABLE IF NOT EXISTS guide_messages (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   site_id     INTEGER NOT NULL REFERENCES sites (id) ON DELETE CASCADE,
-  pillar      TEXT    NOT NULL DEFAULT '',
+  round       INTEGER NOT NULL DEFAULT 0,
   step_key    TEXT    NOT NULL,
   role        TEXT    NOT NULL CHECK (role IN ('user', 'assistant')),
   content     TEXT    NOT NULL,             -- the bubble text
   payload     TEXT    NOT NULL DEFAULT '{}',-- choices / multi / draft, JSON
   created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
 );
-CREATE INDEX IF NOT EXISTS idx_guide_messages ON guide_messages (site_id, pillar, step_key, id);
+CREATE INDEX IF NOT EXISTS idx_guide_messages ON guide_messages (site_id, round, step_key, id);
 
 CREATE TABLE IF NOT EXISTS guide_sites (
   site_id        INTEGER PRIMARY KEY REFERENCES sites (id) ON DELETE CASCADE,
   current_step   TEXT    NOT NULL DEFAULT 'identity',
-  current_pillar TEXT    NOT NULL DEFAULT ''
+  round          INTEGER NOT NULL DEFAULT 1
 );
 ```
 
 The site's identity and pillars are read from `guide_steps` results; nothing
-is copied onto `sites`.
+is copied onto `sites`. Steps 4–6 are stored per **round** (1, 2, 3 …), not
+per pillar name, because the pillar is only chosen inside step 4; the round's
+pillar is read from its step 4 result.
 
 ## Code layout
 
 | File | Responsibility |
 |---|---|
 | `src/guide/steps.ts` | The ordered step list: key, title, why, how[], prompt name, whether it is per pillar, how to validate a draft. Pure data + validators. |
-| `src/guide/state.ts` | Read/write `guide_sites`, `guide_steps`, `guide_messages`; `currentCard(siteId)`; `markDone`, `goBack`, `startNextPillar`. |
+| `src/guide/state.ts` | Read/write `guide_sites`, `guide_steps`, `guide_messages`; cursor, `markDone`, `goBack`, `goTo`, `startNextPillar`. |
 | `src/guide/assistant.ts` | Build variables, call `askPrompt`, parse the reply, store both messages. Step 4's two-phase flow and step 5's duplicate filter live here. |
 | `src/integrations/google-suggest.ts` | `suggest(query)` and `expandSeeds(seeds)`; parsing, cap, delay, timeout. |
 | `src/guide/import.ts` | Step 6: shortlist → keywords + links, transactional. |
