@@ -99,6 +99,13 @@ export const STEP_CONTEXTS: Record<string, Record<string, unknown>> = {
   'guide-search-console': GUIDE_CONTEXT,
   'guide-keywords': GUIDE_CONTEXT,
   'guide-shortlist': GUIDE_CONTEXT,
+  'seo-writer': {
+    identity: 'i',
+    pillar: 'p',
+    itemsJson: '[]',
+    takenJson: '[]',
+    rules: 'r',
+  },
 };
 
 for (const part of ['part-1', 'part-2', 'part-3']) {

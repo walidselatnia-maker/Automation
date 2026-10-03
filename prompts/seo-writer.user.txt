@@ -1,0 +1,10 @@
+Site is for: {{identity}}
+Pillar topic: {{pillar}}
+
+Titles already taken on this site or in this batch (do not repeat or closely copy these):
+{{takenJson}}
+
+Recipes to write for (JSON, each with its keyword and any problems to fix):
+{{itemsJson}}
+
+Answer with the JSON object only.

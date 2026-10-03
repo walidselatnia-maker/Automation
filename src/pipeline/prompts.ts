@@ -133,6 +133,9 @@ export const PROMPT_MODELS: Record<string, { model: string; format: 'json' | nul
   'guide-search-console': { model: 'gpt-oss:120b', format: 'json' },
   'guide-keywords': { model: 'gpt-oss:120b', format: 'json' },
   'guide-shortlist': { model: 'gpt-oss:120b', format: 'json' },
+  // Writes the title and description a guide keyword is missing. JSON because
+  // one call answers for a whole batch of recipes.
+  'seo-writer': { model: 'gpt-oss:120b', format: 'json' },
 };
 
 /* -------------------------------------------------------------------------
