@@ -8,3 +8,4 @@ Link: {{spy.articleUrl}}
 
 Categories:
 {{categoryTitles}}
+{{seoFeedback}}

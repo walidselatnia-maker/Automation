@@ -3,6 +3,8 @@ import { parseJson, requireFields } from '../json.js';
 import { parseJsonOrRepair } from '../parse-with-repair.js';
 import type { Category } from '../../integrations/site-api.js';
 import { createLogger } from '../../lib/logger.js';
+import { checkDescription, checkTitle, rulesPrompt } from '../../seo/rules.js';
+import { feedbackFor, refineOnce } from '../../seo/refine.js';
 
 const log = createLogger('content');
 
@@ -93,30 +95,56 @@ export const validateSpy: Step<Category[], SeoData> = {
       );
     }
 
-    const result = await ctx.prompt('spy-validation', {
-      spy: spyContext(ctx),
-      categoryTitles: JSON.stringify(categories.map((c) => c.title)),
-      site: { domain: ctx.site.domain },
-    });
+    const ask = (feedback: string) =>
+      ctx.prompt('spy-validation', {
+        spy: spyContext(ctx),
+        categoryTitles: JSON.stringify(categories.map((c) => c.title)),
+        site: { domain: ctx.site.domain },
+        seoRules: rulesPrompt(),
+        seoFeedback: feedback,
+      });
 
-    if (result.content.includes('FALSE')) {
-      throw new SpyRejectedError(result.content.slice(0, 300));
-    }
-
-    const parsed = await parseJsonOrRepair<Record<string, string>>(
-      ctx,
-      result.content,
-      'Spy validation output',
-      { requiredFields: ['keyword', 'title', 'description', 'category'] },
-    );
-    requireFields(parsed, ['keyword', 'title', 'description', 'category'], 'Spy validation');
-
-    const seo = {
-      keyword: parsed.keyword!,
-      title: parsed.title!,
-      description: parsed.description!,
-      category: parsed.category!,
+    const derive = async (content: string): Promise<SeoData> => {
+      if (content.includes('FALSE')) throw new SpyRejectedError(content.slice(0, 300));
+      const parsed = await parseJsonOrRepair<Record<string, string>>(
+        ctx,
+        content,
+        'Spy validation output',
+        { requiredFields: ['keyword', 'title', 'description', 'category'] },
+      );
+      requireFields(parsed, ['keyword', 'title', 'description', 'category'], 'Spy validation');
+      return {
+        keyword: parsed.keyword!,
+        title: parsed.title!,
+        description: parsed.description!,
+        category: parsed.category!,
+      };
     };
+
+    const result = await ask('');
+    // Rejection and unreadable JSON still stop the run, exactly as before.
+    const first = await derive(result.content);
+
+    // Wording is different: ask once more with the exact problems, and if it
+    // still breaks a rule keep the answer and say so rather than stop.
+    const refined = await refineOnce(
+      first,
+      (s) => [
+        ...checkTitle(s.title, { keyword: s.keyword }),
+        ...checkDescription(s.description, { keyword: s.keyword }),
+      ],
+      async (problems) => {
+        try {
+          return await derive((await ask(feedbackFor(problems))).content);
+        } catch {
+          return null;
+        }
+      },
+    );
+    if (refined.problems.length) {
+      log.warn(`run ${ctx.runId}: SEO text for "${refined.value.keyword}" still breaks rules: ${refined.problems.join(' ')}`);
+    }
+    const seo = refined.value;
 
     // The failure this whole change exists to stop, caught where it happens
     // rather than three steps later in a photograph. Not fatal: a genuinely

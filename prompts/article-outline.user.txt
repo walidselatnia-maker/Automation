@@ -33,3 +33,4 @@ Answer with this JSON:
 }
 
 Six to ten sections. Four to seven images, the first one \"top\".
+{{seoFeedback}}

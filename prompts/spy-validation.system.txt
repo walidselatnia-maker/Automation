@@ -64,6 +64,8 @@ SEASONAL LANGUAGE:
 Avoid holiday terms (Christmas, Thanksgiving, Valentine’s, Easter, Halloween).
 Use neutral seasonal language (seasonal, festive, winter, cozy, cold-weather).
 
+{{seoRules}}
+
 STRICT OUTPUT RULES:
 - Output ONLY:
   - A valid JSON object with the four required fields

@@ -20,6 +20,8 @@ import { parseJsonOrRepair } from '../parse-with-repair.js';
 import type { Category } from '../../integrations/site-api.js';
 import type { Step } from '../engine.js';
 import type { PipelineContext } from '../context.js';
+import { checkAlt, checkDescription, checkFocusKeyword, checkSlug, checkTitle, rulesPrompt } from '../../seo/rules.js';
+import { feedbackFor, refineOnce } from '../../seo/refine.js';
 
 const log = createLogger('blog');
 
@@ -67,6 +69,25 @@ export function toSlug(value: string): string {
 export const marker = (index: number): string => `[IMAGE_${index + 1}]`;
 
 /**
+ * What is wrong with a plan's search text, each problem labelled with its
+ * field so the model can be told exactly what to fix. Empty means it passes.
+ */
+export function planSeoProblems(plan: Record<string, unknown>, keyword: string): string[] {
+  const focus = String(plan.focusKeyword ?? '').trim() || keyword;
+  const label = (field: string, problems: string[]): string[] => problems.map((p) => `${field}: ${p}`);
+  const images = Array.isArray(plan.images) ? plan.images : [];
+  return [
+    ...label('focusKeyword', checkFocusKeyword(focus)),
+    ...label('metaTitle', checkTitle(String(plan.metaTitle ?? ''), { keyword: focus })),
+    ...label('metaDescription', checkDescription(String(plan.metaDescription ?? ''), { keyword: focus })),
+    ...label('slug', checkSlug(String(plan.slug ?? ''), { keyword: focus })),
+    ...images.flatMap((image, i) =>
+      label(`images[${i}].alt`, checkAlt(String((image as { alt?: unknown })?.alt ?? ''))),
+    ),
+  ];
+}
+
+/**
  * Plan the article: what it says, how it is found, and what it shows.
  *
  * The category comes back as a title the model picked from the site's own
@@ -78,24 +99,48 @@ export const planArticle: Step<Category[], ArticlePlan> = {
   title: 'Plan the article',
   async run(ctx, categories) {
     const spy = ctx.keyword.spy_title.trim();
-    const result = await ctx.prompt('article-outline', {
-      keyword: ctx.keyword.seed_keyword,
-      niche: ctx.keyword.niche || 'general interest',
-      // Optional on purpose: an article keyword is a topic, and unlike a
-      // recipe it does not need a source page to be written from.
-      spyNote: spy
-        ? `It was found from a page titled "${spy}". Cover the same ground, better.`
-        : '',
-      categoryTitles: JSON.stringify(categories.map((c) => c.title)),
-    });
+    const ask = (feedback: string) =>
+      ctx.prompt('article-outline', {
+        keyword: ctx.keyword.seed_keyword,
+        niche: ctx.keyword.niche || 'general interest',
+        // Optional on purpose: an article keyword is a topic, and unlike a
+        // recipe it does not need a source page to be written from.
+        spyNote: spy
+          ? `It was found from a page titled "${spy}". Cover the same ground, better.`
+          : '',
+        categoryTitles: JSON.stringify(categories.map((c) => c.title)),
+        seoRules: rulesPrompt(),
+        seoFeedback: feedback,
+      });
 
-    const parsed = await parseJsonOrRepair<Record<string, unknown>>(
-      ctx,
-      result.content,
-      'Article plan',
-      { requiredFields: ['title', 'sections', 'images'] },
+    const read = async (content: string): Promise<Record<string, unknown>> => {
+      const plan = await parseJsonOrRepair<Record<string, unknown>>(ctx, content, 'Article plan', {
+        requiredFields: ['title', 'sections', 'images'],
+      });
+      requireFields(plan, ['title', 'sections', 'images'], 'Article plan');
+      return plan;
+    };
+
+    const result = await ask('');
+    const firstPlan = await read(result.content);
+
+    // Ask once more with the exact problems; keep the plan and log a warning if
+    // it still breaks a rule, since the .slice() guards below are the last resort.
+    const refined = await refineOnce(
+      firstPlan,
+      (p) => planSeoProblems(p, ctx.keyword.seed_keyword),
+      async (problems) => {
+        try {
+          return await read((await ask(feedbackFor(problems))).content);
+        } catch {
+          return null;
+        }
+      },
     );
-    requireFields(parsed, ['title', 'sections', 'images'], 'Article plan');
+    if (refined.problems.length) {
+      log.warn(`run ${ctx.runId}: article plan SEO text still breaks rules: ${refined.problems.join(' ')}`);
+    }
+    const parsed = refined.value;
 
     const sections = (Array.isArray(parsed.sections) ? parsed.sections : [])
       .map((entry) => entry as ArticleSection)

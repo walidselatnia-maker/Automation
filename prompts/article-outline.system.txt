@@ -34,8 +34,8 @@ The first brief is the one at the top of the article, so it has to carry it.
 
 SEO
 
-metaTitle at most 60 characters, metaDescription at most 160. Both must read as
-sentences a person wrote, not as keyword lists. The slug is lowercase words
-separated by single dashes, no dates and no stop-words padding it out.
+{{seoRules}}
+
+The metaTitle and metaDescription must read as sentences a person wrote, not as keyword lists.
 
 ANSWER WITH JSON ONLY. No prose before or after it.

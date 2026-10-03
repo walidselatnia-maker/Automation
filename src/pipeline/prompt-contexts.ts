@@ -56,6 +56,8 @@ export const STEP_CONTEXTS: Record<string, Record<string, unknown>> = {
     spy: SPY,
     categoryTitles: '[]',
     site: { domain: 'example.com' },
+    seoRules: 'r',
+    seoFeedback: '',
   },
   'recipe-generator': { seo: SEO, spy: SPY },
   'image-prompts': { seo: SEO, spy: SPY, recipe: { raw: '{}' }, recipeJson: '{}' },
@@ -64,6 +66,8 @@ export const STEP_CONTEXTS: Record<string, Record<string, unknown>> = {
     niche: 'travel',
     spyNote: '',
     categoryTitles: '[]',
+    seoRules: 'r',
+    seoFeedback: '',
   },
   'article-write': {
     title: 'A Week in Kyoto',
