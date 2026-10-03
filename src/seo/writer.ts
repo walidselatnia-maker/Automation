@@ -1,7 +1,7 @@
 import { all } from '../db/index.js';
 import { getKeyword, updateKeywordFields, type KeywordRow } from '../db/repos.js';
 import { createLogger, errorMessage } from '../lib/logger.js';
-import { checkDescription, checkTitle, rulesPrompt, TITLE_MAX } from './rules.js';
+import { checkDescription, checkTitle, restrictedWords, rulesPrompt, TITLE_MAX } from './rules.js';
 
 const log = createLogger('seo');
 
@@ -54,7 +54,13 @@ const titleCase = (text: string): string => text.replace(/(^|\s)[a-z]/g, (m) => 
 
 /** Plain, honest text from the keyword alone. It says nothing the keyword does not. */
 export function fallbackFor(keyword: string): SeoDraft {
-  const phrase = clean(keyword).toLowerCase();
+  // A restricted word (pork, alcohol, holidays) is dropped, never written out.
+  const phrase =
+    clean(keyword)
+      .toLowerCase()
+      .split(' ')
+      .filter((word) => restrictedWords(word).length === 0)
+      .join(' ') || 'easy home cooked meal';
   const title = titleCase(phrase);
   const cut = title.lastIndexOf(' ', TITLE_MAX);
   return {
@@ -105,8 +111,8 @@ export async function draftSeo(
     try {
       answers = parseAnswer(
         await deps.ask('seo-writer', {
-          identity: context.identity,
-          pillar: context.pillar,
+          identity: JSON.stringify(context.identity),
+          pillar: JSON.stringify(context.pillar),
           itemsJson: JSON.stringify(
             pending.map((p) => ({ n: p.n, keyword: p.keyword, fix: problems.get(p.n) ?? [] })),
           ),
@@ -152,6 +158,7 @@ export async function draftSeo(
 export interface WriterReport {
   written: number;
   fallbacks: number;
+  skipped: number;
 }
 
 /**
@@ -168,10 +175,14 @@ export async function writeSeoFor(
   identity: string,
   ids: number[],
 ): Promise<WriterReport> {
-  const rows = ids
+  const rows = [...new Set(ids)]
     .map((id) => getKeyword(id))
     .filter((row): row is KeywordRow => !!row && row.content_type === 'recipe' && row.spy_title.trim() === '');
-  if (rows.length === 0) return { written: 0, fallbacks: 0 };
+  // A restricted word can never pass the title rules, so the plain version
+  // would have to write it. Leave those for the operator.
+  const skipped = rows.filter((row) => restrictedWords(row.seed_keyword).length > 0).length;
+  const usable = rows.filter((row) => restrictedWords(row.seed_keyword).length === 0);
+  if (usable.length === 0) return { written: 0, fallbacks: 0, skipped };
 
   const others = all<{ spy_title: string }>(
     `SELECT k.spy_title FROM keywords k
@@ -184,21 +195,26 @@ export async function writeSeoFor(
   try {
     drafts = await draftSeo(
       deps,
-      rows.map((row) => ({ id: row.id, keyword: row.seed_keyword })),
+      usable.map((row) => ({ id: row.id, keyword: row.seed_keyword })),
       { identity, pillar, others },
     );
   } catch (err) {
     // draftSeo is built not to throw; this is the belt to its braces.
     log.warn(`SEO writer failed, using plain text: ${errorMessage(err)}`);
     drafts = new Map(
-      rows.map((row) => [row.id, { ...fallbackFor(row.seed_keyword), fallback: true }]),
+      usable.map((row) => [row.id, { ...fallbackFor(row.seed_keyword), fallback: true }]),
     );
   }
 
   let fallbacks = 0;
-  for (const row of rows) {
+  let written = 0;
+  for (const stale of usable) {
+    // The model call took a while; work from the row as it is now.
+    const row = getKeyword(stale.id);
+    if (!row || row.spy_title.trim() !== '') continue;
     const draft = drafts.get(row.id) ?? { ...fallbackFor(row.seed_keyword), fallback: true };
     if (draft.fallback) fallbacks += 1;
+    written += 1;
     const { id, seed_keyword: _seed, ...fields } = row;
     updateKeywordFields(id, {
       ...fields,
@@ -209,5 +225,5 @@ export async function writeSeoFor(
         .join(' | '),
     });
   }
-  return { written: rows.length, fallbacks };
+  return { written, fallbacks, skipped };
 }

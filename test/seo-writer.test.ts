@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { closeDatabase, openDatabase } from '../src/db/index.js';
 import { randomBytes } from 'node:crypto';
-import { getKeyword, insertKeyword, setLink, upsertSite } from '../src/db/repos.js';
+import { getKeyword, insertKeyword, setKeywordStatus, setLink, updateKeywordFields, upsertSite } from '../src/db/repos.js';
 import { setLogLevel } from '../src/lib/logger.js';
-import { checkDescription, checkTitle } from '../src/seo/rules.js';
+import { checkDescription, checkTitle, restrictedWords } from '../src/seo/rules.js';
 import { draftSeo, fallbackFor, writeSeoFor } from '../src/seo/writer.js';
 
 /**
@@ -49,6 +49,14 @@ describe('fallbackFor', () => {
     expect(f.title).toBe('Honey Garlic Chicken Thighs');
     expect(checkTitle(f.title, { keyword: 'honey garlic chicken thighs' })).toEqual([]);
     expect(checkDescription(f.description, { keyword: 'honey garlic chicken thighs' })).toEqual([]);
+  });
+});
+
+describe('fallbackFor restricted words', () => {
+  it('never emits a restricted word', () => {
+    const f = fallbackFor('pork chops with wine');
+    expect(restrictedWords(f.title + ' ' + f.description)).toEqual([]);
+    expect(f.title.length).toBeGreaterThan(0);
   });
 });
 
@@ -124,7 +132,7 @@ describe('writeSeoFor', () => {
     const b = recipe('lemon herb baked salmon');
     const report = await writeSeoFor({ ask: async () => reply(ONE, TWO) }, siteId, 'Dinners', 'Quick dinners', [a, b]);
 
-    expect(report).toEqual({ written: 2, fallbacks: 0 });
+    expect(report).toEqual({ written: 2, fallbacks: 0, skipped: 0 });
     expect(getKeyword(a)).toMatchObject({
       spy_title: ONE.title,
       spy_description: ONE.description,
@@ -135,7 +143,7 @@ describe('writeSeoFor', () => {
   it('marks fallback text so it can be found and redone', async () => {
     const a = recipe('honey garlic chicken thighs');
     const report = await writeSeoFor({ ask: async () => { throw new Error('offline'); } }, siteId, 'Dinners', 'Quick dinners', [a]);
-    expect(report).toEqual({ written: 1, fallbacks: 1 });
+    expect(report).toEqual({ written: 1, fallbacks: 1, skipped: 0 });
     expect(getKeyword(a)!.spy_title).toBe('Honey Garlic Chicken Thighs');
     expect(getKeyword(a)!.annotation).toContain('seo:fallback');
   });
@@ -150,7 +158,7 @@ describe('writeSeoFor', () => {
       siteId, 'Dinners', 'Quick dinners', [article, researched],
     );
     expect(asked).toBe(0);
-    expect(report).toEqual({ written: 0, fallbacks: 0 });
+    expect(report).toEqual({ written: 0, fallbacks: 0, skipped: 0 });
     expect(getKeyword(article)!.spy_title).toBe('');
     expect(getKeyword(researched)!.spy_title).toBe('Original source title');
   });
@@ -162,5 +170,59 @@ describe('writeSeoFor', () => {
     const answers = [reply(ONE), reply(better)];
     await writeSeoFor({ ask: async () => answers.shift()! }, siteId, 'Dinners', 'Quick dinners', [a]);
     expect(getKeyword(a)!.spy_title).toBe(better.title);
+  });
+
+  it('does not overwrite edits the operator made while the model was thinking', async () => {
+    const a = recipe('honey garlic chicken thighs');
+    const ask = async () => {
+      setKeywordStatus(a, 'no');
+      const row = getKeyword(a)!;
+      updateKeywordFields(a, { ...row, annotation: 'operator note' });
+      return reply(ONE);
+    };
+    const report = await writeSeoFor({ ask }, siteId, 'Dinners', 'Quick dinners', [a]);
+    expect(report).toEqual({ written: 1, fallbacks: 0, skipped: 0 });
+    expect(getKeyword(a)).toMatchObject({ status: 'no', spy_title: ONE.title });
+    expect(getKeyword(a)!.annotation).toContain('operator note');
+  });
+
+  it('leaves a title that appeared while the model was thinking', async () => {
+    const a = recipe('honey garlic chicken thighs');
+    const ask = async () => {
+      updateKeywordFields(a, { ...getKeyword(a)!, spy_title: 'Operator title' });
+      return reply(ONE);
+    };
+    const report = await writeSeoFor({ ask }, siteId, 'Dinners', 'Quick dinners', [a]);
+    expect(report).toEqual({ written: 0, fallbacks: 0, skipped: 0 });
+    expect(getKeyword(a)!.spy_title).toBe('Operator title');
+  });
+
+  it('skips keywords with restricted words and never sends them to the model', async () => {
+    const pork = recipe('slow cooker pork chops');
+    const a = recipe('honey garlic chicken thighs');
+    const sent: string[] = [];
+    const ask = async (_n: string, vars: Record<string, unknown>) => {
+      sent.push(String(vars.itemsJson));
+      return reply(ONE);
+    };
+    const report = await writeSeoFor({ ask }, siteId, 'Dinners', 'Quick dinners', [pork, a]);
+    expect(report).toEqual({ written: 1, fallbacks: 0, skipped: 1 });
+    expect(sent.join(' ')).not.toContain('pork');
+    expect(getKeyword(pork)).toMatchObject({ spy_title: '', annotation: 'guide:Dinners' });
+  });
+
+  it('ignores duplicate ids', async () => {
+    const a = recipe('honey garlic chicken thighs');
+    const report = await writeSeoFor({ ask: async () => reply(ONE) }, siteId, 'Dinners', 'Quick dinners', [a, a]);
+    expect(report).toEqual({ written: 1, fallbacks: 0, skipped: 0 });
+    expect(getKeyword(a)!.annotation).toBe('guide:Dinners | Sticky glaze, oven-baked.');
+  });
+
+  it('passes identity and pillar to the prompt as JSON strings', async () => {
+    const a = recipe('honey garlic chicken thighs');
+    let seen: Record<string, unknown> = {};
+    await writeSeoFor({ ask: async (_n, v) => { seen = v; return reply(ONE); } }, siteId, 'Din"ners', 'Quick "x"', [a]);
+    expect(seen.pillar).toBe(JSON.stringify('Din"ners'));
+    expect(seen.identity).toBe(JSON.stringify('Quick "x"'));
   });
 });
