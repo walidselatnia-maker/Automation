@@ -37,6 +37,8 @@ const PAGES = [
   '/',
   '/runs',
   '/sites',
+  '/new-website',
+  '/new-website/add',
   '/keywords',
   '/keywords/add',
   '/reels',

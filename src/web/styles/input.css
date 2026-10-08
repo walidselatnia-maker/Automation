@@ -143,6 +143,14 @@
     @apply dark:text-slate-400 dark:hover:bg-fill-dark dark:hover:text-white;
   }
 
+  /* The door to the new dashboard: last in the rail, and not a nav item,
+     because it leaves this dashboard rather than moving inside it. */
+  .rail-utils a.rail-new {
+    @apply mt-2 justify-between bg-brand px-4 py-2.5 font-semibold text-white;
+    @apply hover:bg-brand hover:text-white hover:opacity-90;
+    @apply dark:text-white dark:hover:bg-brand dark:hover:text-white;
+  }
+
   .rail-utils svg {
     @apply h-[18px] w-[18px] flex-none;
     stroke-width: 1.75;

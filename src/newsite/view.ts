@@ -1,0 +1,428 @@
+import { html, raw, type Html } from '../web/views/layout.js';
+import type { NewWebsiteRow } from './repo.js';
+import { PERSONAS } from './validate.js';
+
+const PERSONA_TEXT: Record<(typeof PERSONAS)[number], string> = {
+  'Expert / Professional': 'Deep knowledge and credentials. “I have 20+ years of experience…”',
+  'Passionate Enthusiast': 'Has tried everything. “Here is what actually works…”',
+  'Practical Helper': 'Straight to the point, step by step.',
+  Storyteller: 'Warm and personal. “Let me tell you what happened…”',
+};
+
+const gap = (minutes: number): string => {
+  if (!minutes) return 'None';
+  if (minutes % 1440 === 0) return `${minutes / 1440} ${minutes === 1440 ? 'day' : 'days'}`;
+  if (minutes % 60 === 0) return `${minutes / 60} ${minutes === 60 ? 'hour' : 'hours'}`;
+  return `${minutes} minutes`;
+};
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** SQLite's "2026-10-08 11:02:31" as "8 Oct 2026". */
+const added = (createdAt: string): string => {
+  const [y, m, d] = createdAt.slice(0, 10).split('-').map(Number);
+  return y && m && d ? `${d} ${MONTHS[m - 1]} ${y}` : createdAt;
+};
+
+const LIST_CSS = `
+.nl-empty { border: 1px dashed var(--line-strong); border-radius: var(--r-card); padding: 64px 32px; text-align: center; }
+.nl-empty h2 { font-size: 22px; margin-bottom: 8px; }
+.nl-empty p { color: var(--soft); margin: 0 auto 28px; max-width: 44ch; }
+.nl-list { display: grid; gap: 20px; }
+.nl-site { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); padding: 28px 32px; }
+.nl-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; }
+.nl-top h2 { font-size: 24px; line-height: 1.2; }
+.nl-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 6px; color: var(--soft); font-size: 14px; }
+.nl-meta > * + *::before { content: '\\00B7'; margin-right: 10px; color: var(--faint); }
+.nl-state { font-weight: 600; color: var(--faint); }
+.nl-state.active { color: var(--good); }
+.nl-top form { margin: 0; flex: none; }
+.nl-remove { height: 34px; padding: 0 12px; font-size: 13px; color: var(--soft); }
+.nl-remove:hover { color: var(--bad); background: var(--accent-tint); }
+.nl-facts { display: grid; grid-template-columns: 1fr 1fr; column-gap: 48px; margin: 24px 0 0; padding-top: 20px; border-top: 1px solid var(--line); }
+.nl-facts div { display: grid; grid-template-columns: 128px 1fr; gap: 16px; padding: 8px 0; align-items: baseline; }
+.nl-facts dt { color: var(--soft); font-size: 14px; }
+.nl-facts dd { margin: 0; font-weight: 500; overflow-wrap: anywhere; }
+@media (max-width: 680px) {
+  .nl-site { padding: 22px 20px; }
+  .nl-meta { flex-direction: column; align-items: flex-start; gap: 2px; }
+  .nl-meta > * + *::before { content: none; }
+  .nl-facts { grid-template-columns: 1fr; }
+  .nl-facts div { grid-template-columns: 120px 1fr; }
+}
+`;
+
+export function newWebsiteListPage(rows: NewWebsiteRow[]): Html {
+  return html`
+    <style>${raw(LIST_CSS)}</style>
+    <div class="ns-head">
+      <div>
+        <h1 class="ns-title">Websites</h1>
+        <p class="ns-lede">The websites this dashboard writes for. Each one keeps its own niche, voice and schedule.</p>
+      </div>
+      ${rows.length ? html`<a class="ns-btn primary" href="/new-website/add">Add website</a>` : raw('')}
+    </div>
+    ${rows.length
+      ? html`<div class="nl-list">
+          ${rows.map(
+            (r) => html`
+              <article class="nl-site">
+                <div class="nl-top">
+                  <div>
+                    <h2>${r.name}</h2>
+                    <div class="nl-meta">
+                      <span class="ns-mono">${r.domain}</span>
+                      <span class="nl-state ${r.status}">${r.status === 'active' ? 'Active' : 'Paused'}</span>
+                      <span>Added ${added(r.created_at)}</span>
+                    </div>
+                  </div>
+                  <form method="post" action="/new-website/${r.id}/delete" data-name="${r.name}"
+                        onsubmit="return confirm('Remove ' + this.dataset.name + ' from this dashboard? The website itself is not changed.')">
+                    <button class="ns-btn quiet nl-remove">Remove</button>
+                  </form>
+                </div>
+                <dl class="nl-facts">
+                  <div><dt>Niche</dt><dd>${r.niche}</dd></div>
+                  <div><dt>Posts per day</dt><dd class="ns-num">${r.daily_target || 'No target'}</dd></div>
+                  <div><dt>Voice</dt><dd>${r.persona}</dd></div>
+                  <div><dt>Gap between posts</dt><dd class="ns-num">${gap(r.interval_minutes)}</dd></div>
+                  <div><dt>Buffer</dt><dd>${r.buffer_token_encrypted ? 'Connected' : 'Not connected'}</dd></div>
+                  <div><dt>Approval</dt><dd>${r.auto_publish ? 'Publishes automatically' : 'Waits for my approval'}</dd></div>
+                </dl>
+              </article>
+            `,
+          )}
+        </div>`
+      : html`<div class="nl-empty">
+          <h2>No websites yet</h2>
+          <p>Add your first website to choose its niche, its author voice and how often it publishes.</p>
+          <a class="ns-btn primary" href="/new-website/add">Add website</a>
+        </div>`}
+  `;
+}
+
+const STEP_NAMES = ['Website', 'Niche', 'Persona', 'Publishing', 'Social and images', 'Review'];
+
+const WIZARD_CSS = `
+.wz { max-width: 680px; margin: 0 auto; background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r-card); overflow: hidden; }
+.wz-head { background: var(--accent); color: #fff; padding: 28px 32px 24px; }
+.wz-head h1 { font-size: 26px; font-weight: 700; }
+.wz-id { margin: 6px 0 0; font-size: 14px; opacity: .92; min-height: 22px; overflow-wrap: anywhere; }
+.wz-id span + span::before { content: '·'; margin: 0 8px; opacity: .7; }
+.wz-bar { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; margin-top: 20px; }
+.wz-bar i { height: 4px; border-radius: 2px; background: rgba(255,255,255,.3); }
+.wz-bar i.on { background: #fff; }
+.wz-stepname { margin-top: 10px; font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; opacity: .9; }
+.wz-body { padding: 32px; }
+.wz-step { display: none; }
+.wz-step.on { display: block; }
+.wz-step h2 { font-size: 22px; }
+.wz-step > p { color: var(--soft); margin: 6px 0 28px; }
+.wz-field { margin-bottom: 20px; }
+.wz-field:last-child { margin-bottom: 0; }
+.wz-field label { display: block; font-weight: 600; font-size: 14px; margin-bottom: 8px; }
+.wz-field label em { font-style: normal; font-weight: 400; color: var(--faint); margin-left: 6px; }
+.wz-field input, .wz-field select, .wz-field textarea { width: 100%; height: 44px; padding: 0 14px; border: 1px solid var(--line);
+  border-radius: var(--r-ctl); background: var(--surface); color: var(--ink); font: 15px/1.4 var(--body); }
+.wz-field input:hover, .wz-field select:hover, .wz-field textarea:hover { border-color: var(--line-strong); }
+.wz-field textarea { height: auto; min-height: 88px; padding: 12px 14px; resize: vertical; }
+.wz-field input:focus, .wz-field select:focus, .wz-field textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-tint); }
+.wz-field input.bad, .wz-field select.bad { border-color: var(--bad); }
+.wz-hint { color: var(--faint); font-size: 13px; margin-top: 6px; }
+.wz-err { color: var(--bad); font-size: 13px; font-weight: 500; margin-top: 6px; }
+.wz-err:empty { display: none; }
+.wz-two { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.wz-inline { display: grid; grid-template-columns: 1fr 130px; gap: 10px; }
+.wz-ok { display: none; margin-top: 4px; padding-left: 12px; border-left: 3px solid var(--good); color: var(--good); font-size: 14px; font-weight: 500; }
+.wz-personas { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 20px; }
+.wz-persona { text-align: left; padding: 14px 16px; border-radius: var(--r-ctl); border: 1px solid var(--line); background: var(--surface);
+  color: var(--ink); font: inherit; cursor: pointer; }
+.wz-persona:hover { border-color: var(--line-strong); background: var(--raised); }
+.wz-persona.sel { border-color: var(--accent); background: var(--accent-tint); }
+.wz-persona b { display: block; font-weight: 600; font-size: 15px; margin-bottom: 4px; }
+.wz-persona span { color: var(--soft); font-size: 13px; line-height: 1.45; }
+.wz-or { display: flex; align-items: center; gap: 12px; color: var(--faint); font-size: 13px; margin: 0 0 16px; }
+.wz-or::before, .wz-or::after { content: ''; flex: 1; height: 1px; background: var(--line); }
+.wz-sum section { padding: 18px 0; border-top: 1px solid var(--line); }
+.wz-sum section:first-child { padding-top: 0; border-top: 0; }
+.wz-sum h3 { display: flex; justify-content: space-between; align-items: baseline; font-size: 16px; margin-bottom: 10px; }
+.wz-sum h3 button { font: 600 13px var(--body); color: var(--accent); background: none; border: 0; cursor: pointer; padding: 4px 8px; margin-right: -8px; border-radius: var(--r-ctl); }
+.wz-sum h3 button:hover { background: var(--accent-tint); }
+.wz-sum dl { display: grid; grid-template-columns: 180px 1fr; gap: 8px 16px; margin: 0; }
+.wz-sum dt { color: var(--soft); }
+.wz-sum dd { margin: 0; font-weight: 500; overflow-wrap: anywhere; }
+.wz-foot { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 18px 32px;
+  border-top: 1px solid var(--line); }
+.wz-foot .ns-btn.primary { min-width: 140px; }
+.wz-saveerr { color: var(--bad); font-size: 14px; font-weight: 500; margin-top: 16px; }
+.wz-saveerr:empty { display: none; }
+@media (max-width: 640px) {
+  .wz-head, .wz-body { padding: 24px 20px; }
+  .wz-foot { padding: 16px 20px; }
+  .wz-two, .wz-personas { grid-template-columns: 1fr; }
+  .wz-sum dl { grid-template-columns: 1fr; gap: 2px; }
+  .wz-sum dd { margin-bottom: 8px; }
+}
+`;
+
+const field = (
+  name: string,
+  label: string,
+  input: Html,
+  extra: { optional?: string; hint?: string } = {},
+): Html => html`
+  <div class="wz-field">
+    <label for="wz-${name}">${label}${extra.optional ? html`<em>${extra.optional}</em>` : raw('')}</label>
+    ${input}
+    ${extra.hint ? html`<div class="wz-hint">${extra.hint}</div>` : raw('')}
+    <div class="wz-err" data-err="${name}"></div>
+  </div>
+`;
+
+export function newWebsiteWizardPage(): Html {
+  return html`
+    <style>${raw(WIZARD_CSS)}</style>
+    <div class="wz">
+      <div class="wz-head">
+        <h1>Add a website</h1>
+        <p class="wz-id" id="wz-id">Fill in the steps below. Nothing is saved until the last step.</p>
+        <div class="wz-bar" id="wz-bar">${STEP_NAMES.map(() => html`<i></i>`)}</div>
+        <div class="wz-stepname" id="wz-stepname"></div>
+      </div>
+
+      <form id="wz-form" autocomplete="off" novalidate>
+        <div class="wz-body">
+          <div class="wz-step">
+            <h2>The website</h2>
+            <p>Where articles are published. The address and key are checked with the website itself.</p>
+            <div class="wz-two">
+              ${field('name', 'Name', html`<input id="wz-name" name="name" maxlength="60" placeholder="Long Livo" />`)}
+              ${field('domain', 'Address', html`<input id="wz-domain" name="domain" placeholder="f.longlivo.com" spellcheck="false" />`)}
+            </div>
+            ${field('apiKey', 'API key', html`<input id="wz-apiKey" name="apiKey" type="password" placeholder="sk_…" spellcheck="false" />`, {
+              hint: 'On the website: Admin → Automation → create a key.',
+            })}
+            <div class="wz-ok" id="wz-ok"></div>
+          </div>
+
+          <div class="wz-step">
+            <h2>The niche</h2>
+            <p>What this website writes about. Every article is planned around it.</p>
+            ${field('niche', 'Niche', html`<input id="wz-niche" name="niche" maxlength="60" placeholder="Recipes" />`, {
+              hint: 'One or two words: Recipes, Gardening, Travel, Pets…',
+            })}
+            ${field('nicheContext', 'More detail', html`<textarea id="wz-nicheContext" name="nicheContext" maxlength="500" placeholder="Easy family dinners for busy parents. No fancy ingredients."></textarea>`, {
+              optional: 'optional',
+              hint: 'Two or three sentences that steer the writing.',
+            })}
+          </div>
+
+          <div class="wz-step">
+            <h2>The author's voice</h2>
+            <p>Every article on this website is written in this voice.</p>
+            <input type="hidden" name="persona" value="" />
+            <div class="wz-personas" role="radiogroup" aria-label="Persona">
+              ${PERSONAS.map(
+                (p) => html`<button type="button" class="wz-persona" role="radio" aria-checked="false" data-persona="${p}">
+                  <b>${p}</b><span>${PERSONA_TEXT[p]}</span></button>`,
+              )}
+            </div>
+            <div class="wz-err" data-err="persona"></div>
+            <div class="wz-or">or</div>
+            ${field('customPersona', 'Describe your own', html`<input id="wz-customPersona" name="customPersona" maxlength="200" placeholder="A retired chef who explains things simply" />`)}
+          </div>
+
+          <div class="wz-step">
+            <h2>Publishing</h2>
+            <p>How often this website publishes, and whether you approve each article first.</p>
+            <div class="wz-two">
+              ${field('status', 'Status', html`<select id="wz-status" name="status">
+                <option value="active">Active</option><option value="paused">Paused</option></select>`)}
+              ${field('autoPublish', 'Approval', html`<select id="wz-autoPublish" name="autoPublish">
+                <option value="1">Publish automatically</option><option value="0">Wait for my approval</option></select>`)}
+            </div>
+            <div class="wz-two">
+              ${field('dailyTarget', 'Posts per day', html`<input id="wz-dailyTarget" name="dailyTarget" inputmode="numeric" value="3" />`, {
+                hint: '0 means no daily target.',
+              })}
+              <div class="wz-field">
+                <label for="wz-gapAmount">Minimum gap between posts</label>
+                <div class="wz-inline">
+                  <input id="wz-gapAmount" name="gapAmount" inputmode="decimal" value="8" />
+                  <select name="gapUnit" aria-label="Unit">
+                    <option value="minutes">minutes</option><option value="hours" selected>hours</option><option value="days">days</option>
+                  </select>
+                </div>
+                <div class="wz-err" data-err="gapAmount"></div>
+                <div class="wz-err" data-err="gapUnit"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="wz-step">
+            <h2>Social and images</h2>
+            <p>All optional. You can leave these empty and fill them in later.</p>
+            ${field('bufferToken', 'Buffer token', html`<input id="wz-bufferToken" name="bufferToken" type="password" spellcheck="false" />`, {
+              optional: 'optional',
+              hint: 'Schedules the Pinterest and social posts.',
+            })}
+            ${field('pinUsername', 'Pinterest username', html`<input id="wz-pinUsername" name="pinUsername" spellcheck="false" />`, {
+              optional: 'optional',
+              hint: 'Only if the Buffer account has more than one Pinterest profile.',
+            })}
+            ${field('projectId', 'Google Flow project', html`<input id="wz-projectId" name="projectId" spellcheck="false" placeholder="The code after /project/ in the address bar" />`, {
+              optional: 'optional',
+              hint: 'Where this website’s images are made. Empty uses the shared project from Settings.',
+            })}
+          </div>
+
+          <div class="wz-step">
+            <h2>Review</h2>
+            <p>Check everything. Use Change to go back to a step.</p>
+            <div class="wz-sum" id="wz-sum"></div>
+            <div class="wz-saveerr" id="wz-saveerr"></div>
+          </div>
+        </div>
+
+        <div class="wz-foot">
+          <button type="button" class="ns-btn quiet" id="wz-back">Back</button>
+          <button type="submit" class="ns-btn primary" id="wz-next">Next</button>
+        </div>
+      </form>
+    </div>
+    ${raw(SCRIPT)}
+  `;
+}
+
+const SCRIPT = `<script>
+(function () {
+  var NAMES = ${JSON.stringify(STEP_NAMES)};
+  var form = document.getElementById('wz-form');
+  var steps = [].slice.call(form.querySelectorAll('.wz-step'));
+  var cur = 0, busy = false;
+  var $ = function (id) { return document.getElementById(id); };
+  var f = function (n) { return form.elements[n]; };
+  var val = function (n) { return (f(n).value || '').trim(); };
+  var host = function (v) { return v.toLowerCase().replace(/^https?:\\/\\//, '').replace(/[\\/?#].*$/, ''); };
+  var persona = function () { return val('customPersona') || val('persona'); };
+
+  function identity() {
+    var bits = [val('name'), val('domain') && host(val('domain')), cur > 1 && val('niche'), cur > 2 && persona()].filter(Boolean);
+    var box = $('wz-id');
+    if (!bits.length) return;
+    box.textContent = '';
+    bits.forEach(function (b) { var s = document.createElement('span'); s.textContent = b; box.appendChild(s); });
+  }
+
+  function draw() {
+    steps.forEach(function (s, i) { s.classList.toggle('on', i === cur); });
+    [].forEach.call($('wz-bar').children, function (d, i) { d.className = i <= cur ? 'on' : ''; });
+    $('wz-stepname').textContent = 'Step ' + (cur + 1) + ' of ' + NAMES.length + ' — ' + NAMES[cur];
+    $('wz-back').style.visibility = cur ? 'visible' : 'hidden';
+    $('wz-next').textContent = cur === NAMES.length - 1 ? 'Save website' : 'Next';
+    if (cur === NAMES.length - 1) summary();
+    identity();
+    var first = steps[cur].querySelector('input:not([type=hidden]), textarea, select, .wz-persona');
+    if (first && document.activeElement !== first) first.focus({ preventScroll: true });
+  }
+
+  function showErrors(errors) {
+    form.querySelectorAll('[data-err]').forEach(function (e) { e.textContent = ''; });
+    form.querySelectorAll('.bad').forEach(function (e) { e.classList.remove('bad'); });
+    Object.keys(errors || {}).forEach(function (k) {
+      var e = form.querySelector('[data-err="' + k + '"]');
+      if (e) e.textContent = errors[k];
+      if (f(k) && f(k).classList) f(k).classList.add('bad');
+    });
+  }
+
+  function post(url, extra) {
+    var p = new URLSearchParams(new FormData(form));
+    Object.keys(extra || {}).forEach(function (k) { p.set(k, extra[k]); });
+    return fetch(url, { method: 'POST', body: p }).then(function (r) { return r.json(); });
+  }
+
+  function summary() {
+    var groups = [
+      [0, 'Website', [['Name', val('name')], ['Address', host(val('domain'))], ['API key', 'Checked with the website']]],
+      [1, 'Niche', [['Niche', val('niche')], ['More detail', val('nicheContext') || '—']]],
+      [2, 'Voice', [['Persona', persona()]]],
+      [3, 'Publishing', [['Status', f('status').selectedOptions[0].text], ['Approval', f('autoPublish').selectedOptions[0].text],
+        ['Posts per day', val('dailyTarget')], ['Gap between posts', val('gapAmount') + ' ' + val('gapUnit')]]],
+      [4, 'Social and images', [['Buffer token', val('bufferToken') ? 'Added' : 'Not added'], ['Pinterest username', val('pinUsername') || '—'],
+        ['Google Flow project', val('projectId') || 'Shared project from Settings']]]
+    ];
+    var box = $('wz-sum');
+    box.textContent = '';
+    groups.forEach(function (g) {
+      var sec = document.createElement('section');
+      var h = document.createElement('h3'); h.textContent = g[1];
+      var b = document.createElement('button'); b.type = 'button'; b.textContent = 'Change';
+      b.onclick = function () { cur = g[0]; draw(); };
+      h.appendChild(b); sec.appendChild(h);
+      var dl = document.createElement('dl');
+      g[2].forEach(function (r) {
+        var dt = document.createElement('dt'); dt.textContent = r[0];
+        var dd = document.createElement('dd'); dd.textContent = r[1];
+        dl.appendChild(dt); dl.appendChild(dd);
+      });
+      sec.appendChild(dl); box.appendChild(sec);
+    });
+  }
+
+  function setBusy(on, label) {
+    busy = on;
+    $('wz-next').disabled = on;
+    $('wz-back').disabled = on;
+    $('wz-next').classList.toggle('busy', on);
+    if (on) $('wz-next').textContent = label; else draw();
+  }
+
+  $('wz-back').onclick = function () { if (!busy && cur) { cur--; showErrors({}); draw(); } };
+
+  form.onsubmit = function (e) {
+    e.preventDefault();
+    if (busy) return;
+    $('wz-saveerr').textContent = '';
+    if (cur === NAMES.length - 1) {
+      setBusy(true, 'Saving…');
+      post('/new-website/save').then(function (r) {
+        if (r.saved) { location.href = r.redirect + '?ok=' + encodeURIComponent('Website added.'); return; }
+        busy = false; cur = r.step || 0; showErrors(r.errors); setBusy(false);
+      }).catch(function () { $('wz-saveerr').textContent = 'Could not save. Check your connection and try again.'; setBusy(false); });
+      return;
+    }
+    setBusy(true, cur === 0 ? 'Checking website…' : 'Checking…');
+    post('/new-website/check', { step: cur }).then(function (r) {
+      showErrors(r.errors);
+      var ok = !Object.keys(r.errors || {}).length;
+      if (ok && cur === 0 && r.siteName) {
+        $('wz-ok').textContent = 'Connected to ' + r.siteName + '. It accepts: ' + (r.types || []).join(', ') + '.';
+        $('wz-ok').style.display = 'block';
+      }
+      if (ok) cur++;
+      busy = false; setBusy(false);
+    }).catch(function () { busy = false; setBusy(false); });
+  };
+
+  // Changing the address or key means the earlier check no longer counts.
+  ['domain', 'apiKey'].forEach(function (n) { f(n).addEventListener('input', function () { $('wz-ok').style.display = 'none'; }); });
+
+  form.querySelectorAll('.wz-persona').forEach(function (b) {
+    b.onclick = function () {
+      form.querySelectorAll('.wz-persona').forEach(function (x) { x.classList.remove('sel'); x.setAttribute('aria-checked', 'false'); });
+      b.classList.add('sel'); b.setAttribute('aria-checked', 'true');
+      f('persona').value = b.getAttribute('data-persona');
+      f('customPersona').value = '';
+    };
+  });
+  f('customPersona').addEventListener('input', function () {
+    if (!val('customPersona')) return;
+    form.querySelectorAll('.wz-persona').forEach(function (x) { x.classList.remove('sel'); x.setAttribute('aria-checked', 'false'); });
+    f('persona').value = '';
+  });
+
+  draw();
+})();
+</script>`;

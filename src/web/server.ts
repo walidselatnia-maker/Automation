@@ -211,6 +211,7 @@ import { idFromFlowUrl } from '../reels/ids.js';
 import { chat } from '../llm/client.js';
 import { askPrompt } from '../llm/ask.js';
 import { guideCardPage, guideListPage } from './views/guide.js';
+import { registerNewWebsiteRoutes } from '../newsite/routes.js';
 import { respond, type AssistantDeps } from '../guide/assistant.js';
 import { importShortlistReport } from '../guide/import.js';
 import {
@@ -884,6 +885,10 @@ export function buildServer(
       return redirect(reply, `/runs/${id}`, { kind: 'error', message: errorMessage(err) });
     }
   });
+
+  /* -- New website dashboard: its own pages and layout, see src/newsite -- */
+
+  registerNewWebsiteRoutes(app, { encryptionKey });
 
   /* -- Sites ------------------------------------------------------------- */
 

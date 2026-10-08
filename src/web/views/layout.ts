@@ -284,6 +284,7 @@ ${head(options.title)}
     <form method="post" action="/logout">
       <button type="submit">Sign out</button>
     </form>
+    <a class="rail-new" href="/new-website">New website <span aria-hidden="true">&rarr;</span></a>
   </div>
 </header>
 <main>

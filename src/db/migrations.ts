@@ -530,6 +530,33 @@ export const MIGRATIONS: Migration[] = [
       );
     },
   },
+
+  {
+    id: '017-new-websites',
+    description: 'Websites on the new platform, kept apart from the old sites table',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS new_websites (
+          id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+          name                   TEXT    NOT NULL,
+          domain                 TEXT    NOT NULL UNIQUE,
+          niche                  TEXT    NOT NULL,
+          niche_context          TEXT    NOT NULL DEFAULT '',
+          persona                TEXT    NOT NULL,
+          status                 TEXT    NOT NULL DEFAULT 'paused'
+                                 CHECK (status IN ('active', 'paused')),
+          auto_publish           INTEGER NOT NULL DEFAULT 1 CHECK (auto_publish IN (0, 1)),
+          daily_target           INTEGER NOT NULL DEFAULT 0,
+          interval_minutes       INTEGER NOT NULL DEFAULT 480,
+          pin_username           TEXT    NOT NULL DEFAULT '',
+          project_id             TEXT    NOT NULL DEFAULT '',
+          api_key_encrypted      TEXT    NOT NULL,
+          buffer_token_encrypted TEXT    NOT NULL DEFAULT '',
+          created_at             TEXT    NOT NULL DEFAULT (datetime('now'))
+        );
+      `);
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */
