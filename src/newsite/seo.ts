@@ -1,6 +1,7 @@
 import { all, get, run } from '../db/index.js';
 import { createLogger, errorMessage } from '../lib/logger.js';
 import { similarity, words } from '../seo/rules.js';
+import { makeSkeleton } from './skeleton.js';
 
 /**
  * AI#1: SEO metadata for every keyword in a saved keyword plan.
@@ -149,6 +150,10 @@ export interface SeoRow {
   confidence: string;
   reasoning: string;
   problems: string;
+  skeleton_status: '' | 'pending' | 'writing' | 'done' | 'failed';
+  article_type: string;
+  skeleton_json: string;
+  skeleton_problems: string;
 }
 
 /** One waiting row per keyword: the pillar first, then the sub-keywords in order. */
@@ -176,6 +181,15 @@ export function requeueSeo(id: number): void {
 /** A restart mid-write leaves rows marked writing: they go back in the queue. */
 export function resetInterruptedSeo(): void {
   run(`UPDATE keyword_seo SET status = 'pending' WHERE status = 'writing'`);
+  run(`UPDATE keyword_seo SET skeleton_status = 'pending' WHERE skeleton_status = 'writing'`);
+}
+
+/** Make one skeleton again, from the metadata it has. */
+export function requeueSkeleton(id: number): void {
+  run(
+    `UPDATE keyword_seo SET skeleton_status = 'pending', skeleton_problems = '' WHERE id = ? AND status = 'done' AND skeleton_status != 'writing'`,
+    id,
+  );
 }
 
 /* -- The writer ---------------------------------------------------------- */
@@ -242,7 +256,8 @@ export async function writeOne(row: SeoRow, deps: WriterDeps): Promise<void> {
   const a = last ?? { title: '', description: '', focusKeyword: '', altText: '', eeat: '', confidence: '', reasoning: '' };
   run(
     `UPDATE keyword_seo SET status = ?, title = ?, description = ?, focus_keyword = ?, alt_text = ?, eeat = ?,
-       confidence = ?, reasoning = ?, problems = ?, updated_at = datetime('now')
+       confidence = ?, reasoning = ?, problems = ?, updated_at = datetime('now'),
+       skeleton_status = ?, skeleton_json = '', skeleton_problems = ''
      WHERE id = ?`,
     problems.length ? 'failed' : 'done',
     a.title,
@@ -253,6 +268,8 @@ export async function writeOne(row: SeoRow, deps: WriterDeps): Promise<void> {
     a.confidence,
     a.reasoning,
     problems.join('\n'),
+    // New metadata means a new skeleton: AI#2 follows once AI#1 is done.
+    problems.length ? '' : 'pending',
     row.id,
   );
 }
@@ -271,13 +288,27 @@ export function kickSeoWriter(deps: WriterDeps): Promise<void> {
   running = Promise.resolve()
     .then(async () => {
       for (;;) {
+        // AI#1 first, so every keyword of a plan has its title before any
+        // skeleton is made; then AI#2 on the keywords whose metadata is done.
         const next = get<SeoRow>(`SELECT * FROM keyword_seo WHERE status = 'pending' ORDER BY plan_id, position LIMIT 1`);
-        if (!next) break;
+        if (next) {
+          try {
+            await writeOne(next, deps);
+          } catch (err) {
+            log.error(`AI#1 failed on "${next.keyword}": ${errorMessage(err)}`);
+            run(`UPDATE keyword_seo SET status = 'failed', problems = ? WHERE id = ?`, 'Something went wrong while writing. Try again.', next.id);
+          }
+          continue;
+        }
+        const outline = get<SeoRow>(
+          `SELECT * FROM keyword_seo WHERE status = 'done' AND skeleton_status = 'pending' ORDER BY plan_id, position LIMIT 1`,
+        );
+        if (!outline) break;
         try {
-          await writeOne(next, deps);
+          await makeSkeleton(outline, deps);
         } catch (err) {
-          log.error(`AI#1 failed on "${next.keyword}": ${errorMessage(err)}`);
-          run(`UPDATE keyword_seo SET status = 'failed', problems = ? WHERE id = ?`, 'Something went wrong while writing. Try again.', next.id);
+          log.error(`AI#2 failed on "${outline.keyword}": ${errorMessage(err)}`);
+          run(`UPDATE keyword_seo SET skeleton_status = 'failed', skeleton_problems = ? WHERE id = ?`, 'Something went wrong while making the skeleton. Try again.', outline.id);
         }
       }
     })

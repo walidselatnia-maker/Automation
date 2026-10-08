@@ -128,6 +128,19 @@ export const STEP_CONTEXTS: Record<string, Record<string, unknown>> = {
     takenTitlesJson: '[]',
     problemsJson: '[]',
   },
+  'article-skeleton': {
+    keyword: 'k',
+    role: 'r',
+    pillar: 'p',
+    articleType: 't',
+    title: 't',
+    description: 'd',
+    focusKeyword: 'f',
+    niche: 'n',
+    nicheContext: 'c',
+    persona: 'v',
+    problemsJson: '[]',
+  },
 };
 
 for (const part of ['part-1', 'part-2', 'part-3']) {

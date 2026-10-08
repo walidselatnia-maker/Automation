@@ -1,0 +1,17 @@
+Keyword: {{keyword}}
+This page is: {{role}}
+Pillar of this plan: {{pillar}}
+Article type: {{articleType}}
+
+SEO title (use as the H1, exactly): {{title}}
+Meta description: {{description}}
+Focus keyword: {{focusKeyword}}
+
+Niche: {{niche}}
+About the website: {{nicheContext}}
+Author persona: {{persona}}
+
+Problems with your last answer (fix all of them, or ignore if empty):
+{{problemsJson}}
+
+Answer with the JSON object only.

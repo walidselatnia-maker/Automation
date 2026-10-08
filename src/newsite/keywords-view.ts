@@ -1,6 +1,7 @@
 import { html, raw, type Html } from '../web/views/layout.js';
 import type { KeywordPlan, NewWebsiteRow } from './repo.js';
 import { DESCRIPTION, TITLE, type SeoRow } from './seo.js';
+import { parseSkeleton, totalWords, type Skeleton } from './skeleton.js';
 
 const INTENT_LABEL: Record<string, string> = {
   diet: 'Diet',
@@ -93,6 +94,16 @@ const CSS = `
 .kw-seo-facts dd.off { color: var(--bad); font-weight: 600; }
 .kw-seo-problems { margin-top: 12px; color: var(--bad); font-size: 14px; display: grid; gap: 2px; }
 .kw-seo-retry { margin-top: 10px; display: flex; justify-content: flex-end; }
+.kw-skel { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 12px; }
+.kw-skel summary { display: flex; justify-content: space-between; gap: 12px; font-size: 14px; font-weight: 600; color: var(--ink); }
+.kw-skel summary .ns-num { font-weight: 400; color: var(--soft); }
+.kw-skel-h1 { margin: 14px 0 8px; font: 600 15px var(--display); }
+.kw-skel-list { margin: 0; padding-left: 20px; display: grid; gap: 12px; }
+.kw-skel-h2 { display: flex; justify-content: space-between; gap: 16px; font-size: 14px; }
+.kw-skel-h2 .ns-num { color: var(--faint); font-size: 13px; white-space: nowrap; }
+.kw-skel-covers { color: var(--soft); font-size: 13px; margin-top: 2px; }
+.kw-skel ul { margin: 4px 0 0; padding-left: 18px; color: var(--soft); font-size: 13px; }
+.kw-skel-h3s { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 6px; }
 @media (max-width: 640px) {
   .kw-search { padding: 22px 20px; }
   .kw-row { grid-template-columns: 1fr; }
@@ -213,6 +224,54 @@ const STATUS: Record<SeoRow['status'], string> = {
 
 const fits = (length: number, [min, max]: readonly [number, number]): boolean => length >= min && length <= max;
 
+const SKELETON_STATUS: Record<string, string> = {
+  pending: 'Waiting',
+  writing: 'Making…',
+  done: 'Done',
+  failed: 'Failed',
+};
+
+/** The AI#2 outline, folded away until opened: headings, word targets and key points. */
+function skeletonBlock(row: SeoRow, websiteId: number): Html {
+  if (!row.skeleton_status) return raw('');
+  const k: Skeleton | null = row.skeleton_json ? parseSkeleton(row.skeleton_json) : null;
+  const retry = row.skeleton_status === 'done' || row.skeleton_status === 'failed'
+    ? html`<form method="post" action="/new-website/keywords/skeleton/${row.id}/retry" class="kw-seo-retry">
+        <input type="hidden" name="websiteId" value="${websiteId}" />
+        <button class="ns-btn quiet kw-remove">Make skeleton again</button>
+      </form>`
+    : raw('');
+  return html`
+    <details class="kw-skel" ${row.skeleton_status === 'failed' ? raw('open') : raw('')}>
+      <summary>
+        <span>Article skeleton${row.article_type ? ` · ${row.article_type}` : ''}${k ? html` · <span class="ns-num">${k.sections.length} sections, ${totalWords(k)} words</span>` : raw('')}</span>
+        <span class="kw-seo-status ${row.skeleton_status}">${SKELETON_STATUS[row.skeleton_status] ?? ''}</span>
+      </summary>
+      ${k
+        ? html`<div class="kw-skel-h1">H1 · ${k.h1}</div>
+          <ol class="kw-skel-list">
+            ${k.sections.map(
+              (sec) => html`<li>
+                <div class="kw-skel-h2"><b>${sec.h2}</b><span class="ns-num">${sec.words || ''}${sec.words ? ' words' : ''}</span></div>
+                ${sec.covers ? html`<div class="kw-skel-covers">${sec.covers}</div>` : raw('')}
+                <ul>${sec.keyPoints.map((pt) => html`<li>${pt}</li>`)}</ul>
+                ${sec.h3.length
+                  ? html`<ol class="kw-skel-h3s">${sec.h3.map(
+                      (h) => html`<li><div class="kw-skel-h2"><span>${h.h3}</span><span class="ns-num">${h.words || ''}${h.words ? ' words' : ''}</span></div>
+                        ${h.keyPoints.length ? html`<ul>${h.keyPoints.map((pt) => html`<li>${pt}</li>`)}</ul>` : raw('')}</li>`,
+                    )}</ol>`
+                  : raw('')}
+              </li>`,
+            )}
+          </ol>`
+        : raw('')}
+      ${row.skeleton_status === 'failed'
+        ? html`<div class="kw-seo-problems">${row.skeleton_problems.split('\n').map((p) => html`<div>${p}</div>`)}</div>`
+        : raw('')}
+      ${retry}
+    </details>`;
+}
+
 /** One keyword's AI#1 result: what the search result will look like, and its checks. */
 function seoItem(row: SeoRow, intent: string, websiteId: number): Html {
   return html`
@@ -245,6 +304,7 @@ function seoItem(row: SeoRow, intent: string, websiteId: number): Html {
             <button class="ns-btn quiet kw-remove">Write again</button>
           </form>`
         : raw('')}
+      ${skeletonBlock(row, websiteId)}
     </li>`;
 }
 
@@ -260,7 +320,9 @@ function seoBlock(plan: KeywordPlan, rows: SeoRow[], websiteId: number): Html {
       </form>`;
   }
   const intentOf = new Map(plan.items.map((i) => [i.keyword, i.intent]));
-  const busy = rows.some((r) => r.status === 'pending' || r.status === 'writing');
+  const busy = rows.some(
+    (r) => r.status === 'pending' || r.status === 'writing' || r.skeleton_status === 'pending' || r.skeleton_status === 'writing',
+  );
   return html`<ol class="kw-seo-list" ${busy ? raw(`data-watch="${plan.id}"`) : raw('')}>
       ${rows.map((r) => seoItem(r, intentOf.get(r.keyword) ?? '', websiteId))}
     </ol>`;
@@ -365,7 +427,7 @@ const script = (websiteId: number): string => `<script>
       watched.forEach(function (list) {
         var id = list.getAttribute('data-watch');
         fetch('/new-website/keywords/' + id + '/seo').then(function (r) { return r.json(); }).then(function (r) {
-          var key = r.rows.map(function (x) { return x.status; }).join(',');
+          var key = r.rows.map(function (x) { return x.status + '/' + x.skeleton_status; }).join(',');
           if (seen[id] !== undefined && seen[id] !== key) location.reload();
           seen[id] = key;
         }).catch(function () {});

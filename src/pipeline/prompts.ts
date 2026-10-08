@@ -142,6 +142,9 @@ export const PROMPT_MODELS: Record<string, { model: string; format: 'json' | nul
   // AI#1 of the new website plan: title, description, focus keyword, alt
   // text and E-E-A-T signal for one keyword. JSON because code checks it.
   'seo-metadata': { model: 'gpt-oss:120b', format: 'json' },
+  // AI#2: the article outline the writer fills in. The AI designs it; code
+  // checks the plan's general rules.
+  'article-skeleton': { model: 'gpt-oss:120b', format: 'json' },
 };
 
 /* -------------------------------------------------------------------------

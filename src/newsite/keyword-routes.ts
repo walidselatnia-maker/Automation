@@ -21,7 +21,7 @@ import {
   type PlanItem,
 } from './repo.js';
 import { keywordsPage } from './keywords-view.js';
-import { getSeoRow, kickSeoWriter, listPlanSeo, queuePlanSeo, requeueSeo, resetInterruptedSeo } from './seo.js';
+import { getSeoRow, kickSeoWriter, listPlanSeo, queuePlanSeo, requeueSeo, requeueSkeleton, resetInterruptedSeo } from './seo.js';
 
 export interface KeywordRouteDeps extends FindDeps {
   encryptionKey: Buffer;
@@ -202,6 +202,17 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
       startSeo();
     }
     return reply.redirect(`/new-website/keywords?website=${website}&ok=${encodeURIComponent('Writing the SEO metadata.')}`, 303);
+  });
+
+  /** Make one keyword's skeleton again, from its current metadata. */
+  app.post('/new-website/keywords/skeleton/:id/retry', async (request, reply) => {
+    const row = getSeoRow(Number((request.params as { id: string }).id) || 0);
+    const website = Number(body(request).websiteId) || 0;
+    if (row) {
+      requeueSkeleton(row.id);
+      startSeo();
+    }
+    return reply.redirect(`/new-website/keywords?website=${website}&ok=${encodeURIComponent('Making the skeleton again.')}`, 303);
   });
 
   /** Write one keyword's metadata again. */

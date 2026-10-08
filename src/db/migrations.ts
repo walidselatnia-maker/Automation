@@ -609,6 +609,18 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+
+  {
+    id: '020-keyword-skeleton',
+    description: 'AI#2 article skeleton per planned keyword, made after its AI#1 metadata',
+    up(db) {
+      // '' = not started: it becomes 'pending' when the keyword's metadata is done.
+      addColumn(db, 'keyword_seo', 'skeleton_status', "TEXT NOT NULL DEFAULT ''");
+      addColumn(db, 'keyword_seo', 'article_type', "TEXT NOT NULL DEFAULT ''");
+      addColumn(db, 'keyword_seo', 'skeleton_json', "TEXT NOT NULL DEFAULT ''");
+      addColumn(db, 'keyword_seo', 'skeleton_problems', "TEXT NOT NULL DEFAULT ''");
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */
