@@ -21,12 +21,15 @@ import {
   type PlanItem,
 } from './repo.js';
 import { keywordsPage } from './keywords-view.js';
+import { getSeoRow, kickSeoWriter, listPlanSeo, queuePlanSeo, requeueSeo, resetInterruptedSeo } from './seo.js';
 
 export interface KeywordRouteDeps extends FindDeps {
   encryptionKey: Buffer;
   listPosts: (domain: string, apiKey: string) => Promise<SitePost[]>;
   readFlash: (query: unknown) => NewFlash;
   isPlatformReady: () => boolean;
+  /** Start AI#1 after a plan is saved (and resume it at boot). Tests turn it off. */
+  autoSeo?: boolean;
 }
 
 const body = (request: FastifyRequest): Record<string, unknown> =>
@@ -66,6 +69,15 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
   const fail = (reply: FastifyReply, error: string) => reply.send({ ok: false, error });
 
   const NOT_READY = 'Set up the platform first: keywords need a working AI key.';
+  const writer = { ask: deps.ask, suggest: deps.suggest };
+  const startSeo = () => {
+    if (deps.autoSeo !== false) void kickSeoWriter(writer);
+  };
+  // Anything a restart interrupted goes back in the queue and carries on.
+  if (deps.autoSeo !== false) {
+    resetInterruptedSeo();
+    startSeo();
+  }
 
   app.get('/new-website/keywords', async (request, reply) => {
     if (!deps.isPlatformReady()) return reply.redirect(`/new-website/platform?error=${encodeURIComponent(NOT_READY)}`, 303);
@@ -76,7 +88,10 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
       newLayout({
         title: 'Keywords',
         active: '/new-website/keywords',
-        body: keywordsPage(websites, current, current ? listKeywordPlans(current.id) : []),
+        body: (() => {
+          const plans = current ? listKeywordPlans(current.id) : [];
+          return keywordsPage(websites, current, plans, new Map(plans.map((p) => [p.id, listPlanSeo(p.id)])));
+        })(),
         flash: deps.readFlash(request.query),
       }),
     );
@@ -163,11 +178,41 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
       accepted.push(item.keyword);
     }
 
-    saveKeywordPlan(site.id, pillar, items);
+    const planId = saveKeywordPlan(site.id, pillar, items);
+    queuePlanSeo(planId, pillar, items.map((i) => i.keyword));
+    startSeo();
     return reply.send({
       ok: true,
       redirect: `/new-website/keywords?website=${site.id}&ok=${encodeURIComponent('Keyword plan saved.')}`,
     });
+  });
+
+  /** AI#1 progress for one plan, so the page can update without a reload. */
+  app.get('/new-website/keywords/:id/seo', async (request, reply) =>
+    reply.send({ rows: listPlanSeo(Number((request.params as { id: string }).id) || 0) }),
+  );
+
+  /** A plan saved before AI#1 existed: queue its keywords now. */
+  app.post('/new-website/keywords/:id/seo/start', async (request, reply) => {
+    const planId = Number((request.params as { id: string }).id) || 0;
+    const website = Number(body(request).websiteId) || 0;
+    const plan = listKeywordPlans(website).find((p) => p.id === planId);
+    if (plan && listPlanSeo(planId).length === 0) {
+      queuePlanSeo(planId, plan.pillar, plan.items.map((i) => i.keyword));
+      startSeo();
+    }
+    return reply.redirect(`/new-website/keywords?website=${website}&ok=${encodeURIComponent('Writing the SEO metadata.')}`, 303);
+  });
+
+  /** Write one keyword's metadata again. */
+  app.post('/new-website/keywords/seo/:id/retry', async (request, reply) => {
+    const row = getSeoRow(Number((request.params as { id: string }).id) || 0);
+    const website = Number(body(request).websiteId) || 0;
+    if (row) {
+      requeueSeo(row.id);
+      startSeo();
+    }
+    return reply.redirect(`/new-website/keywords?website=${website}&ok=${encodeURIComponent('Writing it again.')}`, 303);
   });
 
   app.post('/new-website/keywords/:id/delete', async (request, reply) => {

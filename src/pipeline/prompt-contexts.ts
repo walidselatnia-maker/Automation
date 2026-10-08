@@ -117,6 +117,17 @@ export const STEP_CONTEXTS: Record<string, Record<string, unknown>> = {
     nicheContext: 'c',
     searchesJson: '[]',
   },
+  'seo-metadata': {
+    keyword: 'k',
+    role: 'r',
+    pillar: 'p',
+    niche: 'n',
+    nicheContext: 'c',
+    persona: 'v',
+    searchesJson: '[]',
+    takenTitlesJson: '[]',
+    problemsJson: '[]',
+  },
 };
 
 for (const part of ['part-1', 'part-2', 'part-3']) {

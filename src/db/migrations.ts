@@ -582,6 +582,33 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+
+  {
+    id: '019-keyword-seo',
+    description: 'AI#1 metadata (title, description, focus keyword, alt text) per planned keyword',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS keyword_seo (
+          id            INTEGER PRIMARY KEY AUTOINCREMENT,
+          plan_id       INTEGER NOT NULL REFERENCES keyword_plans (id) ON DELETE CASCADE,
+          keyword       TEXT    NOT NULL,
+          role          TEXT    NOT NULL CHECK (role IN ('pillar', 'sub')),
+          position      INTEGER NOT NULL,
+          status        TEXT    NOT NULL DEFAULT 'pending'
+                        CHECK (status IN ('pending', 'writing', 'done', 'failed')),
+          title         TEXT    NOT NULL DEFAULT '',
+          description   TEXT    NOT NULL DEFAULT '',
+          focus_keyword TEXT    NOT NULL DEFAULT '',
+          alt_text      TEXT    NOT NULL DEFAULT '',
+          eeat          TEXT    NOT NULL DEFAULT '',
+          confidence    TEXT    NOT NULL DEFAULT '',
+          reasoning     TEXT    NOT NULL DEFAULT '',
+          problems      TEXT    NOT NULL DEFAULT '',
+          updated_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+        );
+      `);
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */

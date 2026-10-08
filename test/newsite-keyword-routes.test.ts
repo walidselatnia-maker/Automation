@@ -51,6 +51,7 @@ describe('keyword routes', () => {
     registerNewWebsiteRoutes(app, {
       encryptionKey: KEY,
       isPlatformReady: () => true,
+      autoSeo: false,
       listPosts: async (domain, apiKey) => {
         asked.push({ domain, apiKey });
         if (postsFail) throw new Error('Could not reach f.longlivo.com to read its posts.');

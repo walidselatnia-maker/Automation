@@ -1,0 +1,18 @@
+Page keyword: {{keyword}}
+This page is: {{role}}
+Pillar of this plan: {{pillar}}
+
+Niche: {{niche}}
+About the website: {{nicheContext}}
+Author persona: {{persona}}
+
+Real Google autocomplete searches for this keyword:
+{{searchesJson}}
+
+Titles already used in this plan (do not repeat or closely copy):
+{{takenTitlesJson}}
+
+Problems with your last answer (fix all of them, or ignore if empty):
+{{problemsJson}}
+
+Answer with the JSON object only.

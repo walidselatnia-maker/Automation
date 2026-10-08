@@ -1,5 +1,6 @@
 import { html, raw, type Html } from '../web/views/layout.js';
 import type { KeywordPlan, NewWebsiteRow } from './repo.js';
+import { DESCRIPTION, TITLE, type SeoRow } from './seo.js';
 
 const INTENT_LABEL: Record<string, string> = {
   diet: 'Diet',
@@ -67,14 +68,35 @@ const CSS = `
 .kw-plan h3 { font-size: 18px; }
 .kw-plan-meta { color: var(--soft); font-size: 14px; margin-top: 2px; }
 .kw-plan form { margin: 0; }
-.kw-plan ol { margin: 12px 0 0; padding: 0; list-style: none; display: grid; gap: 6px; }
-.kw-plan li { display: grid; grid-template-columns: 110px 1fr; gap: 12px; font-size: 15px; }
-.kw-plan li span { color: var(--soft); font-size: 13px; padding-top: 1px; }
 .kw-none { color: var(--soft); }
+.kw-plain { margin: 12px 0 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.kw-plain li { display: grid; grid-template-columns: 110px 1fr; gap: 12px; font-size: 15px; }
+.kw-plain li span { color: var(--soft); font-size: 13px; padding-top: 1px; }
+.kw-seo-list { list-style: none; margin: 16px 0 0; padding: 0; display: grid; gap: 12px; }
+.kw-seo { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); padding: 18px 20px; }
+.kw-seo-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.kw-seo-head b { font-weight: 600; }
+.kw-seo-role { font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--accent); min-width: 84px; }
+.kw-seo-status { margin-left: auto; font-size: 13px; font-weight: 600; color: var(--faint); }
+.kw-seo-status.done { color: var(--good); }
+.kw-seo-status.failed { color: var(--bad); }
+.kw-seo-status.writing { color: var(--ink); }
+.kw-serp { margin: 14px 0 0; padding: 14px 16px; border-left: 3px solid var(--line-strong); background: var(--raised); }
+.kw-serp-title { color: #1a0dab; font-size: 18px; line-height: 1.3; }
+:root.dark .kw-serp-title { color: #8ab4f8; }
+.kw-serp-desc { color: var(--soft); font-size: 14px; margin-top: 4px; }
+.kw-seo-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 32px; margin: 14px 0 0; }
+.kw-seo-facts div { display: grid; grid-template-columns: 120px 1fr; gap: 12px; }
+.kw-seo-facts div.wide { grid-column: 1 / -1; }
+.kw-seo-facts dt { color: var(--soft); font-size: 13px; }
+.kw-seo-facts dd { margin: 0; font-size: 14px; }
+.kw-seo-facts dd.off { color: var(--bad); font-weight: 600; }
+.kw-seo-problems { margin-top: 12px; color: var(--bad); font-size: 14px; display: grid; gap: 2px; }
+.kw-seo-retry { margin-top: 10px; display: flex; justify-content: flex-end; }
 @media (max-width: 640px) {
   .kw-search { padding: 22px 20px; }
   .kw-row { grid-template-columns: 1fr; }
-  .kw-dropped li, .kw-plan li { grid-template-columns: 1fr; gap: 2px; }
+  .kw-dropped li, .kw-plain li, .kw-seo-facts, .kw-seo-facts div { grid-template-columns: 1fr; gap: 2px; }
 }
 `;
 
@@ -82,6 +104,7 @@ export function keywordsPage(
   websites: NewWebsiteRow[],
   current: NewWebsiteRow | undefined,
   plans: KeywordPlan[],
+  seo: Map<number, SeoRow[]> = new Map(),
 ): Html {
   const head = html`
     <div class="ns-head">
@@ -172,15 +195,75 @@ export function keywordsPage(
                     <button class="ns-btn quiet kw-remove">Delete</button>
                   </form>
                 </div>
-                <ol>
-                  ${plan.items.map((i) => html`<li><span>${INTENT_LABEL[i.intent] ?? i.intent}</span>${i.keyword}</li>`)}
-                </ol>
+                ${seoBlock(plan, seo.get(plan.id) ?? [], current.id)}
               </article>`,
           )
         : html`<p class="kw-none">No plans yet. Find sub-keywords above and save the ones you want.</p>`}
     </section>
     ${raw(script(current.id))}
   `;
+}
+
+const STATUS: Record<SeoRow['status'], string> = {
+  pending: 'Waiting',
+  writing: 'Writing…',
+  done: 'Done',
+  failed: 'Failed',
+};
+
+const fits = (length: number, [min, max]: readonly [number, number]): boolean => length >= min && length <= max;
+
+/** One keyword's AI#1 result: what the search result will look like, and its checks. */
+function seoItem(row: SeoRow, intent: string, websiteId: number): Html {
+  return html`
+    <li class="kw-seo ${row.status}">
+      <div class="kw-seo-head">
+        <span class="kw-seo-role">${row.role === 'pillar' ? 'Pillar' : (INTENT_LABEL[intent] ?? 'Sub-keyword')}</span>
+        <b>${row.keyword}</b>
+        <span class="kw-seo-status ${row.status}">${STATUS[row.status]}</span>
+      </div>
+      ${row.status === 'done' || (row.status === 'failed' && row.title)
+        ? html`<div class="kw-serp">
+            <div class="kw-serp-title">${row.title}</div>
+            <div class="kw-serp-desc">${row.description}</div>
+          </div>
+          <dl class="kw-seo-facts">
+            <div><dt>Title</dt><dd class="ns-num ${fits(row.title.length, TITLE) ? '' : 'off'}">${row.title.length} characters</dd></div>
+            <div><dt>Description</dt><dd class="ns-num ${fits(row.description.length, DESCRIPTION) ? '' : 'off'}">${row.description.length} characters</dd></div>
+            <div><dt>Focus keyword</dt><dd>${row.focus_keyword}</dd></div>
+            <div><dt>E-E-A-T</dt><dd>${row.eeat || '—'}${row.confidence ? ` · ${row.confidence} confidence` : ''}</dd></div>
+            <div class="wide"><dt>Image alt text</dt><dd>${row.alt_text}</dd></div>
+            ${row.reasoning ? html`<div class="wide"><dt>Why it works</dt><dd>${row.reasoning}</dd></div>` : raw('')}
+          </dl>`
+        : raw('')}
+      ${row.status === 'failed'
+        ? html`<div class="kw-seo-problems">${row.problems.split('\n').map((p) => html`<div>${p}</div>`)}</div>`
+        : raw('')}
+      ${row.status === 'done' || row.status === 'failed'
+        ? html`<form method="post" action="/new-website/keywords/seo/${row.id}/retry" class="kw-seo-retry">
+            <input type="hidden" name="websiteId" value="${websiteId}" />
+            <button class="ns-btn quiet kw-remove">Write again</button>
+          </form>`
+        : raw('')}
+    </li>`;
+}
+
+function seoBlock(plan: KeywordPlan, rows: SeoRow[], websiteId: number): Html {
+  if (rows.length === 0) {
+    // A plan saved before AI#1 existed.
+    return html`<ol class="kw-plain">
+        ${plan.items.map((i) => html`<li><span>${INTENT_LABEL[i.intent] ?? i.intent}</span>${i.keyword}</li>`)}
+      </ol>
+      <form method="post" action="/new-website/keywords/${plan.id}/seo/start" style="margin-top:12px">
+        <input type="hidden" name="websiteId" value="${websiteId}" />
+        <button class="ns-btn">Write SEO metadata</button>
+      </form>`;
+  }
+  const intentOf = new Map(plan.items.map((i) => [i.keyword, i.intent]));
+  const busy = rows.some((r) => r.status === 'pending' || r.status === 'writing');
+  return html`<ol class="kw-seo-list" ${busy ? raw(`data-watch="${plan.id}"`) : raw('')}>
+      ${rows.map((r) => seoItem(r, intentOf.get(r.keyword) ?? '', websiteId))}
+    </ol>`;
 }
 
 const script = (websiteId: number): string => `<script>
@@ -273,6 +356,22 @@ const script = (websiteId: number): string => `<script>
   }
   $('kw-own-add').onclick = addOwn;
   $('kw-own').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); addOwn(); } });
+
+  // AI#1 runs in the background: while a plan is being written, look again every few seconds.
+  var watched = [].slice.call(document.querySelectorAll('[data-watch]'));
+  if (watched.length) {
+    var seen = {};
+    setInterval(function () {
+      watched.forEach(function (list) {
+        var id = list.getAttribute('data-watch');
+        fetch('/new-website/keywords/' + id + '/seo').then(function (r) { return r.json(); }).then(function (r) {
+          var key = r.rows.map(function (x) { return x.status; }).join(',');
+          if (seen[id] !== undefined && seen[id] !== key) location.reload();
+          seen[id] = key;
+        }).catch(function () {});
+      });
+    }, 5000);
+  }
 
   $('kw-save').onclick = function () {
     $('kw-save-error').textContent = '';

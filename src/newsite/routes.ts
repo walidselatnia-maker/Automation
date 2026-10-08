@@ -32,6 +32,8 @@ export interface NewWebsiteDeps {
   ask?: (promptName: string, variables: Record<string, unknown>) => Promise<string>;
   /** Whether websites may be added yet. Defaults to the saved platform setup. */
   isPlatformReady?: () => boolean;
+  /** Start AI#1 in the background when plans are saved. Tests turn it off. */
+  autoSeo?: boolean;
   /** For the platform setup's live checks (AI provider, Telegram, image service). */
   fetchImpl?: typeof fetch;
 }
@@ -62,6 +64,7 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
     encryptionKey: deps.encryptionKey,
     readFlash,
     isPlatformReady: ready,
+    autoSeo: deps.autoSeo,
     listPosts: deps.listPosts ?? ((domain, apiKey) => realListPosts(domain, apiKey)),
     suggest: deps.suggest ?? ((pillar) => expandSeeds([pillar])),
     ask:
