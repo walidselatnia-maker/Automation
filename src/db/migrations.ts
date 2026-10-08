@@ -557,6 +557,31 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+
+  {
+    id: '018-keyword-plans',
+    description: 'A pillar keyword and its sub-keywords, per new website',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS keyword_plans (
+          id          INTEGER PRIMARY KEY AUTOINCREMENT,
+          website_id  INTEGER NOT NULL REFERENCES new_websites (id) ON DELETE CASCADE,
+          pillar      TEXT    NOT NULL,
+          created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+        );
+      `);
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS keyword_plan_items (
+          id        INTEGER PRIMARY KEY AUTOINCREMENT,
+          plan_id   INTEGER NOT NULL REFERENCES keyword_plans (id) ON DELETE CASCADE,
+          keyword   TEXT    NOT NULL,
+          intent    TEXT    NOT NULL,
+          reason    TEXT    NOT NULL DEFAULT '',
+          position  INTEGER NOT NULL
+        );
+      `);
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */

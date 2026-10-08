@@ -111,6 +111,12 @@ export const STEP_CONTEXTS: Record<string, Record<string, unknown>> = {
     takenJson: '[]',
     rules: 'r',
   },
+  'keyword-cluster': {
+    pillar: 'p',
+    niche: 'n',
+    nicheContext: 'c',
+    searchesJson: '[]',
+  },
 };
 
 for (const part of ['part-1', 'part-2', 'part-3']) {

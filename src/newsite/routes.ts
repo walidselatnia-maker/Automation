@@ -1,6 +1,21 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { checkSite as realCheckSite, type SiteCheck } from './client.js';
-import { createNewWebsite, deleteNewWebsite, getNewWebsiteByDomain, listNewWebsites } from './repo.js';
+import { askPrompt } from '../llm/ask.js';
+import { expandSeeds } from '../integrations/google-suggest.js';
+import type { Settings } from '../settings.js';
+import { checkSite as realCheckSite, listPosts as realListPosts, type SitePost, type SiteCheck } from './client.js';
+import { registerKeywordRoutes } from './keyword-routes.js';
+import { platformReady, registerPlatformRoutes } from './platform-routes.js';
+import {
+  createNewWebsite,
+  deleteNewWebsite,
+  getNewWebsite,
+  getNewWebsiteByDomain,
+  listNewWebsites,
+  updateNewWebsite,
+  websiteApiKey,
+  type NewWebsiteRow,
+} from './repo.js';
+import { decrypt } from '../lib/crypto.js';
 import { newLayout, type NewFlash } from './layout.js';
 import { newWebsiteListPage, newWebsiteWizardPage } from './view.js';
 import { STEP_FIELDS, stepOf, validate, type CleanWebsite, type Errors } from './validate.js';
@@ -8,8 +23,17 @@ import { STEP_FIELDS, stepOf, validate, type CleanWebsite, type Errors } from '.
 /** What the new dashboard needs from the server that hosts it. */
 export interface NewWebsiteDeps {
   encryptionKey: Buffer;
-  /** Replaceable so tests do not call a real website. */
+  /** For the AI connection (models, keys, endpoints from Settings). */
+  settings?: Settings;
+  /* Replaceable so tests call no real website, Google or AI. */
   checkSite?: (domain: string, apiKey: string) => Promise<SiteCheck>;
+  listPosts?: (domain: string, apiKey: string) => Promise<SitePost[]>;
+  suggest?: (pillar: string) => Promise<string[]>;
+  ask?: (promptName: string, variables: Record<string, unknown>) => Promise<string>;
+  /** Whether websites may be added yet. Defaults to the saved platform setup. */
+  isPlatformReady?: () => boolean;
+  /** For the platform setup's live checks (AI provider, Telegram, image service). */
+  fetchImpl?: typeof fetch;
 }
 
 const readFlash = (query: unknown): NewFlash => {
@@ -27,22 +51,68 @@ const body = (request: FastifyRequest): Record<string, unknown> =>
 
 export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteDeps): void {
   const checkSite = deps.checkSite ?? realCheckSite;
+  const ready = deps.isPlatformReady ?? (() => (deps.settings ? platformReady(deps.settings) : false));
+  const NOT_READY = 'Set up the platform first: it needs at least one working AI key.';
+
+  if (deps.settings) {
+    registerPlatformRoutes(app, { settings: deps.settings, encryptionKey: deps.encryptionKey, readFlash, fetchImpl: deps.fetchImpl });
+  }
+
+  registerKeywordRoutes(app, {
+    encryptionKey: deps.encryptionKey,
+    readFlash,
+    isPlatformReady: ready,
+    listPosts: deps.listPosts ?? ((domain, apiKey) => realListPosts(domain, apiKey)),
+    suggest: deps.suggest ?? ((pillar) => expandSeeds([pillar])),
+    ask:
+      deps.ask ??
+      (async (promptName, variables) => {
+        if (!deps.settings) throw new Error('No AI connection configured.');
+        return (await askPrompt(deps.settings, deps.encryptionKey, promptName, variables)).content;
+      }),
+  });
 
   /**
    * Everything wrong with the given fields, including the things only the
    * database and the site itself can tell: a domain already added, and an
    * address and key the site does not accept.
    */
+  /**
+   * When editing, an empty key or token field means "keep the saved one":
+   * the saved secret is put back before checking, so the website is still
+   * asked with the key that will actually be used.
+   */
+  const withSaved = (raw: Record<string, unknown>, site: NewWebsiteRow | undefined): Record<string, unknown> => {
+    if (!site) return raw;
+    const filled = { ...raw };
+    if (!String(raw.apiKey ?? '').trim()) filled.apiKey = websiteApiKey(site, deps.encryptionKey);
+    if (!String(raw.bufferToken ?? '').trim() && raw.removeBuffer !== '1') {
+      try {
+        filled.bufferToken = decrypt(site.buffer_token_encrypted, deps.encryptionKey);
+      } catch {
+        filled.bufferToken = '';
+      }
+    }
+    return filled;
+  };
+
+  const editing = (raw: Record<string, unknown>): NewWebsiteRow | undefined | null => {
+    if (raw.id === undefined || raw.id === '') return undefined;
+    return getNewWebsite(Number(raw.id) || 0) ?? null; // null: asked to edit one that is gone
+  };
+
   const problems = async (
     raw: Record<string, unknown>,
     fields: string[],
+    site?: NewWebsiteRow,
   ): Promise<{ errors: Errors; clean: Partial<CleanWebsite>; siteName?: string; types?: string[] }> => {
-    const { errors, clean } = validate(raw, fields as never);
+    const { errors, clean } = validate(withSaved(raw, site), fields as never);
 
     const siteFields = ['domain', 'apiKey'].every((f) => fields.includes(f));
     if (!siteFields || errors.domain || errors.apiKey) return { errors, clean };
 
-    if (getNewWebsiteByDomain(clean.domain!)) {
+    const owner = getNewWebsiteByDomain(clean.domain!);
+    if (owner && owner.id !== site?.id) {
       errors.domain = 'This website has already been added.';
       return { errors, clean };
     }
@@ -58,14 +128,21 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
     send(reply, newLayout({
       title: 'Websites',
       active: '/new-website',
-      body: newWebsiteListPage(listNewWebsites()),
+      body: newWebsiteListPage(listNewWebsites(), ready()),
       flash: readFlash(request.query),
     })),
   );
 
-  app.get('/new-website/add', async (_request, reply) =>
-    send(reply, newLayout({ title: 'Add website', active: '/new-website/add', body: newWebsiteWizardPage() })),
-  );
+  app.get('/new-website/add', async (_request, reply) => {
+    if (!ready()) return reply.redirect(`/new-website/platform?error=${encodeURIComponent(NOT_READY)}`, 303);
+    return send(reply, newLayout({ title: 'Add website', active: '/new-website/add', body: newWebsiteWizardPage() }));
+  });
+
+  app.get('/new-website/:id/edit', async (request, reply) => {
+    const site = getNewWebsite(Number((request.params as { id: string }).id) || 0);
+    if (!site) return reply.redirect(`/new-website?error=${encodeURIComponent('That website no longer exists.')}`, 303);
+    return send(reply, newLayout({ title: `Edit ${site.name}`, active: '/new-website', body: newWebsiteWizardPage(site) }));
+  });
 
   /** One wizard step: say what is wrong, or let the browser move on. */
   app.post('/new-website/check', async (request, reply) => {
@@ -74,14 +151,19 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
     const fields = STEP_FIELDS[step];
     if (!Number.isInteger(step) || !fields) return reply.code(400).send({ errors: {} });
 
-    const { errors, siteName, types } = await problems(raw, fields);
+    const site = editing(raw);
+    if (site === null) return reply.send({ errors: { name: 'That website no longer exists.' } });
+    const { errors, siteName, types } = await problems(raw, fields, site);
     return reply.send({ errors, siteName, types });
   });
 
   /** The last step: everything again, then save. */
   app.post('/new-website/save', async (request, reply) => {
     const raw = body(request);
-    const { errors, clean } = await problems(raw, STEP_FIELDS.flat());
+    const site = editing(raw);
+    if (site === null) return reply.send({ errors: { name: 'That website no longer exists.' }, step: 0 });
+    if (!site && !ready()) return reply.send({ errors: { name: NOT_READY }, step: 0 });
+    const { errors, clean } = await problems(raw, STEP_FIELDS.flat(), site);
 
     const failed = Object.keys(errors) as (keyof Errors)[];
     if (failed.length) {
@@ -90,7 +172,8 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
     }
 
     try {
-      createNewWebsite(clean as CleanWebsite, deps.encryptionKey);
+      if (site) updateNewWebsite(site.id, clean as CleanWebsite, deps.encryptionKey);
+      else createNewWebsite(clean as CleanWebsite, deps.encryptionKey);
     } catch {
       // The unique domain: two saves at once got past the check above.
       return reply.send({ errors: { domain: 'This website has already been added.' }, step: 0 });

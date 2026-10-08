@@ -888,7 +888,7 @@ export function buildServer(
 
   /* -- New website dashboard: its own pages and layout, see src/newsite -- */
 
-  registerNewWebsiteRoutes(app, { encryptionKey });
+  registerNewWebsiteRoutes(app, { encryptionKey, settings });
 
   /* -- Sites ------------------------------------------------------------- */
 

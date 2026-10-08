@@ -12,6 +12,8 @@ import {
 import { Settings } from '../src/settings.js';
 import { buildServer } from '../src/web/server.js';
 import { setLogLevel } from '../src/lib/logger.js';
+import { upsertEndpoint } from '../src/llm/pool.js';
+import { SETUP_DONE_KEY } from '../src/newsite/platform.js';
 
 /**
  * Every form on every page must post somewhere that exists.
@@ -39,6 +41,9 @@ const PAGES = [
   '/sites',
   '/new-website',
   '/new-website/add',
+  '/new-website/keywords',
+  '/new-website/platform',
+  '/new-website/platform/setup',
   '/keywords',
   '/keywords/add',
   '/reels',
@@ -85,7 +90,13 @@ describe('every control points at a route that exists', () => {
 
     extra = [`/sites/${siteId}`, `/keywords/${keywordId}`, `/runs/${runId}`];
 
-    app = buildServer(new Settings(KEY), KEY, {
+    // The new dashboard sends everything to Platform until it is set up;
+    // set it up so its pages render rather than redirect.
+    const settings = new Settings(KEY);
+    settings.set(SETUP_DONE_KEY, 'true');
+    upsertEndpoint({ name: 'Main key', baseUrl: '', apiKey: 'abc123secretkey', models: ['gpt-oss:120b'], enabled: true }, KEY);
+
+    app = buildServer(settings, KEY, {
       password: PASSWORD,
       secret: KEY,
       generated: false,

@@ -22,6 +22,11 @@ const ICON = (paths: string): string =>
 
 const NAV: NavItem[] = [
   {
+    href: '/new-website/platform',
+    label: 'Platform',
+    icon: ICON('<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/>'),
+  },
+  {
     href: '/new-website',
     label: 'Websites',
     icon: ICON('<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>'),
@@ -30,6 +35,11 @@ const NAV: NavItem[] = [
     href: '/new-website/add',
     label: 'Add website',
     icon: ICON('<path d="M12 5v14M5 12h14"/>'),
+  },
+  {
+    href: '/new-website/keywords',
+    label: 'Keywords',
+    icon: ICON('<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>'),
   },
 ];
 

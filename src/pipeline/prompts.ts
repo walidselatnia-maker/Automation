@@ -136,6 +136,9 @@ export const PROMPT_MODELS: Record<string, { model: string; format: 'json' | nul
   // Writes the title and description a guide keyword is missing. JSON because
   // one call answers for a whole batch of recipes.
   'seo-writer': { model: 'gpt-oss:120b', format: 'json' },
+  // The new website dashboard: picks a pillar's sub-keywords from real
+  // Google searches. JSON because the code checks every pick.
+  'keyword-cluster': { model: 'gpt-oss:120b', format: 'json' },
 };
 
 /* -------------------------------------------------------------------------

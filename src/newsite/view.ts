@@ -36,7 +36,9 @@ const LIST_CSS = `
 .nl-meta > * + *::before { content: '\\00B7'; margin-right: 10px; color: var(--faint); }
 .nl-state { font-weight: 600; color: var(--faint); }
 .nl-state.active { color: var(--good); }
-.nl-top form { margin: 0; flex: none; }
+.nl-actions { display: flex; gap: 4px; flex: none; }
+.nl-top form { margin: 0; }
+.nl-edit { height: 34px; padding: 0 12px; font-size: 13px; }
 .nl-remove { height: 34px; padding: 0 12px; font-size: 13px; color: var(--soft); }
 .nl-remove:hover { color: var(--bad); background: var(--accent-tint); }
 .nl-facts { display: grid; grid-template-columns: 1fr 1fr; column-gap: 48px; margin: 24px 0 0; padding-top: 20px; border-top: 1px solid var(--line); }
@@ -52,7 +54,7 @@ const LIST_CSS = `
 }
 `;
 
-export function newWebsiteListPage(rows: NewWebsiteRow[]): Html {
+export function newWebsiteListPage(rows: NewWebsiteRow[], platformReady = true): Html {
   return html`
     <style>${raw(LIST_CSS)}</style>
     <div class="ns-head">
@@ -60,7 +62,7 @@ export function newWebsiteListPage(rows: NewWebsiteRow[]): Html {
         <h1 class="ns-title">Websites</h1>
         <p class="ns-lede">The websites this dashboard writes for. Each one keeps its own niche, voice and schedule.</p>
       </div>
-      ${rows.length ? html`<a class="ns-btn primary" href="/new-website/add">Add website</a>` : raw('')}
+      ${rows.length && platformReady ? html`<a class="ns-btn primary" href="/new-website/add">Add website</a>` : raw('')}
     </div>
     ${rows.length
       ? html`<div class="nl-list">
@@ -76,10 +78,13 @@ export function newWebsiteListPage(rows: NewWebsiteRow[]): Html {
                       <span>Added ${added(r.created_at)}</span>
                     </div>
                   </div>
+                  <div class="nl-actions">
+                  <a class="ns-btn quiet nl-edit" href="/new-website/${r.id}/edit">Edit</a>
                   <form method="post" action="/new-website/${r.id}/delete" data-name="${r.name}"
                         onsubmit="return confirm('Remove ' + this.dataset.name + ' from this dashboard? The website itself is not changed.')">
                     <button class="ns-btn quiet nl-remove">Remove</button>
                   </form>
+                  </div>
                 </div>
                 <dl class="nl-facts">
                   <div><dt>Niche</dt><dd>${r.niche}</dd></div>
@@ -93,7 +98,13 @@ export function newWebsiteListPage(rows: NewWebsiteRow[]): Html {
             `,
           )}
         </div>`
-      : html`<div class="nl-empty">
+      : !platformReady
+        ? html`<div class="nl-empty">
+          <h2>Set up the platform first</h2>
+          <p>Websites need the AI connection, the timezone and automation settings in place. It takes a few minutes, once.</p>
+          <a class="ns-btn primary" href="/new-website/platform/setup">Set up the platform</a>
+        </div>`
+        : html`<div class="nl-empty">
           <h2>No websites yet</h2>
           <p>Add your first website to choose its niche, its author voice and how often it publishes.</p>
           <a class="ns-btn primary" href="/new-website/add">Add website</a>
@@ -103,7 +114,7 @@ export function newWebsiteListPage(rows: NewWebsiteRow[]): Html {
 
 const STEP_NAMES = ['Website', 'Niche', 'Persona', 'Publishing', 'Social and images', 'Review'];
 
-const WIZARD_CSS = `
+export const WIZARD_CSS = `
 .wz { max-width: 680px; margin: 0 auto; background: var(--surface); border: 1px solid var(--line);
   border-radius: var(--r-card); overflow: hidden; }
 .wz-head { background: var(--accent); color: #fff; padding: 28px 32px 24px; }
@@ -132,7 +143,9 @@ const WIZARD_CSS = `
 .wz-hint { color: var(--faint); font-size: 13px; margin-top: 6px; }
 .wz-err { color: var(--bad); font-size: 13px; font-weight: 500; margin-top: 6px; }
 .wz-err:empty { display: none; }
-.wz-two { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.wz-two { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; }
+.wz-two:last-child { margin-bottom: 0; }
+.wz-two > .wz-field { margin-bottom: 0; }
 .wz-inline { display: grid; grid-template-columns: 1fr 130px; gap: 10px; }
 .wz-ok { display: none; margin-top: 4px; padding-left: 12px; border-left: 3px solid var(--good); color: var(--good); font-size: 14px; font-weight: 500; }
 .wz-personas { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 20px; }
@@ -155,6 +168,8 @@ const WIZARD_CSS = `
 .wz-foot { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 18px 32px;
   border-top: 1px solid var(--line); }
 .wz-foot .ns-btn.primary { min-width: 140px; }
+.wz-check { display: flex; align-items: center; gap: 10px; margin: -6px 0 20px; font-size: 14px; color: var(--soft); cursor: pointer; }
+.wz-check input { width: 16px; height: 16px; accent-color: var(--accent); }
 .wz-saveerr { color: var(--bad); font-size: 14px; font-weight: 500; margin-top: 16px; }
 .wz-saveerr:empty { display: none; }
 @media (max-width: 640px) {
@@ -166,7 +181,7 @@ const WIZARD_CSS = `
 }
 `;
 
-const field = (
+export const field = (
   name: string,
   label: string,
   input: Html,
@@ -180,27 +195,49 @@ const field = (
   </div>
 `;
 
-export function newWebsiteWizardPage(): Html {
+/** Minutes as the wizard's amount and unit, in the largest unit that is exact. */
+const gapParts = (minutes: number): { amount: number; unit: 'minutes' | 'hours' | 'days' } =>
+  minutes && minutes % 1440 === 0
+    ? { amount: minutes / 1440, unit: 'days' }
+    : minutes % 60 === 0
+      ? { amount: minutes / 60, unit: 'hours' }
+      : { amount: minutes, unit: 'minutes' };
+
+const selected = (on: boolean): Html => raw(on ? 'selected' : '');
+
+/**
+ * The wizard. Without a website it adds one; with one it edits it, every
+ * field filled in. Saved secrets are never sent back to the page: an empty
+ * key or token field means "keep the saved one".
+ */
+export function newWebsiteWizardPage(existing?: NewWebsiteRow): Html {
+  const e = existing;
+  const preset = e && (PERSONAS as readonly string[]).includes(e.persona) ? e.persona : '';
+  const custom = e && !preset ? e.persona : '';
+  const gapNow = gapParts(e?.interval_minutes ?? 480);
   return html`
     <style>${raw(WIZARD_CSS)}</style>
     <div class="wz">
       <div class="wz-head">
-        <h1>Add a website</h1>
-        <p class="wz-id" id="wz-id">Fill in the steps below. Nothing is saved until the last step.</p>
+        <h1>${e ? `Edit ${e.name}` : 'Add a website'}</h1>
+        <p class="wz-id" id="wz-id">${e ? 'Change what you need. Nothing is saved until the last step.' : 'Fill in the steps below. Nothing is saved until the last step.'}</p>
         <div class="wz-bar" id="wz-bar">${STEP_NAMES.map(() => html`<i></i>`)}</div>
         <div class="wz-stepname" id="wz-stepname"></div>
       </div>
 
-      <form id="wz-form" autocomplete="off" novalidate>
+      <form id="wz-form" autocomplete="off" novalidate data-edit="${e ? '1' : ''}" data-has-buffer="${e?.buffer_token_encrypted ? '1' : ''}">
+        ${e ? html`<input type="hidden" name="id" value="${e.id}" />` : raw('')}
         <div class="wz-body">
           <div class="wz-step">
             <h2>The website</h2>
             <p>Where articles are published. The address and key are checked with the website itself.</p>
             <div class="wz-two">
-              ${field('name', 'Name', html`<input id="wz-name" name="name" maxlength="60" placeholder="Long Livo" />`)}
-              ${field('domain', 'Address', html`<input id="wz-domain" name="domain" placeholder="f.longlivo.com" spellcheck="false" />`)}
+              ${field('name', 'Name', html`<input id="wz-name" name="name" maxlength="60" placeholder="Long Livo" value="${e?.name ?? ''}" />`)}
+              ${field('domain', 'Address', html`<input id="wz-domain" name="domain" placeholder="f.longlivo.com" spellcheck="false" value="${e?.domain ?? ''}" />`)}
             </div>
-            ${field('apiKey', 'API key', html`<input id="wz-apiKey" name="apiKey" type="password" placeholder="sk_…" spellcheck="false" />`, {
+            ${field('apiKey', 'API key', html`<input id="wz-apiKey" name="apiKey" type="password" spellcheck="false"
+                placeholder="${e ? 'Leave empty to keep the saved key' : 'sk_…'}" />`, {
+              optional: e ? 'only to change it' : undefined,
               hint: 'On the website: Admin → Automation → create a key.',
             })}
             <div class="wz-ok" id="wz-ok"></div>
@@ -209,10 +246,10 @@ export function newWebsiteWizardPage(): Html {
           <div class="wz-step">
             <h2>The niche</h2>
             <p>What this website writes about. Every article is planned around it.</p>
-            ${field('niche', 'Niche', html`<input id="wz-niche" name="niche" maxlength="60" placeholder="Recipes" />`, {
+            ${field('niche', 'Niche', html`<input id="wz-niche" name="niche" maxlength="60" placeholder="Recipes" value="${e?.niche ?? ''}" />`, {
               hint: 'One or two words: Recipes, Gardening, Travel, Pets…',
             })}
-            ${field('nicheContext', 'More detail', html`<textarea id="wz-nicheContext" name="nicheContext" maxlength="500" placeholder="Easy family dinners for busy parents. No fancy ingredients."></textarea>`, {
+            ${field('nicheContext', 'More detail', html`<textarea id="wz-nicheContext" name="nicheContext" maxlength="500" placeholder="Easy family dinners for busy parents. No fancy ingredients.">${e?.niche_context ?? ''}</textarea>`, {
               optional: 'optional',
               hint: 'Two or three sentences that steer the writing.',
             })}
@@ -221,16 +258,16 @@ export function newWebsiteWizardPage(): Html {
           <div class="wz-step">
             <h2>The author's voice</h2>
             <p>Every article on this website is written in this voice.</p>
-            <input type="hidden" name="persona" value="" />
+            <input type="hidden" name="persona" value="${preset}" />
             <div class="wz-personas" role="radiogroup" aria-label="Persona">
               ${PERSONAS.map(
-                (p) => html`<button type="button" class="wz-persona" role="radio" aria-checked="false" data-persona="${p}">
+                (p) => html`<button type="button" class="wz-persona ${p === preset ? 'sel' : ''}" role="radio" aria-checked="${p === preset ? 'true' : 'false'}" data-persona="${p}">
                   <b>${p}</b><span>${PERSONA_TEXT[p]}</span></button>`,
               )}
             </div>
             <div class="wz-err" data-err="persona"></div>
             <div class="wz-or">or</div>
-            ${field('customPersona', 'Describe your own', html`<input id="wz-customPersona" name="customPersona" maxlength="200" placeholder="A retired chef who explains things simply" />`)}
+            ${field('customPersona', 'Describe your own', html`<input id="wz-customPersona" name="customPersona" maxlength="200" placeholder="A retired chef who explains things simply" value="${custom}" />`)}
           </div>
 
           <div class="wz-step">
@@ -238,20 +275,20 @@ export function newWebsiteWizardPage(): Html {
             <p>How often this website publishes, and whether you approve each article first.</p>
             <div class="wz-two">
               ${field('status', 'Status', html`<select id="wz-status" name="status">
-                <option value="active">Active</option><option value="paused">Paused</option></select>`)}
+                <option value="active">Active</option><option value="paused" ${selected(e?.status === 'paused')}>Paused</option></select>`)}
               ${field('autoPublish', 'Approval', html`<select id="wz-autoPublish" name="autoPublish">
-                <option value="1">Publish automatically</option><option value="0">Wait for my approval</option></select>`)}
+                <option value="1">Publish automatically</option><option value="0" ${selected(e?.auto_publish === 0)}>Wait for my approval</option></select>`)}
             </div>
             <div class="wz-two">
-              ${field('dailyTarget', 'Posts per day', html`<input id="wz-dailyTarget" name="dailyTarget" inputmode="numeric" value="3" />`, {
+              ${field('dailyTarget', 'Posts per day', html`<input id="wz-dailyTarget" name="dailyTarget" inputmode="numeric" value="${e?.daily_target ?? 3}" />`, {
                 hint: '0 means no daily target.',
               })}
               <div class="wz-field">
                 <label for="wz-gapAmount">Minimum gap between posts</label>
                 <div class="wz-inline">
-                  <input id="wz-gapAmount" name="gapAmount" inputmode="decimal" value="8" />
+                  <input id="wz-gapAmount" name="gapAmount" inputmode="decimal" value="${gapNow.amount}" />
                   <select name="gapUnit" aria-label="Unit">
-                    <option value="minutes">minutes</option><option value="hours" selected>hours</option><option value="days">days</option>
+                    <option value="minutes" ${selected(gapNow.unit === 'minutes')}>minutes</option><option value="hours" ${selected(gapNow.unit === 'hours')}>hours</option><option value="days" ${selected(gapNow.unit === 'days')}>days</option>
                   </select>
                 </div>
                 <div class="wz-err" data-err="gapAmount"></div>
@@ -263,15 +300,19 @@ export function newWebsiteWizardPage(): Html {
           <div class="wz-step">
             <h2>Social and images</h2>
             <p>All optional. You can leave these empty and fill them in later.</p>
-            ${field('bufferToken', 'Buffer token', html`<input id="wz-bufferToken" name="bufferToken" type="password" spellcheck="false" />`, {
+            ${field('bufferToken', 'Buffer token', html`<input id="wz-bufferToken" name="bufferToken" type="password" spellcheck="false"
+                placeholder="${e?.buffer_token_encrypted ? 'Leave empty to keep the saved token' : ''}" />`, {
               optional: 'optional',
               hint: 'Schedules the Pinterest and social posts.',
             })}
-            ${field('pinUsername', 'Pinterest username', html`<input id="wz-pinUsername" name="pinUsername" spellcheck="false" />`, {
+            ${e?.buffer_token_encrypted
+              ? html`<label class="wz-check"><input type="checkbox" name="removeBuffer" value="1" /> Remove the saved Buffer token</label>`
+              : raw('')}
+            ${field('pinUsername', 'Pinterest username', html`<input id="wz-pinUsername" name="pinUsername" spellcheck="false" value="${e?.pin_username ?? ''}" />`, {
               optional: 'optional',
               hint: 'Only if the Buffer account has more than one Pinterest profile.',
             })}
-            ${field('projectId', 'Google Flow project', html`<input id="wz-projectId" name="projectId" spellcheck="false" placeholder="The code after /project/ in the address bar" />`, {
+            ${field('projectId', 'Google Flow project', html`<input id="wz-projectId" name="projectId" spellcheck="false" placeholder="The code after /project/ in the address bar" value="${e?.project_id ?? ''}" />`, {
               optional: 'optional',
               hint: 'Where this website’s images are made. Empty uses the shared project from Settings.',
             })}
@@ -306,6 +347,13 @@ const SCRIPT = `<script>
   var val = function (n) { return (f(n).value || '').trim(); };
   var host = function (v) { return v.toLowerCase().replace(/^https?:\\/\\//, '').replace(/[\\/?#].*$/, ''); };
   var persona = function () { return val('customPersona') || val('persona'); };
+  var EDIT = form.getAttribute('data-edit') === '1';
+  var HAS_BUFFER = form.getAttribute('data-has-buffer') === '1';
+  var bufferText = function () {
+    if (val('bufferToken')) return HAS_BUFFER ? 'New token' : 'Added';
+    if (HAS_BUFFER) return f('removeBuffer') && f('removeBuffer').checked ? 'Removed' : 'Saved token kept';
+    return 'Not added';
+  };
 
   function identity() {
     var bits = [val('name'), val('domain') && host(val('domain')), cur > 1 && val('niche'), cur > 2 && persona()].filter(Boolean);
@@ -320,7 +368,7 @@ const SCRIPT = `<script>
     [].forEach.call($('wz-bar').children, function (d, i) { d.className = i <= cur ? 'on' : ''; });
     $('wz-stepname').textContent = 'Step ' + (cur + 1) + ' of ' + NAMES.length + ' — ' + NAMES[cur];
     $('wz-back').style.visibility = cur ? 'visible' : 'hidden';
-    $('wz-next').textContent = cur === NAMES.length - 1 ? 'Save website' : 'Next';
+    $('wz-next').textContent = cur === NAMES.length - 1 ? (EDIT ? 'Save changes' : 'Save website') : 'Next';
     if (cur === NAMES.length - 1) summary();
     identity();
     var first = steps[cur].querySelector('input:not([type=hidden]), textarea, select, .wz-persona');
@@ -345,12 +393,13 @@ const SCRIPT = `<script>
 
   function summary() {
     var groups = [
-      [0, 'Website', [['Name', val('name')], ['Address', host(val('domain'))], ['API key', 'Checked with the website']]],
+      [0, 'Website', [['Name', val('name')], ['Address', host(val('domain'))],
+        ['API key', val('apiKey') ? 'New key, checked with the website' : (EDIT ? 'Saved key kept, checked with the website' : 'Checked with the website')]]],
       [1, 'Niche', [['Niche', val('niche')], ['More detail', val('nicheContext') || '—']]],
       [2, 'Voice', [['Persona', persona()]]],
       [3, 'Publishing', [['Status', f('status').selectedOptions[0].text], ['Approval', f('autoPublish').selectedOptions[0].text],
         ['Posts per day', val('dailyTarget')], ['Gap between posts', val('gapAmount') + ' ' + val('gapUnit')]]],
-      [4, 'Social and images', [['Buffer token', val('bufferToken') ? 'Added' : 'Not added'], ['Pinterest username', val('pinUsername') || '—'],
+      [4, 'Social and images', [['Buffer token', bufferText()], ['Pinterest username', val('pinUsername') || '—'],
         ['Google Flow project', val('projectId') || 'Shared project from Settings']]]
     ];
     var box = $('wz-sum');
@@ -388,7 +437,7 @@ const SCRIPT = `<script>
     if (cur === NAMES.length - 1) {
       setBusy(true, 'Saving…');
       post('/new-website/save').then(function (r) {
-        if (r.saved) { location.href = r.redirect + '?ok=' + encodeURIComponent('Website added.'); return; }
+        if (r.saved) { location.href = r.redirect + '?ok=' + encodeURIComponent(EDIT ? 'Website updated.' : 'Website added.'); return; }
         busy = false; cur = r.step || 0; showErrors(r.errors); setBusy(false);
       }).catch(function () { $('wz-saveerr').textContent = 'Could not save. Check your connection and try again.'; setBusy(false); });
       return;

@@ -51,6 +51,7 @@ describe('new website routes', () => {
     await app.register(formbody);
     registerNewWebsiteRoutes(app, {
       encryptionKey: KEY,
+      isPlatformReady: () => true,
       checkSite: async (domain, apiKey) => {
         asked.push({ domain, apiKey });
         return siteAnswer;
@@ -150,6 +151,69 @@ describe('new website routes', () => {
     const again = (await post('/new-website/save', GOOD)).json();
     expect(again.errors.domain).toMatch(/already been added/);
     expect(all('SELECT * FROM new_websites')).toHaveLength(1);
+  });
+
+  describe('editing', () => {
+    const saved = async () => {
+      await post('/new-website/save', { ...GOOD, bufferToken: 'buffer-token-123' });
+      return all<NewWebsiteRow>('SELECT * FROM new_websites')[0]!;
+    };
+
+    it('opens the wizard filled in, without sending the secrets back', async () => {
+      const row = await saved();
+      const page = await app.inject({ method: 'GET', url: `/new-website/${row.id}/edit` });
+      expect(page.statusCode).toBe(200);
+      expect(page.body).toContain('Edit Long Livo');
+      expect(page.body).toContain('value="f.longlivo.com"');
+      expect(page.body).toContain('Leave empty to keep the saved key');
+      expect(page.body).not.toContain(API_KEY);
+      expect(page.body).not.toContain('buffer-token-123');
+    });
+
+    it('keeps the saved key and token when left empty, and checks the site with the saved key', async () => {
+      const row = await saved();
+      asked = [];
+      const r = (await post('/new-website/save', {
+        ...GOOD, id: String(row.id), apiKey: '', bufferToken: '', niche: 'Baking', dailyTarget: '5',
+      })).json();
+      expect(r.saved).toBe(true);
+      expect(asked).toEqual([{ domain: 'f.longlivo.com', apiKey: API_KEY }]);
+
+      const [after] = all<NewWebsiteRow>('SELECT * FROM new_websites');
+      expect(after).toMatchObject({ id: row.id, niche: 'Baking', daily_target: 5 });
+      expect(decrypt(after!.api_key_encrypted, KEY)).toBe(API_KEY);
+      expect(decrypt(after!.buffer_token_encrypted, KEY)).toBe('buffer-token-123');
+    });
+
+    it('replaces the key when a new one is typed, and can remove the Buffer token', async () => {
+      const row = await saved();
+      const fresh = 'sk_new_ABCDEFGHIJKLMNOPQRSTUVWX';
+      await post('/new-website/save', { ...GOOD, id: String(row.id), apiKey: fresh, bufferToken: '', removeBuffer: '1' });
+      const [after] = all<NewWebsiteRow>('SELECT * FROM new_websites');
+      expect(decrypt(after!.api_key_encrypted, KEY)).toBe(fresh);
+      expect(after!.buffer_token_encrypted).toBe('');
+    });
+
+    it('does not call its own address a duplicate, but refuses another website’s', async () => {
+      const row = await saved();
+      await post('/new-website/save', { ...GOOD, domain: 'other.example.com' });
+      const r = (await post('/new-website/save', { ...GOOD, id: String(row.id), apiKey: '', domain: 'other.example.com' })).json();
+      expect(r.errors.domain).toMatch(/already been added/);
+      const same = (await post('/new-website/save', { ...GOOD, id: String(row.id), apiKey: '' })).json();
+      expect(same.saved).toBe(true);
+      expect(all('SELECT * FROM new_websites')).toHaveLength(2);
+    });
+
+    it('still validates everything', async () => {
+      const row = await saved();
+      const r = (await post('/new-website/save', { ...GOOD, id: String(row.id), apiKey: '', name: '' })).json();
+      expect(r.errors.name).toBeTruthy();
+    });
+
+    it('says so when the website was removed meanwhile', async () => {
+      const r = (await post('/new-website/check', { ...GOOD, id: '999', step: '0' })).json();
+      expect(r.errors.name).toMatch(/no longer exists/);
+    });
   });
 
   it('removes a website', async () => {

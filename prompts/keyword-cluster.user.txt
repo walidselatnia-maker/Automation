@@ -1,0 +1,9 @@
+Website niche: {{niche}}
+About the website: {{nicheContext}}
+
+Pillar keyword: {{pillar}}
+
+Real Google searches (pick only from these, copied exactly):
+{{searchesJson}}
+
+Answer with the JSON object only.
