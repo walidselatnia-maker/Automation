@@ -28,7 +28,29 @@ const GOOD: Skeleton = {
   ],
 };
 
-const ctx = { title: TITLE, focusKeyword: FOCUS };
+const ctx = { title: TITLE, focusKeyword: FOCUS, role: 'sub' as const };
+
+/** A pillar outline: longer and deeper, and it touches each sub-topic. */
+const PILLAR: Skeleton = {
+  h1: TITLE,
+  sections: [
+    { h2: 'Why Pumpkin Chocolate Chip Cookies Work So Well', covers: 'c', keyPoints: ['moisture', 'spice'], words: 300, h3: [] },
+    { h2: 'The Ingredients and What Each One Does', covers: 'c', keyPoints: ['puree', 'flour'], words: 350, h3: [] },
+    { h2: 'Mixing and Baking, Step by Step', covers: 'c', keyPoints: ['order', 'time'], words: 450, h3: [] },
+    { h2: 'Texture: Soft, Chewy or Cakey', covers: 'c', keyPoints: ['butter', 'chill'], words: 300, h3: [] },
+    { h2: 'Diet Versions', covers: 'c', keyPoints: ['A vegan batch with flax eggs', 'gluten-free flour'], words: 300, h3: [] },
+    { h2: 'Other Shapes', covers: 'c', keyPoints: ['Cookie bars in one pan', 'mini cookies'], words: 250, h3: [] },
+    { h2: 'Storing and Freezing', covers: 'c', keyPoints: ['airtight', 'freeze dough'], words: 200, h3: [] },
+    { h2: 'Questions Bakers Ask', covers: 'c', keyPoints: ['cakey', 'swap'], words: 250, h3: [] },
+  ],
+};
+const pillarCtx = {
+  title: TITLE,
+  focusKeyword: FOCUS,
+  role: 'pillar' as const,
+  pillar: FOCUS,
+  subKeywords: ['vegan pumpkin chocolate chip cookies', 'pumpkin chocolate chip cookie bars'],
+};
 
 describe('AI#2 checks', () => {
   it('accepts an outline the AI designed, with no fixed section names', () => {
@@ -60,6 +82,19 @@ describe('AI#2 checks', () => {
     expect(checkSkeleton({ ...GOOD, sections: dup }, ctx).join(' ')).toMatch(/used twice/);
     const huge = GOOD.sections.map((s) => ({ ...s, words: 800 }));
     expect(checkSkeleton({ ...GOOD, sections: huge }, ctx).join(' ')).toMatch(/totals \d+ words/);
+  });
+
+  it('holds the pillar to more depth than a sub-page', () => {
+    expect(checkSkeleton(PILLAR, pillarCtx)).toEqual([]);
+    // The sub-page outline is too short and too thin for a pillar.
+    expect(checkSkeleton({ ...GOOD }, pillarCtx).join(' ')).toMatch(/pillar needs 7 to 14|pillar needs 2000 to 4500/);
+    // And the pillar outline is too long for a sub-page.
+    expect(checkSkeleton(PILLAR, ctx).join(' ')).toMatch(/sub-page needs/);
+  });
+
+  it('makes the pillar touch every sub-topic', () => {
+    const noBars = PILLAR.sections.map((sec, i) => (i === 5 ? { ...sec, keyPoints: ['mini cookies', 'sandwich cookies'] } : sec));
+    expect(checkSkeleton({ ...PILLAR, sections: noBars }, pillarCtx).join(' ')).toMatch(/cover the sub-topic "pumpkin chocolate chip cookie bars"/);
   });
 
   it('reads a wrapped answer', () => {
@@ -108,14 +143,15 @@ describe('AI#2 follows AI#1', () => {
       suggest: async () => [],
       ask: async (name, vars) => {
         asked.push({ name, vars });
-        return JSON.stringify(name === 'seo-metadata' ? SEO : GOOD);
+        return JSON.stringify(name === 'seo-metadata' ? SEO : PILLAR);
       },
     });
     expect(asked.map((a) => a.name)).toEqual(['seo-metadata', 'article-skeleton']);
+    expect(String(asked[1]!.vars.depth)).toMatch(/PILLAR/);
     expect(asked[1]!.vars).toMatchObject({ title: TITLE, focusKeyword: FOCUS, articleType: 'recipe', persona: 'Storyteller' });
     const [row] = listPlanSeo(planId);
     expect(row).toMatchObject({ status: 'done', skeleton_status: 'done', article_type: 'recipe' });
-    expect(JSON.parse(row!.skeleton_json).sections).toHaveLength(5);
+    expect(JSON.parse(row!.skeleton_json).sections).toHaveLength(8);
   });
 
   it('retries with the problems, then fails with them', async () => {

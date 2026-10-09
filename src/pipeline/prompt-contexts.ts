@@ -133,6 +133,8 @@ export const STEP_CONTEXTS: Record<string, Record<string, unknown>> = {
     role: 'r',
     pillar: 'p',
     articleType: 't',
+    depth: 'd',
+    subKeywordsJson: '[]',
     title: 't',
     description: 'd',
     focusKeyword: 'f',

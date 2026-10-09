@@ -3,6 +3,9 @@ This page is: {{role}}
 Pillar of this plan: {{pillar}}
 Article type: {{articleType}}
 
+Length and depth for this page: {{depth}}
+Sub-keywords of this plan (the pillar covers each briefly): {{subKeywordsJson}}
+
 SEO title (use as the H1, exactly): {{title}}
 Meta description: {{description}}
 Focus keyword: {{focusKeyword}}

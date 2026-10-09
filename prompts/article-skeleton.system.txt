@@ -9,15 +9,16 @@ These are only EXAMPLES of shapes that often work, not templates to copy:
 
 Rules:
 - The H1 is EXACTLY the SEO title you are given. Do not change it.
-- 4 to 10 H2 sections. H3s break down a section when it has parts (steps, places, options).
+- Follow the length and depth you are given for this page: the pillar is the longest, deepest page; a sub-page is shorter and focused. H3s break down a section when it has parts (steps, places, options).
 - The first H2 introduces the topic or says why it matters.
 - The last H2 is an FAQ or a closing call to action.
 - The focus keyword appears naturally in one H2 or an early H3. Never stuff it into many headings.
 - Headings are plain and specific, under 70 characters, no two the same.
 - Each section lists 2 to 6 key points: concrete things to cover, specific to this keyword, not generic advice.
-- Each H2 and H3 has a realistic word count target. No padding: the whole article is 700 to 3000 words.
+- Each H2 and H3 has a realistic word count target. No padding, but give the pillar real depth.
 - Match the niche and the author persona.
 - If this is a sub-page of a pillar, the first section mentions how it differs from the pillar topic, in one key point.
+- If this is the pillar, give every sub-keyword you are given a short section or key point of its own.
 
 If you are given problems with your last answer, fix every one of them.
 

@@ -1,4 +1,4 @@
-import { get, run } from '../db/index.js';
+import { all, get, run } from '../db/index.js';
 import { createLogger, errorMessage } from '../lib/logger.js';
 import { words } from '../seo/rules.js';
 import type { SeoRow } from './seo.js';
@@ -14,8 +14,15 @@ import type { SeoRow } from './seo.js';
 const log = createLogger('newsite-skeleton');
 const ROUNDS = 3;
 
-export const H2_COUNT = [4, 10] as const;
-export const TOTAL_WORDS = [700, 3000] as const;
+/**
+ * The pillar is the hub: the longest, deepest page, covering the whole topic
+ * and touching every sub-topic so it can link to each one. A sub-page goes
+ * deep on one narrow angle and is shorter.
+ */
+export const LIMITS = {
+  pillar: { h2: [7, 14], words: [2000, 4500] },
+  sub: { h2: [4, 8], words: [800, 1800] },
+} as const;
 export const SECTION_WORDS = [30, 900] as const;
 const HEADING_MAX = 70;
 
@@ -91,6 +98,12 @@ const sectionWords = (s: SkeletonSection): number =>
 
 export const totalWords = (k: Skeleton): number => k.sections.reduce((sum, s) => sum + sectionWords(s), 0);
 
+/** The words of a sub-keyword that are not already in the pillar: what makes it its own topic. */
+const ownWords = (sub: string, pillar: string): string[] => {
+  const base = new Set(words(pillar));
+  return words(sub).filter((w) => !base.has(w));
+};
+
 const OPENING = /why|what|intro|overview|about|matters|before you|quick look|at a glance/i;
 const CLOSING = /faq|frequently asked|questions|final|conclusion|wrap|next step|get started|try it|takeaway/i;
 
@@ -101,12 +114,25 @@ const hasAllWords = (heading: string, phrase: string): boolean => {
 };
 
 /** What is wrong, in words the AI can act on. Empty when it passes. */
-export function checkSkeleton(k: Skeleton, ctx: { title: string; focusKeyword: string }): string[] {
+export interface SkeletonContext {
+  title: string;
+  focusKeyword: string;
+  role: 'pillar' | 'sub';
+  /** For the pillar: its plan's sub-keywords, each of which it must touch. */
+  pillar?: string;
+  subKeywords?: string[];
+}
+
+export function checkSkeleton(k: Skeleton, ctx: SkeletonContext): string[] {
   const problems: string[] = [];
+  const limits = LIMITS[ctx.role];
   if (k.h1 !== ctx.title) problems.push(`The H1 must be exactly the SEO title: "${ctx.title}".`);
 
   const n = k.sections.length;
-  if (n < H2_COUNT[0] || n > H2_COUNT[1]) problems.push(`There are ${n} H2 sections; use ${H2_COUNT[0]} to ${H2_COUNT[1]}.`);
+  const kind = ctx.role === 'pillar' ? 'The pillar' : 'A sub-page';
+  if (n < limits.h2[0] || n > limits.h2[1]) {
+    problems.push(`There are ${n} H2 sections; ${kind.toLowerCase()} needs ${limits.h2[0]} to ${limits.h2[1]}.`);
+  }
   if (n && !OPENING.test(k.sections[0]!.h2)) problems.push('The first H2 must introduce the topic or say why it matters.');
   if (n && !CLOSING.test(k.sections[n - 1]!.h2)) problems.push('The last H2 must be an FAQ or a closing call to action.');
 
@@ -136,8 +162,22 @@ export function checkSkeleton(k: Skeleton, ctx: { title: string; focusKeyword: s
     }
   }
   const total = totalWords(k);
-  if (total < TOTAL_WORDS[0] || total > TOTAL_WORDS[1]) {
-    problems.push(`The article totals ${total} words; aim for ${TOTAL_WORDS[0]} to ${TOTAL_WORDS[1]}.`);
+  if (total < limits.words[0] || total > limits.words[1]) {
+    problems.push(`The article totals ${total} words; ${kind.toLowerCase()} needs ${limits.words[0]} to ${limits.words[1]}.`);
+  }
+
+  // The pillar is the hub: every sub-topic gets at least a mention, so the
+  // pillar can link down to each sub-page.
+  if (ctx.role === 'pillar' && ctx.subKeywords?.length) {
+    const outline = new Set(
+      words(k.sections.flatMap((sec) => [sec.h2, sec.covers, ...sec.keyPoints, ...sec.h3.flatMap((h) => [h.h3, ...h.keyPoints])]).join(' ')),
+    );
+    for (const subKeyword of ctx.subKeywords) {
+      const own = ownWords(subKeyword, ctx.pillar ?? '');
+      if (own.length && !own.every((w) => outline.has(w))) {
+        problems.push(`The pillar must cover the sub-topic "${subKeyword}" in a heading or key point, so it can link to that page.`);
+      }
+    }
   }
   return problems;
 }
@@ -166,6 +206,20 @@ export async function makeSkeleton(row: SeoRow, deps: SkeletonDeps): Promise<voi
   const type = articleTypeFor(ctx.niche);
   run(`UPDATE keyword_seo SET skeleton_status = 'writing', article_type = ? WHERE id = ?`, type, row.id);
 
+  const subKeywords =
+    row.role === 'pillar'
+      ? all<{ keyword: string }>(`SELECT keyword FROM keyword_seo WHERE plan_id = ? AND role = 'sub' ORDER BY position`, row.plan_id).map((r) => r.keyword)
+      : [];
+  const limits = LIMITS[row.role];
+  const depth =
+    row.role === 'pillar'
+      ? `This is the PILLAR: the hub of the topic and the longest, deepest page of the plan. Cover the whole topic thoroughly, ` +
+        `${limits.h2[0]} to ${limits.h2[1]} H2 sections and ${limits.words[0]} to ${limits.words[1]} words in total. ` +
+        `Give each sub-keyword below its own short section or key point (a summary that a link to its page will follow), ` +
+        `without repeating their full content.`
+      : `This is a SUB-PAGE: one narrow angle of the pillar, covered in depth. ${limits.h2[0]} to ${limits.h2[1]} H2 sections ` +
+        `and ${limits.words[0]} to ${limits.words[1]} words in total. Stay on this angle; the pillar covers the broad topic.`;
+
   let problems: string[] = [];
   let last: Skeleton | null = null;
   for (let round = 0; round < ROUNDS; round++) {
@@ -182,6 +236,8 @@ export async function makeSkeleton(row: SeoRow, deps: SkeletonDeps): Promise<voi
         niche: ctx.niche,
         nicheContext: ctx.niche_context || '(none)',
         persona: ctx.persona,
+        depth,
+        subKeywordsJson: JSON.stringify(subKeywords),
         problemsJson: JSON.stringify(problems),
       });
     } catch (err) {
@@ -191,7 +247,9 @@ export async function makeSkeleton(row: SeoRow, deps: SkeletonDeps): Promise<voi
     }
     last = parseSkeleton(raw);
     if (last) last.h1 = last.h1 || row.title;
-    problems = last ? checkSkeleton(last, { title: row.title, focusKeyword: row.focus_keyword }) : ['The AI answer could not be read.'];
+    problems = last
+      ? checkSkeleton(last, { title: row.title, focusKeyword: row.focus_keyword, role: row.role, pillar: ctx.pillar, subKeywords })
+      : ['The AI answer could not be read.'];
     if (problems.length === 0) break;
   }
 
