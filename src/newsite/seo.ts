@@ -1,7 +1,8 @@
 import { all, get, run } from '../db/index.js';
 import { createLogger, errorMessage } from '../lib/logger.js';
 import { similarity, words } from '../seo/rules.js';
-import { makeSkeleton } from './skeleton.js';
+import { articleTypeFor, makeSkeleton } from './skeleton.js';
+import { makeRecipe } from './recipe.js';
 
 /**
  * AI#1: SEO metadata for every keyword in a saved keyword plan.
@@ -154,6 +155,9 @@ export interface SeoRow {
   article_type: string;
   skeleton_json: string;
   skeleton_problems: string;
+  recipe_status: '' | 'pending' | 'writing' | 'done' | 'failed';
+  recipe_json: string;
+  recipe_problems: string;
 }
 
 /** One waiting row per keyword: the pillar first, then the sub-keywords in order. */
@@ -182,6 +186,16 @@ export function requeueSeo(id: number): void {
 export function resetInterruptedSeo(): void {
   run(`UPDATE keyword_seo SET status = 'pending' WHERE status = 'writing'`);
   run(`UPDATE keyword_seo SET skeleton_status = 'pending' WHERE skeleton_status = 'writing'`);
+  run(`UPDATE keyword_seo SET recipe_status = 'pending' WHERE recipe_status = 'writing'`);
+}
+
+/** Make one recipe again. Its skeleton is remade after it, from the new recipe. */
+export function requeueRecipe(id: number): void {
+  run(
+    `UPDATE keyword_seo SET recipe_status = 'pending', recipe_problems = '', skeleton_status = '', skeleton_json = '', skeleton_problems = ''
+     WHERE id = ? AND status = 'done' AND recipe_status != 'writing'`,
+    id,
+  );
 }
 
 /** Make one skeleton again, from the metadata it has. */
@@ -253,11 +267,13 @@ export async function writeOne(row: SeoRow, deps: WriterDeps): Promise<void> {
     if (problems.length === 0) break;
   }
 
+  const isRecipe = articleTypeFor(plan.niche) === 'recipe';
   const a = last ?? { title: '', description: '', focusKeyword: '', altText: '', eeat: '', confidence: '', reasoning: '' };
   run(
     `UPDATE keyword_seo SET status = ?, title = ?, description = ?, focus_keyword = ?, alt_text = ?, eeat = ?,
        confidence = ?, reasoning = ?, problems = ?, updated_at = datetime('now'),
-       skeleton_status = ?, skeleton_json = '', skeleton_problems = ''
+       skeleton_status = ?, skeleton_json = '', skeleton_problems = '',
+       recipe_status = ?, recipe_json = '', recipe_problems = ''
      WHERE id = ?`,
     problems.length ? 'failed' : 'done',
     a.title,
@@ -268,8 +284,10 @@ export async function writeOne(row: SeoRow, deps: WriterDeps): Promise<void> {
     a.confidence,
     a.reasoning,
     problems.join('\n'),
-    // New metadata means a new skeleton: AI#2 follows once AI#1 is done.
-    problems.length ? '' : 'pending',
+    // New metadata means new work after it: on a recipe website the recipe
+    // comes next and the skeleton waits for it; elsewhere the skeleton is next.
+    problems.length || isRecipe ? '' : 'pending',
+    problems.length || !isRecipe ? '' : 'pending',
     row.id,
   );
 }
@@ -297,6 +315,18 @@ export function kickSeoWriter(deps: WriterDeps): Promise<void> {
           } catch (err) {
             log.error(`AI#1 failed on "${next.keyword}": ${errorMessage(err)}`);
             run(`UPDATE keyword_seo SET status = 'failed', problems = ? WHERE id = ?`, 'Something went wrong while writing. Try again.', next.id);
+          }
+          continue;
+        }
+        const dish = get<SeoRow>(
+          `SELECT * FROM keyword_seo WHERE status = 'done' AND recipe_status = 'pending' ORDER BY plan_id, position LIMIT 1`,
+        );
+        if (dish) {
+          try {
+            await makeRecipe(dish, deps);
+          } catch (err) {
+            log.error(`Recipe failed on "${dish.keyword}": ${errorMessage(err)}`);
+            run(`UPDATE keyword_seo SET recipe_status = 'failed', recipe_problems = ? WHERE id = ?`, 'Something went wrong while making the recipe. Try again.', dish.id);
           }
           continue;
         }

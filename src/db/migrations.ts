@@ -621,6 +621,17 @@ export const MIGRATIONS: Migration[] = [
       addColumn(db, 'keyword_seo', 'skeleton_problems', "TEXT NOT NULL DEFAULT ''");
     },
   },
+
+  {
+    id: '021-keyword-recipe',
+    description: 'The fixed recipe per keyword on recipe websites, made before the skeleton',
+    up(db) {
+      // '' = not a recipe website, or not started yet.
+      addColumn(db, 'keyword_seo', 'recipe_status', "TEXT NOT NULL DEFAULT ''");
+      addColumn(db, 'keyword_seo', 'recipe_json', "TEXT NOT NULL DEFAULT ''");
+      addColumn(db, 'keyword_seo', 'recipe_problems', "TEXT NOT NULL DEFAULT ''");
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */

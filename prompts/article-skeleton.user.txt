@@ -6,6 +6,9 @@ Article type: {{articleType}}
 Length and depth for this page: {{depth}}
 Sub-keywords of this plan (the pillar covers each briefly): {{subKeywordsJson}}
 
+The fixed recipe for this page (follow it exactly; never add ingredients or steps it does not have):
+{{recipeJson}}
+
 SEO title (use as the H1, exactly): {{title}}
 Meta description: {{description}}
 Focus keyword: {{focusKeyword}}

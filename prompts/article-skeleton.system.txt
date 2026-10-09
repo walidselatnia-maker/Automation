@@ -19,6 +19,8 @@ Rules:
 - Match the niche and the author persona.
 - If this is a sub-page of a pillar, the first section mentions how it differs from the pillar topic, in one key point.
 - If this is the pillar, give every sub-keyword you are given a short section or key point of its own.
+- When a fixed recipe is given, build the outline from it: the ingredients and steps you plan are exactly the recipe's, in its order, with no additions. For a sub-page, the step H3s follow the recipe's steps.
+- When a fixed recipe is given for the pillar, the second-to-last H2 is the full recipe (with "recipe" in its heading): its ingredients and steps, as extra content just before the FAQ.
 
 If you are given problems with your last answer, fix every one of them.
 

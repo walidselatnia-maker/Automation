@@ -1,0 +1,15 @@
+Keyword: {{keyword}}
+This page is: {{role}}
+Pillar of this plan: {{pillar}}
+
+SEO title: {{title}}
+Meta description: {{description}}
+
+Niche: {{niche}}
+About the website: {{nicheContext}}
+Author persona: {{persona}}
+
+Problems with your last answer (fix all of them, or ignore if empty):
+{{problemsJson}}
+
+Answer with the JSON object only.

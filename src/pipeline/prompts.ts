@@ -145,6 +145,8 @@ export const PROMPT_MODELS: Record<string, { model: string; format: 'json' | nul
   // AI#2: the article outline the writer fills in. The AI designs it; code
   // checks the plan's general rules.
   'article-skeleton': { model: 'gpt-oss:120b', format: 'json' },
+  // The fixed recipe a recipe website's skeleton and article are written from.
+  'recipe-card': { model: 'gpt-oss:120b', format: 'json' },
 };
 
 /* -------------------------------------------------------------------------

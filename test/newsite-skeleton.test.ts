@@ -44,6 +44,25 @@ const PILLAR: Skeleton = {
     { h2: 'Questions Bakers Ask', covers: 'c', keyPoints: ['cakey', 'swap'], words: 250, h3: [] },
   ],
 };
+/** A recipe that passes every check, for the recipe-website chain. */
+export const RECIPE = {
+  prepMinutes: 15, cookMinutes: 12, servings: 24, difficulty: 'easy', cuisine: 'American', course: 'Dessert',
+  ingredients: [{ title: 'Dough', items: ['250 g all-purpose flour', '1 tsp baking soda', '200 g pumpkin puree', '150 g chocolate chips'] }],
+  steps: [{ text: 'Heat the oven to 175 °C and line two trays.' }, { text: 'Mix the flour and baking soda in a bowl.' }, { text: 'Fold in the pumpkin and chocolate chips, then bake for 12 minutes.' }],
+  nutrition: { calories: 140, protein: 2, carbs: 20, fat: 6 },
+  notes: 'Blot the pumpkin first.',
+};
+
+/** The pillar outline with the full recipe just before the FAQ. */
+const PILLAR_WITH_RECIPE: Skeleton = {
+  ...PILLAR,
+  sections: [
+    ...PILLAR.sections.slice(0, -1),
+    { h2: 'The Pumpkin Chocolate Chip Cookies Recipe', covers: 'c', keyPoints: ['ingredients', 'steps'], words: 300, h3: [] },
+    PILLAR.sections.at(-1)!,
+  ],
+};
+
 const pillarCtx = {
   title: TITLE,
   focusKeyword: FOCUS,
@@ -143,15 +162,17 @@ describe('AI#2 follows AI#1', () => {
       suggest: async () => [],
       ask: async (name, vars) => {
         asked.push({ name, vars });
-        return JSON.stringify(name === 'seo-metadata' ? SEO : PILLAR);
+        return JSON.stringify(name === 'seo-metadata' ? SEO : name === 'recipe-card' ? RECIPE : PILLAR_WITH_RECIPE);
       },
     });
-    expect(asked.map((a) => a.name)).toEqual(['seo-metadata', 'article-skeleton']);
-    expect(String(asked[1]!.vars.depth)).toMatch(/PILLAR/);
-    expect(asked[1]!.vars).toMatchObject({ title: TITLE, focusKeyword: FOCUS, articleType: 'recipe', persona: 'Storyteller' });
+    expect(asked.map((a) => a.name)).toEqual(['seo-metadata', 'recipe-card', 'article-skeleton']);
+    expect(String(asked[2]!.vars.depth)).toMatch(/PILLAR/);
+    expect(String(asked[2]!.vars.recipeJson)).toContain('250 g all-purpose flour');
+    expect(asked[2]!.vars).toMatchObject({ title: TITLE, focusKeyword: FOCUS, articleType: 'recipe', persona: 'Storyteller' });
     const [row] = listPlanSeo(planId);
     expect(row).toMatchObject({ status: 'done', skeleton_status: 'done', article_type: 'recipe' });
-    expect(JSON.parse(row!.skeleton_json).sections).toHaveLength(8);
+    expect(JSON.parse(row!.skeleton_json).sections).toHaveLength(9);
+    expect(row).toMatchObject({ recipe_status: 'done' });
   });
 
   it('retries with the problems, then fails with them', async () => {
@@ -160,6 +181,7 @@ describe('AI#2 follows AI#1', () => {
       suggest: async () => [],
       ask: async (name, vars) => {
         if (name === 'seo-metadata') return JSON.stringify(SEO);
+        if (name === 'recipe-card') return JSON.stringify(RECIPE);
         skeletonVars.push(vars);
         return JSON.stringify({ ...GOOD, sections: GOOD.sections.slice(0, 2) });
       },

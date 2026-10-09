@@ -2,6 +2,7 @@ import { all, get, run } from '../db/index.js';
 import { createLogger, errorMessage } from '../lib/logger.js';
 import { words } from '../seo/rules.js';
 import type { SeoRow } from './seo.js';
+import { parseRecipe, type Recipe } from './recipe.js';
 
 /**
  * AI#2: the article skeleton for one keyword, made after its AI#1 metadata.
@@ -121,6 +122,8 @@ export interface SkeletonContext {
   /** For the pillar: its plan's sub-keywords, each of which it must touch. */
   pillar?: string;
   subKeywords?: string[];
+  /** On a recipe website: the fixed recipe the outline is built from. */
+  recipe?: Recipe | null;
 }
 
 export function checkSkeleton(k: Skeleton, ctx: SkeletonContext): string[] {
@@ -164,6 +167,12 @@ export function checkSkeleton(k: Skeleton, ctx: SkeletonContext): string[] {
   const total = totalWords(k);
   if (total < limits.words[0] || total > limits.words[1]) {
     problems.push(`The article totals ${total} words; ${kind.toLowerCase()} needs ${limits.words[0]} to ${limits.words[1]}.`);
+  }
+
+  // The pillar carries its own full recipe as extra content, at the end and
+  // just before the closing FAQ.
+  if (ctx.role === 'pillar' && ctx.recipe && n >= 2 && !/recipe/i.test(k.sections[n - 2]!.h2)) {
+    problems.push('The pillar must have the full recipe as its second-to-last H2 (just before the FAQ), with "recipe" in the heading.');
   }
 
   // The pillar is the hub: every sub-topic gets at least a mention, so the
@@ -211,6 +220,7 @@ export async function makeSkeleton(row: SeoRow, deps: SkeletonDeps): Promise<voi
       ? all<{ keyword: string }>(`SELECT keyword FROM keyword_seo WHERE plan_id = ? AND role = 'sub' ORDER BY position`, row.plan_id).map((r) => r.keyword)
       : [];
   const limits = LIMITS[row.role];
+  const recipe = row.recipe_json ? parseRecipe(row.recipe_json) : null;
   const depth =
     row.role === 'pillar'
       ? `This is the PILLAR: the hub of the topic and the longest, deepest page of the plan. Cover the whole topic thoroughly, ` +
@@ -238,6 +248,7 @@ export async function makeSkeleton(row: SeoRow, deps: SkeletonDeps): Promise<voi
         persona: ctx.persona,
         depth,
         subKeywordsJson: JSON.stringify(subKeywords),
+        recipeJson: recipe ? JSON.stringify(recipe) : '(no fixed recipe: this is not a recipe website)',
         problemsJson: JSON.stringify(problems),
       });
     } catch (err) {
@@ -248,7 +259,7 @@ export async function makeSkeleton(row: SeoRow, deps: SkeletonDeps): Promise<voi
     last = parseSkeleton(raw);
     if (last) last.h1 = last.h1 || row.title;
     problems = last
-      ? checkSkeleton(last, { title: row.title, focusKeyword: row.focus_keyword, role: row.role, pillar: ctx.pillar, subKeywords })
+      ? checkSkeleton(last, { title: row.title, focusKeyword: row.focus_keyword, role: row.role, pillar: ctx.pillar, subKeywords, recipe })
       : ['The AI answer could not be read.'];
     if (problems.length === 0) break;
   }
