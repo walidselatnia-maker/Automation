@@ -20,7 +20,7 @@ import {
   type NewWebsiteRow,
   type PlanItem,
 } from './repo.js';
-import { keywordsPage } from './keywords-view.js';
+import { keywordsPage, seoStepPage, skeletonStepPage } from './keywords-view.js';
 import { getSeoRow, kickSeoWriter, listPlanSeo, queuePlanSeo, requeueSeo, requeueSkeleton, resetInterruptedSeo } from './seo.js';
 
 export interface KeywordRouteDeps extends FindDeps {
@@ -183,9 +183,31 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
     startSeo();
     return reply.send({
       ok: true,
-      redirect: `/new-website/keywords?website=${site.id}&ok=${encodeURIComponent('Keyword plan saved.')}`,
+      redirect: `/new-website/keywords/plan/${planId}/seo?ok=${encodeURIComponent('Keyword plan saved. The AI is writing the SEO metadata.')}`,
     });
   });
+
+  /** Steps 2 and 3 of one plan: its SEO metadata, then its skeletons. */
+  for (const step of ['seo', 'skeleton'] as const) {
+    app.get(`/new-website/keywords/plan/:id/${step}`, async (request, reply) => {
+      if (!deps.isPlatformReady()) return reply.redirect(`/new-website/platform?error=${encodeURIComponent(NOT_READY)}`, 303);
+      const planId = Number((request.params as { id: string }).id) || 0;
+      const plan = listKeywordPlans().find((p) => p.id === planId);
+      const site = plan ? getNewWebsite(plan.website_id) : undefined;
+      if (!plan || !site) {
+        return reply.redirect(`/new-website/keywords?error=${encodeURIComponent('That keyword plan no longer exists.')}`, 303);
+      }
+      const rows = listPlanSeo(plan.id);
+      return reply.type('text/html; charset=utf-8').send(
+        newLayout({
+          title: `${plan.pillar} · ${step === 'seo' ? 'SEO' : 'Skeletons'}`,
+          active: '/new-website/keywords',
+          body: step === 'seo' ? seoStepPage(site, plan, rows) : skeletonStepPage(site, plan, rows),
+          flash: deps.readFlash(request.query),
+        }),
+      );
+    });
+  }
 
   /** AI#1 progress for one plan, so the page can update without a reload. */
   app.get('/new-website/keywords/:id/seo', async (request, reply) =>
@@ -201,29 +223,25 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
       queuePlanSeo(planId, plan.pillar, plan.items.map((i) => i.keyword));
       startSeo();
     }
-    return reply.redirect(`/new-website/keywords?website=${website}&ok=${encodeURIComponent('Writing the SEO metadata.')}`, 303);
+    return reply.redirect(`/new-website/keywords/plan/${planId}/seo?ok=${encodeURIComponent('Writing the SEO metadata.')}`, 303);
   });
 
   /** Make one keyword's skeleton again, from its current metadata. */
   app.post('/new-website/keywords/skeleton/:id/retry', async (request, reply) => {
     const row = getSeoRow(Number((request.params as { id: string }).id) || 0);
-    const website = Number(body(request).websiteId) || 0;
-    if (row) {
-      requeueSkeleton(row.id);
-      startSeo();
-    }
-    return reply.redirect(`/new-website/keywords?website=${website}&ok=${encodeURIComponent('Making the skeleton again.')}`, 303);
+    if (!row) return reply.redirect('/new-website/keywords', 303);
+    requeueSkeleton(row.id);
+    startSeo();
+    return reply.redirect(`/new-website/keywords/plan/${row.plan_id}/skeleton?ok=${encodeURIComponent('Making the skeleton again.')}`, 303);
   });
 
   /** Write one keyword's metadata again. */
   app.post('/new-website/keywords/seo/:id/retry', async (request, reply) => {
     const row = getSeoRow(Number((request.params as { id: string }).id) || 0);
-    const website = Number(body(request).websiteId) || 0;
-    if (row) {
-      requeueSeo(row.id);
-      startSeo();
-    }
-    return reply.redirect(`/new-website/keywords?website=${website}&ok=${encodeURIComponent('Writing it again.')}`, 303);
+    if (!row) return reply.redirect('/new-website/keywords', 303);
+    requeueSeo(row.id);
+    startSeo();
+    return reply.redirect(`/new-website/keywords/plan/${row.plan_id}/seo?ok=${encodeURIComponent('Writing it again.')}`, 303);
   });
 
   app.post('/new-website/keywords/:id/delete', async (request, reply) => {

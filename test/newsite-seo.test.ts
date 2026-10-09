@@ -191,7 +191,11 @@ describe('saving a plan starts AI#1', () => {
     expect(r.json().ok).toBe(true);
 
     await kickSeoWriter({ ask, suggest: async () => [] }); // waits for the run the save started
-    const page = await app.inject({ method: 'GET', url: `/new-website/keywords?website=${websiteId}` });
+    const planId = Number(new URL(r.json().redirect, 'http://x').pathname.split('/')[4]);
+    const page = await app.inject({ method: 'GET', url: `/new-website/keywords/plan/${planId}/seo` });
+    const skeletons = await app.inject({ method: 'GET', url: `/new-website/keywords/plan/${planId}/skeleton` });
+    expect(skeletons.statusCode).toBe(200);
+    expect(skeletons.body).toContain('Article skeletons');
     expect(page.body).toContain(GOOD.title);
     expect(page.body).toContain('Pumpkin Chocolate Chip Cookies: Soft, Easy and Spiced');
   });

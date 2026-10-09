@@ -138,7 +138,7 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
 
   app.get('/new-website/add', async (_request, reply) => {
     if (!ready()) return reply.redirect(`/new-website/platform?error=${encodeURIComponent(NOT_READY)}`, 303);
-    return send(reply, newLayout({ title: 'Add website', active: '/new-website/add', body: newWebsiteWizardPage() }));
+    return send(reply, newLayout({ title: 'Add website', active: '/new-website', body: newWebsiteWizardPage() }));
   });
 
   app.get('/new-website/:id/edit', async (request, reply) => {
