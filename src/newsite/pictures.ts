@@ -2,34 +2,29 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { all, get, run } from '../db/index.js';
 import { resolveDataDir } from '../config.js';
+import { describeProjectId, resolveProjectId, type ResolvedProjectId } from '../core/project-id.js';
 import { ImageClient } from '../integrations/images.js';
 import { createLogger, errorMessage } from '../lib/logger.js';
 import type { Settings } from '../settings.js';
 import { parseImageSet } from './images.js';
 
 /**
- * The pictures themselves: each AI#4 prompt sent to Google Flow through the
- * Flowkit image service, one at a time.
- *
- * Flowkit drives the Flow web app, so it is treated gently:
- * - nothing is sent until someone presses "Make pictures";
- * - one picture at a time, never two at once, with the platform's gap
- *   (Platform -> Images) between one picture and the next;
- * - every picture is its own row, so a failure never makes a finished
- *   picture again, and each gets at most MAX_TRIES tries;
- * - STOP_AFTER failures in a row pause all picture making and send a
- *   Telegram message; nothing more is sent until someone presses Resume.
- *   A broken Flow session then costs a few captchas, not a whole queue's.
- * Flow's links expire, so each picture is downloaded the moment it is made
- * and kept in the platform's data folder.
+ * The pictures themselves: each AI#4 prompt made into a picture by the image
+ * service, exactly the way the old dashboard makes article images
+ * (src/pipeline/context.ts and src/pipeline/steps/images.ts):
+ * - the same ImageClient, built from the same settings;
+ * - the same Flow project, from resolveProjectId (the website's own, else the
+ *   shared one from Settings, else the old placeholder);
+ * - the same call, generate(prompt, 'VERTICAL');
+ * - the same pause between images (image_gap_seconds), counted from when the
+ *   previous image came back;
+ * - one image at a time, and a failed image stops its article there, like a
+ *   failed step stops an old run. Pressing Make again carries on from it.
+ * Nothing is sent until someone presses "Make pictures". Each picture is
+ * downloaded the moment it is made and kept in the platform's data folder.
  */
 
 const log = createLogger('newsite-pictures');
-
-export const MAX_TRIES = 2;
-export const STOP_AFTER = 3;
-/** Set while picture making is paused; its value says why. */
-export const PAUSE_KEY = 'newsite_pictures_paused';
 
 export interface PictureRow {
   id: number;
@@ -115,41 +110,38 @@ export function queuePictures(seoId: number, dataDir = resolveDataDir()): number
   return queued;
 }
 
-/** Try one failed picture again, with fresh tries. */
-export function retryPicture(id: number): void {
-  run(`UPDATE newsite_pictures SET status = 'queued', attempts = 0, error = '' WHERE id = ? AND status = 'failed'`, id);
-}
-
 /** A restart mid-picture: it goes back in the queue, and the cut-off try does not count. */
 export function resetInterruptedPictures(): void {
   run(`UPDATE newsite_pictures SET status = 'queued', attempts = MAX(0, attempts - 1) WHERE status = 'making'`);
 }
 
-export const pausedReason = (settings: Settings): string => settings.get(PAUSE_KEY);
-
 /* -- The maker ------------------------------------------------------------ */
 
 export interface PictureDeps {
   settings: Settings;
-  /** Makes one picture. The real one goes through Flowkit; tests pass their own. */
+  /** Makes one picture. The real one is the old dashboard's ImageClient; tests pass their own. */
   make?: (prompt: string, projectId: string) => Promise<{ data: Buffer; contentType: string }>;
-  notify?: (message: string) => Promise<void>;
   dataDir?: string;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
 }
 
 let running: Promise<void> | null = null;
-let lastPictureAt: number | null = null;
-let failStreak = 0;
+let lastImageGeneratedAt: number | null = null;
 
-/** For tests: forget the gap and the failure streak between cases. */
+/** For tests: forget the gap between cases. */
 export function resetPictureMakerState(): void {
-  lastPictureAt = null;
-  failStreak = 0;
+  lastImageGeneratedAt = null;
 }
 
-const flowMaker = (settings: Settings) => (prompt: string, projectId: string) =>
+/** The Flow project a website's pictures go into: the old dashboard's own rule. */
+export const flowProjectFor = (siteProjectId: string, domain: string, settings: Settings): ResolvedProjectId =>
+  resolveProjectId(siteProjectId, settings.get('flow_project_id'), domain);
+
+export { describeProjectId };
+
+/** The old dashboard's image client (PipelineContext), built from the same settings. */
+const oldDashboardMaker = (settings: Settings) => (prompt: string, projectId: string) =>
   new ImageClient({
     baseUrl: settings.get('image_base_url'),
     apiKey: settings.get('image_api_key'),
@@ -158,61 +150,11 @@ const flowMaker = (settings: Settings) => (prompt: string, projectId: string) =>
     projectId,
     imageModel: settings.get('image_model'),
   })
-    .generate(prompt, 'HORIZONTAL')
+    .generate(prompt, 'VERTICAL')
     .then(({ data, contentType }) => ({ data, contentType }));
 
 const extension = (contentType: string): string =>
-  contentType.includes('png') ? 'png' : contentType.includes('jpeg') || contentType.includes('jpg') ? 'jpg' : 'webp';
-
-/**
- * The Flow project pictures for a website go into: its own, else the shared
- * one from Platform -> Images. Never a made-up one: Google answers a project
- * it does not know with NOT_FOUND on every picture.
- */
-export type FlowProject = { id: string; source: 'website' | 'platform' | '' };
-
-export function flowProjectFor(siteProjectId: string, settings: Settings): FlowProject {
-  if (siteProjectId.trim()) return { id: siteProjectId.trim(), source: 'website' };
-  const shared = settings.get('flow_project_id').trim();
-  return shared ? { id: shared, source: 'platform' } : { id: '', source: '' };
-}
-
-/** The Flow project for the website a keyword belongs to. */
-export function flowProjectForSeo(seoId: number, settings: Settings): FlowProject {
-  const site = get<{ project_id: string }>(
-    `SELECT w.project_id FROM keyword_seo s JOIN keyword_plans k ON k.id = s.plan_id JOIN new_websites w ON w.id = k.website_id WHERE s.id = ?`,
-    seoId,
-  );
-  return flowProjectFor(site?.project_id ?? '', settings);
-}
-
-export const NO_PROJECT =
-  'No Google Flow project is set. Add one on the website (Edit website, Google Flow project) or on Platform, Images: the code after /project/ in Flow\'s address bar.';
-
-/**
- * Google answers that will be the same for every picture: carrying on would
- * only spend a captcha per picture. In plain words, or null for an error that
- * may pass (a timeout, a captcha that did not solve).
- */
-export function stopsEverything(message: string, projectId: string): string | null {
-  const text = message.toUpperCase();
-  if (/FAILED: \[5[\],]/.test(text) || text.includes('NOT_FOUND')) {
-    return `Google Flow could not find the project ${projectId} (NOT_FOUND). Check the project code on the website or on Platform, and that it belongs to the Google account signed in to the image service.`;
-  }
-  if (text.includes('MODEL_ACCESS_DENIED')) return 'The Google account in the image service may not use the image model. Pick another model on Platform, Images.';
-  if (text.includes('USER_QUOTA_REACHED')) return 'The Google account in the image service has no image credits left. Wait for them to reset.';
-  if (text.includes('UNUSUAL_ACTIVITY')) return 'Google flagged unusual activity on the Flow account. Give it a few hours before resuming.';
-  if (text.includes('SESSION_EXPIRED') || text.includes('SIGN IN') || text.includes('SIGN-IN')) {
-    return 'The image service is signed out of Google Flow. Sign it in again.';
-  }
-  return null;
-}
-
-/** Resume after a stop: clears the pause and the failure streak. */
-export function resumePictures(settings: Settings): void {
-  settings.set(PAUSE_KEY, '');
-  failStreak = 0;
-}
+  contentType.includes('png') ? 'png' : contentType.includes('jpeg') ? 'jpg' : 'webp';
 
 /**
  * Make every queued picture, one at a time. Calling it while it runs does
@@ -220,7 +162,7 @@ export function resumePictures(settings: Settings): void {
  */
 export function kickPictureMaker(deps: PictureDeps): Promise<void> {
   if (running) return running;
-  const make = deps.make ?? flowMaker(deps.settings);
+  const make = deps.make ?? oldDashboardMaker(deps.settings);
   const now = deps.now ?? Date.now;
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const dataDir = deps.dataDir ?? resolveDataDir();
@@ -228,9 +170,8 @@ export function kickPictureMaker(deps: PictureDeps): Promise<void> {
   running = Promise.resolve()
     .then(async () => {
       for (;;) {
-        if (pausedReason(deps.settings)) break;
-        const next = get<PictureRow & { project_id: string }>(
-          `SELECT p.*, w.project_id FROM newsite_pictures p
+        const next = get<PictureRow & { domain: string; project_id: string }>(
+          `SELECT p.*, w.domain, w.project_id FROM newsite_pictures p
              JOIN keyword_seo s ON s.id = p.seo_id
              JOIN keyword_plans k ON k.id = s.plan_id
              JOIN new_websites w ON w.id = k.website_id
@@ -245,57 +186,34 @@ export function kickPictureMaker(deps: PictureDeps): Promise<void> {
           continue;
         }
 
-        // The gap, counted from when the previous picture came back.
-        const gapMs = Math.max(0, deps.settings.getNumber('image_gap_seconds')) * 1000;
-        if (lastPictureAt !== null) {
-          const wait = lastPictureAt + gapMs - now();
-          if (wait > 0) await sleep(wait);
-        }
-        if (pausedReason(deps.settings)) break;
+        const project = flowProjectFor(next.project_id, next.domain, deps.settings);
+        const explanation = describeProjectId(project, next.domain);
+        if (project.source === 'placeholder') log.warn(explanation);
+        else log.debug(explanation);
 
-        const project = flowProjectFor(next.project_id, deps.settings);
-        if (!project.id) {
-          deps.settings.set(PAUSE_KEY, NO_PROJECT);
-          break;
+        // The old waitOutImageGap: only the remainder of the gap is waited.
+        const gapMs = Math.max(0, deps.settings.getNumber('image_gap_seconds')) * 1000;
+        if (lastImageGeneratedAt !== null && gapMs > 0) {
+          const remaining = gapMs - (now() - lastImageGeneratedAt);
+          if (remaining > 0) await sleep(remaining);
         }
-        const projectId = project.id;
+
         run(`UPDATE newsite_pictures SET status = 'making', attempts = attempts + 1 WHERE id = ?`, next.id);
         try {
-          const { data, contentType } = await make(next.prompt, projectId);
+          const { data, contentType } = await make(next.prompt, project.projectId);
+          lastImageGeneratedAt = now();
           const dir = pictureDir(next.seo_id, dataDir);
           mkdirSync(dir, { recursive: true });
           const file = `${next.slot}-${next.id}.${extension(contentType)}`;
           writeFileSync(join(dir, file), data);
           run(`UPDATE newsite_pictures SET status = 'done', error = '', file = ?, made_at = datetime('now') WHERE id = ?`, file, next.id);
-          failStreak = 0;
         } catch (err) {
           const message = errorMessage(err).slice(0, 400);
-          const fatal = stopsEverything(message, projectId);
-          if (fatal) {
-            // Not this picture's fault: it goes back in the queue, untouched.
-            run(`UPDATE newsite_pictures SET status = 'queued', attempts = attempts - 1, error = '' WHERE id = ?`, next.id);
-            deps.settings.set(PAUSE_KEY, `${fatal} (Google said: ${message})`);
-            log.error(`Picture making paused: ${fatal} ${message}`);
-            await deps.notify?.(`<b>New website: picture making paused</b>\n${fatal}\nThen press Resume on the Images page.`).catch(() => {});
-            break;
-          }
-          failStreak += 1;
-          const tries = next.attempts + 1;
-          log.warn(`Picture "${next.slot}" (${next.id}) failed, try ${tries} of ${MAX_TRIES}: ${message}`);
-          run(
-            `UPDATE newsite_pictures SET status = ?, error = ? WHERE id = ?`,
-            tries >= MAX_TRIES ? 'failed' : 'queued',
-            message,
-            next.id,
-          );
-          if (failStreak >= STOP_AFTER) {
-            const reason = `${STOP_AFTER} pictures failed in a row. The last error: ${message}`;
-            deps.settings.set(PAUSE_KEY, reason);
-            log.error(`Picture making paused: ${reason}`);
-            await deps.notify?.(`<b>New website: picture making paused</b>\n${reason}\nCheck the image service, then press Resume on the Images page.`).catch(() => {});
-          }
-        } finally {
-          lastPictureAt = now();
+          log.warn(`Picture "${next.slot}" (${next.id}) failed: ${message}`);
+          run(`UPDATE newsite_pictures SET status = 'failed', error = ? WHERE id = ?`, message, next.id);
+          // Like a failed step in an old run: this article stops here, and
+          // its other pictures wait until Make pictures is pressed again.
+          run(`DELETE FROM newsite_pictures WHERE seo_id = ? AND status = 'queued'`, next.seo_id);
         }
       }
     })

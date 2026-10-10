@@ -5,7 +5,7 @@ import { articleTypeFor, parseSkeleton, totalWords, type Skeleton } from './skel
 import { parseRecipe } from './recipe.js';
 import { markdownToHtml } from './markdown.js';
 import { parseImageSet } from './images.js';
-import { MAX_TRIES, NO_PROJECT, STOP_AFTER, type FlowProject, type PictureRow } from './pictures.js';
+import type { PictureRow } from './pictures.js';
 import { WIZARD_CSS } from './view.js';
 
 const INTENT_LABEL: Record<string, string> = {
@@ -148,9 +148,6 @@ const CSS = `
 .kw-pic-actions { gap: 8px; align-items: center; }
 .kw-pic-actions form { margin: 0; }
 .kw-project { font-size: 14px; color: var(--soft); overflow-wrap: anywhere; }
-.kw-paused { border: 1px solid var(--bad); border-left-width: 3px; border-radius: var(--r-ctl); padding: 14px 16px; margin-bottom: 24px; }
-.kw-paused b { color: var(--bad); }
-.kw-paused p { margin: 6px 0 12px; color: var(--soft); font-size: 14px; }
 .kw-img-slot { font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--accent); }
 .kw-img-prompt { margin: 6px 0 8px; font-size: 14px; line-height: 1.6; max-width: 72ch; }
 .kw-img-alt { color: var(--soft); font-size: 13px; }
@@ -632,16 +629,13 @@ function pictureBox(picture: PictureRow | undefined): Html {
       <img src="/new-website/pictures/${picture.id}/file" alt="${picture.alt}" loading="lazy"></a>`;
   }
   return html`<div class="kw-pic kw-pic-empty ${picture.status}">
-    <span>${PICTURE_STATE[picture.status]}${picture.status !== 'failed' && picture.attempts > 0 ? ` · try ${picture.attempts + (picture.status === 'queued' ? 1 : 0)}` : ''}</span>
-    ${picture.status === 'failed'
-      ? html`<small>${picture.error}</small>
-          <form method="post" action="/new-website/pictures/${picture.id}/retry"><button class="ns-btn quiet kw-remove">Try again</button></form>`
-      : raw('')}
+    <span>${PICTURE_STATE[picture.status]}</span>
+    ${picture.status === 'failed' ? html`<small>${picture.error}</small>` : raw('')}
   </div>`;
 }
 
 /** One keyword's image prompts (AI#4) and the pictures made from them. */
-function imagesCard(row: SeoRow, intent: string, pictures: PictureRow[], paused: boolean): Html {
+function imagesCard(row: SeoRow, intent: string, pictures: PictureRow[]): Html {
   const ready = row.article_status === 'done';
   const set = row.images_json ? parseImageSet(row.images_json) : null;
   const bySlot = new Map(pictures.map((p) => [p.slot, p]));
@@ -653,7 +647,7 @@ function imagesCard(row: SeoRow, intent: string, pictures: PictureRow[], paused:
   const state = !ready ? 'Needs the article first' : (SKELETON_STATUS[row.images_status] ?? 'Waiting');
   const head = html`${roleLabel(row, intent)}<b>${row.keyword}</b>${promptsDone
     ? html`<span class="ns-num kw-count">${made} of ${set!.images.length} pictures</span>`
-    : raw('')}<span class="kw-seo-status ${row.images_status}">${row.images_status === 'writing' ? 'Writing…' : busy ? (paused ? 'Paused' : 'Making pictures…') : state}</span>`;
+    : raw('')}<span class="kw-seo-status ${row.images_status}">${row.images_status === 'writing' ? 'Writing…' : busy ? 'Making pictures…' : state}</span>`;
   const body = html`
     ${row.images_status === 'failed' ? problemList(row.images_problems) : raw('')}
     ${promptsDone
@@ -706,8 +700,7 @@ export function imagesStepPage(
   plan: KeywordPlan,
   rows: SeoRow[],
   pictures: PictureRow[] = [],
-  paused = '',
-  project: FlowProject = { id: '', source: '' },
+  project = '',
 ): Html {
   const intentOf = new Map(plan.items.map((i) => [i.keyword, i.intent]));
   const names = stepNames(site.niche);
@@ -717,24 +710,15 @@ export function imagesStepPage(
   const made = pictures.filter((p) => p.status === 'done').length;
   const total = rows.reduce((n, r) => n + (r.images_status === 'done' ? (parseImageSet(r.images_json)?.images.length ?? 0) : 0), 0);
   const body = html`
-    ${paused
-      ? html`<div class="kw-paused" role="alert">
-          <div><b>Picture making is paused.</b> ${paused}</div>
-          <p>Nothing is sent to Google Flow until you resume. Check that the image service is running and signed in to Flow first.</p>
-          <form method="post" action="/new-website/pictures/resume"><input type="hidden" name="planId" value="${plan.id}"><button class="ns-btn primary">Resume</button></form>
-        </div>`
-      : raw('')}
     <h2>Images</h2>
     <p>For each article the AI first sets one look (surface, lighting, palette, style, mood), then writes a prompt per picture that follows it, so all of an article's pictures look like one photoshoot. ${recipeSite
       ? 'Recipe pages get six photos of the dish and one per recipe step; article pages get a feature image and one per main section.'
       : 'Each article gets a feature image and one per main section.'}</p>
-    <p>Pictures are made by Google Flow only when you press <b>Make pictures</b>: one at a time, with the platform's pause between them. Each gets ${MAX_TRIES} tries; ${STOP_AFTER} failures in a row, or an answer from Google that would fail every picture, pause everything until you resume.</p>
-    ${project.id
-      ? html`<p class="kw-project">Flow project: <span class="ns-mono">${project.id}</span> <span class="kw-count">(${project.source === 'website' ? "this website's own" : 'the shared one from Platform'})</span></p>`
-      : html`<p class="kw-project kw-error">${NO_PROJECT}</p>`}
+    <p>Pictures are made only when you press <b>Make pictures</b>, the same way the old dashboard makes article images: one at a time, with the platform's pause between them. If a picture fails, that article stops there; pressing Make pictures again carries on from it.</p>
+    ${project ? html`<p class="kw-project">Flow project: ${project}</p>` : raw('')}
     ${rows.length
       ? html`<ul class="acc-list" ${busy ? raw(`data-watch="${plan.id}"`) : raw('')}>
-          ${rows.map((r) => imagesCard(r, intentOf.get(r.keyword) ?? '', picturesOf(r.id), Boolean(paused)))}
+          ${rows.map((r) => imagesCard(r, intentOf.get(r.keyword) ?? '', picturesOf(r.id)))}
         </ul>`
       : html`<p class="kw-none">Image prompts follow the articles. Go back to start them.</p>`}`;
   const foot = html`

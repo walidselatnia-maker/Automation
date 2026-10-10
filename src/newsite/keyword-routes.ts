@@ -22,7 +22,7 @@ import {
 } from './repo.js';
 import { articleStepPage, imagesStepPage, keywordsPage, recipeStepPage, seoStepPage, skeletonStepPage } from './keywords-view.js';
 import { articleTypeFor } from './skeleton.js';
-import { clearPictures, listPictures, listPlanPictures, type FlowProject } from './pictures.js';
+import { clearPictures, listPictures, listPlanPictures } from './pictures.js';
 import { asPage } from './keywords.js';
 import { getSeoRow, kickSeoWriter, listPlanSeo, queuePlanSeo, requeueArticle, requeueImages, requeueRecipe, requeueSeo, requeueSkeleton, resetInterruptedSeo } from './seo.js';
 
@@ -34,9 +34,8 @@ export interface KeywordRouteDeps extends FindDeps {
   /** Start AI#1 after a plan is saved (and resume it at boot). Tests turn it off. */
   autoSeo?: boolean;
   /** Why picture making is paused, or '' when it is not. */
-  picturesPaused?: () => string;
-  /** Which Flow project a website's pictures go into. */
-  flowProject?: (siteProjectId: string) => FlowProject;
+  /** Which Flow project a website's pictures go into, in the old dashboard's words. */
+  flowProject?: (site: NewWebsiteRow) => string;
   dataDir?: string;
 }
 
@@ -226,7 +225,7 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
                   ? skeletonStepPage(site, plan, rows)
                   : step === 'article'
                     ? articleStepPage(site, plan, rows)
-                    : imagesStepPage(site, plan, rows, listPlanPictures(plan.id), deps.picturesPaused?.() ?? '', deps.flowProject?.(site.project_id)),
+                    : imagesStepPage(site, plan, rows, listPlanPictures(plan.id), deps.flowProject?.(site) ?? ''),
           flash: deps.readFlash(request.query),
         }),
       );

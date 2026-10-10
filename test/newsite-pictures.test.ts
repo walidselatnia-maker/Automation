@@ -2,8 +2,10 @@ import { randomBytes } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { closeDatabase, openDatabase, run } from '../src/db/index.js';
+import { placeholderProjectId } from '../src/core/project-id.js';
+import { ImageClient } from '../src/integrations/images.js';
 import { Settings } from '../src/settings.js';
 import { createNewWebsite, saveKeywordPlan } from '../src/newsite/repo.js';
 import { listPlanSeo, queuePlanSeo } from '../src/newsite/seo.js';
@@ -11,12 +13,9 @@ import {
   clearPictures,
   kickPictureMaker,
   listPictures,
-  PAUSE_KEY,
   pictureDir,
   queuePictures,
   resetPictureMakerState,
-  resumePictures,
-  retryPicture,
 } from '../src/newsite/pictures.js';
 
 const KEY = randomBytes(32);
@@ -26,26 +25,25 @@ const promptsFor = (slots: string[], tag = '') => ({
   images: slots.map((slot) => ({ slot, prompt: `prompt for ${slot}${tag}`, alt: `alt for ${slot}` })),
 });
 
-describe('Pictures from Google Flow', () => {
+describe('Pictures, made the old dashboard way', () => {
   let settings: Settings;
   let seoId: number;
   let dataDir: string;
   let clock: number;
   let sleeps: number[];
-  let sent: string[];
+  let sent: { prompt: string; projectId: string }[];
 
   const setPrompts = (slots: string[], tag = '') =>
     run(`UPDATE keyword_seo SET images_status = 'done', images_json = ? WHERE id = ?`, JSON.stringify(promptsFor(slots, tag)), seoId);
 
-  const deps = (make: (prompt: string) => Promise<{ data: Buffer; contentType: string }>, notify?: (m: string) => Promise<void>) => ({
+  const deps = (make: (prompt: string) => Promise<{ data: Buffer; contentType: string }>) => ({
     settings,
     dataDir,
-    make: async (prompt: string) => {
-      sent.push(prompt);
+    make: async (prompt: string, projectId: string) => {
+      sent.push({ prompt, projectId });
       clock += 5000; // a picture takes a while
       return make(prompt);
     },
-    notify,
     now: () => clock,
     sleep: async (ms: number) => {
       sleeps.push(ms);
@@ -54,12 +52,12 @@ describe('Pictures from Google Flow', () => {
   });
 
   const ok = async () => ({ data: Buffer.from('img'), contentType: 'image/png' });
+  const prompts = () => sent.map((s) => s.prompt);
 
   beforeEach(() => {
     openDatabase(':memory:');
     settings = new Settings(KEY);
     settings.set('image_gap_seconds', '30');
-    settings.set('flow_project_id', 'shared-project-1');
     const websiteId = createNewWebsite(
       {
         name: 'Site', domain: 'f.longlivo.com', apiKey: 'sk_test_ABCDEFGHIJKLMNOP', niche: 'Baking recipes', nicheContext: '',
@@ -81,6 +79,7 @@ describe('Pictures from Google Flow', () => {
   afterEach(() => {
     closeDatabase();
     rmSync(dataDir, { recursive: true, force: true });
+    vi.restoreAllMocks();
   });
 
   it('sends nothing until pictures are asked for', async () => {
@@ -90,16 +89,69 @@ describe('Pictures from Google Flow', () => {
     expect(listPictures(seoId)).toEqual([]);
   });
 
-  it('makes them one at a time, with the gap between them, and keeps the files', async () => {
+  it('makes them one at a time, with the old gap between them, and keeps the files', async () => {
     setPrompts(['feature', 'overhead', 'closeup']);
     expect(queuePictures(seoId, dataDir)).toBe(3);
     await kickPictureMaker(deps(ok));
-    expect(sent).toEqual(['prompt for feature', 'prompt for overhead', 'prompt for closeup']);
-    // No wait before the first; 30 s after each one came back before the next.
+    expect(prompts()).toEqual(['prompt for feature', 'prompt for overhead', 'prompt for closeup']);
+    // No wait before the first; the gap after each one came back before the next.
     expect(sleeps).toEqual([30000, 30000]);
     const pictures = listPictures(seoId);
     expect(pictures.map((p) => p.status)).toEqual(['done', 'done', 'done']);
     expect(readFileSync(join(pictureDir(seoId, dataDir), pictures[0]!.file), 'utf8')).toBe('img');
+  });
+
+  it('uses the old project rule: the website, else Settings, else the old placeholder', async () => {
+    setPrompts(['feature']);
+    queuePictures(seoId, dataDir);
+    await kickPictureMaker(deps(ok));
+    expect(sent[0]!.projectId).toBe(placeholderProjectId('f.longlivo.com'));
+
+    settings.set('flow_project_id', 'shared-project');
+    clearPictures(seoId, dataDir);
+    queuePictures(seoId, dataDir);
+    await kickPictureMaker(deps(ok));
+    expect(sent[1]!.projectId).toBe('shared-project');
+
+    run(`UPDATE new_websites SET project_id = 'site-project'`);
+    clearPictures(seoId, dataDir);
+    queuePictures(seoId, dataDir);
+    await kickPictureMaker(deps(ok));
+    expect(sent[2]!.projectId).toBe('site-project');
+  });
+
+  it('calls the old image client the old way: VERTICAL, with the same settings', async () => {
+    settings.set('image_base_url', 'http://imagegen:8100');
+    settings.set('flow_project_id', 'shared-project');
+    const generate = vi
+      .spyOn(ImageClient.prototype, 'generate')
+      .mockResolvedValue({ jobId: 'j', imageUrl: 'u', data: Buffer.from('img'), contentType: 'image/png' });
+    setPrompts(['feature']);
+    queuePictures(seoId, dataDir);
+    await kickPictureMaker({ settings, dataDir, now: () => clock, sleep: async () => {} });
+    expect(generate).toHaveBeenCalledWith('prompt for feature', 'VERTICAL');
+    expect(listPictures(seoId)[0]).toMatchObject({ status: 'done' });
+  });
+
+  it('stops the article at a failed picture, and carries on from it when asked again', async () => {
+    setPrompts(['feature', 'overhead', 'closeup']);
+    queuePictures(seoId, dataDir);
+    let fail = true;
+    await kickPictureMaker(deps(async (prompt) => {
+      if (fail && prompt.includes('overhead')) throw new Error('Image job x failed with status FAILED: blocked');
+      return ok();
+    }));
+    expect(prompts()).toEqual(['prompt for feature', 'prompt for overhead']);
+    const pictures = listPictures(seoId);
+    expect(pictures.map((p) => p.slot + ':' + p.status)).toEqual(['feature:done', 'overhead:failed']);
+    expect(pictures[1]!.error).toMatch(/blocked/);
+
+    fail = false;
+    sent = [];
+    expect(queuePictures(seoId, dataDir)).toBe(2);
+    await kickPictureMaker(deps(ok));
+    expect(prompts()).toEqual(['prompt for overhead', 'prompt for closeup']);
+    expect(listPictures(seoId).map((p) => p.status)).toEqual(['done', 'done', 'done']);
   });
 
   it('never makes a finished picture again', async () => {
@@ -110,77 +162,6 @@ describe('Pictures from Google Flow', () => {
     expect(queuePictures(seoId, dataDir)).toBe(0);
     await kickPictureMaker(deps(ok));
     expect(sent).toEqual([]);
-  });
-
-  it('gives each picture two tries, then moves on to the next', async () => {
-    setPrompts(['feature', 'overhead']);
-    queuePictures(seoId, dataDir);
-    await kickPictureMaker(deps(async (prompt) => {
-      if (prompt.includes('feature')) throw new Error('Image job x failed with status FAILED: blocked');
-      return ok();
-    }));
-    expect(sent).toEqual(['prompt for feature', 'prompt for feature', 'prompt for overhead']);
-    const [feature, overhead] = listPictures(seoId);
-    expect(feature).toMatchObject({ status: 'failed', attempts: 2 });
-    expect(feature!.error).toMatch(/blocked/);
-    expect(overhead).toMatchObject({ status: 'done' });
-
-    retryPicture(feature!.id);
-    sent = [];
-    await kickPictureMaker(deps(ok));
-    expect(sent).toEqual(['prompt for feature']);
-    expect(listPictures(seoId)[0]).toMatchObject({ status: 'done' });
-  });
-
-  it('stops everything after three failures in a row, and tells Telegram', async () => {
-    setPrompts(['feature', 'overhead', 'closeup', 'serving']);
-    queuePictures(seoId, dataDir);
-    const messages: string[] = [];
-    await kickPictureMaker(deps(async () => { throw new Error('captcha_timeout'); }, async (m) => { messages.push(m); }));
-    // Feature twice (failed), overhead once: three in a row, then the stop.
-    expect(sent).toEqual(['prompt for feature', 'prompt for feature', 'prompt for overhead']);
-    expect(settings.get(PAUSE_KEY)).toMatch(/3 pictures failed in a row.*captcha_timeout/);
-    expect(messages[0]).toMatch(/paused/);
-    expect(listPictures(seoId).map((p) => p.status)).toEqual(['failed', 'queued', 'queued', 'queued']);
-
-    // Paused: pressing on sends nothing.
-    sent = [];
-    await kickPictureMaker(deps(ok));
-    expect(sent).toEqual([]);
-
-    resumePictures(settings);
-    await kickPictureMaker(deps(ok));
-    expect(sent).toEqual(['prompt for overhead', 'prompt for closeup', 'prompt for serving']);
-  });
-
-  it('sends the project id, and sends nothing at all without a real one', async () => {
-    setPrompts(['feature']);
-    queuePictures(seoId, dataDir);
-    const projects: string[] = [];
-    settings.set('flow_project_id', '');
-    await kickPictureMaker({ ...deps(ok), make: async (_p: string, projectId: string) => { projects.push(projectId); return ok(); } });
-    expect(projects).toEqual([]);
-    expect(settings.get(PAUSE_KEY)).toMatch(/No Google Flow project/);
-    expect(listPictures(seoId)[0]).toMatchObject({ status: 'queued', attempts: 0 });
-
-    settings.set('flow_project_id', 'shared-project-1');
-    resumePictures(settings);
-    await kickPictureMaker({ ...deps(ok), make: async (_p: string, projectId: string) => { projects.push(projectId); return ok(); } });
-    expect(projects).toEqual(['shared-project-1']);
-  });
-
-  it('stops at once on an answer that would fail every picture, without spending its tries', async () => {
-    setPrompts(['feature', 'overhead']);
-    queuePictures(seoId, dataDir);
-    const messages: string[] = [];
-    await kickPictureMaker(deps(
-      async () => { throw new Error('Image job eb5e failed with status FAILED: RpcError: ogiZ0b failed: [5]'); },
-      async (m) => { messages.push(m); },
-    ));
-    expect(sent).toHaveLength(1);
-    expect(settings.get(PAUSE_KEY)).toMatch(/could not find the project shared-project-1/);
-    expect(messages[0]).toMatch(/NOT_FOUND/);
-    expect(listPictures(seoId).map((p) => [p.status, p.attempts])).toEqual([['queued', 0], ['queued', 0]]);
   });
 
   it('does not send a prompt that was rewritten after it was queued', async () => {
