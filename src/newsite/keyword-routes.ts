@@ -22,6 +22,7 @@ import {
 } from './repo.js';
 import { articleStepPage, imagesStepPage, keywordsPage, recipeStepPage, seoStepPage, skeletonStepPage } from './keywords-view.js';
 import { articleTypeFor } from './skeleton.js';
+import { clearPictures, listPictures, listPlanPictures } from './pictures.js';
 import { asPage } from './keywords.js';
 import { getSeoRow, kickSeoWriter, listPlanSeo, queuePlanSeo, requeueArticle, requeueImages, requeueRecipe, requeueSeo, requeueSkeleton, resetInterruptedSeo } from './seo.js';
 
@@ -32,6 +33,9 @@ export interface KeywordRouteDeps extends FindDeps {
   isPlatformReady: () => boolean;
   /** Start AI#1 after a plan is saved (and resume it at boot). Tests turn it off. */
   autoSeo?: boolean;
+  /** Why picture making is paused, or '' when it is not. */
+  picturesPaused?: () => string;
+  dataDir?: string;
 }
 
 const body = (request: FastifyRequest): Record<string, unknown> =>
@@ -220,7 +224,7 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
                   ? skeletonStepPage(site, plan, rows)
                   : step === 'article'
                     ? articleStepPage(site, plan, rows)
-                    : imagesStepPage(site, plan, rows),
+                    : imagesStepPage(site, plan, rows, listPlanPictures(plan.id), deps.picturesPaused?.() ?? ''),
           flash: deps.readFlash(request.query),
         }),
       );
@@ -229,7 +233,10 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
 
   /** AI#1 progress for one plan, so the page can update without a reload. */
   app.get('/new-website/keywords/:id/seo', async (request, reply) =>
-    reply.send({ rows: listPlanSeo(Number((request.params as { id: string }).id) || 0) }),
+    reply.send({
+      rows: listPlanSeo(Number((request.params as { id: string }).id) || 0),
+      pictures: listPlanPictures(Number((request.params as { id: string }).id) || 0).map((p) => ({ id: p.id, status: p.status })),
+    }),
   );
 
   /** A plan saved before AI#1 existed: queue its keywords now. */
@@ -248,7 +255,15 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
   app.post('/new-website/keywords/images/:id/retry', async (request, reply) => {
     const row = getSeoRow(Number((request.params as { id: string }).id) || 0);
     if (!row) return reply.redirect('/new-website/keywords', 303);
+    if (listPictures(row.id).some((p) => p.status === 'queued' || p.status === 'making')) {
+      return reply.redirect(
+        `/new-website/keywords/plan/${row.plan_id}/images?error=${encodeURIComponent('Its pictures are being made. Wait for them to finish first.')}`,
+        303,
+      );
+    }
     requeueImages(row.id);
+    // New prompts, new pictures: the old ones would not match them.
+    clearPictures(row.id, deps.dataDir);
     startSeo();
     return reply.redirect(`/new-website/keywords/plan/${row.plan_id}/images?ok=${encodeURIComponent('Writing the image prompts again.')}`, 303);
   });
@@ -291,7 +306,10 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
 
   app.post('/new-website/keywords/:id/delete', async (request, reply) => {
     const website = Number(body(request).websiteId) || 0;
-    deleteKeywordPlan(Number((request.params as { id: string }).id) || 0);
+    const planId = Number((request.params as { id: string }).id) || 0;
+    // The plan's pictures are files in the data folder: they go with it.
+    for (const row of listPlanSeo(planId)) clearPictures(row.id, deps.dataDir);
+    deleteKeywordPlan(planId);
     return reply.redirect(
       `/new-website/keywords?website=${website}&ok=${encodeURIComponent('Keyword plan deleted.')}`,
       303,

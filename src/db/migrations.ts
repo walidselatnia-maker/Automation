@@ -664,6 +664,30 @@ export const MIGRATIONS: Migration[] = [
       addColumn(db, 'keyword_seo', 'images_problems', "TEXT NOT NULL DEFAULT ''");
     },
   },
+
+  {
+    id: '025-newsite-pictures',
+    description: 'The pictures made by Google Flow from each keyword\'s image prompts, one row per picture',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS newsite_pictures (
+          id         INTEGER PRIMARY KEY AUTOINCREMENT,
+          seo_id     INTEGER NOT NULL REFERENCES keyword_seo (id) ON DELETE CASCADE,
+          slot       TEXT    NOT NULL,
+          position   INTEGER NOT NULL DEFAULT 0,
+          prompt     TEXT    NOT NULL,
+          alt        TEXT    NOT NULL DEFAULT '',
+          status     TEXT    NOT NULL DEFAULT 'queued',
+          attempts   INTEGER NOT NULL DEFAULT 0,
+          error      TEXT    NOT NULL DEFAULT '',
+          file       TEXT    NOT NULL DEFAULT '',
+          made_at    TEXT,
+          UNIQUE (seo_id, slot)
+        );
+        CREATE INDEX IF NOT EXISTS newsite_pictures_status ON newsite_pictures (status, id);
+      `);
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */

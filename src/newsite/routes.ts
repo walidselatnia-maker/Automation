@@ -4,6 +4,8 @@ import { expandSeeds } from '../integrations/google-suggest.js';
 import type { Settings } from '../settings.js';
 import { checkSite as realCheckSite, listPosts as realListPosts, type SitePost, type SiteCheck } from './client.js';
 import { registerKeywordRoutes } from './keyword-routes.js';
+import { registerPictureRoutes, type PictureRouteDeps } from './picture-routes.js';
+import { PAUSE_KEY } from './pictures.js';
 import { platformReady, registerPlatformRoutes } from './platform-routes.js';
 import {
   createNewWebsite,
@@ -36,6 +38,12 @@ export interface NewWebsiteDeps {
   autoSeo?: boolean;
   /** For the platform setup's live checks (AI provider, Telegram, image service). */
   fetchImpl?: typeof fetch;
+  /** Replaces the Flowkit call in tests. */
+  makePicture?: PictureRouteDeps['makePicture'];
+  /** Where pictures are kept; the platform's data folder unless given. */
+  dataDir?: string;
+  /** Start the picture maker. Tests turn it off. */
+  autoPictures?: boolean;
 }
 
 const readFlash = (query: unknown): NewFlash => {
@@ -58,6 +66,12 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
 
   if (deps.settings) {
     registerPlatformRoutes(app, { settings: deps.settings, encryptionKey: deps.encryptionKey, readFlash, fetchImpl: deps.fetchImpl });
+    registerPictureRoutes(app, {
+      settings: deps.settings,
+      makePicture: deps.makePicture,
+      dataDir: deps.dataDir,
+      autoPictures: deps.autoPictures,
+    });
   }
 
   registerKeywordRoutes(app, {
@@ -65,6 +79,8 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
     readFlash,
     isPlatformReady: ready,
     autoSeo: deps.autoSeo,
+    picturesPaused: () => deps.settings?.get(PAUSE_KEY) ?? '',
+    dataDir: deps.dataDir,
     listPosts: deps.listPosts ?? ((domain, apiKey) => realListPosts(domain, apiKey)),
     suggest: deps.suggest ?? ((pillar) => expandSeeds([pillar])),
     ask:

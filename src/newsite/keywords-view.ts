@@ -5,6 +5,7 @@ import { articleTypeFor, parseSkeleton, totalWords, type Skeleton } from './skel
 import { parseRecipe } from './recipe.js';
 import { markdownToHtml } from './markdown.js';
 import { parseImageSet } from './images.js';
+import { MAX_TRIES, STOP_AFTER, type PictureRow } from './pictures.js';
 import { WIZARD_CSS } from './view.js';
 
 const INTENT_LABEL: Record<string, string> = {
@@ -135,7 +136,20 @@ const CSS = `
 .kw-img-theme dt { color: var(--soft); font-size: 12px; }
 .kw-img-theme dd { margin: 2px 0 0; font-size: 14px; }
 .kw-img-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 0; border-top: 1px solid var(--line); }
-.kw-img-list li { padding: 14px 0; border-bottom: 1px solid var(--line); }
+.kw-img-list li { padding: 14px 0; border-bottom: 1px solid var(--line); display: grid; grid-template-columns: minmax(0, 1fr) 176px; gap: 20px; align-items: start; }
+.kw-pic { display: block; aspect-ratio: 16 / 9; border-radius: var(--r-ctl); overflow: hidden; background: var(--raised); border: 1px solid var(--line); }
+.kw-pic img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.kw-pic-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 8px; text-align: center;
+  color: var(--faint); font-size: 12px; aspect-ratio: auto; min-height: 99px; }
+.kw-pic-empty.making { color: var(--accent); }
+.kw-pic-empty.failed { color: var(--bad); border-color: var(--bad); }
+.kw-pic-empty small { color: var(--soft); font-size: 11px; line-height: 1.4; max-height: 5.6em; overflow: hidden; overflow-wrap: anywhere; max-width: 100%; }
+.kw-pic-empty .ns-btn { height: 30px; padding: 0 10px; font-size: 12px; }
+.kw-pic-actions { gap: 8px; align-items: center; }
+.kw-pic-actions form { margin: 0; }
+.kw-paused { border: 1px solid var(--bad); border-left-width: 3px; border-radius: var(--r-ctl); padding: 14px 16px; margin-bottom: 24px; }
+.kw-paused b { color: var(--bad); }
+.kw-paused p { margin: 6px 0 12px; color: var(--soft); font-size: 14px; }
 .kw-img-slot { font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--accent); }
 .kw-img-prompt { margin: 6px 0 8px; font-size: 14px; line-height: 1.6; max-width: 72ch; }
 .kw-img-alt { color: var(--soft); font-size: 13px; }
@@ -183,6 +197,8 @@ const CSS = `
   .kw-saved-row { grid-template-columns: 1fr; gap: 8px; }
   .kw-recipe-facts { grid-template-columns: repeat(3, 1fr); }
   .kw-recipe-cols { grid-template-columns: 1fr; }
+  .kw-img-list li { grid-template-columns: 1fr; gap: 10px; }
+  .kw-pic { max-width: 320px; }
   .kw-row { grid-template-columns: 1fr; }
   .kw-dropped li, .kw-plain li, .kw-seo-facts, .kw-seo-facts div { grid-template-columns: 1fr; gap: 2px; }
 }
@@ -600,31 +616,63 @@ export function articleStepPage(site: NewWebsiteRow, plan: KeywordPlan, rows: Se
     ${raw(watchScript)}`;
 }
 
-/** One keyword's image prompts (AI#4): the shared theme, then one prompt per picture. */
-function imagesCard(row: SeoRow, intent: string): Html {
+const PICTURE_STATE: Record<PictureRow['status'], string> = {
+  queued: 'In the queue',
+  making: 'Making…',
+  done: 'Made',
+  failed: 'Failed',
+};
+
+/** The picture made from one prompt, or where it is in the queue. */
+function pictureBox(picture: PictureRow | undefined): Html {
+  if (!picture) return html`<div class="kw-pic kw-pic-empty">Not made yet</div>`;
+  if (picture.status === 'done') {
+    return html`<a class="kw-pic" href="/new-website/pictures/${picture.id}/file" target="_blank" rel="noopener">
+      <img src="/new-website/pictures/${picture.id}/file" alt="${picture.alt}" loading="lazy"></a>`;
+  }
+  return html`<div class="kw-pic kw-pic-empty ${picture.status}">
+    <span>${PICTURE_STATE[picture.status]}${picture.status !== 'failed' && picture.attempts > 0 ? ` · try ${picture.attempts + (picture.status === 'queued' ? 1 : 0)}` : ''}</span>
+    ${picture.status === 'failed'
+      ? html`<small>${picture.error}</small>
+          <form method="post" action="/new-website/pictures/${picture.id}/retry"><button class="ns-btn quiet kw-remove">Try again</button></form>`
+      : raw('')}
+  </div>`;
+}
+
+/** One keyword's image prompts (AI#4) and the pictures made from them. */
+function imagesCard(row: SeoRow, intent: string, pictures: PictureRow[], paused: boolean): Html {
   const ready = row.article_status === 'done';
   const set = row.images_json ? parseImageSet(row.images_json) : null;
+  const bySlot = new Map(pictures.map((p) => [p.slot, p]));
+  const promptsDone = Boolean(set && row.images_status === 'done');
+  // Only pictures made from the prompt as it is now count.
+  const current = promptsDone ? set!.images.map((im) => bySlot.get(im.slot)).map((p, i) => (p && p.prompt === set!.images[i]!.prompt ? p : undefined)) : [];
+  const made = current.filter((p) => p?.status === 'done').length;
+  const busy = current.some((p) => p?.status === 'queued' || p?.status === 'making');
   const state = !ready ? 'Needs the article first' : (SKELETON_STATUS[row.images_status] ?? 'Waiting');
-  const head = html`${roleLabel(row, intent)}<b>${row.keyword}</b>${set && row.images_status === 'done'
-    ? html`<span class="ns-num kw-count">${set.images.length} images</span>`
-    : raw('')}<span class="kw-seo-status ${row.images_status}">${row.images_status === 'writing' ? 'Writing…' : state}</span>`;
+  const head = html`${roleLabel(row, intent)}<b>${row.keyword}</b>${promptsDone
+    ? html`<span class="ns-num kw-count">${made} of ${set!.images.length} pictures</span>`
+    : raw('')}<span class="kw-seo-status ${row.images_status}">${row.images_status === 'writing' ? 'Writing…' : busy ? (paused ? 'Paused' : 'Making pictures…') : state}</span>`;
   const body = html`
     ${row.images_status === 'failed' ? problemList(row.images_problems) : raw('')}
-    ${set && row.images_status === 'done'
+    ${promptsDone
       ? html`<div class="kw-img">
           <dl class="kw-img-theme">
-            <div><dt>Surface</dt><dd>${set.theme.surface}</dd></div>
-            <div><dt>Lighting</dt><dd>${set.theme.lighting}</dd></div>
-            <div><dt>Palette</dt><dd>${set.theme.palette}</dd></div>
-            <div><dt>Style</dt><dd>${set.theme.style}</dd></div>
-            <div><dt>Mood</dt><dd>${set.theme.mood}</dd></div>
+            <div><dt>Surface</dt><dd>${set!.theme.surface}</dd></div>
+            <div><dt>Lighting</dt><dd>${set!.theme.lighting}</dd></div>
+            <div><dt>Palette</dt><dd>${set!.theme.palette}</dd></div>
+            <div><dt>Style</dt><dd>${set!.theme.style}</dd></div>
+            <div><dt>Mood</dt><dd>${set!.theme.mood}</dd></div>
           </dl>
           <ol class="kw-img-list">
-            ${set.images.map(
-              (im) => html`<li>
-                <div class="kw-img-slot">${im.slot.replace(/-/g, ' ')}</div>
-                <p class="kw-img-prompt">${im.prompt}</p>
-                <div class="kw-img-alt"><b>Alt</b> ${im.alt}</div>
+            ${set!.images.map(
+              (im, i) => html`<li>
+                <div>
+                  <div class="kw-img-slot">${im.slot.replace(/-/g, ' ')}</div>
+                  <p class="kw-img-prompt">${im.prompt}</p>
+                  <div class="kw-img-alt"><b>Alt</b> ${im.alt}</div>
+                </div>
+                ${pictureBox(current[i])}
               </li>`,
             )}
           </ol>
@@ -635,35 +683,59 @@ function imagesCard(row: SeoRow, intent: string): Html {
             ? 'The image prompts are written once this keyword has its article.'
             : row.images_status === 'writing' ? 'The AI is writing the image prompts now.' : 'Waiting for its turn.'}</p>`}
     ${row.images_status === 'done' || row.images_status === 'failed'
-      ? html`<form method="post" action="/new-website/keywords/images/${row.id}/retry" class="kw-seo-retry">
-          <button class="ns-btn quiet kw-remove">Write image prompts again</button>
-        </form>`
+      ? html`<div class="kw-seo-retry kw-pic-actions">
+          ${row.images_status === 'failed' || !busy
+            ? html`<form method="post" action="/new-website/keywords/images/${row.id}/retry">
+                <button class="ns-btn quiet kw-remove" ${made ? raw(`onclick="return confirm('New prompts mean the ${made} pictures made so far are made again. Carry on?')"`) : raw('')}>Write image prompts again</button>
+              </form>`
+            : raw('')}
+          ${promptsDone && made < set!.images.length && !busy
+            ? html`<form method="post" action="/new-website/keywords/pictures/${row.id}/make">
+                <button class="ns-btn primary">Make ${set!.images.length - made} picture${set!.images.length - made === 1 ? '' : 's'}</button>
+              </form>`
+            : raw('')}
+        </div>`
       : raw('')}`;
   return card(head, body, row.images_status === 'failed');
 }
 
-/** The image prompts (AI#4) of every keyword in one plan. */
-export function imagesStepPage(site: NewWebsiteRow, plan: KeywordPlan, rows: SeoRow[]): Html {
+/** The image prompts (AI#4) of every keyword in one plan, and their pictures. */
+export function imagesStepPage(site: NewWebsiteRow, plan: KeywordPlan, rows: SeoRow[], pictures: PictureRow[] = [], paused = ''): Html {
   const intentOf = new Map(plan.items.map((i) => [i.keyword, i.intent]));
-  const done = rows.filter((r) => r.images_status === 'done').length;
   const names = stepNames(site.niche);
   const recipeSite = articleTypeFor(site.niche) === 'recipe';
+  const picturesOf = (id: number) => pictures.filter((p) => p.seo_id === id);
+  const busy = busyRows(rows) || pictures.some((p) => p.status === 'queued' || p.status === 'making');
+  const made = pictures.filter((p) => p.status === 'done').length;
+  const total = rows.reduce((n, r) => n + (r.images_status === 'done' ? (parseImageSet(r.images_json)?.images.length ?? 0) : 0), 0);
   const body = html`
-    <h2>Image prompts</h2>
+    ${paused
+      ? html`<div class="kw-paused" role="alert">
+          <div><b>Picture making is paused.</b> ${paused}</div>
+          <p>Nothing is sent to Google Flow until you resume. Check that the image service is running and signed in to Flow first.</p>
+          <form method="post" action="/new-website/pictures/resume"><input type="hidden" name="planId" value="${plan.id}"><button class="ns-btn primary">Resume</button></form>
+        </div>`
+      : raw('')}
+    <h2>Images</h2>
     <p>For each article the AI first sets one look (surface, lighting, palette, style, mood), then writes a prompt per picture that follows it, so all of an article's pictures look like one photoshoot. ${recipeSite
       ? 'Recipe pages get six photos of the dish and one per recipe step; article pages get a feature image and one per main section.'
-      : 'Each article gets a feature image and one per main section.'} Code checked every prompt: the shared look, lens, aperture, light, real details from the article and no generic words.</p>
+      : 'Each article gets a feature image and one per main section.'}</p>
+    <p>Pictures are made by Google Flow only when you press <b>Make pictures</b>: one at a time, with the platform's pause between them. Each gets ${MAX_TRIES} tries; ${STOP_AFTER} failures in a row pause everything until you resume.</p>
     ${rows.length
-      ? html`<ul class="acc-list" ${busyRows(rows) ? raw(`data-watch="${plan.id}"`) : raw('')}>
-          ${rows.map((r) => imagesCard(r, intentOf.get(r.keyword) ?? ''))}
+      ? html`<ul class="acc-list" ${busy ? raw(`data-watch="${plan.id}"`) : raw('')}>
+          ${rows.map((r) => imagesCard(r, intentOf.get(r.keyword) ?? '', picturesOf(r.id), Boolean(paused)))}
         </ul>`
       : html`<p class="kw-none">Image prompts follow the articles. Go back to start them.</p>`}`;
   const foot = html`
     <a class="ns-btn quiet" href="${planHref(plan.id, 'article')}">Previous</a>
-    <a class="ns-btn primary disabled" aria-disabled="true">Next: make the pictures (coming next)</a>`;
+    ${total > made
+      ? html`<form method="post" action="/new-website/keywords/plan/${plan.id}/pictures/make" style="margin:0">
+          <button class="ns-btn primary" ${raw(`onclick="return confirm('Send ${total - made} pictures to Google Flow, one at a time?')"`)}>Make all pictures</button>
+        </form>`
+      : html`<a class="ns-btn primary disabled" aria-disabled="true">Next: publishing (coming next)</a>`}`;
   return html`
     <style>${raw(WIZARD_CSS)}${raw(CSS)}</style>
-    ${stepCard(names, names.indexOf('Images'), plan.pillar, html`${site.name} · <span class="ns-num">${done} of ${rows.length || plan.items.length + 1} done</span>`, body, foot)}
+    ${stepCard(names, names.indexOf('Images'), plan.pillar, html`${site.name} · <span class="ns-num">${made} of ${total} pictures made</span>`, body, foot)}
     ${raw(watchScript)}`;
 }
 
@@ -682,7 +754,8 @@ const watchScript = `<script>
   var id = list.getAttribute('data-watch'), seen;
   setInterval(function () {
     fetch('/new-website/keywords/' + id + '/seo').then(function (r) { return r.json(); }).then(function (r) {
-      var key = r.rows.map(function (x) { return [x.status, x.recipe_status, x.skeleton_status, x.article_status, x.images_status].join('/'); }).join(',');
+      var key = r.rows.map(function (x) { return [x.status, x.recipe_status, x.skeleton_status, x.article_status, x.images_status].join('/'); }).join(',')
+        + '|' + (r.pictures || []).map(function (x) { return x.id + x.status; }).join(',');
       if (seen !== undefined && seen !== key) location.reload();
       seen = key;
     }).catch(function () {});
