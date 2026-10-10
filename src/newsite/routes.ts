@@ -5,7 +5,7 @@ import type { Settings } from '../settings.js';
 import { checkSite as realCheckSite, listPosts as realListPosts, type SitePost, type SiteCheck } from './client.js';
 import { registerKeywordRoutes } from './keyword-routes.js';
 import { registerPictureRoutes, type PictureRouteDeps } from './picture-routes.js';
-import { PAUSE_KEY } from './pictures.js';
+import { flowProjectFor, PAUSE_KEY } from './pictures.js';
 import { platformReady, registerPlatformRoutes } from './platform-routes.js';
 import {
   createNewWebsite,
@@ -80,6 +80,7 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
     isPlatformReady: ready,
     autoSeo: deps.autoSeo,
     picturesPaused: () => deps.settings?.get(PAUSE_KEY) ?? '',
+    flowProject: (siteProjectId) => (deps.settings ? flowProjectFor(siteProjectId, deps.settings) : { id: '', source: '' }),
     dataDir: deps.dataDir,
     listPosts: deps.listPosts ?? ((domain, apiKey) => realListPosts(domain, apiKey)),
     suggest: deps.suggest ?? ((pillar) => expandSeeds([pillar])),

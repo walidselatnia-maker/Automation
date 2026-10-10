@@ -2,7 +2,6 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { all, get, run } from '../db/index.js';
 import { resolveDataDir } from '../config.js';
-import { resolveProjectId } from '../core/project-id.js';
 import { ImageClient } from '../integrations/images.js';
 import { createLogger, errorMessage } from '../lib/logger.js';
 import type { Settings } from '../settings.js';
@@ -165,6 +164,50 @@ const flowMaker = (settings: Settings) => (prompt: string, projectId: string) =>
 const extension = (contentType: string): string =>
   contentType.includes('png') ? 'png' : contentType.includes('jpeg') || contentType.includes('jpg') ? 'jpg' : 'webp';
 
+/**
+ * The Flow project pictures for a website go into: its own, else the shared
+ * one from Platform -> Images. Never a made-up one: Google answers a project
+ * it does not know with NOT_FOUND on every picture.
+ */
+export type FlowProject = { id: string; source: 'website' | 'platform' | '' };
+
+export function flowProjectFor(siteProjectId: string, settings: Settings): FlowProject {
+  if (siteProjectId.trim()) return { id: siteProjectId.trim(), source: 'website' };
+  const shared = settings.get('flow_project_id').trim();
+  return shared ? { id: shared, source: 'platform' } : { id: '', source: '' };
+}
+
+/** The Flow project for the website a keyword belongs to. */
+export function flowProjectForSeo(seoId: number, settings: Settings): FlowProject {
+  const site = get<{ project_id: string }>(
+    `SELECT w.project_id FROM keyword_seo s JOIN keyword_plans k ON k.id = s.plan_id JOIN new_websites w ON w.id = k.website_id WHERE s.id = ?`,
+    seoId,
+  );
+  return flowProjectFor(site?.project_id ?? '', settings);
+}
+
+export const NO_PROJECT =
+  'No Google Flow project is set. Add one on the website (Edit website, Google Flow project) or on Platform, Images: the code after /project/ in Flow\'s address bar.';
+
+/**
+ * Google answers that will be the same for every picture: carrying on would
+ * only spend a captcha per picture. In plain words, or null for an error that
+ * may pass (a timeout, a captcha that did not solve).
+ */
+export function stopsEverything(message: string, projectId: string): string | null {
+  const text = message.toUpperCase();
+  if (/FAILED: \[5[\],]/.test(text) || text.includes('NOT_FOUND')) {
+    return `Google Flow could not find the project ${projectId} (NOT_FOUND). Check the project code on the website or on Platform, and that it belongs to the Google account signed in to the image service.`;
+  }
+  if (text.includes('MODEL_ACCESS_DENIED')) return 'The Google account in the image service may not use the image model. Pick another model on Platform, Images.';
+  if (text.includes('USER_QUOTA_REACHED')) return 'The Google account in the image service has no image credits left. Wait for them to reset.';
+  if (text.includes('UNUSUAL_ACTIVITY')) return 'Google flagged unusual activity on the Flow account. Give it a few hours before resuming.';
+  if (text.includes('SESSION_EXPIRED') || text.includes('SIGN IN') || text.includes('SIGN-IN')) {
+    return 'The image service is signed out of Google Flow. Sign it in again.';
+  }
+  return null;
+}
+
 /** Resume after a stop: clears the pause and the failure streak. */
 export function resumePictures(settings: Settings): void {
   settings.set(PAUSE_KEY, '');
@@ -186,8 +229,8 @@ export function kickPictureMaker(deps: PictureDeps): Promise<void> {
     .then(async () => {
       for (;;) {
         if (pausedReason(deps.settings)) break;
-        const next = get<PictureRow & { domain: string; project_id: string }>(
-          `SELECT p.*, w.domain, w.project_id FROM newsite_pictures p
+        const next = get<PictureRow & { project_id: string }>(
+          `SELECT p.*, w.project_id FROM newsite_pictures p
              JOIN keyword_seo s ON s.id = p.seo_id
              JOIN keyword_plans k ON k.id = s.plan_id
              JOIN new_websites w ON w.id = k.website_id
@@ -210,8 +253,13 @@ export function kickPictureMaker(deps: PictureDeps): Promise<void> {
         }
         if (pausedReason(deps.settings)) break;
 
+        const project = flowProjectFor(next.project_id, deps.settings);
+        if (!project.id) {
+          deps.settings.set(PAUSE_KEY, NO_PROJECT);
+          break;
+        }
+        const projectId = project.id;
         run(`UPDATE newsite_pictures SET status = 'making', attempts = attempts + 1 WHERE id = ?`, next.id);
-        const projectId = resolveProjectId(next.project_id, deps.settings.get('flow_project_id'), next.domain).projectId;
         try {
           const { data, contentType } = await make(next.prompt, projectId);
           const dir = pictureDir(next.seo_id, dataDir);
@@ -222,6 +270,15 @@ export function kickPictureMaker(deps: PictureDeps): Promise<void> {
           failStreak = 0;
         } catch (err) {
           const message = errorMessage(err).slice(0, 400);
+          const fatal = stopsEverything(message, projectId);
+          if (fatal) {
+            // Not this picture's fault: it goes back in the queue, untouched.
+            run(`UPDATE newsite_pictures SET status = 'queued', attempts = attempts - 1, error = '' WHERE id = ?`, next.id);
+            deps.settings.set(PAUSE_KEY, `${fatal} (Google said: ${message})`);
+            log.error(`Picture making paused: ${fatal} ${message}`);
+            await deps.notify?.(`<b>New website: picture making paused</b>\n${fatal}\nThen press Resume on the Images page.`).catch(() => {});
+            break;
+          }
           failStreak += 1;
           const tries = next.attempts + 1;
           log.warn(`Picture "${next.slot}" (${next.id}) failed, try ${tries} of ${MAX_TRIES}: ${message}`);

@@ -59,6 +59,7 @@ describe('Pictures from Google Flow', () => {
     openDatabase(':memory:');
     settings = new Settings(KEY);
     settings.set('image_gap_seconds', '30');
+    settings.set('flow_project_id', 'shared-project-1');
     const websiteId = createNewWebsite(
       {
         name: 'Site', domain: 'f.longlivo.com', apiKey: 'sk_test_ABCDEFGHIJKLMNOP', niche: 'Baking recipes', nicheContext: '',
@@ -150,6 +151,36 @@ describe('Pictures from Google Flow', () => {
     resumePictures(settings);
     await kickPictureMaker(deps(ok));
     expect(sent).toEqual(['prompt for overhead', 'prompt for closeup', 'prompt for serving']);
+  });
+
+  it('sends the project id, and sends nothing at all without a real one', async () => {
+    setPrompts(['feature']);
+    queuePictures(seoId, dataDir);
+    const projects: string[] = [];
+    settings.set('flow_project_id', '');
+    await kickPictureMaker({ ...deps(ok), make: async (_p: string, projectId: string) => { projects.push(projectId); return ok(); } });
+    expect(projects).toEqual([]);
+    expect(settings.get(PAUSE_KEY)).toMatch(/No Google Flow project/);
+    expect(listPictures(seoId)[0]).toMatchObject({ status: 'queued', attempts: 0 });
+
+    settings.set('flow_project_id', 'shared-project-1');
+    resumePictures(settings);
+    await kickPictureMaker({ ...deps(ok), make: async (_p: string, projectId: string) => { projects.push(projectId); return ok(); } });
+    expect(projects).toEqual(['shared-project-1']);
+  });
+
+  it('stops at once on an answer that would fail every picture, without spending its tries', async () => {
+    setPrompts(['feature', 'overhead']);
+    queuePictures(seoId, dataDir);
+    const messages: string[] = [];
+    await kickPictureMaker(deps(
+      async () => { throw new Error('Image job eb5e failed with status FAILED: RpcError: ogiZ0b failed: [5]'); },
+      async (m) => { messages.push(m); },
+    ));
+    expect(sent).toHaveLength(1);
+    expect(settings.get(PAUSE_KEY)).toMatch(/could not find the project shared-project-1/);
+    expect(messages[0]).toMatch(/NOT_FOUND/);
+    expect(listPictures(seoId).map((p) => [p.status, p.attempts])).toEqual([['queued', 0], ['queued', 0]]);
   });
 
   it('does not send a prompt that was rewritten after it was queued', async () => {

@@ -12,6 +12,8 @@ import {
   pictureDir,
   queuePictures,
   resetInterruptedPictures,
+  flowProjectForSeo,
+  NO_PROJECT,
   pausedReason,
   resumePictures,
   retryPicture,
@@ -69,6 +71,7 @@ export function registerPictureRoutes(app: FastifyInstance, deps: PictureRouteDe
   app.post('/new-website/keywords/pictures/:id/make', async (request, reply) => {
     const row = getSeoRow(Number((request.params as { id: string }).id) || 0);
     if (!row) return reply.redirect('/new-website/keywords', 303);
+    if (!flowProjectForSeo(row.id, settings).id) return reply.redirect(imagesPage(row.plan_id, NO_PROJECT, 'error'), 303);
     const queued = queuePictures(row.id, dataDir);
     start();
     return reply.redirect(
@@ -80,6 +83,8 @@ export function registerPictureRoutes(app: FastifyInstance, deps: PictureRouteDe
   /** Make the pictures of every keyword in a plan whose prompts are ready. */
   app.post('/new-website/keywords/plan/:id/pictures/make', async (request, reply) => {
     const planId = Number((request.params as { id: string }).id) || 0;
+    const first = listPlanSeo(planId)[0];
+    if (first && !flowProjectForSeo(first.id, settings).id) return reply.redirect(imagesPage(planId, NO_PROJECT, 'error'), 303);
     const queued = listPlanSeo(planId).reduce((n, r) => n + queuePictures(r.id, dataDir), 0);
     start();
     return reply.redirect(

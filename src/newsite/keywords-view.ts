@@ -5,7 +5,7 @@ import { articleTypeFor, parseSkeleton, totalWords, type Skeleton } from './skel
 import { parseRecipe } from './recipe.js';
 import { markdownToHtml } from './markdown.js';
 import { parseImageSet } from './images.js';
-import { MAX_TRIES, STOP_AFTER, type PictureRow } from './pictures.js';
+import { MAX_TRIES, NO_PROJECT, STOP_AFTER, type FlowProject, type PictureRow } from './pictures.js';
 import { WIZARD_CSS } from './view.js';
 
 const INTENT_LABEL: Record<string, string> = {
@@ -147,6 +147,7 @@ const CSS = `
 .kw-pic-empty .ns-btn { height: 30px; padding: 0 10px; font-size: 12px; }
 .kw-pic-actions { gap: 8px; align-items: center; }
 .kw-pic-actions form { margin: 0; }
+.kw-project { font-size: 14px; color: var(--soft); overflow-wrap: anywhere; }
 .kw-paused { border: 1px solid var(--bad); border-left-width: 3px; border-radius: var(--r-ctl); padding: 14px 16px; margin-bottom: 24px; }
 .kw-paused b { color: var(--bad); }
 .kw-paused p { margin: 6px 0 12px; color: var(--soft); font-size: 14px; }
@@ -700,7 +701,14 @@ function imagesCard(row: SeoRow, intent: string, pictures: PictureRow[], paused:
 }
 
 /** The image prompts (AI#4) of every keyword in one plan, and their pictures. */
-export function imagesStepPage(site: NewWebsiteRow, plan: KeywordPlan, rows: SeoRow[], pictures: PictureRow[] = [], paused = ''): Html {
+export function imagesStepPage(
+  site: NewWebsiteRow,
+  plan: KeywordPlan,
+  rows: SeoRow[],
+  pictures: PictureRow[] = [],
+  paused = '',
+  project: FlowProject = { id: '', source: '' },
+): Html {
   const intentOf = new Map(plan.items.map((i) => [i.keyword, i.intent]));
   const names = stepNames(site.niche);
   const recipeSite = articleTypeFor(site.niche) === 'recipe';
@@ -720,7 +728,10 @@ export function imagesStepPage(site: NewWebsiteRow, plan: KeywordPlan, rows: Seo
     <p>For each article the AI first sets one look (surface, lighting, palette, style, mood), then writes a prompt per picture that follows it, so all of an article's pictures look like one photoshoot. ${recipeSite
       ? 'Recipe pages get six photos of the dish and one per recipe step; article pages get a feature image and one per main section.'
       : 'Each article gets a feature image and one per main section.'}</p>
-    <p>Pictures are made by Google Flow only when you press <b>Make pictures</b>: one at a time, with the platform's pause between them. Each gets ${MAX_TRIES} tries; ${STOP_AFTER} failures in a row pause everything until you resume.</p>
+    <p>Pictures are made by Google Flow only when you press <b>Make pictures</b>: one at a time, with the platform's pause between them. Each gets ${MAX_TRIES} tries; ${STOP_AFTER} failures in a row, or an answer from Google that would fail every picture, pause everything until you resume.</p>
+    ${project.id
+      ? html`<p class="kw-project">Flow project: <span class="ns-mono">${project.id}</span> <span class="kw-count">(${project.source === 'website' ? "this website's own" : 'the shared one from Platform'})</span></p>`
+      : html`<p class="kw-project kw-error">${NO_PROJECT}</p>`}
     ${rows.length
       ? html`<ul class="acc-list" ${busy ? raw(`data-watch="${plan.id}"`) : raw('')}>
           ${rows.map((r) => imagesCard(r, intentOf.get(r.keyword) ?? '', picturesOf(r.id), Boolean(paused)))}
