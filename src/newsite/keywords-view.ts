@@ -542,19 +542,27 @@ export function recipeStepPage(site: NewWebsiteRow, plan: KeywordPlan, rows: Seo
 function articleCard(row: SeoRow, intent: string): Html {
   const ready = row.skeleton_status === 'done';
   const state = !ready ? 'Needs the skeleton first' : (SKELETON_STATUS[row.article_status] ?? 'Waiting');
+  const failed = row.article_status === 'failed';
   const head = html`${roleLabel(row, intent)}<b>${row.keyword}</b>${row.article_status === 'done'
     ? html`<span class="ns-num kw-count">${row.article_words.toLocaleString('en')} words</span>`
     : raw('')}<span class="kw-seo-status ${row.article_status}">${row.article_status === 'writing' ? 'Writing…' : state}</span>`;
   const body = html`
+    ${failed
+      ? html`${problemList(row.article_problems)}
+          <p class="kw-none" style="margin:8px 0 16px">${row.article_md
+            ? 'The sections written before the failed one are kept below. Carrying on writes from the failed section.'
+            : 'The first section failed, so nothing is kept yet.'}</p>`
+      : raw('')}
     ${row.article_md
       ? html`<article class="kw-article"><h1>${row.title}</h1>${raw(markdownToHtml(row.article_md))}</article>`
-      : html`<p class="kw-none" style="margin:4px 0 0">${!ready
-          ? 'The article is written once this keyword has its skeleton.'
-          : row.article_status === 'writing' ? 'The AI is writing this article now, one section at a time.' : 'Waiting for its turn.'}</p>`}
-    ${row.article_status === 'failed' ? problemList(row.article_problems) : raw('')}
-    ${row.article_status === 'done' || row.article_status === 'failed'
+      : failed
+        ? raw('')
+        : html`<p class="kw-none" style="margin:4px 0 0">${!ready
+            ? 'The article is written once this keyword has its skeleton.'
+            : row.article_status === 'writing' ? 'The AI is writing this article now, one section at a time.' : 'Waiting for its turn.'}</p>`}
+    ${row.article_status === 'done' || failed
       ? html`<form method="post" action="/new-website/keywords/article/${row.id}/retry" class="kw-seo-retry">
-          <button class="ns-btn quiet kw-remove">Write article again</button>
+          <button class="ns-btn ${failed ? 'primary' : 'quiet kw-remove'}">${failed ? 'Carry on writing' : 'Write article again'}</button>
         </form>`
       : raw('')}`;
   return card(head, body, row.article_status === 'failed');

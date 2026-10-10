@@ -9,9 +9,14 @@ import { parseSkeleton, type SkeletonSection } from './skeleton.js';
  * AI#3: the article for one keyword, written from its skeleton.
  *
  * One H2 section per request, so even a long pillar stays within what one
- * answer can hold. Each section is checked before the next is written; a
- * section that still fails after three rounds stops the article, with the
- * reasons, so a bad article is never quietly assembled.
+ * answer can hold. Each section is checked before the next is written, and
+ * its problems go back to the AI, up to three rounds.
+ *
+ * After three rounds the best attempt is kept when only soft problems are
+ * left (a little long or short, a little hard to read). A hard problem
+ * (wrong headings, a generic AI phrase, an ingredient the recipe does not
+ * have) stops the article at that section. The sections already written are
+ * kept, so trying again carries on from the section that failed.
  */
 
 const log = createLogger('newsite-article');
@@ -84,10 +89,17 @@ export interface SectionContext {
   section: SkeletonSection;
   first: boolean;
   focusKeyword: string;
-  /** Text of the recipe(s) the article may use, when it is held to a recipe. */
+  /**
+   * Text of the recipe(s) the article may use, when it is held to a recipe,
+   * plus the plan's keywords and the skeleton, whose words may also be used.
+   */
   allowedText?: string;
   keyword: string;
 }
+
+/** Problems that may stay in the best attempt after the last round. */
+export const isSoftProblem = (problem: string): boolean =>
+  /^The section has \d+ words|^The writing is too hard to read/.test(problem);
 
 /** What is wrong with one written section, in words the AI can act on. Empty when it passes. */
 export function checkSection(md: string, ctx: SectionContext): string[] {
@@ -190,15 +202,32 @@ export async function writeArticle(row: SeoRow, deps: ArticleDeps): Promise<void
     }
   }
 
+  if (allowedText !== undefined) {
+    // The plan's own keywords and the skeleton are allowed too: a pillar names
+    // its sub-pages, and a section may say what its heading says.
+    const keywords = all<{ keyword: string }>('SELECT keyword FROM keyword_seo WHERE plan_id = ?', row.plan_id).map((r) => r.keyword);
+    const outlineText = skeleton.sections.flatMap((s) => [s.h2, s.covers, ...s.keyPoints, ...s.h3.flatMap((h) => [h.h3, ...h.keyPoints])]);
+    allowedText += '\n' + [ctx.pillar, ...keywords, ...outlineText].join('\n');
+  }
+
   const outline = skeleton.sections.map((s) => s.h2);
+  // Sections kept from an earlier attempt that stopped part-way: writing
+  // carries on after them.
+  const earlier = row.article_md ? row.article_md.split(/\n(?=## )/).map((p) => p.trim()) : [];
   const parts: string[] = [];
   let failure = '';
 
   for (const [i, section] of skeleton.sections.entries()) {
+    const kept = earlier[i];
+    if (kept && kept.split('\n')[0]!.trim() === `## ${section.h2}` && parts.length === i) {
+      parts.push(kept);
+      continue;
+    }
     const target = sectionTarget(section);
     const [min, max] = wordRange(target);
     let problems: string[] = [];
     let text = '';
+    let best: { text: string; problems: string[] } | null = null;
     for (let round = 0; round < ROUNDS; round++) {
       let raw: string;
       try {
@@ -232,6 +261,16 @@ export async function writeArticle(row: SeoRow, deps: ArticleDeps): Promise<void
       text = cleanMarkdown(raw);
       problems = checkSection(text, { section, first: i === 0, focusKeyword: row.focus_keyword, allowedText, keyword: row.keyword });
       if (problems.length === 0) break;
+      const hard = problems.filter((p) => !isSoftProblem(p)).length;
+      if (!best || hard < best.problems.filter((p) => !isSoftProblem(p)).length || (hard === 0 && problems.length < best.problems.length)) {
+        best = { text, problems };
+      }
+    }
+    // Only soft problems left: keep the best attempt and go on.
+    if (problems.length && best && best.problems.every(isSoftProblem)) {
+      log.info(`AI#3 kept "${section.h2}" for "${row.keyword}" with: ${best.problems.join(' ')}`);
+      text = best.text;
+      problems = [];
     }
     if (problems.length) {
       failure = [`Section "${section.h2}":`, ...problems].join('\n');

@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { closeDatabase, openDatabase, run } from '../src/db/index.js';
-import { checkSection, cleanMarkdown, readingGrade, wordRange } from '../src/newsite/article.js';
+import { checkSection, cleanMarkdown, isSoftProblem, readingGrade, wordRange } from '../src/newsite/article.js';
 import { markdownToHtml } from '../src/newsite/markdown.js';
 import { createNewWebsite, saveKeywordPlan } from '../src/newsite/repo.js';
 import { kickSeoWriter, listPlanSeo, queuePlanSeo, requeueArticle } from '../src/newsite/seo.js';
@@ -73,6 +73,12 @@ describe('AI#3 section checks', () => {
     expect(problems).toMatch(/not in the recipe.*walnut/);
     expect(problems).toMatch(/syrup/);
     expect(problems).toMatch(/temperature "190 °C"/);
+  });
+
+  it('tells soft problems from hard ones', () => {
+    expect(isSoftProblem('The section has 30 words; write 105 to 250.')).toBe(true);
+    expect(isSoftProblem('The writing is too hard to read (about grade 9); use shorter sentences and simpler words.')).toBe(true);
+    expect(isSoftProblem('These ingredients are not in the recipe; do not mention them: chocolate.')).toBe(false);
   });
 
   it('takes the section out of a code fence', () => {
@@ -149,6 +155,40 @@ describe('AI#3 follows the skeleton', () => {
     const [row] = listPlanSeo(planId);
     expect(row).toMatchObject({ article_status: 'failed' });
     expect(row!.article_problems).toMatch(/Section "Why Pumpkin Chocolate Chip Cookies Stay Soft"/);
+  });
+
+  it('keeps the best attempt when only soft problems are left', async () => {
+    // Always a little short: a soft problem, so the article still goes on.
+    await kickSeoWriter({
+      suggest: async () => [],
+      ask: async (_name, vars) => {
+        const sec = JSON.parse(String(vars.sectionJson)) as SkeletonSection;
+        return `## ${sec.h2}\n\n${plain(50, 'These pumpkin chocolate chip cookies stay soft.')}`;
+      },
+    });
+    expect(listPlanSeo(planId)[0]).toMatchObject({ article_status: 'done' });
+  });
+
+  it('carries on from the failed section, keeping the ones before it', async () => {
+    let failSecond = true;
+    const asked: string[] = [];
+    const ask = async (_name: string, vars: Record<string, unknown>) => {
+      const sec = JSON.parse(String(vars.sectionJson)) as SkeletonSection;
+      asked.push(sec.h2);
+      if (sec.h2.startsWith('Questions') && failSecond) return '## Wrong heading';
+      return `## ${sec.h2}\n\n${plain(100, 'These pumpkin chocolate chip cookies stay soft.')}`;
+    };
+    await kickSeoWriter({ suggest: async () => [], ask });
+    const failed = listPlanSeo(planId)[0]!;
+    expect(failed.article_status).toBe('failed');
+    expect(failed.article_md).toMatch(/^## Why Pumpkin/);
+
+    failSecond = false;
+    asked.length = 0;
+    requeueArticle(failed.id);
+    await kickSeoWriter({ suggest: async () => [], ask });
+    expect(asked).toEqual(['Questions Bakers Ask']);
+    expect(listPlanSeo(planId)[0]).toMatchObject({ article_status: 'done' });
   });
 
   it('can be written again', async () => {

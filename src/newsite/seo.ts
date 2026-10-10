@@ -202,10 +202,15 @@ export function resetInterruptedSeo(): void {
   run(`UPDATE keyword_seo SET article_status = 'pending' WHERE article_status = 'writing'`);
 }
 
-/** Write one article again, from the skeleton it has. */
+/**
+ * Write one article again, from the skeleton it has. A finished article is
+ * written from the start; a failed one keeps its good sections and carries on
+ * from the section that failed.
+ */
 export function requeueArticle(id: number): void {
   run(
-    `UPDATE keyword_seo SET article_status = 'pending', article_problems = '' WHERE id = ? AND skeleton_status = 'done' AND article_status != 'writing'`,
+    `UPDATE keyword_seo SET article_md = CASE WHEN article_status = 'failed' THEN article_md ELSE '' END,
+       article_status = 'pending', article_problems = '' WHERE id = ? AND skeleton_status = 'done' AND article_status != 'writing'`,
     id,
   );
 }
