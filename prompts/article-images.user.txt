@@ -1,0 +1,20 @@
+Keyword: {{keyword}}
+Article title: {{title}}
+
+Niche: {{niche}}
+About the website: {{nicheContext}}
+Alt text pattern from the SEO step: {{altPattern}}
+
+The slots, one image each, in this order (slot name and what it shows):
+{{slotsJson}}
+
+The fixed recipe for this page:
+{{recipeJson}}
+
+The article (take the real details from it):
+{{article}}
+
+Problems with your last answer (fix all of them, or ignore if empty):
+{{problemsJson}}
+
+Answer with the JSON only.

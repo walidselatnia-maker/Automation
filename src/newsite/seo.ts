@@ -4,6 +4,7 @@ import { similarity, words } from '../seo/rules.js';
 import { articleTypeFor, makeSkeleton } from './skeleton.js';
 import { makeRecipe } from './recipe.js';
 import { writeArticle } from './article.js';
+import { makeImagePrompts } from './images.js';
 
 /**
  * AI#1: SEO metadata for every keyword in a saved keyword plan.
@@ -164,6 +165,9 @@ export interface SeoRow {
   article_md: string;
   article_words: number;
   article_problems: string;
+  images_status: '' | 'pending' | 'writing' | 'done' | 'failed';
+  images_json: string;
+  images_problems: string;
 }
 
 /** One waiting row per keyword: the pillar first, then the sub-keywords in order. */
@@ -200,6 +204,15 @@ export function resetInterruptedSeo(): void {
   run(`UPDATE keyword_seo SET skeleton_status = 'pending' WHERE skeleton_status = 'writing'`);
   run(`UPDATE keyword_seo SET recipe_status = 'pending' WHERE recipe_status = 'writing'`);
   run(`UPDATE keyword_seo SET article_status = 'pending' WHERE article_status = 'writing'`);
+  run(`UPDATE keyword_seo SET images_status = 'pending' WHERE images_status = 'writing'`);
+}
+
+/** Write one article's image prompts again, from the article it has. */
+export function requeueImages(id: number): void {
+  run(
+    `UPDATE keyword_seo SET images_status = 'pending', images_problems = '' WHERE id = ? AND article_status = 'done' AND images_status != 'writing'`,
+    id,
+  );
 }
 
 /**
@@ -210,7 +223,7 @@ export function resetInterruptedSeo(): void {
 export function requeueArticle(id: number): void {
   run(
     `UPDATE keyword_seo SET article_md = CASE WHEN article_status = 'failed' THEN article_md ELSE '' END,
-       article_status = 'pending', article_problems = '' WHERE id = ? AND skeleton_status = 'done' AND article_status != 'writing'`,
+       article_status = 'pending', article_problems = '', images_status = '', images_json = '', images_problems = '' WHERE id = ? AND skeleton_status = 'done' AND article_status != 'writing'`,
     id,
   );
 }
@@ -219,7 +232,7 @@ export function requeueArticle(id: number): void {
 export function requeueRecipe(id: number): void {
   run(
     `UPDATE keyword_seo SET recipe_status = 'pending', recipe_problems = '', skeleton_status = '', skeleton_json = '', skeleton_problems = '',
-       article_status = '', article_md = '', article_words = 0, article_problems = ''
+       article_status = '', article_md = '', article_words = 0, article_problems = '', images_status = '', images_json = '', images_problems = ''
      WHERE id = ? AND status = 'done' AND recipe_status != 'writing' AND page != 'article'`,
     id,
   );
@@ -228,7 +241,8 @@ export function requeueRecipe(id: number): void {
 /** Make one skeleton again, from the metadata it has. */
 export function requeueSkeleton(id: number): void {
   run(
-    `UPDATE keyword_seo SET skeleton_status = 'pending', skeleton_problems = '', article_status = '', article_md = '', article_words = 0, article_problems = ''
+    `UPDATE keyword_seo SET skeleton_status = 'pending', skeleton_problems = '', article_status = '', article_md = '', article_words = 0, article_problems = '',
+       images_status = '', images_json = '', images_problems = ''
      WHERE id = ? AND status = 'done' AND skeleton_status != 'writing'`,
     id,
   );
@@ -303,7 +317,7 @@ export async function writeOne(row: SeoRow, deps: WriterDeps): Promise<void> {
        confidence = ?, reasoning = ?, problems = ?, updated_at = datetime('now'),
        skeleton_status = ?, skeleton_json = '', skeleton_problems = '',
        recipe_status = ?, recipe_json = '', recipe_problems = '',
-       article_status = '', article_md = '', article_words = 0, article_problems = ''
+       article_status = '', article_md = '', article_words = 0, article_problems = '', images_status = '', images_json = '', images_problems = ''
      WHERE id = ?`,
     problems.length ? 'failed' : 'done',
     a.title,
@@ -375,12 +389,24 @@ export function kickSeoWriter(deps: WriterDeps): Promise<void> {
         const piece = get<SeoRow>(
           `SELECT * FROM keyword_seo WHERE skeleton_status = 'done' AND article_status = 'pending' ORDER BY plan_id, position LIMIT 1`,
         );
-        if (!piece) break;
+        if (piece) {
+          try {
+            await writeArticle(piece, deps);
+          } catch (err) {
+            log.error(`AI#3 failed on "${piece.keyword}": ${errorMessage(err)}`);
+            run(`UPDATE keyword_seo SET article_status = 'failed', article_problems = ? WHERE id = ?`, 'Something went wrong while writing the article. Try again.', piece.id);
+          }
+          continue;
+        }
+        const pictures = get<SeoRow>(
+          `SELECT * FROM keyword_seo WHERE article_status = 'done' AND images_status = 'pending' ORDER BY plan_id, position LIMIT 1`,
+        );
+        if (!pictures) break;
         try {
-          await writeArticle(piece, deps);
+          await makeImagePrompts(pictures, deps);
         } catch (err) {
-          log.error(`AI#3 failed on "${piece.keyword}": ${errorMessage(err)}`);
-          run(`UPDATE keyword_seo SET article_status = 'failed', article_problems = ? WHERE id = ?`, 'Something went wrong while writing the article. Try again.', piece.id);
+          log.error(`AI#4 failed on "${pictures.keyword}": ${errorMessage(err)}`);
+          run(`UPDATE keyword_seo SET images_status = 'failed', images_problems = ? WHERE id = ?`, 'Something went wrong while writing the image prompts. Try again.', pictures.id);
         }
       }
     })

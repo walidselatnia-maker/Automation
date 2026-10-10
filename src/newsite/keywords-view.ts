@@ -4,6 +4,7 @@ import { DESCRIPTION, TITLE, type SeoRow } from './seo.js';
 import { articleTypeFor, parseSkeleton, totalWords, type Skeleton } from './skeleton.js';
 import { parseRecipe } from './recipe.js';
 import { markdownToHtml } from './markdown.js';
+import { parseImageSet } from './images.js';
 import { WIZARD_CSS } from './view.js';
 
 const INTENT_LABEL: Record<string, string> = {
@@ -129,6 +130,16 @@ const CSS = `
 .kw-recipe-foot { margin-top: 16px; color: var(--soft); font-size: 13px; }
 .kw-recipe-notes { margin-top: 8px; font-size: 14px; color: var(--soft); }
 .kw-recipe-notes b { color: var(--ink); margin-right: 6px; }
+.kw-img-theme { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px 20px; margin: 0 0 18px;
+  padding: 14px 16px; background: var(--raised); border-radius: var(--r-ctl); }
+.kw-img-theme dt { color: var(--soft); font-size: 12px; }
+.kw-img-theme dd { margin: 2px 0 0; font-size: 14px; }
+.kw-img-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 0; border-top: 1px solid var(--line); }
+.kw-img-list li { padding: 14px 0; border-bottom: 1px solid var(--line); }
+.kw-img-slot { font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--accent); }
+.kw-img-prompt { margin: 6px 0 8px; font-size: 14px; line-height: 1.6; max-width: 72ch; }
+.kw-img-alt { color: var(--soft); font-size: 13px; }
+.kw-img-alt b { color: var(--ink); margin-right: 6px; }
 .kw-article { border-top: 1px solid var(--line); padding-top: 18px; max-width: 68ch; overflow-wrap: anywhere; font-size: 16px; line-height: 1.7; }
 .kw-article h1 { font-size: 26px; line-height: 1.2; margin: 0 0 16px; }
 .kw-article h2 { font-size: 21px; margin: 28px 0 10px; }
@@ -140,7 +151,6 @@ const CSS = `
 .kw-wz .wz-bar { grid-template-columns: repeat(4, 1fr); }
 .kw-steps-names { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 8px; font-size: 12px; font-weight: 600; opacity: .75; }
 .kw-steps-names span.on { opacity: 1; }
-.kw-later { opacity: .55; }
 .wz-foot a.ns-btn.disabled { pointer-events: none; opacity: .5; }
 
 /* Saved plans under step 1: a compact list, each opening its steps. */
@@ -188,7 +198,6 @@ const CHEVRON = '<svg class="acc-chev" viewBox="0 0 24 24" fill="none" stroke="c
 
 /** The wizard card every step shares: header with progress, body, and a footer with Previous / Next. */
 function stepCard(names: string[], step: number, title: string, subtitle: Html | string, body: Html, foot: Html): Html {
-  const last = names.length - 1;
   return html`
     <div class="wz kw-wz">
       <div class="wz-head">
@@ -196,7 +205,7 @@ function stepCard(names: string[], step: number, title: string, subtitle: Html |
         <p class="wz-id">${subtitle}</p>
         <div class="wz-bar" style="grid-template-columns:repeat(${names.length},1fr)">${names.map((_, i) => html`<i class="${i <= step ? 'on' : ''}"></i>`)}</div>
         <div class="kw-steps-names" style="grid-template-columns:repeat(${names.length},1fr)">${names.map(
-          (n, i) => html`<span class="${i === step ? 'on' : ''} ${i === last ? 'kw-later' : ''}">${i + 1}. ${n}${i === last ? ' (next)' : ''}</span>`,
+          (n, i) => html`<span class="${i === step ? 'on' : ''}">${i + 1}. ${n}</span>`,
         )}</div>
       </div>
       <div class="wz-body">${body}</div>
@@ -204,7 +213,7 @@ function stepCard(names: string[], step: number, title: string, subtitle: Html |
     </div>`;
 }
 
-const planHref = (planId: number, step: 'seo' | 'recipe' | 'skeleton' | 'article'): string => `/new-website/keywords/plan/${planId}/${step}`;
+const planHref = (planId: number, step: 'seo' | 'recipe' | 'skeleton' | 'article' | 'images'): string => `/new-website/keywords/plan/${planId}/${step}`;
 
 /** How far a plan has got, in one line. */
 const progress = (rows: SeoRow[]): string => {
@@ -213,7 +222,8 @@ const progress = (rows: SeoRow[]): string => {
   const recipes = rows.filter((r) => r.recipe_status === 'done').length;
   const sk = rows.filter((r) => r.skeleton_status === 'done').length;
   const articles = rows.filter((r) => r.article_status === 'done').length;
-  return `SEO ${seo}/${rows.length}${recipes ? ` · Recipes ${recipes}/${rows.length}` : ''} · Skeletons ${sk}/${rows.length} · Articles ${articles}/${rows.length}`;
+  const images = rows.filter((r) => r.images_status === 'done').length;
+  return `SEO ${seo}/${rows.length}${recipes ? ` · Recipes ${recipes}/${rows.length}` : ''} · Skeletons ${sk}/${rows.length} · Articles ${articles}/${rows.length} · Images ${images}/${rows.length}`;
 };
 
 /** Step 1: pick the website, find sub-keywords, save the plan. Saved plans are listed below. */
@@ -416,7 +426,7 @@ function skeletonCard(row: SeoRow, intent: string): Html {
 
 const busyRows = (rows: SeoRow[]): boolean =>
   rows.some((r) =>
-    [r.status, r.recipe_status, r.skeleton_status, r.article_status].some((st) => st === 'pending' || st === 'writing'),
+    [r.status, r.recipe_status, r.skeleton_status, r.article_status, r.images_status].some((st) => st === 'pending' || st === 'writing'),
   );
 
 /** Step 2: the SEO metadata (AI#1) of every keyword in one plan. */
@@ -583,10 +593,77 @@ export function articleStepPage(site: NewWebsiteRow, plan: KeywordPlan, rows: Se
       : html`<p class="kw-none">Articles follow the skeletons. Go back to start them.</p>`}`;
   const foot = html`
     <a class="ns-btn quiet" href="${planHref(plan.id, 'skeleton')}">Previous</a>
-    <a class="ns-btn primary disabled" aria-disabled="true">Next: images (coming next)</a>`;
+    <a class="ns-btn primary" href="${planHref(plan.id, 'images')}">Next: images</a>`;
   return html`
     <style>${raw(WIZARD_CSS)}${raw(CSS)}</style>
     ${stepCard(names, names.indexOf('Article'), plan.pillar, html`${site.name} · <span class="ns-num">${done} of ${rows.length || plan.items.length + 1} done</span>`, body, foot)}
+    ${raw(watchScript)}`;
+}
+
+/** One keyword's image prompts (AI#4): the shared theme, then one prompt per picture. */
+function imagesCard(row: SeoRow, intent: string): Html {
+  const ready = row.article_status === 'done';
+  const set = row.images_json ? parseImageSet(row.images_json) : null;
+  const state = !ready ? 'Needs the article first' : (SKELETON_STATUS[row.images_status] ?? 'Waiting');
+  const head = html`${roleLabel(row, intent)}<b>${row.keyword}</b>${set && row.images_status === 'done'
+    ? html`<span class="ns-num kw-count">${set.images.length} images</span>`
+    : raw('')}<span class="kw-seo-status ${row.images_status}">${row.images_status === 'writing' ? 'Writing…' : state}</span>`;
+  const body = html`
+    ${row.images_status === 'failed' ? problemList(row.images_problems) : raw('')}
+    ${set && row.images_status === 'done'
+      ? html`<div class="kw-img">
+          <dl class="kw-img-theme">
+            <div><dt>Surface</dt><dd>${set.theme.surface}</dd></div>
+            <div><dt>Lighting</dt><dd>${set.theme.lighting}</dd></div>
+            <div><dt>Palette</dt><dd>${set.theme.palette}</dd></div>
+            <div><dt>Style</dt><dd>${set.theme.style}</dd></div>
+            <div><dt>Mood</dt><dd>${set.theme.mood}</dd></div>
+          </dl>
+          <ol class="kw-img-list">
+            ${set.images.map(
+              (im) => html`<li>
+                <div class="kw-img-slot">${im.slot.replace(/-/g, ' ')}</div>
+                <p class="kw-img-prompt">${im.prompt}</p>
+                <div class="kw-img-alt"><b>Alt</b> ${im.alt}</div>
+              </li>`,
+            )}
+          </ol>
+        </div>`
+      : row.images_status === 'failed'
+        ? raw('')
+        : html`<p class="kw-none" style="margin:4px 0 0">${!ready
+            ? 'The image prompts are written once this keyword has its article.'
+            : row.images_status === 'writing' ? 'The AI is writing the image prompts now.' : 'Waiting for its turn.'}</p>`}
+    ${row.images_status === 'done' || row.images_status === 'failed'
+      ? html`<form method="post" action="/new-website/keywords/images/${row.id}/retry" class="kw-seo-retry">
+          <button class="ns-btn quiet kw-remove">Write image prompts again</button>
+        </form>`
+      : raw('')}`;
+  return card(head, body, row.images_status === 'failed');
+}
+
+/** The image prompts (AI#4) of every keyword in one plan. */
+export function imagesStepPage(site: NewWebsiteRow, plan: KeywordPlan, rows: SeoRow[]): Html {
+  const intentOf = new Map(plan.items.map((i) => [i.keyword, i.intent]));
+  const done = rows.filter((r) => r.images_status === 'done').length;
+  const names = stepNames(site.niche);
+  const recipeSite = articleTypeFor(site.niche) === 'recipe';
+  const body = html`
+    <h2>Image prompts</h2>
+    <p>For each article the AI first sets one look (surface, lighting, palette, style, mood), then writes a prompt per picture that follows it, so all of an article's pictures look like one photoshoot. ${recipeSite
+      ? 'Recipe pages get six photos of the dish and one per recipe step; article pages get a feature image and one per main section.'
+      : 'Each article gets a feature image and one per main section.'} Code checked every prompt: the shared look, lens, aperture, light, real details from the article and no generic words.</p>
+    ${rows.length
+      ? html`<ul class="acc-list" ${busyRows(rows) ? raw(`data-watch="${plan.id}"`) : raw('')}>
+          ${rows.map((r) => imagesCard(r, intentOf.get(r.keyword) ?? ''))}
+        </ul>`
+      : html`<p class="kw-none">Image prompts follow the articles. Go back to start them.</p>`}`;
+  const foot = html`
+    <a class="ns-btn quiet" href="${planHref(plan.id, 'article')}">Previous</a>
+    <a class="ns-btn primary disabled" aria-disabled="true">Next: make the pictures (coming next)</a>`;
+  return html`
+    <style>${raw(WIZARD_CSS)}${raw(CSS)}</style>
+    ${stepCard(names, names.indexOf('Images'), plan.pillar, html`${site.name} · <span class="ns-num">${done} of ${rows.length || plan.items.length + 1} done</span>`, body, foot)}
     ${raw(watchScript)}`;
 }
 
@@ -605,7 +682,7 @@ const watchScript = `<script>
   var id = list.getAttribute('data-watch'), seen;
   setInterval(function () {
     fetch('/new-website/keywords/' + id + '/seo').then(function (r) { return r.json(); }).then(function (r) {
-      var key = r.rows.map(function (x) { return [x.status, x.recipe_status, x.skeleton_status, x.article_status].join('/'); }).join(',');
+      var key = r.rows.map(function (x) { return [x.status, x.recipe_status, x.skeleton_status, x.article_status, x.images_status].join('/'); }).join(',');
       if (seen !== undefined && seen !== key) location.reload();
       seen = key;
     }).catch(function () {});

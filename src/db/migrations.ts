@@ -654,6 +654,16 @@ export const MIGRATIONS: Migration[] = [
       addColumn(db, 'keyword_seo', 'article_problems', "TEXT NOT NULL DEFAULT ''");
     },
   },
+
+  {
+    id: '024-keyword-images',
+    description: 'AI#4: the visual theme and image prompts per planned keyword, made from its article',
+    up(db) {
+      addColumn(db, 'keyword_seo', 'images_status', "TEXT NOT NULL DEFAULT ''");
+      addColumn(db, 'keyword_seo', 'images_json', "TEXT NOT NULL DEFAULT ''");
+      addColumn(db, 'keyword_seo', 'images_problems', "TEXT NOT NULL DEFAULT ''");
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */

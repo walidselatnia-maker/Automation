@@ -161,6 +161,17 @@ export const STEP_CONTEXTS: Record<string, Record<string, unknown>> = {
     recipeJson: '{}',
     problemsJson: '[]',
   },
+  'article-images': {
+    keyword: 'k',
+    title: 't',
+    niche: 'n',
+    nicheContext: 'c',
+    altPattern: 'a',
+    recipeJson: '{}',
+    article: 'a',
+    slotsJson: '[]',
+    problemsJson: '[]',
+  },
   'recipe-card': {
     keyword: 'k',
     role: 'r',

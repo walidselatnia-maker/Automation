@@ -58,6 +58,13 @@ const INGREDIENTS = [
   'mustard', 'ketchup', 'soy', 'tofu', 'flax', 'chia', 'quinoa', 'lentil', 'bean', 'chickpea', 'corn', 'pea',
 ].map((w) => (w.length > 3 && w.endsWith('s') ? w.slice(0, -1) : w));
 
+/** Ingredients `text` names that `allowedText` does not have. */
+export function inventedIngredients(text: string, allowedText: string): string[] {
+  const allowed = new Set(words(allowedText));
+  const used = new Set(words(text));
+  return INGREDIENTS.filter((i) => used.has(i) && !allowed.has(i));
+}
+
 /** Plain-language check: an estimate of the US school grade needed to read the text. */
 export function readingGrade(text: string): number {
   const sentences = Math.max(1, (text.match(/[.!?]+(\s|$)/g) ?? []).length);
@@ -143,9 +150,7 @@ export function checkSection(md: string, ctx: SectionContext): string[] {
   }
 
   if (ctx.allowedText !== undefined) {
-    const allowed = new Set([...words(ctx.allowedText), ...words(ctx.keyword)]);
-    const used = new Set(words(prose));
-    const invented = INGREDIENTS.filter((i) => used.has(i) && !allowed.has(i));
+    const invented = inventedIngredients(prose, ctx.allowedText + '\n' + ctx.keyword);
     if (invented.length) {
       problems.push(`These ingredients are not in the recipe; do not mention them: ${invented.join(', ')}.`);
     }
@@ -281,11 +286,14 @@ export async function writeArticle(row: SeoRow, deps: ArticleDeps): Promise<void
 
   const md = parts.join('\n\n');
   run(
-    `UPDATE keyword_seo SET article_status = ?, article_md = ?, article_words = ?, article_problems = ? WHERE id = ?`,
+    `UPDATE keyword_seo SET article_status = ?, article_md = ?, article_words = ?, article_problems = ?,
+       images_status = ?, images_json = '', images_problems = '' WHERE id = ?`,
     failure ? 'failed' : 'done',
     md,
     bodyWords(md),
     failure,
+    // A finished article gets its image prompts next.
+    failure ? '' : 'pending',
     row.id,
   );
 }

@@ -132,7 +132,8 @@ describe('AI#3 follows the skeleton', () => {
     const asked: Record<string, unknown>[] = [];
     await kickSeoWriter({
       suggest: async () => [],
-      ask: async (_name, vars) => {
+      ask: async (name, vars) => {
+        if (name !== 'article-section') return '{}';
         asked.push(vars);
         const sec = JSON.parse(String(vars.sectionJson)) as SkeletonSection;
         const lead = sec.h2.startsWith('Why') ? 'These pumpkin chocolate chip cookies stay soft.' : '';

@@ -266,7 +266,8 @@ export async function makeSkeleton(row: SeoRow, deps: SkeletonDeps): Promise<voi
 
   run(
     `UPDATE keyword_seo SET skeleton_status = ?, skeleton_json = ?, skeleton_problems = ?,
-       article_status = ?, article_md = '', article_words = 0, article_problems = '' WHERE id = ?`,
+       article_status = ?, article_md = '', article_words = 0, article_problems = '',
+       images_status = '', images_json = '', images_problems = '' WHERE id = ?`,
     problems.length ? 'failed' : 'done',
     last ? JSON.stringify(last) : '',
     problems.join('\n'),

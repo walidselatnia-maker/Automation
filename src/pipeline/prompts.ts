@@ -149,6 +149,9 @@ export const PROMPT_MODELS: Record<string, { model: string; format: 'json' | nul
   'recipe-card': { model: 'gpt-oss:120b', format: 'json' },
   // AI#3: one section of the article, in Markdown. Not JSON: it is prose.
   'article-section': { model: 'gpt-oss:120b', format: null },
+  // AI#4: one visual theme and one image prompt per picture of an article.
+  // JSON because code checks every prompt.
+  'article-images': { model: 'gpt-oss:120b', format: 'json' },
 };
 
 /* -------------------------------------------------------------------------
