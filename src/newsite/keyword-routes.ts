@@ -20,10 +20,10 @@ import {
   type NewWebsiteRow,
   type PlanItem,
 } from './repo.js';
-import { keywordsPage, recipeStepPage, seoStepPage, skeletonStepPage } from './keywords-view.js';
+import { articleStepPage, keywordsPage, recipeStepPage, seoStepPage, skeletonStepPage } from './keywords-view.js';
 import { articleTypeFor } from './skeleton.js';
 import { asPage } from './keywords.js';
-import { getSeoRow, kickSeoWriter, listPlanSeo, queuePlanSeo, requeueRecipe, requeueSeo, requeueSkeleton, resetInterruptedSeo } from './seo.js';
+import { getSeoRow, kickSeoWriter, listPlanSeo, queuePlanSeo, requeueArticle, requeueRecipe, requeueSeo, requeueSkeleton, resetInterruptedSeo } from './seo.js';
 
 export interface KeywordRouteDeps extends FindDeps {
   encryptionKey: Buffer;
@@ -197,7 +197,7 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
   });
 
   /** Steps 2 and 3 of one plan: its SEO metadata, then its skeletons. */
-  for (const step of ['seo', 'recipe', 'skeleton'] as const) {
+  for (const step of ['seo', 'recipe', 'skeleton', 'article'] as const) {
     app.get(`/new-website/keywords/plan/:id/${step}`, async (request, reply) => {
       if (!deps.isPlatformReady()) return reply.redirect(`/new-website/platform?error=${encodeURIComponent(NOT_READY)}`, 303);
       const planId = Number((request.params as { id: string }).id) || 0;
@@ -209,14 +209,16 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
       const rows = listPlanSeo(plan.id);
       return reply.type('text/html; charset=utf-8').send(
         newLayout({
-          title: `${plan.pillar} · ${step === 'seo' ? 'SEO' : step === 'recipe' ? 'Recipes' : 'Skeletons'}`,
+          title: `${plan.pillar} · ${{ seo: 'SEO', recipe: 'Recipes', skeleton: 'Skeletons', article: 'Articles' }[step]}`,
           active: '/new-website/keywords',
           body:
             step === 'seo'
               ? seoStepPage(site, plan, rows)
               : step === 'recipe'
                 ? recipeStepPage(site, plan, rows)
-                : skeletonStepPage(site, plan, rows),
+                : step === 'skeleton'
+                  ? skeletonStepPage(site, plan, rows)
+                  : articleStepPage(site, plan, rows),
           flash: deps.readFlash(request.query),
         }),
       );
@@ -238,6 +240,15 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
       startSeo();
     }
     return reply.redirect(`/new-website/keywords/plan/${planId}/seo?ok=${encodeURIComponent('Writing the SEO metadata.')}`, 303);
+  });
+
+  /** Write one keyword's article again, from its skeleton. */
+  app.post('/new-website/keywords/article/:id/retry', async (request, reply) => {
+    const row = getSeoRow(Number((request.params as { id: string }).id) || 0);
+    if (!row) return reply.redirect('/new-website/keywords', 303);
+    requeueArticle(row.id);
+    startSeo();
+    return reply.redirect(`/new-website/keywords/plan/${row.plan_id}/article?ok=${encodeURIComponent('Writing the article again.')}`, 303);
   });
 
   /** Make one keyword's recipe (again); its skeleton is remade from it. */

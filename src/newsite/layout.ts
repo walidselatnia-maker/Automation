@@ -106,7 +106,8 @@ h1, h2, h3 { font-family: var(--display); letter-spacing: -.02em; margin: 0; }
   .ns-side { position: static; width: auto; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 16px; border-right: 0; border-bottom: 1px solid var(--line); }
   .ns-brand { padding: 0 8px 0 4px; }
   .ns-brand small { display: none; }
-  .ns-nav { flex-direction: row; }
+  .ns-nav { flex-direction: row; flex-wrap: wrap; }
+  .ns-nav a { padding: 8px 10px; }
   .ns-foot { margin: 0 0 0 auto; border: 0; padding: 0; flex-direction: row; }
   .ns-foot span { display: none; }
   .ns-main { margin: 0; padding: 28px 16px 48px; }

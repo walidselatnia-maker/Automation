@@ -1,0 +1,28 @@
+Article title (the H1, already shown above the article; do not write it): {{title}}
+Keyword: {{keyword}}
+This page is: {{role}}
+Pillar of this plan: {{pillar}}
+Focus keyword: {{focusKeyword}}
+
+Niche: {{niche}}
+About the website: {{nicheContext}}
+Author persona: {{persona}}
+
+The whole outline (H2 headings in order): {{outlineJson}}
+This is {{position}}.
+
+The section to write (H2, what it covers, key points, H3s):
+{{sectionJson}}
+
+Length: {{wordRange}}
+
+The fixed recipe for this page:
+{{recipeJson}}
+
+How the previous section ended:
+{{previousEnding}}
+
+Problems with your last answer (fix all of them, or ignore if empty):
+{{problemsJson}}
+
+Answer with the Markdown of this one section only.

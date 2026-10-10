@@ -643,6 +643,17 @@ export const MIGRATIONS: Migration[] = [
       addColumn(db, 'keyword_seo', 'page', "TEXT NOT NULL DEFAULT 'recipe'");
     },
   },
+
+  {
+    id: '023-keyword-article',
+    description: 'AI#3: the written article per planned keyword, made from its skeleton',
+    up(db) {
+      addColumn(db, 'keyword_seo', 'article_status', "TEXT NOT NULL DEFAULT ''");
+      addColumn(db, 'keyword_seo', 'article_md', "TEXT NOT NULL DEFAULT ''");
+      addColumn(db, 'keyword_seo', 'article_words', 'INTEGER NOT NULL DEFAULT 0');
+      addColumn(db, 'keyword_seo', 'article_problems', "TEXT NOT NULL DEFAULT ''");
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */

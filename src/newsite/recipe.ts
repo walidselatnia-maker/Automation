@@ -199,7 +199,8 @@ export async function makeRecipe(row: SeoRow, deps: RecipeDeps): Promise<void> {
   const ok = problems.length === 0;
   run(
     `UPDATE keyword_seo SET recipe_status = ?, recipe_json = ?, recipe_problems = ?,
-       skeleton_status = ?, skeleton_json = '', skeleton_problems = ''
+       skeleton_status = ?, skeleton_json = '', skeleton_problems = '',
+       article_status = '', article_md = '', article_words = 0, article_problems = ''
      WHERE id = ?`,
     ok ? 'done' : 'failed',
     last ? JSON.stringify(last) : '',

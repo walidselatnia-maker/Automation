@@ -3,6 +3,7 @@ import type { KeywordPlan, NewWebsiteRow } from './repo.js';
 import { DESCRIPTION, TITLE, type SeoRow } from './seo.js';
 import { articleTypeFor, parseSkeleton, totalWords, type Skeleton } from './skeleton.js';
 import { parseRecipe } from './recipe.js';
+import { markdownToHtml } from './markdown.js';
 import { WIZARD_CSS } from './view.js';
 
 const INTENT_LABEL: Record<string, string> = {
@@ -128,6 +129,12 @@ const CSS = `
 .kw-recipe-foot { margin-top: 16px; color: var(--soft); font-size: 13px; }
 .kw-recipe-notes { margin-top: 8px; font-size: 14px; color: var(--soft); }
 .kw-recipe-notes b { color: var(--ink); margin-right: 6px; }
+.kw-article { border-top: 1px solid var(--line); padding-top: 18px; max-width: 68ch; overflow-wrap: anywhere; font-size: 16px; line-height: 1.7; }
+.kw-article h1 { font-size: 26px; line-height: 1.2; margin: 0 0 16px; }
+.kw-article h2 { font-size: 21px; margin: 28px 0 10px; }
+.kw-article h3 { font-size: 17px; margin: 20px 0 8px; }
+.kw-article p { margin: 0 0 14px; }
+.kw-article ul, .kw-article ol { margin: 0 0 14px; padding-left: 22px; display: grid; gap: 4px; }
 /* Steps: the wizard card, wider for lists. */
 .wz.kw-wz { max-width: 820px; }
 .kw-wz .wz-bar { grid-template-columns: repeat(4, 1fr); }
@@ -146,13 +153,13 @@ const CSS = `
 .kw-saved-meta { color: var(--soft); font-size: 14px; margin-top: 2px; }
 
 /* Keyword cards that open and close. */
-.acc-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.acc-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
 .acc { border: 1px solid var(--line); border-radius: var(--r-card); background: var(--surface); }
 .acc.open { border-color: var(--line-strong); }
-.acc-head { width: 100%; display: flex; align-items: center; gap: 12px; padding: 16px 18px; background: none; border: 0;
+.acc-head { width: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 16px 18px; background: none; border: 0;
   color: var(--ink); font: inherit; text-align: left; cursor: pointer; border-radius: var(--r-card); }
 .acc-head:hover { background: var(--raised); }
-.acc-head b { font-weight: 600; flex: 1; min-width: 0; }
+.acc-head b { font-weight: 600; flex: 1 1 160px; min-width: 0; overflow-wrap: anywhere; }
 .acc-chev { width: 18px; height: 18px; flex: none; color: var(--soft); transition: transform .25s ease; }
 .acc.open .acc-chev { transform: rotate(180deg); }
 .acc-panel { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .28s ease; }
@@ -174,8 +181,8 @@ const CSS = `
 /** The steps of a plan. Recipe websites get the fixed recipe before the skeleton. */
 const stepNames = (niche: string): string[] =>
   articleTypeFor(niche) === 'recipe'
-    ? ['Keywords', 'SEO', 'Recipe', 'Skeleton', 'Article']
-    : ['Keywords', 'SEO', 'Skeleton', 'Article'];
+    ? ['Keywords', 'SEO', 'Recipe', 'Skeleton', 'Article', 'Images']
+    : ['Keywords', 'SEO', 'Skeleton', 'Article', 'Images'];
 
 const CHEVRON = '<svg class="acc-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>';
 
@@ -197,7 +204,7 @@ function stepCard(names: string[], step: number, title: string, subtitle: Html |
     </div>`;
 }
 
-const planHref = (planId: number, step: 'seo' | 'recipe' | 'skeleton'): string => `/new-website/keywords/plan/${planId}/${step}`;
+const planHref = (planId: number, step: 'seo' | 'recipe' | 'skeleton' | 'article'): string => `/new-website/keywords/plan/${planId}/${step}`;
 
 /** How far a plan has got, in one line. */
 const progress = (rows: SeoRow[]): string => {
@@ -205,7 +212,8 @@ const progress = (rows: SeoRow[]): string => {
   const seo = rows.filter((r) => r.status === 'done').length;
   const recipes = rows.filter((r) => r.recipe_status === 'done').length;
   const sk = rows.filter((r) => r.skeleton_status === 'done').length;
-  return `SEO ${seo}/${rows.length}${recipes ? ` · Recipes ${recipes}/${rows.length}` : ''} · Skeletons ${sk}/${rows.length}`;
+  const articles = rows.filter((r) => r.article_status === 'done').length;
+  return `SEO ${seo}/${rows.length}${recipes ? ` · Recipes ${recipes}/${rows.length}` : ''} · Skeletons ${sk}/${rows.length} · Articles ${articles}/${rows.length}`;
 };
 
 /** Step 1: pick the website, find sub-keywords, save the plan. Saved plans are listed below. */
@@ -408,7 +416,7 @@ function skeletonCard(row: SeoRow, intent: string): Html {
 
 const busyRows = (rows: SeoRow[]): boolean =>
   rows.some((r) =>
-    [r.status, r.recipe_status, r.skeleton_status].some((st) => st === 'pending' || st === 'writing'),
+    [r.status, r.recipe_status, r.skeleton_status, r.article_status].some((st) => st === 'pending' || st === 'writing'),
   );
 
 /** Step 2: the SEO metadata (AI#1) of every keyword in one plan. */
@@ -452,7 +460,7 @@ export function skeletonStepPage(site: NewWebsiteRow, plan: KeywordPlan, rows: S
       : html`<p class="kw-none">Skeletons follow the SEO metadata. Go back one step to start it.</p>`}`;
   const foot = html`
     <a class="ns-btn quiet" href="${planHref(plan.id, articleTypeFor(site.niche) === 'recipe' ? 'recipe' : 'seo')}">Previous</a>
-    <a class="ns-btn primary disabled" aria-disabled="true">Next: article (coming next)</a>`;
+    <a class="ns-btn primary" href="${planHref(plan.id, 'article')}">Next: articles</a>`;
   return html`
     <style>${raw(WIZARD_CSS)}${raw(CSS)}</style>
     ${stepCard(stepNames(site.niche), stepNames(site.niche).indexOf('Skeleton'), plan.pillar, html`${site.name} · <span class="ns-num">${done} of ${rows.length || plan.items.length + 1} done</span>`, body, foot)}
@@ -530,6 +538,50 @@ export function recipeStepPage(site: NewWebsiteRow, plan: KeywordPlan, rows: Seo
     ${raw(watchScript)}`;
 }
 
+/** One keyword's written article (AI#3), shown as it will read. */
+function articleCard(row: SeoRow, intent: string): Html {
+  const ready = row.skeleton_status === 'done';
+  const state = !ready ? 'Needs the skeleton first' : (SKELETON_STATUS[row.article_status] ?? 'Waiting');
+  const head = html`${roleLabel(row, intent)}<b>${row.keyword}</b>${row.article_status === 'done'
+    ? html`<span class="ns-num kw-count">${row.article_words.toLocaleString('en')} words</span>`
+    : raw('')}<span class="kw-seo-status ${row.article_status}">${row.article_status === 'writing' ? 'Writing…' : state}</span>`;
+  const body = html`
+    ${row.article_md
+      ? html`<article class="kw-article"><h1>${row.title}</h1>${raw(markdownToHtml(row.article_md))}</article>`
+      : html`<p class="kw-none" style="margin:4px 0 0">${!ready
+          ? 'The article is written once this keyword has its skeleton.'
+          : row.article_status === 'writing' ? 'The AI is writing this article now, one section at a time.' : 'Waiting for its turn.'}</p>`}
+    ${row.article_status === 'failed' ? problemList(row.article_problems) : raw('')}
+    ${row.article_status === 'done' || row.article_status === 'failed'
+      ? html`<form method="post" action="/new-website/keywords/article/${row.id}/retry" class="kw-seo-retry">
+          <button class="ns-btn quiet kw-remove">Write article again</button>
+        </form>`
+      : raw('')}`;
+  return card(head, body, row.article_status === 'failed');
+}
+
+/** The written article (AI#3) of every keyword in one plan. */
+export function articleStepPage(site: NewWebsiteRow, plan: KeywordPlan, rows: SeoRow[]): Html {
+  const intentOf = new Map(plan.items.map((i) => [i.keyword, i.intent]));
+  const done = rows.filter((r) => r.article_status === 'done').length;
+  const names = stepNames(site.niche);
+  const body = html`
+    <h2>Articles</h2>
+    <p>Each article, written section by section from its skeleton${articleTypeFor(site.niche) === 'recipe' ? ' and, for recipe pages, from its fixed recipe' : ''}. Code checked every section: headings, length, plain language, no generic AI phrases${articleTypeFor(site.niche) === 'recipe' ? ', and nothing that is not in the recipe' : ''}. Click a keyword to read it.</p>
+    ${rows.length
+      ? html`<ul class="acc-list" ${busyRows(rows) ? raw(`data-watch="${plan.id}"`) : raw('')}>
+          ${rows.map((r) => articleCard(r, intentOf.get(r.keyword) ?? ''))}
+        </ul>`
+      : html`<p class="kw-none">Articles follow the skeletons. Go back to start them.</p>`}`;
+  const foot = html`
+    <a class="ns-btn quiet" href="${planHref(plan.id, 'skeleton')}">Previous</a>
+    <a class="ns-btn primary disabled" aria-disabled="true">Next: images (coming next)</a>`;
+  return html`
+    <style>${raw(WIZARD_CSS)}${raw(CSS)}</style>
+    ${stepCard(names, names.indexOf('Article'), plan.pillar, html`${site.name} · <span class="ns-num">${done} of ${rows.length || plan.items.length + 1} done</span>`, body, foot)}
+    ${raw(watchScript)}`;
+}
+
 /** Opens and closes the cards, and refreshes the page while the AI is still working. */
 const watchScript = `<script>
 (function () {
@@ -545,7 +597,7 @@ const watchScript = `<script>
   var id = list.getAttribute('data-watch'), seen;
   setInterval(function () {
     fetch('/new-website/keywords/' + id + '/seo').then(function (r) { return r.json(); }).then(function (r) {
-      var key = r.rows.map(function (x) { return x.status + '/' + x.recipe_status + '/' + x.skeleton_status; }).join(',');
+      var key = r.rows.map(function (x) { return [x.status, x.recipe_status, x.skeleton_status, x.article_status].join('/'); }).join(',');
       if (seen !== undefined && seen !== key) location.reload();
       seen = key;
     }).catch(function () {});

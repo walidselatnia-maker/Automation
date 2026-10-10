@@ -165,7 +165,8 @@ describe('AI#2 follows AI#1', () => {
         return JSON.stringify(name === 'seo-metadata' ? SEO : name === 'recipe-card' ? RECIPE : PILLAR_WITH_RECIPE);
       },
     });
-    expect(asked.map((a) => a.name)).toEqual(['seo-metadata', 'recipe-card', 'article-skeleton']);
+    expect(asked.map((a) => a.name).slice(0, 3)).toEqual(['seo-metadata', 'recipe-card', 'article-skeleton']);
+    expect(asked.slice(3).every((a) => a.name === 'article-section')).toBe(true);
     expect(String(asked[2]!.vars.depth)).toMatch(/PILLAR/);
     expect(String(asked[2]!.vars.recipeJson)).toContain('250 g all-purpose flour');
     expect(asked[2]!.vars).toMatchObject({ title: TITLE, focusKeyword: FOCUS, articleType: 'recipe', persona: 'Storyteller' });

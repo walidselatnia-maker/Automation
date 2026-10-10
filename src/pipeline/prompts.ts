@@ -147,6 +147,8 @@ export const PROMPT_MODELS: Record<string, { model: string; format: 'json' | nul
   'article-skeleton': { model: 'gpt-oss:120b', format: 'json' },
   // The fixed recipe a recipe website's skeleton and article are written from.
   'recipe-card': { model: 'gpt-oss:120b', format: 'json' },
+  // AI#3: one section of the article, in Markdown. Not JSON: it is prose.
+  'article-section': { model: 'gpt-oss:120b', format: null },
 };
 
 /* -------------------------------------------------------------------------
