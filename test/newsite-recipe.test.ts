@@ -145,3 +145,40 @@ describe('the pillar carries its recipe', () => {
     expect(checkSkeleton({ h1: 'T', sections: withRecipe }, ctx).join(' ')).not.toMatch(/second-to-last/);
   });
 });
+
+describe('recipe pages and article pages', () => {
+  afterEach(() => closeDatabase());
+
+  it('gives a recipe only to recipe pages', async () => {
+    openDatabase(':memory:');
+    const websiteId = createNewWebsite(
+      {
+        name: 'Site', domain: 'f.longlivo.com', apiKey: 'sk_test_ABCDEFGHIJKLMNOP', niche: 'Recipes', nicheContext: '',
+        persona: 'Storyteller', status: 'active', autoPublish: true, dailyTarget: 3, intervalMinutes: 480,
+        bufferToken: '', pinUsername: '', projectId: '',
+      },
+      KEY,
+    );
+    const planId = saveKeywordPlan(websiteId, 'strawberry desserts', [], 'article');
+    queuePlanSeo(planId, 'strawberry desserts', [
+      { keyword: 'strawberry cake with cake mix', page: 'recipe' },
+      { keyword: 'strawberry cake vs shortcake', page: 'article' },
+    ], 'article');
+    const SEO = {
+      title: 'Strawberry Desserts: Easy Ideas for Every Season Now', // checks fail but status is what matters below
+      description: 'x', focusKeyword: 'x', altText: 'x', eeat: 'Experience',
+    };
+    // Mark every keyword's metadata done directly, then let the writer decide what follows.
+    const rows = listPlanSeo(planId);
+    const { run } = await import('../src/db/index.js');
+    for (const r of rows) run(`UPDATE keyword_seo SET status = 'done', title = ?, recipe_status = CASE WHEN page = 'recipe' THEN 'pending' ELSE '' END, skeleton_status = CASE WHEN page = 'recipe' THEN '' ELSE 'pending' END WHERE id = ?`, SEO.title, r.id);
+    const asked: { name: string; keyword: unknown }[] = [];
+    await kickSeoWriter({ suggest: async () => [], ask: async (name, vars) => { asked.push({ name, keyword: vars.keyword }); return '{}'; } });
+    const recipeCalls = asked.filter((a) => a.name === 'recipe-card').map((a) => a.keyword);
+    expect(recipeCalls.every((k) => k === 'strawberry cake with cake mix')).toBe(true);
+    expect(recipeCalls.length).toBeGreaterThan(0);
+    const skeletonFor = asked.filter((a) => a.name === 'article-skeleton').map((a) => a.keyword);
+    expect(skeletonFor).toContain('strawberry cake vs shortcake');
+    expect(skeletonFor).toContain('strawberry desserts');
+  });
+});

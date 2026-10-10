@@ -21,6 +21,8 @@ import {
   type PlanItem,
 } from './repo.js';
 import { keywordsPage, recipeStepPage, seoStepPage, skeletonStepPage } from './keywords-view.js';
+import { articleTypeFor } from './skeleton.js';
+import { asPage } from './keywords.js';
 import { getSeoRow, kickSeoWriter, listPlanSeo, queuePlanSeo, requeueRecipe, requeueSeo, requeueSkeleton, resetInterruptedSeo } from './seo.js';
 
 export interface KeywordRouteDeps extends FindDeps {
@@ -113,12 +115,16 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
     } catch (err) {
       return fail(reply, `${(err as Error).message} The duplicate check needs the full list, so nothing was searched.`);
     }
-    return reply.send(
-      await findSubKeywords(
-        { pillar, niche: site.niche, nicheContext: site.niche_context, existing },
-        { suggest: deps.suggest, ask: deps.ask },
-      ),
+    const found = await findSubKeywords(
+      { pillar, niche: site.niche, nicheContext: site.niche_context, existing },
+      { suggest: deps.suggest, ask: deps.ask },
     );
+    // Only recipe websites have recipe pages.
+    if (found.ok && articleTypeFor(site.niche) !== 'recipe') {
+      found.pillarPage = 'article';
+      found.kept = found.kept.map((k) => ({ ...k, page: 'article' }));
+    }
+    return reply.send(found);
   });
 
   /** One keyword you typed yourself, against the pillar, the site and the list so far. */
@@ -150,6 +156,8 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
     const bad = pillarInputProblem(pillar);
     if (bad) return fail(reply, bad);
 
+    const recipeSite = articleTypeFor(site.niche) === 'recipe';
+    const pillarPage = recipeSite ? asPage(raw.pillarPage) : 'article';
     const items: PlanItem[] = parseList(raw.items).map((item) => {
       const i = (item ?? {}) as Record<string, unknown>;
       const intent = text(i.intent, 20).toLowerCase();
@@ -157,6 +165,7 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
         keyword: text(i.keyword, 100),
         intent: (INTENTS as readonly string[]).includes(intent) ? intent : 'yours',
         reason: text(i.reason, 200),
+        page: recipeSite ? asPage(i.page) : 'article',
       };
     }).filter((i) => i.keyword);
 
@@ -178,8 +187,8 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
       accepted.push(item.keyword);
     }
 
-    const planId = saveKeywordPlan(site.id, pillar, items);
-    queuePlanSeo(planId, pillar, items.map((i) => i.keyword));
+    const planId = saveKeywordPlan(site.id, pillar, items, pillarPage);
+    queuePlanSeo(planId, pillar, items, pillarPage);
     startSeo();
     return reply.send({
       ok: true,
@@ -225,7 +234,7 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
     const website = Number(body(request).websiteId) || 0;
     const plan = listKeywordPlans(website).find((p) => p.id === planId);
     if (plan && listPlanSeo(planId).length === 0) {
-      queuePlanSeo(planId, plan.pillar, plan.items.map((i) => i.keyword));
+      queuePlanSeo(planId, plan.pillar, plan.items, plan.pillar_page);
       startSeo();
     }
     return reply.redirect(`/new-website/keywords/plan/${planId}/seo?ok=${encodeURIComponent('Writing the SEO metadata.')}`, 303);

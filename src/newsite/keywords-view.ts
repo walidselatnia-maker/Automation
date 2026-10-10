@@ -12,6 +12,7 @@ const INTENT_LABEL: Record<string, string> = {
   flavor: 'Flavor',
   ingredient: 'Ingredient',
   time: 'Time',
+  info: 'Know-how',
   yours: 'Added by you',
 };
 
@@ -50,6 +51,16 @@ const CSS = `
 .kw-item b { font-weight: 600; font-size: 16px; }
 .kw-intent { display: inline-block; margin-left: 10px; font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--accent); }
 .kw-why { color: var(--soft); font-size: 14px; margin-top: 4px; }
+.kw-page { display: flex; align-items: center; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
+.kw-page-chip { height: 28px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--line-strong); background: var(--surface);
+  color: var(--ink); font: 600 12px var(--body); cursor: pointer; }
+.kw-page-chip.recipe { border-color: var(--good); color: var(--good); }
+.kw-page-chip:hover { background: var(--raised); }
+.kw-page-why { color: var(--faint); font-size: 13px; }
+.kw-pillar-page { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: -4px 0 16px; padding: 12px 14px; background: var(--raised); border-radius: var(--r-ctl); }
+.kw-pillar-page[hidden] { display: none; }
+.kw-pillar-page .kw-page { margin-top: 0; }
+.kw-pillar-label { font-weight: 600; font-size: 14px; }
 .kw-remove { height: 32px; padding: 0 10px; font-size: 13px; }
 .kw-remove:hover { color: var(--bad); background: var(--accent-tint); }
 .kw-empty { color: var(--soft); padding: 16px 0; border-bottom: 1px solid var(--line); }
@@ -242,6 +253,7 @@ export function keywordsPage(
         <span class="kw-count" id="kw-count"></span>
       </div>
       <p class="kw-source" id="kw-source"></p>
+      <div class="kw-pillar-page" id="kw-pillar-page" hidden></div>
       <ul class="kw-list" id="kw-list"></ul>
 
       <div class="kw-add">
@@ -288,7 +300,7 @@ export function keywordsPage(
           })
         : html`<p class="kw-none">No plans yet. Find sub-keywords above and save the ones you want.</p>`}
     </section>
-    ${raw(script(current.id))}
+    ${raw(script(current.id, articleTypeFor(current.niche) === 'recipe'))}
   `;
 }
 
@@ -450,6 +462,12 @@ export function skeletonStepPage(site: NewWebsiteRow, plan: KeywordPlan, rows: S
 /** One keyword's fixed recipe: the card the article will follow exactly. */
 function recipeCard(row: SeoRow, intent: string): Html {
   const r = row.recipe_json ? parseRecipe(row.recipe_json) : null;
+  if (row.page === 'article') {
+    return card(
+      html`${roleLabel(row, intent)}<b>${row.keyword}</b><span class="kw-seo-status">Article page · no recipe</span>`,
+      html`<p class="kw-none" style="margin:4px 0 0">This keyword answers a question rather than cooking a dish, so it is written as an article without a recipe. You chose this on step 1.</p>`,
+    );
+  }
   const state = row.status !== 'done' ? 'Needs SEO first' : (SKELETON_STATUS[row.recipe_status] ?? 'Waiting');
   const head = html`${roleLabel(row, intent)}<b>${row.keyword}</b>${r && row.recipe_status === 'done'
     ? html`<span class="ns-num kw-count">${r.ingredients.reduce((n, g) => n + g.items.length, 0)} ingredients · ${r.steps.length} steps</span>`
@@ -497,7 +515,7 @@ export function recipeStepPage(site: NewWebsiteRow, plan: KeywordPlan, rows: Seo
   const done = rows.filter((r) => r.recipe_status === 'done').length;
   const body = html`
     <h2>Recipes</h2>
-    <p>The real recipe for each keyword: exact ingredients, steps, times and nutrition. The skeleton and the article are written from it and cannot change it. The pillar's recipe is also added near the end of the pillar article. Click a keyword to open it.</p>
+    <p>The real recipe for each keyword: exact ingredients, steps, times and nutrition. The skeleton and the article are written from it and cannot change it. When the pillar is one dish, its recipe is also added near the end of the pillar article. Article pages have no recipe. Click a keyword to open it.</p>
     ${rows.length
       ? html`<ul class="acc-list" ${busyRows(rows) ? raw(`data-watch="${plan.id}"`) : raw('')}>
           ${rows.map((r) => recipeCard(r, intentOf.get(r.keyword) ?? ''))}
@@ -535,11 +553,24 @@ const watchScript = `<script>
 })();
 </script>`;
 
-const script = (websiteId: number): string => `<script>
+const script = (websiteId: number, recipeSite: boolean): string => `<script>
 (function () {
   var LABELS = ${JSON.stringify(INTENT_LABEL)};
   var MAX = 6;
-  var state = { pillar: '', items: [], dropped: [] };
+  var RECIPE_SITE = ${recipeSite ? 'true' : 'false'};
+  var state = { pillar: '', pillarPage: 'recipe', pillarReason: '', items: [], dropped: [] };
+
+  // Recipe page or article page: shown, and switchable, only on recipe websites.
+  function pageChip(get, set, reason) {
+    var wrap = el('span', 'kw-page');
+    var b = el('button', 'kw-page-chip ' + get(), get() === 'recipe' ? 'Recipe page' : 'Article page');
+    b.type = 'button';
+    b.title = 'Switch between a recipe page (gets a full recipe) and an article page (no recipe)';
+    b.onclick = function () { set(get() === 'recipe' ? 'article' : 'recipe'); render(); };
+    wrap.appendChild(b);
+    if (reason) wrap.appendChild(el('span', 'kw-page-why', reason));
+    return wrap;
+  }
   var $ = function (id) { return document.getElementById(id); };
   var el = function (tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 
@@ -562,6 +593,9 @@ const script = (websiteId: number): string => `<script>
       var name = el('b', null, item.keyword);
       text.appendChild(name);
       text.appendChild(el('span', 'kw-intent', LABELS[item.intent] || item.intent));
+      if (RECIPE_SITE) {
+        text.appendChild(pageChip(function () { return item.page || 'recipe'; }, function (v) { item.page = v; item.pageReason = 'Set by you'; }, item.pageReason));
+      }
       if (item.reason) text.appendChild(el('div', 'kw-why', item.reason));
       var rm = el('button', 'ns-btn quiet kw-remove', 'Remove');
       rm.type = 'button';
@@ -569,6 +603,14 @@ const script = (websiteId: number): string => `<script>
       rm.onclick = function () { state.items.splice(i, 1); render(); };
       li.appendChild(text); li.appendChild(rm); list.appendChild(li);
     });
+    var pp = $('kw-pillar-page');
+    pp.hidden = !RECIPE_SITE;
+    pp.textContent = '';
+    if (RECIPE_SITE) {
+      pp.appendChild(el('span', 'kw-pillar-label', 'The pillar “' + state.pillar + '” is'));
+      pp.appendChild(pageChip(function () { return state.pillarPage; }, function (v) { state.pillarPage = v; state.pillarReason = 'Set by you'; },
+        state.pillarReason || (state.pillarPage === 'recipe' ? 'one dish: its recipe goes near the end' : 'a broad topic: no single recipe')));
+    }
     $('kw-own-add').disabled = state.items.length >= MAX;
     $('kw-save').disabled = state.items.length === 0;
 
@@ -597,7 +639,7 @@ const script = (websiteId: number): string => `<script>
       $('kw-status').textContent = '';
       busy($('kw-go'), false, 'Find sub-keywords');
       if (!r.ok) { $('kw-error').textContent = r.error; $('kw-result').hidden = true; return; }
-      state = { pillar: pillar, items: r.kept, dropped: r.dropped };
+      state = { pillar: pillar, pillarPage: r.pillarPage || 'recipe', pillarReason: r.pillarPageReason || '', items: r.kept, dropped: r.dropped };
       $('kw-source').textContent = 'Picked from ' + r.searches + ' real Google searches. Remove any you do not want.';
       render();
     }).catch(function () {
@@ -618,7 +660,7 @@ const script = (websiteId: number): string => `<script>
     }).then(function (r) {
       busy($('kw-own-add'), false, 'Add');
       if (!r.ok) { $('kw-own-error').textContent = r.error; return; }
-      state.items.push({ keyword: r.keyword, intent: 'yours', reason: '' });
+      state.items.push({ keyword: r.keyword, intent: 'yours', reason: '', page: RECIPE_SITE ? 'recipe' : 'article', pageReason: '' });
       $('kw-own').value = '';
       render();
     }).catch(function () { busy($('kw-own-add'), false, 'Add'); $('kw-own-error').textContent = 'Could not check it. Try again.'; });
@@ -629,7 +671,7 @@ const script = (websiteId: number): string => `<script>
   $('kw-save').onclick = function () {
     $('kw-save-error').textContent = '';
     busy($('kw-save'), true, 'Saving…');
-    post('/new-website/keywords/save', { pillar: state.pillar, items: JSON.stringify(state.items) }).then(function (r) {
+    post('/new-website/keywords/save', { pillar: state.pillar, pillarPage: state.pillarPage, items: JSON.stringify(state.items) }).then(function (r) {
       if (r.ok) { location.href = r.redirect; return; }
       busy($('kw-save'), false, 'Save and continue');
       $('kw-save-error').textContent = r.error;

@@ -158,14 +158,21 @@ export interface SeoRow {
   recipe_status: '' | 'pending' | 'writing' | 'done' | 'failed';
   recipe_json: string;
   recipe_problems: string;
+  page: 'recipe' | 'article';
 }
 
 /** One waiting row per keyword: the pillar first, then the sub-keywords in order. */
-export function queuePlanSeo(planId: number, pillar: string, subs: string[]): void {
-  run(`INSERT INTO keyword_seo (plan_id, keyword, role, position) VALUES (?, ?, 'pillar', 0)`, planId, pillar);
-  subs.forEach((keyword, i) =>
-    run(`INSERT INTO keyword_seo (plan_id, keyword, role, position) VALUES (?, ?, 'sub', ?)`, planId, keyword, i + 1),
-  );
+export function queuePlanSeo(
+  planId: number,
+  pillar: string,
+  subs: (string | { keyword: string; page?: 'recipe' | 'article' })[],
+  pillarPage: 'recipe' | 'article' = 'recipe',
+): void {
+  run(`INSERT INTO keyword_seo (plan_id, keyword, role, position, page) VALUES (?, ?, 'pillar', 0, ?)`, planId, pillar, pillarPage);
+  subs.forEach((sub, i) => {
+    const { keyword, page } = typeof sub === 'string' ? { keyword: sub, page: 'recipe' as const } : sub;
+    run(`INSERT INTO keyword_seo (plan_id, keyword, role, position, page) VALUES (?, ?, 'sub', ?, ?)`, planId, keyword, i + 1, page ?? 'recipe');
+  });
 }
 
 export const listPlanSeo = (planId: number): SeoRow[] =>
@@ -193,7 +200,7 @@ export function resetInterruptedSeo(): void {
 export function requeueRecipe(id: number): void {
   run(
     `UPDATE keyword_seo SET recipe_status = 'pending', recipe_problems = '', skeleton_status = '', skeleton_json = '', skeleton_problems = ''
-     WHERE id = ? AND status = 'done' AND recipe_status != 'writing'`,
+     WHERE id = ? AND status = 'done' AND recipe_status != 'writing' AND page != 'article'`,
     id,
   );
 }
@@ -267,7 +274,8 @@ export async function writeOne(row: SeoRow, deps: WriterDeps): Promise<void> {
     if (problems.length === 0) break;
   }
 
-  const isRecipe = articleTypeFor(plan.niche) === 'recipe';
+  // Only a recipe page on a recipe website gets a fixed recipe.
+  const isRecipe = articleTypeFor(plan.niche) === 'recipe' && row.page !== 'article';
   const a = last ?? { title: '', description: '', focusKeyword: '', altText: '', eeat: '', confidence: '', reasoning: '' };
   run(
     `UPDATE keyword_seo SET status = ?, title = ?, description = ?, focus_keyword = ?, alt_text = ?, eeat = ?,

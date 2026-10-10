@@ -74,7 +74,7 @@ describe('filtering the AI picks', () => {
       { keyword: 'pumpkin chocolate chip cookie bars', intent: 'nonsense', reason: 'Baked in a pan.' },
     ];
     const { kept, dropped } = filterPicks(raw, PILLAR, SEARCHES, []);
-    expect(kept).toEqual([
+    expect(kept).toMatchObject([
       { keyword: 'vegan pumpkin chocolate chip cookies', intent: 'diet', reason: 'No eggs or butter.' },
       { keyword: 'pumpkin chocolate chip cookie bars', intent: 'format', reason: 'Baked in a pan.' },
     ]);
@@ -142,5 +142,20 @@ describe('the whole search', () => {
       ask: async () => { throw new Error('no endpoint'); },
     });
     expect(result).toMatchObject({ ok: false, error: expect.stringMatching(/AI could not be reached/) });
+  });
+});
+
+describe('recipe page or article page', () => {
+  it('carries the AI suggestion for each pick and for the pillar', async () => {
+    const { parsePillarPage } = await import('../src/newsite/keywords.js');
+    const raw = [
+      { keyword: 'vegan pumpkin chocolate chip cookies', intent: 'diet', reason: 'r', page: 'recipe', pageReason: 'a dish to bake' },
+      { keyword: 'pumpkin chocolate chip cookie bars', intent: 'format', reason: 'r', page: 'article', pageReason: 'test' },
+    ];
+    const { kept } = filterPicks(raw, PILLAR, SEARCHES, []);
+    expect(kept.map((k) => k.page)).toEqual(['recipe', 'article']);
+    expect(kept[0]!.pageReason).toBe('a dish to bake');
+    expect(parsePillarPage('{"pillarPage":"article","pillarPageReason":"a category","picks":[]}')).toEqual({ page: 'article', reason: 'a category' });
+    expect(parsePillarPage('nonsense').page).toBe('recipe');
   });
 });

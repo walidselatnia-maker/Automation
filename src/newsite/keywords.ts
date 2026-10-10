@@ -12,7 +12,7 @@ import { similarity, words } from '../seo/rules.js';
 export const MAX_SUBS = 6;
 export const TOO_CLOSE = 0.75;
 
-export const INTENTS = ['diet', 'method', 'format', 'flavor', 'ingredient', 'time'] as const;
+export const INTENTS = ['diet', 'method', 'format', 'flavor', 'ingredient', 'time', 'info'] as const;
 export type Intent = (typeof INTENTS)[number] | 'yours';
 
 /**
@@ -43,10 +43,17 @@ export interface Existing {
   text: string;
 }
 
+/** A recipe page is a dish to cook (it gets a fixed recipe); an article page answers a question. */
+export type PageKind = 'recipe' | 'article';
+
+export const asPage = (value: unknown): PageKind => (String(value ?? '').trim().toLowerCase() === 'article' ? 'article' : 'recipe');
+
 export interface Pick {
   keyword: string;
   intent: Intent;
   reason: string;
+  page: PageKind;
+  pageReason: string;
 }
 
 export interface Dropped {
@@ -107,7 +114,7 @@ export function filterPicks(
   const dropped: Dropped[] = [];
 
   for (const item of raw) {
-    const entry = (item ?? {}) as { keyword?: unknown; intent?: unknown; reason?: unknown };
+    const entry = (item ?? {}) as { keyword?: unknown; intent?: unknown; reason?: unknown; page?: unknown; pageReason?: unknown };
     const typed = String(entry.keyword ?? '').replace(/\s+/g, ' ').trim();
     if (!typed) continue;
     if (kept.some((k) => k.keyword.toLowerCase() === typed.toLowerCase())) continue;
@@ -130,6 +137,8 @@ export function filterPicks(
       keyword: exact,
       intent: asIntent(entry.intent),
       reason: String(entry.reason ?? '').replace(/\s+/g, ' ').trim().slice(0, 200),
+      page: asPage(entry.page),
+      pageReason: String(entry.pageReason ?? '').replace(/\s+/g, ' ').trim().slice(0, 160),
     });
   }
   return { kept, dropped };
@@ -170,8 +179,29 @@ export interface FindInput {
   existing: Existing[];
 }
 
+/** What the AI says about the pillar itself: one dish (gets its recipe) or a broad topic. */
+export function parsePillarPage(raw: string): { page: PageKind; reason: string } {
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    const start = raw.indexOf('{');
+    const end = raw.lastIndexOf('}');
+    try {
+      value = start >= 0 && end > start ? JSON.parse(raw.slice(start, end + 1)) : null;
+    } catch {
+      value = null;
+    }
+  }
+  const o = (value ?? {}) as { pillarPage?: unknown; pillarPageReason?: unknown };
+  return {
+    page: asPage(o.pillarPage),
+    reason: String(o.pillarPageReason ?? '').replace(/\s+/g, ' ').trim().slice(0, 160),
+  };
+}
+
 export type FindResult =
-  | { ok: true; kept: Pick[]; dropped: Dropped[]; searches: number }
+  | { ok: true; kept: Pick[]; dropped: Dropped[]; searches: number; pillarPage: PageKind; pillarPageReason: string }
   | { ok: false; error: string };
 
 export async function findSubKeywords(input: FindInput, deps: FindDeps): Promise<FindResult> {
@@ -205,5 +235,6 @@ export async function findSubKeywords(input: FindInput, deps: FindDeps): Promise
   if (kept.length === 0 && dropped.length === 0) {
     return { ok: false, error: 'The AI answer could not be read. Try again.' };
   }
-  return { ok: true, kept, dropped, searches: searches.length };
+  const pillar_ = parsePillarPage(raw);
+  return { ok: true, kept, dropped, searches: searches.length, pillarPage: pillar_.page, pillarPageReason: pillar_.reason };
 }

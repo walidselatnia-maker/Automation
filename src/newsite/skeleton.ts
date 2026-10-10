@@ -212,7 +212,7 @@ export async function makeSkeleton(row: SeoRow, deps: SkeletonDeps): Promise<voi
     row.plan_id,
   );
   if (!ctx) return;
-  const type = articleTypeFor(ctx.niche);
+  const type: ArticleType = articleTypeFor(ctx.niche) === 'recipe' && row.page !== 'article' ? 'recipe' : 'guide';
   run(`UPDATE keyword_seo SET skeleton_status = 'writing', article_type = ? WHERE id = ?`, type, row.id);
 
   const subKeywords =

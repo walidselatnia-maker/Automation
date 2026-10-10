@@ -13,13 +13,17 @@ Never pick:
 - anything not clearly about the pillar
 - buying or place searches (for sale, near me, a store or brand that sells it)
 - a TV show, chef or website name, unless it is a famous copycat recipe people want to make
-- small questions (can it be frozen, how long does it last, without baking soda): they belong in the pillar's FAQ, not on their own page
+- tiny yes/no questions (can it be frozen, how long does it last, without baking soda): they belong in the pillar's FAQ, not on their own page
+
+A bigger need to KNOW something can be its own page when the searcher needs more than one line: comparing two things, choosing the right ingredient or tool, fixing a problem, or a list of ideas. Use intent "info" for these.
 
 Rules for your answer:
 - Copy every keyword EXACTLY as written in the searches list. Never invent or rewrite a keyword.
 - Pick between 0 and 8. Fewer strong picks are better than padding. Order them best first.
-- "intent" is one of: diet, method, format, flavor, ingredient, time.
+- "intent" is one of: diet, method, format, flavor, ingredient, time, info.
 - "reason" is one short sentence saying what is different for the reader, in plain words.
+- "page" is "recipe" when the searcher wants to cook or make this dish (it will get a full recipe), or "article" when they want to know something (storing, comparing, choosing, fixing a problem, a list of ideas) and a recipe would not answer them. "pageReason" says why in a few words.
+- Say the same for the pillar keyword itself in "pillarPage" and "pillarPageReason": "recipe" when the pillar is one dish (its classic recipe goes near the end of the pillar), "article" when it is a broad topic or a category of dishes.
 
 Answer with JSON only, exactly this shape:
-{"picks": [{"keyword": "...", "intent": "diet", "reason": "..."}]}
+{"pillarPage": "recipe", "pillarPageReason": "...", "picks": [{"keyword": "...", "intent": "diet", "reason": "...", "page": "recipe", "pageReason": "..."}]}

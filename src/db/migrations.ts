@@ -632,6 +632,17 @@ export const MIGRATIONS: Migration[] = [
       addColumn(db, 'keyword_seo', 'recipe_problems', "TEXT NOT NULL DEFAULT ''");
     },
   },
+
+  {
+    id: '022-page-kind',
+    description: 'Whether each planned keyword is a recipe page or an article page',
+    up(db) {
+      // 'recipe' keeps what plans saved before this did: every keyword had a recipe.
+      addColumn(db, 'keyword_plans', 'pillar_page', "TEXT NOT NULL DEFAULT 'recipe'");
+      addColumn(db, 'keyword_plan_items', 'page', "TEXT NOT NULL DEFAULT 'recipe'");
+      addColumn(db, 'keyword_seo', 'page', "TEXT NOT NULL DEFAULT 'recipe'");
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */

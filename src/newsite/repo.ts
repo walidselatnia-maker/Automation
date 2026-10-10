@@ -95,12 +95,15 @@ export interface PlanItem {
   keyword: string;
   intent: string;
   reason: string;
+  /** 'recipe' gets a fixed recipe; 'article' does not. */
+  page?: 'recipe' | 'article';
 }
 
 export interface KeywordPlan {
   id: number;
   website_id: number;
   pillar: string;
+  pillar_page: 'recipe' | 'article';
   created_at: string;
   items: PlanItem[];
 }
@@ -112,23 +115,29 @@ export function listKeywordPlans(websiteId?: number): KeywordPlan[] {
   return plans.map((plan) => ({
     ...plan,
     items: all<PlanItem>(
-      'SELECT keyword, intent, reason FROM keyword_plan_items WHERE plan_id = ? ORDER BY position',
+      'SELECT keyword, intent, reason, page FROM keyword_plan_items WHERE plan_id = ? ORDER BY position',
       plan.id,
     ),
   }));
 }
 
-export function saveKeywordPlan(websiteId: number, pillar: string, items: PlanItem[]): number {
+export function saveKeywordPlan(
+  websiteId: number,
+  pillar: string,
+  items: PlanItem[],
+  pillarPage: 'recipe' | 'article' = 'recipe',
+): number {
   return transaction(() => {
-    const id = run('INSERT INTO keyword_plans (website_id, pillar) VALUES (?, ?)', websiteId, pillar).lastInsertRowid;
+    const id = run('INSERT INTO keyword_plans (website_id, pillar, pillar_page) VALUES (?, ?, ?)', websiteId, pillar, pillarPage).lastInsertRowid;
     items.forEach((item, position) =>
       run(
-        'INSERT INTO keyword_plan_items (plan_id, keyword, intent, reason, position) VALUES (?, ?, ?, ?, ?)',
+        'INSERT INTO keyword_plan_items (plan_id, keyword, intent, reason, position, page) VALUES (?, ?, ?, ?, ?, ?)',
         id,
         item.keyword,
         item.intent,
         item.reason,
         position,
+        item.page ?? 'recipe',
       ),
     );
     return id;
