@@ -6,6 +6,7 @@ import { parseRecipe } from './recipe.js';
 import { markdownToHtml } from './markdown.js';
 import { parseImageSet } from './images.js';
 import { isStepSlot, STEP_GAP_MINUTES, type PictureRow } from './pictures.js';
+import { notReadyReason } from './publish.js';
 import { WIZARD_CSS } from './view.js';
 
 const INTENT_LABEL: Record<string, string> = {
@@ -207,8 +208,8 @@ const CSS = `
 /** The steps of a plan. Recipe websites get the fixed recipe before the skeleton. */
 const stepNames = (niche: string): string[] =>
   articleTypeFor(niche) === 'recipe'
-    ? ['Keywords', 'SEO', 'Recipe', 'Skeleton', 'Article', 'Images']
-    : ['Keywords', 'SEO', 'Skeleton', 'Article', 'Images'];
+    ? ['Keywords', 'SEO', 'Recipe', 'Skeleton', 'Article', 'Images', 'Publish']
+    : ['Keywords', 'SEO', 'Skeleton', 'Article', 'Images', 'Publish'];
 
 const CHEVRON = '<svg class="acc-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>';
 
@@ -233,7 +234,7 @@ function stepCard(names: string[], step: number, title: string, subtitle: Html |
     </div>`;
 }
 
-const planHref = (planId: number, step: 'seo' | 'recipe' | 'skeleton' | 'article' | 'images'): string => `/new-website/keywords/plan/${planId}/${step}`;
+const planHref = (planId: number, step: 'seo' | 'recipe' | 'skeleton' | 'article' | 'images' | 'publish'): string => `/new-website/keywords/plan/${planId}/${step}`;
 
 /** How far a plan has got, in one line. */
 const progress = (rows: SeoRow[]): string => {
@@ -243,7 +244,8 @@ const progress = (rows: SeoRow[]): string => {
   const sk = rows.filter((r) => r.skeleton_status === 'done').length;
   const articles = rows.filter((r) => r.article_status === 'done').length;
   const images = rows.filter((r) => r.images_status === 'done').length;
-  return `SEO ${seo}/${rows.length}${recipes ? ` · Recipes ${recipes}/${rows.length}` : ''} · Skeletons ${sk}/${rows.length} · Articles ${articles}/${rows.length} · Images ${images}/${rows.length}`;
+  const posted = rows.filter((r) => r.post_status === 'published').length;
+  return `SEO ${seo}/${rows.length}${recipes ? ` · Recipes ${recipes}/${rows.length}` : ''} · Skeletons ${sk}/${rows.length} · Articles ${articles}/${rows.length} · Images ${images}/${rows.length} · Published ${posted}/${rows.length}`;
 };
 
 /** Step 1: pick the website, find sub-keywords, save the plan. Saved plans are listed below. */
@@ -446,7 +448,8 @@ function skeletonCard(row: SeoRow, intent: string): Html {
 
 const busyRows = (rows: SeoRow[]): boolean =>
   rows.some((r) =>
-    [r.status, r.recipe_status, r.skeleton_status, r.article_status, r.images_status].some((st) => st === 'pending' || st === 'writing'),
+    [r.status, r.recipe_status, r.skeleton_status, r.article_status, r.images_status].some((st) => st === 'pending' || st === 'writing') ||
+    r.post_status === 'publishing',
   );
 
 /** Step 2: the SEO metadata (AI#1) of every keyword in one plan. */
@@ -752,10 +755,73 @@ export function imagesStepPage(
       ? html`<form method="post" action="/new-website/keywords/plan/${plan.id}/pictures/make" style="margin:0">
           <button class="ns-btn primary" ${raw(`onclick="return confirm('Send ${mainTotal - mainMade} main pictures to Google Flow, one at a time? Step pictures follow in the slow queue.')"`)}>Make all main pictures</button>
         </form>`
-      : html`<a class="ns-btn primary disabled" aria-disabled="true">Next: publishing (coming next)</a>`}`;
+      : html`<a class="ns-btn primary" href="${planHref(plan.id, 'publish')}">Next: publish</a>`}`;
   return html`
     <style>${raw(WIZARD_CSS)}${raw(CSS)}</style>
     ${stepCard(names, names.indexOf('Images'), plan.pillar, html`${site.name} · <span class="ns-num">${made} of ${total} pictures made</span>`, body, foot)}
+    ${raw(watchScript)}`;
+}
+
+/** One keyword's post on its website: ready or not, posted, and its step pictures so far. */
+function publishCard(row: SeoRow, intent: string, pictures: PictureRow[]): Html {
+  const reason = notReadyReason(row, pictures);
+  const steps = pictures.filter((p) => isStepSlot(p.slot));
+  const stepsOn = steps.filter((p) => p.media_id).length;
+  const state =
+    row.post_status === 'publishing' ? 'Publishing…'
+      : row.post_status === 'published' ? (row.post_state === 'draft' ? 'Posted as a draft' : 'Published')
+        : row.post_status === 'failed' ? 'Failed'
+          : reason ? 'Not ready' : 'Ready';
+  const cls = row.post_status === 'published' ? 'done' : row.post_status === 'failed' ? 'failed' : row.post_status === 'publishing' ? 'writing' : '';
+  const head = html`${roleLabel(row, intent)}<b>${row.keyword}</b><span class="kw-seo-status ${cls}">${state}</span>`;
+  const body = html`
+    ${!reason && row.post_status !== 'publishing'
+      ? html`<form method="post" action="/new-website/keywords/publish/${row.id}" class="kw-seo-retry">
+          <button class="ns-btn ${row.post_status === 'published' ? 'quiet kw-remove' : 'primary'}">${row.post_status === 'published' ? 'Publish again (update the post)' : 'Publish'}</button>
+        </form>`
+      : raw('')}
+    ${row.post_status === 'failed' ? problemList(row.post_error) : reason ? html`<p class="kw-none" style="margin:0">${reason}</p>` : raw('')}
+    <dl class="kw-seo-facts">
+      <div><dt>Title</dt><dd>${row.title}</dd></div>
+      ${row.post_url ? html`<div><dt>On the website</dt><dd><a href="${row.post_url}" target="_blank" rel="noopener">${row.post_url}</a></dd></div>` : raw('')}
+      ${row.posted_at ? html`<div><dt>Posted</dt><dd class="ns-num">${row.posted_at} (UTC)</dd></div>` : raw('')}
+      ${steps.length
+        ? html`<div><dt>Step pictures</dt><dd class="ns-num">${stepsOn} of ${steps.length} on the post${row.post_status === 'published' && stepsOn < steps.length ? ' · the rest are added as the slow queue makes them' : ''}</dd></div>`
+        : raw('')}
+    </dl>`;
+  return card(head, body, row.post_status === 'failed');
+}
+
+/** The last step: each keyword's article posted to its website. */
+export function publishStepPage(site: NewWebsiteRow, plan: KeywordPlan, rows: SeoRow[], pictures: PictureRow[] = []): Html {
+  const intentOf = new Map(plan.items.map((i) => [i.keyword, i.intent]));
+  const names = stepNames(site.niche);
+  const picturesOf = (id: number) => pictures.filter((p) => p.seo_id === id);
+  const posted = rows.filter((r) => r.post_status === 'published').length;
+  const ready = rows.filter((r) => r.post_status !== 'published' && r.post_status !== 'publishing' && !notReadyReason(r, picturesOf(r.id))).length;
+  const body = html`
+    <h2>Publish</h2>
+    <p>Each article goes to ${site.domain} with its SEO title and description, the feature picture as its cover and the other main pictures spread through the text${articleTypeFor(site.niche) === 'recipe' ? ', and its recipe card on recipe pages' : ''}. ${site.auto_publish
+      ? 'This website publishes straight away.'
+      : 'This website saves posts as drafts (auto-publish is off in its settings).'} Publishing again updates the same post; it never makes a copy.</p>
+    ${articleTypeFor(site.niche) === 'recipe'
+      ? html`<p>Once a recipe is posted, its step pictures join the slow queue (${STEP_GAP_MINUTES[0]} to ${STEP_GAP_MINUTES[1]} minutes apart), and each one is added to its step of the recipe card on the website as it is made.</p>`
+      : raw('')}
+    ${rows.length
+      ? html`<ul class="acc-list" ${busyRows(rows) ? raw(`data-watch="${plan.id}"`) : raw('')}>
+          ${rows.map((r) => publishCard(r, intentOf.get(r.keyword) ?? '', picturesOf(r.id)))}
+        </ul>`
+      : html`<p class="kw-none">Nothing to publish yet.</p>`}`;
+  const foot = html`
+    <a class="ns-btn quiet" href="${planHref(plan.id, 'images')}">Previous</a>
+    ${ready
+      ? html`<form method="post" action="/new-website/keywords/plan/${plan.id}/publish" style="margin:0">
+          <button class="ns-btn primary" ${raw(`onclick="return confirm('Publish ${ready} article${ready === 1 ? '' : 's'} to ${site.domain}?')"`)}>Publish all ready (${ready})</button>
+        </form>`
+      : html`<span></span>`}`;
+  return html`
+    <style>${raw(WIZARD_CSS)}${raw(CSS)}</style>
+    ${stepCard(names, names.indexOf('Publish'), plan.pillar, html`${site.name} · <span class="ns-num">${posted} of ${rows.length} posted</span>`, body, foot)}
     ${raw(watchScript)}`;
 }
 
@@ -774,7 +840,7 @@ const watchScript = `<script>
   var id = list.getAttribute('data-watch'), seen;
   setInterval(function () {
     fetch('/new-website/keywords/' + id + '/seo').then(function (r) { return r.json(); }).then(function (r) {
-      var key = r.rows.map(function (x) { return [x.status, x.recipe_status, x.skeleton_status, x.article_status, x.images_status].join('/'); }).join(',')
+      var key = r.rows.map(function (x) { return [x.status, x.recipe_status, x.skeleton_status, x.article_status, x.images_status, x.post_status].join('/'); }).join(',')
         + '|' + (r.pictures || []).map(function (x) { return x.id + x.status; }).join(',');
       if (seen !== undefined && seen !== key) location.reload();
       seen = key;

@@ -20,7 +20,7 @@ import {
   type NewWebsiteRow,
   type PlanItem,
 } from './repo.js';
-import { articleStepPage, imagesStepPage, keywordsPage, recipeStepPage, seoStepPage, skeletonStepPage } from './keywords-view.js';
+import { articleStepPage, imagesStepPage, publishStepPage, keywordsPage, recipeStepPage, seoStepPage, skeletonStepPage } from './keywords-view.js';
 import { articleTypeFor } from './skeleton.js';
 import { clearPictures, isStepSlot, listPictures, listPlanPictures } from './pictures.js';
 import { asPage } from './keywords.js';
@@ -204,7 +204,7 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
   });
 
   /** Steps 2 and 3 of one plan: its SEO metadata, then its skeletons. */
-  for (const step of ['seo', 'recipe', 'skeleton', 'article', 'images'] as const) {
+  for (const step of ['seo', 'recipe', 'skeleton', 'article', 'images', 'publish'] as const) {
     app.get(`/new-website/keywords/plan/:id/${step}`, async (request, reply) => {
       if (!deps.isPlatformReady()) return reply.redirect(`/new-website/platform?error=${encodeURIComponent(NOT_READY)}`, 303);
       const planId = Number((request.params as { id: string }).id) || 0;
@@ -216,7 +216,7 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
       const rows = listPlanSeo(plan.id);
       return reply.type('text/html; charset=utf-8').send(
         newLayout({
-          title: `${plan.pillar} · ${{ seo: 'SEO', recipe: 'Recipes', skeleton: 'Skeletons', article: 'Articles', images: 'Images' }[step]}`,
+          title: `${plan.pillar} · ${{ seo: 'SEO', recipe: 'Recipes', skeleton: 'Skeletons', article: 'Articles', images: 'Images', publish: 'Publish' }[step]}`,
           active: '/new-website/keywords',
           body:
             step === 'seo'
@@ -227,7 +227,9 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
                   ? skeletonStepPage(site, plan, rows)
                   : step === 'article'
                     ? articleStepPage(site, plan, rows)
-                    : imagesStepPage(site, plan, rows, listPlanPictures(plan.id), deps.flowProject?.(site) ?? '', deps.nextStepAt?.() ?? 0),
+                    : step === 'publish'
+                      ? publishStepPage(site, plan, rows, listPlanPictures(plan.id))
+                      : imagesStepPage(site, plan, rows, listPlanPictures(plan.id), deps.flowProject?.(site) ?? '', deps.nextStepAt?.() ?? 0),
           flash: deps.readFlash(request.query),
         }),
       );

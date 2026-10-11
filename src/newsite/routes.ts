@@ -6,6 +6,8 @@ import { checkSite as realCheckSite, listPosts as realListPosts, type SitePost, 
 import { registerKeywordRoutes } from './keyword-routes.js';
 import { registerPictureRoutes, type PictureRouteDeps } from './picture-routes.js';
 import { registerImageModelRoutes } from './image-model.js';
+import { registerPublishRoutes } from './publish-routes.js';
+import { addStepPicture, type PublishDeps } from './publish.js';
 import { describeProjectId, flowProjectFor, NEXT_STEP_KEY } from './pictures.js';
 import { platformReady, registerPlatformRoutes } from './platform-routes.js';
 import {
@@ -68,11 +70,14 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
   if (deps.settings) {
     registerPlatformRoutes(app, { settings: deps.settings, encryptionKey: deps.encryptionKey, readFlash, fetchImpl: deps.fetchImpl });
     registerImageModelRoutes(app, { settings: deps.settings, readFlash, fetchImpl: deps.fetchImpl });
+    const publish: PublishDeps = { settings: deps.settings, encryptionKey: deps.encryptionKey, fetchImpl: deps.fetchImpl, dataDir: deps.dataDir };
+    registerPublishRoutes(app, { ...publish, autoResume: deps.autoPictures });
     registerPictureRoutes(app, {
       settings: deps.settings,
       makePicture: deps.makePicture,
       dataDir: deps.dataDir,
       autoPictures: deps.autoPictures,
+      afterStep: (pictureId) => addStepPicture(pictureId, publish),
     });
   }
 

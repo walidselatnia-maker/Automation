@@ -27,9 +27,8 @@ import { parseImageSet } from './images.js';
  * for at once. So pictures come in two lanes. "Make pictures" makes the main
  * ones (feature, top-down, close-up and the like). The step pictures go to a
  * slow queue: one at a time, with a random 15 to 30 minutes between them,
- * across every article. For now an article's steps join that queue once its
- * main pictures are done; when publishing is built, they will join once the
- * article is posted, and each will be added to the post as it is made.
+ * across every article. An article's steps join that queue once it is posted
+ * (publish.ts), and each is added to the post's recipe card as it is made.
  */
 
 const log = createLogger('newsite-pictures');
@@ -46,6 +45,8 @@ export interface PictureRow {
   error: string;
   file: string;
   made_at: string | null;
+  /** The picture's id in the website's media library, once uploaded. */
+  media_id: number | null;
 }
 
 /** A recipe step's picture: made in the slow queue. */
@@ -161,6 +162,8 @@ export interface PictureDeps {
   random?: () => number;
   /** Wakes the maker when the next step picture is due. Tests pass their own. */
   wakeIn?: (ms: number, wake: () => void) => void;
+  /** Called with each step picture once it is made: publishing adds it to the post. */
+  afterStep?: (pictureId: number) => Promise<void>;
 }
 
 let running: Promise<void> | null = null;
@@ -272,10 +275,7 @@ export function kickPictureMaker(deps: PictureDeps): Promise<void> {
           const file = `${next.slot}-${next.id}.${extension(contentType)}`;
           writeFileSync(join(dir, file), data);
           run(`UPDATE newsite_pictures SET status = 'done', error = '', file = ?, made_at = datetime('now') WHERE id = ?`, file, next.id);
-          // An article whose main pictures are all made: its steps join the slow queue.
-          if (!step && listPictures(next.seo_id).filter((p) => !isStepSlot(p.slot)).every((p) => p.status === 'done')) {
-            queueStepPictures(next.seo_id, deps.settings, now(), random, dataDir);
-          }
+          if (step) await deps.afterStep?.(next.id).catch((err) => log.warn(`After ${next.slot}: ${errorMessage(err)}`));
         } catch (err) {
           const message = errorMessage(err).slice(0, 400);
           log.warn(`Picture "${next.slot}" (${next.id}) failed: ${message}`);

@@ -168,6 +168,13 @@ export interface SeoRow {
   images_status: '' | 'pending' | 'writing' | 'done' | 'failed';
   images_json: string;
   images_problems: string;
+  post_status: '' | 'publishing' | 'published' | 'failed';
+  post_id: number | null;
+  post_url: string;
+  /** The post's status on the website: draft or published. */
+  post_state: string;
+  post_error: string;
+  posted_at: string | null;
 }
 
 /** One waiting row per keyword: the pillar first, then the sub-keywords in order. */

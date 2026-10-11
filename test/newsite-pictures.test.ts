@@ -16,6 +16,7 @@ import {
   pictureDir,
   queuePictures,
   resetPictureMakerState,
+  queueStepPictures,
   NEXT_STEP_KEY,
 } from '../src/newsite/pictures.js';
 
@@ -155,7 +156,7 @@ describe('Pictures, made the old dashboard way', () => {
     expect(listPictures(seoId).map((p) => p.status)).toEqual(['done', 'done', 'done']);
   });
 
-  it('makes the main pictures first, then sends the steps to the slow queue, 15 to 30 minutes apart', async () => {
+  it('makes the main pictures first; once posted, the steps go through the slow queue, 15 to 30 minutes apart', async () => {
     setPrompts(['feature', 'overhead', 'step-1', 'step-2']);
     // Make pictures queues the main ones only.
     expect(queuePictures(seoId, dataDir)).toBe(2);
@@ -163,8 +164,12 @@ describe('Pictures, made the old dashboard way', () => {
     const slow = () => ({ ...deps(ok), random: () => 0.5, wakeIn: (ms: number) => { wakes.push(ms); } });
 
     await kickPictureMaker(slow());
-    // The main two were made; the steps joined the slow queue, but nothing was sent for them yet.
     expect(prompts()).toEqual(['prompt for feature', 'prompt for overhead']);
+    // Steps wait for the article to be posted, which queues them.
+    expect(listPictures(seoId).map((p) => p.slot)).toEqual(['feature', 'overhead']);
+    expect(queueStepPictures(seoId, settings, clock, () => 0.5, dataDir)).toBe(2);
+    await kickPictureMaker(slow());
+    // Nothing was sent for the steps yet.
     expect(listPictures(seoId).map((p) => `${p.slot}:${p.status}`)).toEqual([
       'feature:done', 'overhead:done', 'step-1:queued', 'step-2:queued',
     ]);
@@ -191,6 +196,7 @@ describe('Pictures, made the old dashboard way', () => {
     queuePictures(seoId, dataDir);
     const slow = (make: (p: string) => Promise<{ data: Buffer; contentType: string }>) => ({ ...deps(make), random: () => 0, wakeIn: () => {} });
     await kickPictureMaker(slow(ok));
+    queueStepPictures(seoId, settings, clock, () => 0, dataDir);
     clock += 15 * 60_000;
     await kickPictureMaker(slow(async (p) => { if (p.includes('step-1')) throw new Error('blocked'); return ok(); }));
     clock += 15 * 60_000;

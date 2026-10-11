@@ -101,3 +101,99 @@ export async function listPosts(domain: string, apiKey: string, fetchImpl: Fetch
   }
   return posts;
 }
+
+/* -- Publishing ----------------------------------------------------------- */
+
+/** What the site answered, as a plain message: its own error text and the fields it named. */
+async function siteError(domain: string, response: Response, what: string): Promise<Error> {
+  if (response.status === 401 || response.status === 403) {
+    return new Error(`${domain} rejected the API key. Edit the website and paste a fresh key from Admin → Automation.`);
+  }
+  const body = (await response.json().catch(() => null)) as { error?: unknown; details?: unknown } | null;
+  const details = Array.isArray(body?.details) ? ` (${body!.details.join('; ')})` : '';
+  const error = typeof body?.error === 'string' ? body.error : `HTTP ${response.status}`;
+  return new Error(`${domain} could not ${what}: ${error}${details}`);
+}
+
+export interface SiteMedia {
+  id: number;
+  url: string;
+}
+
+/** Upload one picture to the website's media library (POST /api/v1/media, multipart). */
+export async function uploadMedia(
+  domain: string,
+  apiKey: string,
+  file: { data: Buffer; name: string; type: string; alt: string },
+  fetchImpl: Fetch = fetch,
+): Promise<SiteMedia> {
+  const form = new FormData();
+  form.set('file', new Blob([new Uint8Array(file.data)], { type: file.type }), file.name);
+  form.set('alt', file.alt);
+  let response: Response;
+  try {
+    response = await fetchImpl(`https://${domain}/api/v1/media`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}` },
+      body: form,
+      signal: AbortSignal.timeout(120_000),
+    });
+  } catch {
+    throw new Error(`Could not reach ${domain} to upload a picture.`);
+  }
+  if (!response.ok) throw await siteError(domain, response, 'take the picture');
+  const body = (await response.json().catch(() => null)) as { media?: { id?: unknown; url?: unknown } } | null;
+  const id = Number(body?.media?.id);
+  if (!Number.isFinite(id)) throw new Error(`${domain} took the picture but did not say its id.`);
+  return { id, url: String(body?.media?.url ?? '') };
+}
+
+export interface SitePostSaved {
+  id: number;
+  url: string;
+  status: string;
+}
+
+const readPost = async (domain: string, response: Response): Promise<SitePostSaved> => {
+  const body = (await response.json().catch(() => null)) as { post?: { id?: unknown; url?: unknown; status?: unknown } } | null;
+  const id = Number(body?.post?.id);
+  if (!Number.isFinite(id)) throw new Error(`${domain} saved the post but did not say its id.`);
+  return { id, url: String(body?.post?.url ?? ''), status: String(body?.post?.status ?? '') };
+};
+
+/**
+ * Create a post, or update the one with the same externalId (POST /api/v1/posts).
+ * Sending it again never makes a duplicate.
+ */
+export async function savePost(domain: string, apiKey: string, post: Record<string, unknown>, fetchImpl: Fetch = fetch): Promise<SitePostSaved> {
+  let response: Response;
+  try {
+    response = await fetchImpl(`https://${domain}/api/v1/posts`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(post),
+      signal: AbortSignal.timeout(120_000),
+    });
+  } catch {
+    throw new Error(`Could not reach ${domain} to publish the article.`);
+  }
+  if (!response.ok) throw await siteError(domain, response, 'save the article');
+  return readPost(domain, response);
+}
+
+/** Change only the fields sent, on one post (PATCH /api/v1/posts/:id). */
+export async function patchPost(domain: string, apiKey: string, id: number, fields: Record<string, unknown>, fetchImpl: Fetch = fetch): Promise<SitePostSaved> {
+  let response: Response;
+  try {
+    response = await fetchImpl(`https://${domain}/api/v1/posts/${id}`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(fields),
+      signal: AbortSignal.timeout(60_000),
+    });
+  } catch {
+    throw new Error(`Could not reach ${domain} to update the article.`);
+  }
+  if (!response.ok) throw await siteError(domain, response, 'update the article');
+  return readPost(domain, response);
+}

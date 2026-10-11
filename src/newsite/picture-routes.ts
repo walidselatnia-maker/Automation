@@ -10,9 +10,6 @@ import {
   pictureDir,
   queuePictures,
   resetInterruptedPictures,
-  isStepSlot,
-  listPictures,
-  queueStepPictures,
   type PictureDeps,
 } from './pictures.js';
 
@@ -23,6 +20,8 @@ export interface PictureRouteDeps {
   dataDir?: string;
   /** Start the picture maker (and resume it at boot). Tests turn it off. */
   autoPictures?: boolean;
+  /** Called with each step picture once it is made: publishing adds it to the post. */
+  afterStep?: PictureDeps['afterStep'];
 }
 
 const imagesPage = (planId: number, message: string, kind: 'ok' | 'error' = 'ok'): string =>
@@ -34,17 +33,12 @@ const queuedMessage = (queued: number, what: string): string =>
 export function registerPictureRoutes(app: FastifyInstance, deps: PictureRouteDeps): void {
   const { settings } = deps;
   const dataDir = deps.dataDir ?? resolveDataDir();
-  /** Main pictures queued; an article whose main ones are all done sends its steps to the slow queue. */
-  const queueAll = (seoId: number): number => {
-    const queued = queuePictures(seoId, dataDir);
-    const main = listPictures(seoId).filter((p) => !isStepSlot(p.slot));
-    if (main.length && main.every((p) => p.status === 'done')) queueStepPictures(seoId, settings, Date.now(), Math.random, dataDir);
-    return queued;
-  };
+  const queueAll = (seoId: number): number => queuePictures(seoId, dataDir);
   const maker: PictureDeps = {
     settings,
     make: deps.makePicture,
     dataDir,
+    afterStep: deps.afterStep,
   };
   const start = () => {
     if (deps.autoPictures !== false) void kickPictureMaker(maker);

@@ -688,6 +688,20 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+
+  {
+    id: '026-newsite-publish',
+    description: 'Each planned keyword\'s post on its website, and each picture\'s copy in its media library',
+    up(db) {
+      addColumn(db, 'keyword_seo', 'post_status', "TEXT NOT NULL DEFAULT ''");
+      addColumn(db, 'keyword_seo', 'post_id', 'INTEGER');
+      addColumn(db, 'keyword_seo', 'post_url', "TEXT NOT NULL DEFAULT ''");
+      addColumn(db, 'keyword_seo', 'post_state', "TEXT NOT NULL DEFAULT ''");
+      addColumn(db, 'keyword_seo', 'post_error', "TEXT NOT NULL DEFAULT ''");
+      addColumn(db, 'keyword_seo', 'posted_at', 'TEXT');
+      addColumn(db, 'newsite_pictures', 'media_id', 'INTEGER');
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */
