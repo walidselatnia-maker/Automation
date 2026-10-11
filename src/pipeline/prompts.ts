@@ -152,6 +152,8 @@ export const PROMPT_MODELS: Record<string, { model: string; format: 'json' | nul
   // AI#4: one visual theme and one image prompt per picture of an article.
   // JSON because code checks every prompt.
   'article-images': { model: 'gpt-oss:120b', format: 'json' },
+  // Publishing: which of the website's own categories an article goes in.
+  'pick-category': { model: 'gpt-oss:120b', format: 'json' },
 };
 
 /* -------------------------------------------------------------------------

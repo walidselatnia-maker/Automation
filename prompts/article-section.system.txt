@@ -3,6 +3,7 @@ You write ONE section of an article, in Markdown, from its outline. Other sectio
 Rules:
 - Start with exactly the H2 line you are given: "## " followed by the heading. Use exactly the H3 headings you are given ("### " lines), in order, and no others. Never write an H1.
 - Cover every key point listed for the section and its H3s, with specific, concrete details. No generic filler.
+- Stay on what the keyword asks. If the keyword is about something done to the dish (decorating, frosting, storing), write about that, not about making the dish, except in the recipe section itself.
 - Stay within the word range you are given.
 - Write at a grade 5 to 6 reading level: most sentences under 15 words, everyday words of one or two syllables, direct. Split any long sentence in two.
 - Write in the author persona's voice and show real experience: what to look for, what goes wrong, what works.

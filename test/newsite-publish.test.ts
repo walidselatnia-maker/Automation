@@ -39,11 +39,27 @@ describe('Publishing to the website', () => {
       nextMedia += 1;
       return new Response(JSON.stringify({ media: { id: nextMedia, url: `https://f.longlivo.com/media/${nextMedia}.webp` } }), { status: 201 });
     }
+    if (u.endsWith('/api/v1/categories')) {
+      calls.push({ method, url: u, body: null });
+      return new Response(JSON.stringify({ items: [
+        { id: 3, name: 'Desserts', authorIds: [9] },
+        { id: 5, name: 'Cakes', authorIds: [] },
+      ] }));
+    }
+    if (u.endsWith('/api/v1/authors')) {
+      calls.push({ method, url: u, body: null });
+      return new Response(JSON.stringify({ items: [{ id: 9, name: 'Mia' }, { id: 12, name: 'Sam' }] }));
+    }
     calls.push({ method, url: u, body: JSON.parse(String(init!.body)) });
-    return new Response(JSON.stringify({ post: { id: 77, url: 'https://f.longlivo.com/strawberry-cake', status: 'published' } }), { status: 200 });
+    // The site builds its link from the address it believes it has.
+    return new Response(JSON.stringify({ post: { id: 77, url: 'http://localhost:4321/recipes/strawberry-cake', status: 'published' } }), { status: 200 });
   }) as unknown as typeof fetch;
 
-  const deps = () => ({ settings, encryptionKey: KEY, fetchImpl: fakeSite, dataDir, now: () => 1_000_000 });
+  let asked: Record<string, unknown>[];
+  const deps = () => ({
+    settings, encryptionKey: KEY, fetchImpl: fakeSite, dataDir, now: () => 1_000_000, random: () => 0.9,
+    ask: async (_name: string, vars: Record<string, unknown>) => { asked.push(vars); return '{"category": "Cakes"}'; },
+  });
 
   /** A made picture: a row and its file. */
   const made = (slot: string, i: number) => {
@@ -79,6 +95,7 @@ describe('Publishing to the website', () => {
     );
     dataDir = mkdtempSync(join(tmpdir(), 'publish-'));
     calls = [];
+    asked = [];
     nextMedia = 100;
   });
 
@@ -110,11 +127,15 @@ describe('Publishing to the website', () => {
       status: 'published',
       cover: 101,
       gallery: [102, 103],
-      category: 'Strawberry Cake',
+      // The AI picked one of the site's own categories; it has no author, so one is sent.
+      category: 5,
+      author: 12,
       seo: { metaTitle: 'Strawberry Cake With Fresh Berries', metaDescription: 'D', focusKeyword: 'strawberry cake' },
       details: { ...RECIPE, steps: [{ text: 'Mix.' }, { text: 'Bake.' }] },
     });
-    expect(getSeoRow(seoId)).toMatchObject({ post_status: 'published', post_id: 77, post_url: 'https://f.longlivo.com/strawberry-cake' });
+    expect(String(asked[0]!.categoriesJson)).toBe('["Desserts","Cakes"]');
+    // The link is the website's own domain with the post's path.
+    expect(getSeoRow(seoId)).toMatchObject({ post_status: 'published', post_id: 77, post_url: 'https://f.longlivo.com/recipes/strawberry-cake', post_category: 'Cakes' });
     // The step pictures joined the slow queue, the first one 15 to 30 minutes out.
     expect(listPictures(seoId).filter((p) => p.slot.startsWith('step-')).map((p) => p.status)).toEqual(['queued', 'queued']);
     expect(Number(settings.get(NEXT_STEP_KEY))).toBeGreaterThanOrEqual(1_000_000 + 15 * 60_000);
@@ -144,8 +165,10 @@ describe('Publishing to the website', () => {
     calls = [];
     await publishKeyword(seoId, deps());
     expect(calls.filter((c) => c.url.endsWith('/media'))).toEqual([]);
-    expect(calls).toHaveLength(1);
-    expect(calls[0]!.body).toMatchObject({ externalId: `newsite-${seoId}`, cover: 101, gallery: [102, 103] });
+    // The category picked the first time is kept: the AI is not asked again.
+    expect(asked).toHaveLength(1);
+    const post = calls.find((c) => c.url.endsWith('/api/v1/posts'))!;
+    expect(post.body).toMatchObject({ externalId: `newsite-${seoId}`, cover: 101, gallery: [102, 103], category: 5 });
   });
 
   it('keeps what the website said when it refuses', async () => {

@@ -73,19 +73,25 @@ export const BANNED_WORDS: RegExp[] = [
 export function imageSlots(keyword: string, skeleton: Skeleton, recipe: Recipe | null): ImageSlot[] {
   if (recipe) {
     return [
-      { slot: 'feature', shows: `The finished ${keyword}, plated and ready: the hero image at the top of the article.` },
-      { slot: 'overhead', shows: `Top-down shot of the finished ${keyword} on its surface, with a few of its ingredients around it.` },
-      { slot: 'closeup', shows: `Macro close-up of the texture of the finished ${keyword} (crumb, layers, glaze, sauce).` },
-      { slot: 'ingredients', shows: 'The raw ingredients from the recipe laid out before cooking, each one recognisable.' },
-      { slot: 'process', shows: 'A key moment while making it, half-way through the recipe (the "before" of before-and-after).' },
-      { slot: 'serving', shows: `One portion of the ${keyword} served (cut, scooped or poured), ready to eat (the "after").` },
-      ...recipe.steps.map((s, i) => ({ slot: `step-${i + 1}`, shows: `Step ${i + 1} of the recipe, the moment it describes: ${s.text}` })),
+      {
+        slot: 'feature',
+        shows: `WIDE 16:9 hero image at the top of the article, showing "${keyword}" exactly as the article is about it. A styled, lived-in scene that makes people stop scrolling: the dish as the star, a slice cut or a serving lifted out, a hand reaching in or a fork mid-bite, crumbs and drips, props from the recipe, depth with a soft foreground and background. Never a plain product shot on an empty table.`,
+      },
+      { slot: 'overhead', shows: `WIDE 16:9 top-down shot of the ${keyword} on its table, the scene around it: plates, a cake server, scattered ingredients from the recipe, a linen napkin, hands at the edge of the frame.` },
+      { slot: 'closeup', shows: `WIDE 16:9 macro close-up of the most mouth-catching detail of the ${keyword} (crumb, layers, glaze, frosting swirl, juice), shallow depth of field.` },
+      { slot: 'ingredients', shows: 'WIDE 16:9 the raw ingredients from the recipe laid out before cooking, each one recognisable, arranged with care in bowls, spoons and their packaging.' },
+      { slot: 'process', shows: 'WIDE 16:9 a key moment while making it, half-way through, with hands at work (whisking, spreading, piping): the "before" of before-and-after.' },
+      { slot: 'serving', shows: `WIDE 16:9 one portion of the ${keyword} served (cut, scooped or poured) at a set table, ready to eat, someone about to enjoy it: the "after".` },
+      ...recipe.steps.map((s, i) => ({ slot: `step-${i + 1}`, shows: `WIDE 16:9 photo of step ${i + 1} of the recipe, the moment it describes, with hands at work: ${s.text}` })),
     ];
   }
   const middle = skeleton.sections.slice(1, -1).slice(0, ARTICLE_SECTION_IMAGES);
   return [
-    { slot: 'feature', shows: `The main subject of "${keyword}": the hero image at the top of the article.` },
-    ...middle.map((s, i) => ({ slot: `section-${i + 1}`, shows: `For the section "${s.h2}": ${s.covers}` })),
+    {
+      slot: 'feature',
+      shows: `WIDE 16:9 hero image at the top of the article, showing "${keyword}" exactly as the article is about it. A styled, lived-in scene with people's hands, the moment of doing it, props and depth. Never a plain object on an empty table.`,
+    },
+    ...middle.map((s, i) => ({ slot: `section-${i + 1}`, shows: `WIDE 16:9 photo for the section "${s.h2}": ${s.covers}` })),
   ];
 }
 

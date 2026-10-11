@@ -76,6 +76,19 @@ describe('AI#2 checks', () => {
     expect(checkSkeleton(GOOD, ctx)).toEqual([]);
   });
 
+  it('keeps an outline on what its keyword asks: a decorating keyword is about decorating', () => {
+    const decorate = { ...ctx, keyword: 'strawberry cake how to decorate' };
+    // GOOD is about making the cookies: for a decorating keyword it drifts.
+    expect(checkSkeleton(GOOD, decorate).join(' ')).toMatch(/drifts from the keyword "strawberry cake how to decorate": it is about decorating, but that comes up in only 0 of 5 sections/);
+    const onTopic = {
+      ...GOOD,
+      sections: GOOD.sections.map((s, i) => (i < 3 ? { ...s, keyPoints: [...s.keyPoints, 'decorating with piped cream'] } : s)),
+    };
+    expect(checkSkeleton(onTopic, decorate).join(' ')).not.toMatch(/drifts/);
+    // A keyword that is the dish itself has no such rule.
+    expect(checkSkeleton(GOOD, { ...ctx, keyword: FOCUS })).toEqual([]);
+  });
+
   it('keeps the H1 as the SEO title', () => {
     expect(checkSkeleton({ ...GOOD, h1: 'Something else' }, ctx).join(' ')).toMatch(/H1 must be exactly/);
   });

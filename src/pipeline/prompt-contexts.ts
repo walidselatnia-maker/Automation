@@ -161,6 +161,13 @@ export const STEP_CONTEXTS: Record<string, Record<string, unknown>> = {
     recipeJson: '{}',
     problemsJson: '[]',
   },
+  'pick-category': {
+    title: 't',
+    keyword: 'k',
+    pillar: 'p',
+    niche: 'n',
+    categoriesJson: '[]',
+  },
   'article-images': {
     keyword: 'k',
     title: 't',

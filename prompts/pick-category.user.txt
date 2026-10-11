@@ -1,0 +1,9 @@
+Article title: {{title}}
+Keyword: {{keyword}}
+Pillar topic it belongs to: {{pillar}}
+Website niche: {{niche}}
+
+The website's categories:
+{{categoriesJson}}
+
+Answer with the JSON only.

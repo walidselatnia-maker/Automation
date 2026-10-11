@@ -15,7 +15,8 @@ import { parseImageSet } from './images.js';
  * - the same ImageClient, built from the same settings;
  * - the same Flow project, from resolveProjectId (the website's own, else the
  *   shared one from Settings, else the old placeholder);
- * - the same call, generate(prompt, 'VERTICAL');
+ * - the same call, generate(prompt, 'HORIZONTAL'): every picture wide (16:9),
+ *   as the new websites want, where the old dashboard used VERTICAL;
  * - the same pause between images (image_gap_seconds), counted from when the
  *   previous image came back;
  * - one image at a time, and a failed image stops its article there, like a
@@ -202,7 +203,7 @@ const oldDashboardMaker = (settings: Settings) => (prompt: string, projectId: st
     projectId,
     imageModel: settings.get('image_model'),
   })
-    .generate(prompt, 'VERTICAL')
+    .generate(prompt, 'HORIZONTAL')
     .then(({ data, contentType }) => ({ data, contentType }));
 
 const extension = (contentType: string): string =>

@@ -105,6 +105,18 @@ const ownWords = (sub: string, pillar: string): string[] => {
   return words(sub).filter((w) => !base.has(w));
 };
 
+/**
+ * Things done to a dish, as word stems, and how to say each. A keyword with
+ * one of these is about that action, not about making the dish.
+ */
+const ACTION_NAMES: Record<string, string> = {
+  decorat: 'decorating', frost: 'frosting', icing: 'icing', piping: 'piping', glaz: 'glazing', stor: 'storing',
+  freez: 'freezing', reheat: 'reheating', thaw: 'thawing', transport: 'transporting', slic: 'slicing', cut: 'cutting',
+  fix: 'fixing', substitut: 'substituting', assembl: 'assembling', stack: 'stacking', level: 'leveling', wrap: 'wrapping',
+};
+const actionsIn = (keyword: string): string[] =>
+  Object.keys(ACTION_NAMES).filter((stem) => words(keyword).some((w) => w.startsWith(stem)));
+
 const OPENING = /why|what|intro|overview|about|matters|before you|quick look|at a glance/i;
 const CLOSING = /faq|frequently asked|questions|final|conclusion|wrap|next step|get started|try it|takeaway/i;
 
@@ -118,6 +130,8 @@ const hasAllWords = (heading: string, phrase: string): boolean => {
 export interface SkeletonContext {
   title: string;
   focusKeyword: string;
+  /** The planned keyword: what the article must be about. */
+  keyword?: string;
   role: 'pillar' | 'sub';
   /** For the pillar: its plan's sub-keywords, each of which it must touch. */
   pillar?: string;
@@ -156,6 +170,23 @@ export function checkSkeleton(k: Skeleton, ctx: SkeletonContext): string[] {
   }
   const stuffed = headings.filter((h) => hasAllWords(h, ctx.focusKeyword)).length;
   if (stuffed > 2) problems.push(`The focus keyword is in ${stuffed} headings; keep it to one or two.`);
+
+  // The article answers its keyword. When the keyword is about doing
+  // something to the dish (decorating, frosting, storing...), that action runs
+  // through at least half the outline: an article for "how to decorate a
+  // strawberry cake" whose sections are about baking one fails here.
+  if (ctx.keyword && n) {
+    const sectionText = k.sections.map((s) => words([s.h2, s.covers, ...s.keyPoints, ...s.h3.flatMap((h) => [h.h3, ...h.keyPoints])].join(' ')));
+    const need = Math.ceil(n / 2);
+    for (const stem of actionsIn(ctx.keyword)) {
+      const hits = sectionText.filter((ws) => ws.some((x) => x.startsWith(stem))).length;
+      if (hits < need) {
+        problems.push(
+          `The outline drifts from the keyword "${ctx.keyword}": it is about ${ACTION_NAMES[stem]}, but that comes up in only ${hits} of ${n} sections. Most sections (at least ${need}) must be about ${ACTION_NAMES[stem]}; drop or rework the ones about other things (like making the dish from scratch).`,
+        );
+      }
+    }
+  }
 
   for (const s of k.sections) {
     if (s.keyPoints.length < 2) problems.push(`The section "${s.h2}" needs at least 2 key points.`);
@@ -259,7 +290,7 @@ export async function makeSkeleton(row: SeoRow, deps: SkeletonDeps): Promise<voi
     last = parseSkeleton(raw);
     if (last) last.h1 = last.h1 || row.title;
     problems = last
-      ? checkSkeleton(last, { title: row.title, focusKeyword: row.focus_keyword, role: row.role, pillar: ctx.pillar, subKeywords, recipe })
+      ? checkSkeleton(last, { title: row.title, focusKeyword: row.focus_keyword, keyword: row.keyword, role: row.role, pillar: ctx.pillar, subKeywords, recipe })
       : ['The AI answer could not be read.'];
     if (problems.length === 0) break;
   }

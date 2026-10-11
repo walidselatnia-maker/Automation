@@ -702,6 +702,14 @@ export const MIGRATIONS: Migration[] = [
       addColumn(db, 'newsite_pictures', 'media_id', 'INTEGER');
     },
   },
+
+  {
+    id: '027-newsite-post-category',
+    description: 'The website category the AI picked for each published article',
+    up(db) {
+      addColumn(db, 'keyword_seo', 'post_category', "TEXT NOT NULL DEFAULT ''");
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */

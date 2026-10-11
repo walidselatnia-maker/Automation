@@ -67,10 +67,17 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
   const ready = deps.isPlatformReady ?? (() => (deps.settings ? platformReady(deps.settings) : false));
   const NOT_READY = 'Set up the platform first: it needs at least one working AI key.';
 
+  const ask =
+    deps.ask ??
+    (async (promptName: string, variables: Record<string, unknown>) => {
+      if (!deps.settings) throw new Error('No AI connection configured.');
+      return (await askPrompt(deps.settings, deps.encryptionKey, promptName, variables)).content;
+    });
+
   if (deps.settings) {
     registerPlatformRoutes(app, { settings: deps.settings, encryptionKey: deps.encryptionKey, readFlash, fetchImpl: deps.fetchImpl });
     registerImageModelRoutes(app, { settings: deps.settings, readFlash, fetchImpl: deps.fetchImpl });
-    const publish: PublishDeps = { settings: deps.settings, encryptionKey: deps.encryptionKey, fetchImpl: deps.fetchImpl, dataDir: deps.dataDir };
+    const publish: PublishDeps = { settings: deps.settings, encryptionKey: deps.encryptionKey, fetchImpl: deps.fetchImpl, dataDir: deps.dataDir, ask };
     registerPublishRoutes(app, { ...publish, autoResume: deps.autoPictures });
     registerPictureRoutes(app, {
       settings: deps.settings,
@@ -91,12 +98,7 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
     dataDir: deps.dataDir,
     listPosts: deps.listPosts ?? ((domain, apiKey) => realListPosts(domain, apiKey)),
     suggest: deps.suggest ?? ((pillar) => expandSeeds([pillar])),
-    ask:
-      deps.ask ??
-      (async (promptName, variables) => {
-        if (!deps.settings) throw new Error('No AI connection configured.');
-        return (await askPrompt(deps.settings, deps.encryptionKey, promptName, variables)).content;
-      }),
+    ask,
   });
 
   /**

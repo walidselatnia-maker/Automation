@@ -175,6 +175,8 @@ export interface SeoRow {
   post_state: string;
   post_error: string;
   posted_at: string | null;
+  /** The website category the article was posted in. */
+  post_category: string;
 }
 
 /** One waiting row per keyword: the pillar first, then the sub-keywords in order. */

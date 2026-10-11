@@ -122,7 +122,7 @@ describe('Pictures, made the old dashboard way', () => {
     expect(sent[2]!.projectId).toBe('site-project');
   });
 
-  it('calls the old image client the old way: VERTICAL, with the same settings', async () => {
+  it('calls the old image client with the same settings, for wide pictures', async () => {
     settings.set('image_base_url', 'http://imagegen:8100');
     settings.set('flow_project_id', 'shared-project');
     const generate = vi
@@ -131,7 +131,7 @@ describe('Pictures, made the old dashboard way', () => {
     setPrompts(['feature']);
     queuePictures(seoId, dataDir);
     await kickPictureMaker({ settings, dataDir, now: () => clock, sleep: async () => {} });
-    expect(generate).toHaveBeenCalledWith('prompt for feature', 'VERTICAL');
+    expect(generate).toHaveBeenCalledWith('prompt for feature', 'HORIZONTAL');
     expect(listPictures(seoId)[0]).toMatchObject({ status: 'done' });
   });
 

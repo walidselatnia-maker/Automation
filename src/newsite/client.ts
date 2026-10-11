@@ -197,3 +197,48 @@ export async function patchPost(domain: string, apiKey: string, id: number, fiel
   if (!response.ok) throw await siteError(domain, response, 'update the article');
   return readPost(domain, response);
 }
+
+export interface SiteCategory {
+  id: number;
+  name: string;
+  /** Authors assigned to the category in the site's admin. */
+  authorIds: number[];
+}
+
+export interface SiteAuthor {
+  id: number;
+  name: string;
+}
+
+async function getList<T>(domain: string, apiKey: string, path: string, what: string, fetchImpl: Fetch): Promise<T[]> {
+  let response: Response;
+  try {
+    response = await fetchImpl(`https://${domain}/api/v1/${path}`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(20_000),
+    });
+  } catch {
+    throw new Error(`Could not reach ${domain} to read its ${what}.`);
+  }
+  if (!response.ok) throw await siteError(domain, response, `list its ${what}`);
+  const body = (await response.json().catch(() => null)) as { items?: unknown } | null;
+  return Array.isArray(body?.items) ? (body!.items as T[]) : [];
+}
+
+/** The website's categories, with the authors assigned to each (GET /api/v1/categories). */
+export async function listCategories(domain: string, apiKey: string, fetchImpl: Fetch = fetch): Promise<SiteCategory[]> {
+  const items = await getList<Record<string, unknown>>(domain, apiKey, 'categories', 'categories', fetchImpl);
+  return items
+    .map((c) => ({
+      id: Number(c.id),
+      name: String(c.name ?? ''),
+      authorIds: Array.isArray(c.authorIds) ? c.authorIds.map(Number).filter(Number.isFinite) : [],
+    }))
+    .filter((c) => Number.isFinite(c.id) && c.name);
+}
+
+/** The website's authors (GET /api/v1/authors). */
+export async function listAuthors(domain: string, apiKey: string, fetchImpl: Fetch = fetch): Promise<SiteAuthor[]> {
+  const items = await getList<Record<string, unknown>>(domain, apiKey, 'authors', 'authors', fetchImpl);
+  return items.map((a) => ({ id: Number(a.id), name: String(a.name ?? '') })).filter((a) => Number.isFinite(a.id));
+}
