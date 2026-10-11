@@ -191,6 +191,14 @@ describe('Pictures, made the old dashboard way', () => {
     expect(listPictures(seoId).map((p) => p.status)).toEqual(['done', 'done', 'done', 'queued']);
   });
 
+  it('says when the main pictures of an article are all made, so it can be published', async () => {
+    setPrompts(['feature', 'overhead', 'step-1']);
+    queuePictures(seoId, dataDir);
+    const ready: number[] = [];
+    await kickPictureMaker({ ...deps(ok), afterMain: async (id: number) => { ready.push(id); } });
+    expect(ready).toEqual([seoId]);
+  });
+
   it('keeps the slow queue going past a failed step picture', async () => {
     setPrompts(['feature', 'step-1', 'step-2']);
     queuePictures(seoId, dataDir);

@@ -7,7 +7,7 @@ import { registerKeywordRoutes } from './keyword-routes.js';
 import { registerPictureRoutes, type PictureRouteDeps } from './picture-routes.js';
 import { registerImageModelRoutes } from './image-model.js';
 import { registerPublishRoutes } from './publish-routes.js';
-import { addStepPicture, type PublishDeps } from './publish.js';
+import { addStepPicture, publishWhenReady, type PublishDeps } from './publish.js';
 import { describeProjectId, flowProjectFor, NEXT_STEP_KEY } from './pictures.js';
 import { platformReady, registerPlatformRoutes } from './platform-routes.js';
 import {
@@ -85,6 +85,7 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
       dataDir: deps.dataDir,
       autoPictures: deps.autoPictures,
       afterStep: (pictureId) => addStepPicture(pictureId, publish),
+      afterMain: (seoId) => publishWhenReady(seoId, publish),
     });
   }
 

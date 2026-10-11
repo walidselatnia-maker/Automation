@@ -8,7 +8,7 @@ import { Settings } from '../src/settings.js';
 import { createNewWebsite, saveKeywordPlan } from '../src/newsite/repo.js';
 import { listPlanSeo, queuePlanSeo, getSeoRow } from '../src/newsite/seo.js';
 import { listPictures, NEXT_STEP_KEY, pictureDir } from '../src/newsite/pictures.js';
-import { addStepPicture, notReadyReason, publishKeyword } from '../src/newsite/publish.js';
+import { addStepPicture, notReadyReason, publishKeyword, publishWhenReady } from '../src/newsite/publish.js';
 import type { Recipe } from '../src/newsite/recipe.js';
 
 const KEY = randomBytes(32);
@@ -169,6 +169,27 @@ describe('Publishing to the website', () => {
     expect(asked).toHaveLength(1);
     const post = calls.find((c) => c.url.endsWith('/api/v1/posts'))!;
     expect(post.body).toMatchObject({ externalId: `newsite-${seoId}`, cover: 101, gallery: [102, 103], category: 5 });
+  });
+
+  it('publishes by itself once the main pictures are made, when the website says Publish automatically', async () => {
+    ['feature', 'overhead'].forEach(made);
+    await publishWhenReady(seoId, deps());
+    expect(calls).toEqual([]); // one main picture still missing
+    made('closeup', 2);
+    await publishWhenReady(seoId, deps());
+    expect(getSeoRow(seoId)).toMatchObject({ post_status: 'published' });
+    // Already posted: not sent again.
+    calls = [];
+    await publishWhenReady(seoId, deps());
+    expect(calls).toEqual([]);
+  });
+
+  it('waits for the Publish button when the website says Wait for my approval', async () => {
+    run('UPDATE new_websites SET auto_publish = 0');
+    ['feature', 'overhead', 'closeup'].forEach(made);
+    await publishWhenReady(seoId, deps());
+    expect(calls).toEqual([]);
+    expect(getSeoRow(seoId)).toMatchObject({ post_status: '' });
   });
 
   it('keeps what the website said when it refuses', async () => {

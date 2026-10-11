@@ -22,6 +22,7 @@ export interface PictureRouteDeps {
   autoPictures?: boolean;
   /** Called with each step picture once it is made: publishing adds it to the post. */
   afterStep?: PictureDeps['afterStep'];
+  afterMain?: PictureDeps['afterMain'];
 }
 
 const imagesPage = (planId: number, message: string, kind: 'ok' | 'error' = 'ok'): string =>
@@ -39,6 +40,7 @@ export function registerPictureRoutes(app: FastifyInstance, deps: PictureRouteDe
     make: deps.makePicture,
     dataDir,
     afterStep: deps.afterStep,
+    afterMain: deps.afterMain,
   };
   const start = () => {
     if (deps.autoPictures !== false) void kickPictureMaker(maker);

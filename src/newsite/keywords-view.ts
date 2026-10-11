@@ -802,8 +802,8 @@ export function publishStepPage(site: NewWebsiteRow, plan: KeywordPlan, rows: Se
   const body = html`
     <h2>Publish</h2>
     <p>Each article goes to ${site.domain} with its SEO title and description, the feature picture as its cover and the other main pictures spread through the text${articleTypeFor(site.niche) === 'recipe' ? ', and its recipe card on recipe pages' : ''}. ${site.auto_publish
-      ? 'This website publishes straight away.'
-      : 'This website saves posts as drafts (auto-publish is off in its settings).'} Publishing again updates the same post; it never makes a copy.</p>
+      ? html`This website is set to <b>Publish automatically</b>: an article goes out by itself as soon as its main pictures are made.`
+      : html`This website is set to <b>Wait for my approval</b>: an article goes out only when you press Publish.`} Publishing again updates the same post; it never makes a copy.</p>
     ${articleTypeFor(site.niche) === 'recipe'
       ? html`<p>Once a recipe is posted, its step pictures join the slow queue (${STEP_GAP_MINUTES[0]} to ${STEP_GAP_MINUTES[1]} minutes apart), and each one is added to its step of the recipe card on the website as it is made.</p>`
       : raw('')}

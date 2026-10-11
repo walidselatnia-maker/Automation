@@ -165,6 +165,8 @@ export interface PictureDeps {
   wakeIn?: (ms: number, wake: () => void) => void;
   /** Called with each step picture once it is made: publishing adds it to the post. */
   afterStep?: (pictureId: number) => Promise<void>;
+  /** Called when all of an article's main pictures are made: it may be published now. */
+  afterMain?: (seoId: number) => Promise<void>;
 }
 
 let running: Promise<void> | null = null;
@@ -277,6 +279,9 @@ export function kickPictureMaker(deps: PictureDeps): Promise<void> {
           writeFileSync(join(dir, file), data);
           run(`UPDATE newsite_pictures SET status = 'done', error = '', file = ?, made_at = datetime('now') WHERE id = ?`, file, next.id);
           if (step) await deps.afterStep?.(next.id).catch((err) => log.warn(`After ${next.slot}: ${errorMessage(err)}`));
+          else if (listPictures(next.seo_id).filter((p) => !isStepSlot(p.slot)).every((p) => p.status === 'done')) {
+            void deps.afterMain?.(next.seo_id).catch((err) => log.warn(`After the main pictures: ${errorMessage(err)}`));
+          }
         } catch (err) {
           const message = errorMessage(err).slice(0, 400);
           log.warn(`Picture "${next.slot}" (${next.id}) failed: ${message}`);

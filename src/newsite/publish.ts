@@ -199,7 +199,8 @@ export async function publishKeyword(seoId: number, deps: PublishDeps): Promise<
         excerpt: t.row.description,
         content: t.row.article_md,
         contentFormat: 'markdown',
-        status: t.site.auto_publish ? 'published' : 'draft',
+        // Publishing is the approval: a post sent here goes live.
+        status: 'published',
         cover: coverId,
         coverAlt: cover.alt,
         gallery,
@@ -246,6 +247,27 @@ export async function addStepPicture(pictureId: number, deps: PublishDeps): Prom
     log.warn(`Adding ${picture.slot} to "${t.row.keyword}" failed: ${errorMessage(err)}`);
     run('UPDATE newsite_pictures SET error = ? WHERE id = ?', `Made, but not added to the post yet: ${errorMessage(err).slice(0, 300)}`, picture.id);
   }
+}
+
+/** One publish at a time, so two triggers never post the same article twice at once. */
+let chain: Promise<void> = Promise.resolve();
+export function queuePublish(seoId: number, deps: PublishDeps): Promise<void> {
+  chain = chain.then(() => publishKeyword(seoId, deps)).catch(() => {});
+  return chain;
+}
+
+/**
+ * An article's main pictures are all made. On a website set to "Publish
+ * automatically" it goes out now; on "Wait for my approval" it waits for the
+ * Publish button. (Scheduled runs, when they exist, will follow the website's
+ * posts per day and gap instead.)
+ */
+export function publishWhenReady(seoId: number, deps: PublishDeps): Promise<void> {
+  const t = target(seoId, deps.encryptionKey);
+  if (!t || !t.site.auto_publish || t.row.post_status === 'published' || t.row.post_status === 'publishing') return Promise.resolve();
+  if (notReadyReason(t.row, listPictures(seoId))) return Promise.resolve();
+  log.info(`Main pictures of "${t.row.keyword}" are made: publishing it automatically.`);
+  return queuePublish(seoId, deps);
 }
 
 /** A restart mid-publish: the keyword can be published again. */
