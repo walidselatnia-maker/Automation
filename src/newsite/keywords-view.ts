@@ -5,7 +5,7 @@ import { articleTypeFor, parseSkeleton, totalWords, type Skeleton } from './skel
 import { parseRecipe } from './recipe.js';
 import { markdownToHtml } from './markdown.js';
 import { parseImageSet } from './images.js';
-import type { PictureRow } from './pictures.js';
+import { isStepSlot, STEP_GAP_MINUTES, type PictureRow } from './pictures.js';
 import { WIZARD_CSS } from './view.js';
 
 const INTENT_LABEL: Record<string, string> = {
@@ -622,8 +622,11 @@ const PICTURE_STATE: Record<PictureRow['status'], string> = {
 };
 
 /** The picture made from one prompt, or where it is in the queue. */
-function pictureBox(picture: PictureRow | undefined): Html {
-  if (!picture) return html`<div class="kw-pic kw-pic-empty">Not made yet</div>`;
+function pictureBox(picture: PictureRow | undefined, slot: string): Html {
+  if (!picture) {
+    return html`<div class="kw-pic kw-pic-empty">${isStepSlot(slot) ? 'Slow queue, after the main pictures' : 'Not made yet'}</div>`;
+  }
+  if (picture.status === 'queued' && isStepSlot(slot)) return html`<div class="kw-pic kw-pic-empty queued"><span>In the slow queue</span></div>`;
   if (picture.status === 'done') {
     return html`<a class="kw-pic" href="/new-website/pictures/${picture.id}/file" target="_blank" rel="noopener">
       <img src="/new-website/pictures/${picture.id}/file" alt="${picture.alt}" loading="lazy"></a>`;
@@ -643,11 +646,15 @@ function imagesCard(row: SeoRow, intent: string, pictures: PictureRow[]): Html {
   // Only pictures made from the prompt as it is now count.
   const current = promptsDone ? set!.images.map((im) => bySlot.get(im.slot)).map((p, i) => (p && p.prompt === set!.images[i]!.prompt ? p : undefined)) : [];
   const made = current.filter((p) => p?.status === 'done').length;
-  const busy = current.some((p) => p?.status === 'queued' || p?.status === 'making');
+  const main = promptsDone ? set!.images.map((im, i) => ({ slot: im.slot, p: current[i] })).filter((x) => !isStepSlot(x.slot)) : [];
+  const mainLeft = main.filter((x) => x.p?.status !== 'done').length;
+  const mainBusy = main.some((x) => x.p?.status === 'queued' || x.p?.status === 'making');
+  const making = current.some((p) => p?.status === 'making');
+  const stepsWaiting = current.some((p, i) => p?.status === 'queued' && isStepSlot(set!.images[i]!.slot));
   const state = !ready ? 'Needs the article first' : (SKELETON_STATUS[row.images_status] ?? 'Waiting');
   const head = html`${roleLabel(row, intent)}<b>${row.keyword}</b>${promptsDone
     ? html`<span class="ns-num kw-count">${made} of ${set!.images.length} pictures</span>`
-    : raw('')}<span class="kw-seo-status ${row.images_status}">${row.images_status === 'writing' ? 'Writing…' : busy ? 'Making pictures…' : state}</span>`;
+    : raw('')}<span class="kw-seo-status ${row.images_status}">${row.images_status === 'writing' ? 'Writing…' : mainBusy || making ? 'Making pictures…' : stepsWaiting ? 'Steps in the slow queue' : state}</span>`;
   const body = html`
     ${row.images_status === 'failed' ? problemList(row.images_problems) : raw('')}
     ${promptsDone
@@ -667,7 +674,7 @@ function imagesCard(row: SeoRow, intent: string, pictures: PictureRow[]): Html {
                   <p class="kw-img-prompt">${im.prompt}</p>
                   <div class="kw-img-alt"><b>Alt</b> ${im.alt}</div>
                 </div>
-                ${pictureBox(current[i])}
+                ${pictureBox(current[i], im.slot)}
               </li>`,
             )}
           </ol>
@@ -679,14 +686,14 @@ function imagesCard(row: SeoRow, intent: string, pictures: PictureRow[]): Html {
             : row.images_status === 'writing' ? 'The AI is writing the image prompts now.' : 'Waiting for its turn.'}</p>`}
     ${row.images_status === 'done' || row.images_status === 'failed'
       ? html`<div class="kw-seo-retry kw-pic-actions">
-          ${row.images_status === 'failed' || !busy
+          ${row.images_status === 'failed' || !(mainBusy || making)
             ? html`<form method="post" action="/new-website/keywords/images/${row.id}/retry">
                 <button class="ns-btn quiet kw-remove" ${made ? raw(`onclick="return confirm('New prompts mean the ${made} pictures made so far are made again. Carry on?')"`) : raw('')}>Write image prompts again</button>
               </form>`
             : raw('')}
-          ${promptsDone && made < set!.images.length && !busy
+          ${promptsDone && mainLeft > 0 && !mainBusy
             ? html`<form method="post" action="/new-website/keywords/pictures/${row.id}/make">
-                <button class="ns-btn primary">Make ${set!.images.length - made} picture${set!.images.length - made === 1 ? '' : 's'}</button>
+                <button class="ns-btn primary">Make ${mainLeft} main picture${mainLeft === 1 ? '' : 's'}</button>
               </form>`
             : raw('')}
         </div>`
@@ -701,6 +708,8 @@ export function imagesStepPage(
   rows: SeoRow[],
   pictures: PictureRow[] = [],
   project = '',
+  nextStepAt = 0,
+  now = Date.now(),
 ): Html {
   const intentOf = new Map(plan.items.map((i) => [i.keyword, i.intent]));
   const names = stepNames(site.niche);
@@ -708,13 +717,23 @@ export function imagesStepPage(
   const picturesOf = (id: number) => pictures.filter((p) => p.seo_id === id);
   const busy = busyRows(rows) || pictures.some((p) => p.status === 'queued' || p.status === 'making');
   const made = pictures.filter((p) => p.status === 'done').length;
-  const total = rows.reduce((n, r) => n + (r.images_status === 'done' ? (parseImageSet(r.images_json)?.images.length ?? 0) : 0), 0);
+  const slotsOf = (r: SeoRow) => (r.images_status === 'done' ? (parseImageSet(r.images_json)?.images ?? []) : []);
+  const total = rows.reduce((n, r) => n + slotsOf(r).length, 0);
+  const mainTotal = rows.reduce((n, r) => n + slotsOf(r).filter((im) => !isStepSlot(im.slot)).length, 0);
+  const mainMade = pictures.filter((p) => p.status === 'done' && !isStepSlot(p.slot)).length;
+  const stepsWaiting = pictures.filter((p) => p.status === 'queued' && isStepSlot(p.slot)).length;
+  const minutes = Math.max(0, Math.round((nextStepAt - now) / 60_000));
   const body = html`
     <h2>Images</h2>
     <p>For each article the AI first sets one look (surface, lighting, palette, style, mood), then writes a prompt per picture that follows it, so all of an article's pictures look like one photoshoot. ${recipeSite
       ? 'Recipe pages get six photos of the dish and one per recipe step; article pages get a feature image and one per main section.'
       : 'Each article gets a feature image and one per main section.'}</p>
-    <p>Pictures are made only when you press <b>Make pictures</b>, the same way the old dashboard makes article images: one at a time, with the platform's pause between them. If a picture fails, that article stops there; pressing Make pictures again carries on from it.</p>
+    <p>The main pictures are made when you press <b>Make pictures</b>, the same way the old dashboard makes article images: one at a time, with the platform's pause between them. If one fails, that article stops there; pressing Make pictures again carries on from it.</p>
+    ${recipeSite
+      ? html`<p>Recipe step pictures are not made all at once. Once an article's main pictures are done, its steps join a slow queue: one picture at a time, ${STEP_GAP_MINUTES[0]} to ${STEP_GAP_MINUTES[1]} minutes apart, so Google Flow is never asked for a burst.${stepsWaiting
+          ? html` <b class="ns-num">${stepsWaiting} step picture${stepsWaiting === 1 ? '' : 's'} waiting; the next ${minutes ? `in about ${minutes} minute${minutes === 1 ? '' : 's'}` : 'any moment now'}.</b>`
+          : raw('')}</p>`
+      : raw('')}
     ${project ? html`<p class="kw-project">Flow project: ${project}</p>` : raw('')}
     ${rows.length
       ? html`<ul class="acc-list" ${busy ? raw(`data-watch="${plan.id}"`) : raw('')}>
@@ -723,9 +742,9 @@ export function imagesStepPage(
       : html`<p class="kw-none">Image prompts follow the articles. Go back to start them.</p>`}`;
   const foot = html`
     <a class="ns-btn quiet" href="${planHref(plan.id, 'article')}">Previous</a>
-    ${total > made
+    ${mainTotal > mainMade
       ? html`<form method="post" action="/new-website/keywords/plan/${plan.id}/pictures/make" style="margin:0">
-          <button class="ns-btn primary" ${raw(`onclick="return confirm('Send ${total - made} pictures to Google Flow, one at a time?')"`)}>Make all pictures</button>
+          <button class="ns-btn primary" ${raw(`onclick="return confirm('Send ${mainTotal - mainMade} main pictures to Google Flow, one at a time? Step pictures follow in the slow queue.')"`)}>Make all main pictures</button>
         </form>`
       : html`<a class="ns-btn primary disabled" aria-disabled="true">Next: publishing (coming next)</a>`}`;
   return html`

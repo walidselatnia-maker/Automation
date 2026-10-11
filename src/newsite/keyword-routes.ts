@@ -22,7 +22,7 @@ import {
 } from './repo.js';
 import { articleStepPage, imagesStepPage, keywordsPage, recipeStepPage, seoStepPage, skeletonStepPage } from './keywords-view.js';
 import { articleTypeFor } from './skeleton.js';
-import { clearPictures, listPictures, listPlanPictures } from './pictures.js';
+import { clearPictures, isStepSlot, listPictures, listPlanPictures } from './pictures.js';
 import { asPage } from './keywords.js';
 import { getSeoRow, kickSeoWriter, listPlanSeo, queuePlanSeo, requeueArticle, requeueImages, requeueRecipe, requeueSeo, requeueSkeleton, resetInterruptedSeo } from './seo.js';
 
@@ -36,6 +36,8 @@ export interface KeywordRouteDeps extends FindDeps {
   /** Why picture making is paused, or '' when it is not. */
   /** Which Flow project a website's pictures go into, in the old dashboard's words. */
   flowProject?: (site: NewWebsiteRow) => string;
+  /** When the slow queue makes its next step picture (ms since 1970). */
+  nextStepAt?: () => number;
   dataDir?: string;
 }
 
@@ -225,7 +227,7 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
                   ? skeletonStepPage(site, plan, rows)
                   : step === 'article'
                     ? articleStepPage(site, plan, rows)
-                    : imagesStepPage(site, plan, rows, listPlanPictures(plan.id), deps.flowProject?.(site) ?? ''),
+                    : imagesStepPage(site, plan, rows, listPlanPictures(plan.id), deps.flowProject?.(site) ?? '', deps.nextStepAt?.() ?? 0),
           flash: deps.readFlash(request.query),
         }),
       );
@@ -256,7 +258,7 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
   app.post('/new-website/keywords/images/:id/retry', async (request, reply) => {
     const row = getSeoRow(Number((request.params as { id: string }).id) || 0);
     if (!row) return reply.redirect('/new-website/keywords', 303);
-    if (listPictures(row.id).some((p) => p.status === 'queued' || p.status === 'making')) {
+    if (listPictures(row.id).some((p) => p.status === 'making' || (p.status === 'queued' && !isStepSlot(p.slot)))) {
       return reply.redirect(
         `/new-website/keywords/plan/${row.plan_id}/images?error=${encodeURIComponent('Its pictures are being made. Wait for them to finish first.')}`,
         303,

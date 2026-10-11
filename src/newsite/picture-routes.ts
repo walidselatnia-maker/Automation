@@ -10,6 +10,9 @@ import {
   pictureDir,
   queuePictures,
   resetInterruptedPictures,
+  isStepSlot,
+  listPictures,
+  queueStepPictures,
   type PictureDeps,
 } from './pictures.js';
 
@@ -31,6 +34,13 @@ const queuedMessage = (queued: number, what: string): string =>
 export function registerPictureRoutes(app: FastifyInstance, deps: PictureRouteDeps): void {
   const { settings } = deps;
   const dataDir = deps.dataDir ?? resolveDataDir();
+  /** Main pictures queued; an article whose main ones are all done sends its steps to the slow queue. */
+  const queueAll = (seoId: number): number => {
+    const queued = queuePictures(seoId, dataDir);
+    const main = listPictures(seoId).filter((p) => !isStepSlot(p.slot));
+    if (main.length && main.every((p) => p.status === 'done')) queueStepPictures(seoId, settings, Date.now(), Math.random, dataDir);
+    return queued;
+  };
   const maker: PictureDeps = {
     settings,
     make: deps.makePicture,
@@ -49,7 +59,7 @@ export function registerPictureRoutes(app: FastifyInstance, deps: PictureRouteDe
   app.post('/new-website/keywords/pictures/:id/make', async (request, reply) => {
     const row = getSeoRow(Number((request.params as { id: string }).id) || 0);
     if (!row) return reply.redirect('/new-website/keywords', 303);
-    const queued = queuePictures(row.id, dataDir);
+    const queued = queueAll(row.id);
     start();
     return reply.redirect(
       imagesPage(row.plan_id, queuedMessage(queued, ` for “${row.keyword}”`)),
@@ -60,7 +70,7 @@ export function registerPictureRoutes(app: FastifyInstance, deps: PictureRouteDe
   /** Make the pictures of every keyword in a plan whose prompts are ready. */
   app.post('/new-website/keywords/plan/:id/pictures/make', async (request, reply) => {
     const planId = Number((request.params as { id: string }).id) || 0;
-    const queued = listPlanSeo(planId).reduce((n, r) => n + queuePictures(r.id, dataDir), 0);
+    const queued = listPlanSeo(planId).reduce((n, r) => n + queueAll(r.id), 0);
     start();
     return reply.redirect(
       imagesPage(planId, queuedMessage(queued, '')),

@@ -16,6 +16,7 @@ import {
   pictureDir,
   queuePictures,
   resetPictureMakerState,
+  NEXT_STEP_KEY,
 } from '../src/newsite/pictures.js';
 
 const KEY = randomBytes(32);
@@ -152,6 +153,49 @@ describe('Pictures, made the old dashboard way', () => {
     await kickPictureMaker(deps(ok));
     expect(prompts()).toEqual(['prompt for overhead', 'prompt for closeup']);
     expect(listPictures(seoId).map((p) => p.status)).toEqual(['done', 'done', 'done']);
+  });
+
+  it('makes the main pictures first, then sends the steps to the slow queue, 15 to 30 minutes apart', async () => {
+    setPrompts(['feature', 'overhead', 'step-1', 'step-2']);
+    // Make pictures queues the main ones only.
+    expect(queuePictures(seoId, dataDir)).toBe(2);
+    const wakes: number[] = [];
+    const slow = () => ({ ...deps(ok), random: () => 0.5, wakeIn: (ms: number) => { wakes.push(ms); } });
+
+    await kickPictureMaker(slow());
+    // The main two were made; the steps joined the slow queue, but nothing was sent for them yet.
+    expect(prompts()).toEqual(['prompt for feature', 'prompt for overhead']);
+    expect(listPictures(seoId).map((p) => `${p.slot}:${p.status}`)).toEqual([
+      'feature:done', 'overhead:done', 'step-1:queued', 'step-2:queued',
+    ]);
+    // The first step waits 22.5 minutes (halfway between 15 and 30), and the maker wakes for it.
+    expect(Number(settings.get(NEXT_STEP_KEY))).toBe(clock + 22.5 * 60_000);
+    expect(wakes).toEqual([22.5 * 60_000]);
+
+    // Woken too early: still nothing.
+    sent = [];
+    clock += 10 * 60_000;
+    await kickPictureMaker(slow());
+    expect(sent).toEqual([]);
+
+    // Due: one step picture, then the next one waits again.
+    clock += 13 * 60_000;
+    await kickPictureMaker(slow());
+    expect(prompts()).toEqual(['prompt for step-1']);
+    expect(Number(settings.get(NEXT_STEP_KEY)) - clock).toBe(22.5 * 60_000);
+    expect(listPictures(seoId).map((p) => p.status)).toEqual(['done', 'done', 'done', 'queued']);
+  });
+
+  it('keeps the slow queue going past a failed step picture', async () => {
+    setPrompts(['feature', 'step-1', 'step-2']);
+    queuePictures(seoId, dataDir);
+    const slow = (make: (p: string) => Promise<{ data: Buffer; contentType: string }>) => ({ ...deps(make), random: () => 0, wakeIn: () => {} });
+    await kickPictureMaker(slow(ok));
+    clock += 15 * 60_000;
+    await kickPictureMaker(slow(async (p) => { if (p.includes('step-1')) throw new Error('blocked'); return ok(); }));
+    clock += 15 * 60_000;
+    await kickPictureMaker(slow(ok));
+    expect(listPictures(seoId).map((p) => `${p.slot}:${p.status}`)).toEqual(['feature:done', 'step-1:failed', 'step-2:done']);
   });
 
   it('never makes a finished picture again', async () => {

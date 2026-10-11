@@ -22,6 +22,14 @@ import { parseImageSet } from './images.js';
  *   failed step stops an old run. Pressing Make again carries on from it.
  * Nothing is sent until someone presses "Make pictures". Each picture is
  * downloaded the moment it is made and kept in the platform's data folder.
+ *
+ * A recipe has a picture per step, often 15 or more: too many to ask Flow
+ * for at once. So pictures come in two lanes. "Make pictures" makes the main
+ * ones (feature, top-down, close-up and the like). The step pictures go to a
+ * slow queue: one at a time, with a random 15 to 30 minutes between them,
+ * across every article. For now an article's steps join that queue once its
+ * main pictures are done; when publishing is built, they will join once the
+ * article is posted, and each will be added to the post as it is made.
  */
 
 const log = createLogger('newsite-pictures');
@@ -39,6 +47,14 @@ export interface PictureRow {
   file: string;
   made_at: string | null;
 }
+
+/** A recipe step's picture: made in the slow queue. */
+export const isStepSlot = (slot: string): boolean => slot.startsWith('step-');
+
+/** Minutes between two step pictures: a random wait in this range. */
+export const STEP_GAP_MINUTES = [15, 30] as const;
+/** When the next step picture may be made (ms since 1970), kept across restarts. */
+export const NEXT_STEP_KEY = 'newsite_next_step_picture_at';
 
 /** Where one keyword's pictures are kept. */
 export const pictureDir = (seoId: number, dataDir = resolveDataDir()): string =>
@@ -70,15 +86,32 @@ export function clearPictures(seoId: number, dataDir = resolveDataDir()): void {
 }
 
 /**
- * Put one keyword's pictures in the queue. A picture already made from the
- * same prompt is kept; a failed one gets fresh tries; one whose prompt was
+ * Put one keyword's main pictures in the queue. A picture already made from
+ * the same prompt is kept; a failed one gets fresh tries; one whose prompt was
  * rewritten since is made again. Returns how many were queued.
  */
-export function queuePictures(seoId: number, dataDir = resolveDataDir()): number {
-  const prompts = currentPrompts(seoId);
+export const queuePictures = (seoId: number, dataDir = resolveDataDir()): number =>
+  queueLane(seoId, (slot) => !isStepSlot(slot), dataDir);
+
+/** Put one keyword's step pictures in the slow queue. Returns how many were queued. */
+export function queueStepPictures(seoId: number, settings: Settings, now = Date.now(), random = Math.random, dataDir = resolveDataDir()): number {
+  const queued = queueLane(seoId, isStepSlot, dataDir);
+  // The first one waits too: the slow queue never starts with a burst.
+  if (queued && Number(settings.get(NEXT_STEP_KEY) || 0) < now) settings.set(NEXT_STEP_KEY, String(now + stepGapMs(random)));
+  return queued;
+}
+
+const stepGapMs = (random: () => number): number => {
+  const [min, max] = STEP_GAP_MINUTES;
+  return Math.round((min + random() * (max - min)) * 60_000);
+};
+
+function queueLane(seoId: number, inLane: (slot: string) => boolean, dataDir: string): number {
+  const prompts = currentPrompts(seoId).filter((p) => inLane(p.slot));
   if (!prompts.length) return 0;
-  const have = new Map(listPictures(seoId).map((p) => [p.slot, p]));
+  const have = new Map(listPictures(seoId).filter((p) => inLane(p.slot)).map((p) => [p.slot, p]));
   const wanted = new Set(prompts.map((p) => p.slot));
+  const order = new Map(currentPrompts(seoId).map((p, i) => [p.slot, i]));
   // Slots the prompts no longer have.
   for (const old of have.values()) {
     if (wanted.has(old.slot)) continue;
@@ -86,7 +119,8 @@ export function queuePictures(seoId: number, dataDir = resolveDataDir()): number
     run('DELETE FROM newsite_pictures WHERE id = ?', old.id);
   }
   let queued = 0;
-  prompts.forEach((p, position) => {
+  prompts.forEach((p) => {
+    const position = order.get(p.slot) ?? 0;
     const old = have.get(p.slot);
     if (old && old.prompt === p.prompt && (old.status === 'done' || old.status === 'making' || old.status === 'queued')) {
       run('UPDATE newsite_pictures SET position = ?, alt = ? WHERE id = ?', position, p.alt, old.id);
@@ -124,15 +158,30 @@ export interface PictureDeps {
   dataDir?: string;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
+  random?: () => number;
+  /** Wakes the maker when the next step picture is due. Tests pass their own. */
+  wakeIn?: (ms: number, wake: () => void) => void;
 }
 
 let running: Promise<void> | null = null;
 let lastImageGeneratedAt: number | null = null;
+let wakeTimer: ReturnType<typeof setTimeout> | null = null;
 
-/** For tests: forget the gap between cases. */
+/** For tests: forget the gap and any pending wake-up between cases. */
 export function resetPictureMakerState(): void {
   lastImageGeneratedAt = null;
+  if (wakeTimer) clearTimeout(wakeTimer);
+  wakeTimer = null;
 }
+
+const defaultWake = (ms: number, wake: () => void): void => {
+  if (wakeTimer) clearTimeout(wakeTimer);
+  wakeTimer = setTimeout(() => {
+    wakeTimer = null;
+    wake();
+  }, ms);
+  wakeTimer.unref?.();
+};
 
 /** The Flow project a website's pictures go into: the old dashboard's own rule. */
 export const flowProjectFor = (siteProjectId: string, domain: string, settings: Settings): ResolvedProjectId =>
@@ -166,18 +215,34 @@ export function kickPictureMaker(deps: PictureDeps): Promise<void> {
   const now = deps.now ?? Date.now;
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const dataDir = deps.dataDir ?? resolveDataDir();
+  const random = deps.random ?? Math.random;
+  const wakeIn = deps.wakeIn ?? defaultWake;
+
+  const pick = (stepLane: boolean) =>
+    get<PictureRow & { domain: string; project_id: string }>(
+      `SELECT p.*, w.domain, w.project_id FROM newsite_pictures p
+         JOIN keyword_seo s ON s.id = p.seo_id
+         JOIN keyword_plans k ON k.id = s.plan_id
+         JOIN new_websites w ON w.id = k.website_id
+        WHERE p.status = 'queued' AND (p.slot LIKE 'step-%') = ? ORDER BY p.id LIMIT 1`,
+      stepLane ? 1 : 0,
+    );
 
   running = Promise.resolve()
     .then(async () => {
       for (;;) {
-        const next = get<PictureRow & { domain: string; project_id: string }>(
-          `SELECT p.*, w.domain, w.project_id FROM newsite_pictures p
-             JOIN keyword_seo s ON s.id = p.seo_id
-             JOIN keyword_plans k ON k.id = s.plan_id
-             JOIN new_websites w ON w.id = k.website_id
-            WHERE p.status = 'queued' ORDER BY p.id LIMIT 1`,
-        );
-        if (!next) break;
+        // Main pictures first; a step picture only when the slow queue says so.
+        let next = pick(false);
+        if (!next) {
+          next = pick(true);
+          if (!next) break;
+          const due = Number(deps.settings.get(NEXT_STEP_KEY) || 0);
+          if (now() < due) {
+            wakeIn(due - now(), () => void kickPictureMaker(deps));
+            break;
+          }
+        }
+        const step = isStepSlot(next.slot);
 
         // A prompt rewritten after it was queued is not sent: it is stale.
         const current = currentPrompts(next.seo_id).find((p) => p.slot === next.slot);
@@ -207,13 +272,20 @@ export function kickPictureMaker(deps: PictureDeps): Promise<void> {
           const file = `${next.slot}-${next.id}.${extension(contentType)}`;
           writeFileSync(join(dir, file), data);
           run(`UPDATE newsite_pictures SET status = 'done', error = '', file = ?, made_at = datetime('now') WHERE id = ?`, file, next.id);
+          // An article whose main pictures are all made: its steps join the slow queue.
+          if (!step && listPictures(next.seo_id).filter((p) => !isStepSlot(p.slot)).every((p) => p.status === 'done')) {
+            queueStepPictures(next.seo_id, deps.settings, now(), random, dataDir);
+          }
         } catch (err) {
           const message = errorMessage(err).slice(0, 400);
           log.warn(`Picture "${next.slot}" (${next.id}) failed: ${message}`);
           run(`UPDATE newsite_pictures SET status = 'failed', error = ? WHERE id = ?`, message, next.id);
-          // Like a failed step in an old run: this article stops here, and
-          // its other pictures wait until Make pictures is pressed again.
-          run(`DELETE FROM newsite_pictures WHERE seo_id = ? AND status = 'queued'`, next.seo_id);
+          // Like a failed step in an old run: this article's main pictures
+          // stop here until Make pictures is pressed again. A failed step
+          // picture only waits for its own retry; the slow queue goes on.
+          if (!step) run(`DELETE FROM newsite_pictures WHERE seo_id = ? AND status = 'queued' AND slot NOT LIKE 'step-%'`, next.seo_id);
+        } finally {
+          if (step) deps.settings.set(NEXT_STEP_KEY, String(now() + stepGapMs(random)));
         }
       }
     })
