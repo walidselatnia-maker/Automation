@@ -108,7 +108,7 @@ const CSS = `
 .kw-seo-facts dd { margin: 0; font-size: 14px; }
 .kw-seo-facts dd.off { color: var(--bad); font-weight: 600; }
 .kw-seo-problems { margin-top: 12px; color: var(--bad); font-size: 14px; display: grid; gap: 2px; }
-.kw-seo-retry { margin-top: 10px; display: flex; justify-content: flex-end; }
+.kw-seo-retry { margin: 0 0 14px; display: flex; justify-content: flex-start; flex-wrap: wrap; }
 .kw-skel { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 12px; }
 .kw-skel summary { display: flex; justify-content: space-between; gap: 12px; font-size: 14px; font-weight: 600; color: var(--ink); }
 .kw-skel summary .ns-num { font-weight: 400; color: var(--soft); }
@@ -163,6 +163,8 @@ const CSS = `
 .kw-wz .wz-bar { grid-template-columns: repeat(4, 1fr); }
 .kw-steps-names { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 8px; font-size: 12px; font-weight: 600; opacity: .75; }
 .kw-steps-names span.on { opacity: 1; }
+.kw-foot-top { border-top: 0; border-bottom: 1px solid var(--line); }
+.kw-foot-top form { margin: 0; }
 .wz-foot a.ns-btn.disabled { pointer-events: none; opacity: .5; }
 
 /* Saved plans under step 1: a compact list, each opening its steps. */
@@ -210,7 +212,11 @@ const stepNames = (niche: string): string[] =>
 
 const CHEVRON = '<svg class="acc-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>';
 
-/** The wizard card every step shares: header with progress, body, and a footer with Previous / Next. */
+/**
+ * The wizard card every step shares: header with progress, then the step's
+ * buttons (Previous / Next / Make all), then the body. The buttons come first
+ * so a long list never has to be scrolled to reach them.
+ */
 function stepCard(names: string[], step: number, title: string, subtitle: Html | string, body: Html, foot: Html): Html {
   return html`
     <div class="wz kw-wz">
@@ -222,8 +228,8 @@ function stepCard(names: string[], step: number, title: string, subtitle: Html |
           (n, i) => html`<span class="${i === step ? 'on' : ''}">${i + 1}. ${n}</span>`,
         )}</div>
       </div>
+      <div class="wz-foot kw-foot-top">${foot}</div>
       <div class="wz-body">${body}</div>
-      <div class="wz-foot">${foot}</div>
     </div>`;
 }
 
@@ -371,6 +377,11 @@ function seoCard(row: SeoRow, intent: string): Html {
   const head = html`${roleLabel(row, intent)}<b>${row.keyword}</b><span class="kw-seo-status ${row.status}">${STATUS[row.status]}</span>`;
   const shown = row.status === 'done' || (row.status === 'failed' && row.title);
   const body = html`
+    ${row.status === 'done' || row.status === 'failed'
+      ? html`<form method="post" action="/new-website/keywords/seo/${row.id}/retry" class="kw-seo-retry">
+          <button class="ns-btn quiet kw-remove">Write again</button>
+        </form>`
+      : raw('')}
     ${shown
       ? html`<div class="kw-serp">
           <div class="kw-serp-title">${row.title}</div>
@@ -385,12 +396,7 @@ function seoCard(row: SeoRow, intent: string): Html {
           ${row.reasoning ? html`<div class="wide"><dt>Why it works</dt><dd>${row.reasoning}</dd></div>` : raw('')}
         </dl>`
       : html`<p class="kw-none" style="margin:4px 0 0">${row.status === 'writing' ? 'The AI is writing this now.' : 'Waiting for its turn.'}</p>`}
-    ${row.status === 'failed' ? problemList(row.problems) : raw('')}
-    ${row.status === 'done' || row.status === 'failed'
-      ? html`<form method="post" action="/new-website/keywords/seo/${row.id}/retry" class="kw-seo-retry">
-          <button class="ns-btn quiet kw-remove">Write again</button>
-        </form>`
-      : raw('')}`;
+    ${row.status === 'failed' ? problemList(row.problems) : raw('')}`;
   return card(head, body, row.status === 'failed');
 }
 
@@ -407,6 +413,11 @@ function skeletonCard(row: SeoRow, intent: string): Html {
     ? html`<span class="ns-num kw-count">${k.sections.length} sections · ${totalWords(k)} words</span>`
     : raw('')}<span class="kw-seo-status ${row.skeleton_status}">${state}</span>`;
   const body = html`
+    ${row.skeleton_status === 'done' || row.skeleton_status === 'failed'
+      ? html`<form method="post" action="/new-website/keywords/skeleton/${row.id}/retry" class="kw-seo-retry">
+          <button class="ns-btn quiet kw-remove">Make skeleton again</button>
+        </form>`
+      : raw('')}
     ${k
       ? html`<div class="kw-skel">
           <div class="kw-skel-h1">H1 · ${k.h1}${row.article_type ? html` <span class="kw-count">(${row.article_type})</span>` : raw('')}</div>
@@ -429,12 +440,7 @@ function skeletonCard(row: SeoRow, intent: string): Html {
       : html`<p class="kw-none" style="margin:4px 0 0">${row.status !== 'done'
           ? 'The skeleton is made once this keyword has its SEO metadata.'
           : row.skeleton_status === 'writing' ? 'The AI is designing this outline now.' : 'Waiting for its turn.'}</p>`}
-    ${row.skeleton_status === 'failed' ? problemList(row.skeleton_problems) : raw('')}
-    ${row.skeleton_status === 'done' || row.skeleton_status === 'failed'
-      ? html`<form method="post" action="/new-website/keywords/skeleton/${row.id}/retry" class="kw-seo-retry">
-          <button class="ns-btn quiet kw-remove">Make skeleton again</button>
-        </form>`
-      : raw('')}`;
+    ${row.skeleton_status === 'failed' ? problemList(row.skeleton_problems) : raw('')}`;
   return card(head, body, row.skeleton_status === 'failed');
 }
 
@@ -505,6 +511,11 @@ function recipeCard(row: SeoRow, intent: string): Html {
     ? html`<span class="ns-num kw-count">${r.ingredients.reduce((n, g) => n + g.items.length, 0)} ingredients · ${r.steps.length} steps</span>`
     : raw('')}<span class="kw-seo-status ${row.recipe_status}">${state}</span>`;
   const body = html`
+    ${row.recipe_status === 'done' || row.recipe_status === 'failed' || (row.status === 'done' && !row.recipe_status)
+      ? html`<form method="post" action="/new-website/keywords/recipe/${row.id}/retry" class="kw-seo-retry">
+          <button class="ns-btn quiet kw-remove">${row.recipe_status ? 'Make recipe again' : 'Make recipe'}</button>
+        </form>`
+      : raw('')}
     ${r
       ? html`<div class="kw-recipe">
           <dl class="kw-recipe-facts">
@@ -532,12 +543,7 @@ function recipeCard(row: SeoRow, intent: string): Html {
       : html`<p class="kw-none" style="margin:4px 0 0">${row.status !== 'done'
           ? 'The recipe is made once this keyword has its SEO metadata.'
           : row.recipe_status === 'writing' ? 'The AI is writing this recipe now.' : 'Waiting for its turn.'}</p>`}
-    ${row.recipe_status === 'failed' ? problemList(row.recipe_problems) : raw('')}
-    ${row.recipe_status === 'done' || row.recipe_status === 'failed' || (row.status === 'done' && !row.recipe_status)
-      ? html`<form method="post" action="/new-website/keywords/recipe/${row.id}/retry" class="kw-seo-retry">
-          <button class="ns-btn quiet kw-remove">${row.recipe_status ? 'Make recipe again' : 'Make recipe'}</button>
-        </form>`
-      : raw('')}`;
+    ${row.recipe_status === 'failed' ? problemList(row.recipe_problems) : raw('')}`;
   return card(head, body, row.recipe_status === 'failed');
 }
 
@@ -571,6 +577,11 @@ function articleCard(row: SeoRow, intent: string): Html {
     ? html`<span class="ns-num kw-count">${row.article_words.toLocaleString('en')} words</span>`
     : raw('')}<span class="kw-seo-status ${row.article_status}">${row.article_status === 'writing' ? 'Writing…' : state}</span>`;
   const body = html`
+    ${row.article_status === 'done' || failed
+      ? html`<form method="post" action="/new-website/keywords/article/${row.id}/retry" class="kw-seo-retry">
+          <button class="ns-btn ${failed ? 'primary' : 'quiet kw-remove'}">${failed ? 'Carry on writing' : 'Write article again'}</button>
+        </form>`
+      : raw('')}
     ${failed
       ? html`${problemList(row.article_problems)}
           <p class="kw-none" style="margin:8px 0 16px">${row.article_md
@@ -583,12 +594,7 @@ function articleCard(row: SeoRow, intent: string): Html {
         ? raw('')
         : html`<p class="kw-none" style="margin:4px 0 0">${!ready
             ? 'The article is written once this keyword has its skeleton.'
-            : row.article_status === 'writing' ? 'The AI is writing this article now, one section at a time.' : 'Waiting for its turn.'}</p>`}
-    ${row.article_status === 'done' || failed
-      ? html`<form method="post" action="/new-website/keywords/article/${row.id}/retry" class="kw-seo-retry">
-          <button class="ns-btn ${failed ? 'primary' : 'quiet kw-remove'}">${failed ? 'Carry on writing' : 'Write article again'}</button>
-        </form>`
-      : raw('')}`;
+            : row.article_status === 'writing' ? 'The AI is writing this article now, one section at a time.' : 'Waiting for its turn.'}</p>`}`;
   return card(head, body, row.article_status === 'failed');
 }
 
@@ -656,6 +662,20 @@ function imagesCard(row: SeoRow, intent: string, pictures: PictureRow[]): Html {
     ? html`<span class="ns-num kw-count">${made} of ${set!.images.length} pictures</span>`
     : raw('')}<span class="kw-seo-status ${row.images_status}">${row.images_status === 'writing' ? 'Writing…' : mainBusy || making ? 'Making pictures…' : stepsWaiting ? 'Steps in the slow queue' : state}</span>`;
   const body = html`
+    ${row.images_status === 'done' || row.images_status === 'failed'
+      ? html`<div class="kw-seo-retry kw-pic-actions">
+          ${promptsDone && mainLeft > 0 && !mainBusy
+            ? html`<form method="post" action="/new-website/keywords/pictures/${row.id}/make">
+                <button class="ns-btn primary">Make ${mainLeft} main picture${mainLeft === 1 ? '' : 's'}</button>
+              </form>`
+            : raw('')}
+          ${row.images_status === 'failed' || !(mainBusy || making)
+            ? html`<form method="post" action="/new-website/keywords/images/${row.id}/retry">
+                <button class="ns-btn quiet kw-remove" ${made ? raw(`onclick="return confirm('New prompts mean the ${made} pictures made so far are made again. Carry on?')"`) : raw('')}>Write image prompts again</button>
+              </form>`
+            : raw('')}
+        </div>`
+      : raw('')}
     ${row.images_status === 'failed' ? problemList(row.images_problems) : raw('')}
     ${promptsDone
       ? html`<div class="kw-img">
@@ -683,21 +703,7 @@ function imagesCard(row: SeoRow, intent: string, pictures: PictureRow[]): Html {
         ? raw('')
         : html`<p class="kw-none" style="margin:4px 0 0">${!ready
             ? 'The image prompts are written once this keyword has its article.'
-            : row.images_status === 'writing' ? 'The AI is writing the image prompts now.' : 'Waiting for its turn.'}</p>`}
-    ${row.images_status === 'done' || row.images_status === 'failed'
-      ? html`<div class="kw-seo-retry kw-pic-actions">
-          ${row.images_status === 'failed' || !(mainBusy || making)
-            ? html`<form method="post" action="/new-website/keywords/images/${row.id}/retry">
-                <button class="ns-btn quiet kw-remove" ${made ? raw(`onclick="return confirm('New prompts mean the ${made} pictures made so far are made again. Carry on?')"`) : raw('')}>Write image prompts again</button>
-              </form>`
-            : raw('')}
-          ${promptsDone && mainLeft > 0 && !mainBusy
-            ? html`<form method="post" action="/new-website/keywords/pictures/${row.id}/make">
-                <button class="ns-btn primary">Make ${mainLeft} main picture${mainLeft === 1 ? '' : 's'}</button>
-              </form>`
-            : raw('')}
-        </div>`
-      : raw('')}`;
+            : row.images_status === 'writing' ? 'The AI is writing the image prompts now.' : 'Waiting for its turn.'}</p>`}`;
   return card(head, body, row.images_status === 'failed');
 }
 
