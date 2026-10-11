@@ -1,30 +1,30 @@
 """Which image model to ask Flow for, and what to do when it says no.
 
-Flow offers three: Nano Banana Pro, Nano Banana 2, and Nano Banana 2 Lite.
+Flow offers three: Nano Banana Pro, Nano Banana 2.1, and Nano Banana 2 Lite.
 The platform's Settings page picks one, or picks Automatic, which is Pro
-first and the others as fallbacks in that order when Pro is refused. Refused
+first and the others as fallbacks in that order when Pro is refused.
+
+On 2026-10-10 Google replaced Nano Banana 2 (NARWHAL) with Nano Banana 2.1,
+and NARWHAL stopped being accepted. All three wire names were read off a real
+request from the Flow page that day: GEM_PIX_2 is Pro, BELUGA is 2.1 and
+HARBOR_SEAL is 2 Lite. A setting still saying NANO_BANANA_2 means 2.1. Refused
 means Google answered the model by name -- the account may not use it
 (MODEL_ACCESS_DENIED) or has no credits for it (USER_QUOTA_REACHED) -- not that
 the captcha failed or the transport dropped, which are not about the model and
 do not move down the list.
 
-Only two of the three wire names are known: GEM_PIX_2 is Pro and NARWHAL is 2.
-Lite's is read off the Flow page by the extension: the page's bundle has to
-carry every name it can put on the wire, and what comes back is whatever
-UPPER_SNAKE string sits near BOTH known names in that source -- near both,
-because that is what being in the same list looks like.
+Lite's name used to be read off the Flow page by the extension (whatever
+UPPER_SNAKE string sat near both known names in the page's bundle). That scan
+still runs, but it only fills Lite in if its name were ever unset; the name
+captured from a real request wins.
 
-A name read off a page is a candidate until Google accepts it. Nothing else
-can verify it, and in Automatic mode nothing would: Nano Banana 2 is
-unlimited, so the walk never reaches a third name. So the outcome of every
-attempt is recorded per model -- accepted, refused, or rejected as not a model
-at all -- and the Settings page shows it. Choosing Lite there and running one
-article is the verification, and the field says so afterwards.
+Every attempt's outcome is recorded per model -- accepted, refused, or
+rejected as not a model at all -- and the Settings page shows it.
 
 A refused model is skipped for a while and then tried again, in memory. A
 remembered fallback kept forever is the wrong answer for a model that is
 merely preferred: one transient refusal of Pro would leave every later image
-on 2. The skip is what keeps the walk cheap -- every attempt is a captcha.
+on 2.1. The skip is what keeps the walk cheap -- every attempt is a captcha.
 """
 import asyncio
 import logging
@@ -40,9 +40,15 @@ AUTO = "auto"
 # discovery and is None until then.
 MODELS: list[dict] = [
     {"key": "NANO_BANANA_PRO", "label": "Nano Banana Pro", "wire": "GEM_PIX_2"},
-    {"key": "NANO_BANANA_2", "label": "Nano Banana 2", "wire": "NARWHAL"},
-    {"key": "NANO_BANANA_2_LITE", "label": "Nano Banana 2 Lite", "wire": None},
+    {"key": "NANO_BANANA_2_1", "label": "Nano Banana 2.1", "wire": "BELUGA"},
+    {"key": "NANO_BANANA_2_LITE", "label": "Nano Banana 2 Lite", "wire": "HARBOR_SEAL"},
 ]
+
+# Keys saved before a model was renamed, and the model they mean now.
+ALIASES = {"NANO_BANANA_2": "NANO_BANANA_2_1"}
+
+# Lite's name as read off the Flow page; discovery only fills it if unset.
+LITE_WIRE = "HARBOR_SEAL"
 
 KNOWN: tuple[str, ...] = tuple(m["wire"] for m in MODELS if m["wire"])
 
@@ -73,6 +79,7 @@ def _lite() -> dict:
 
 
 def _by_key(key: str) -> Optional[dict]:
+    key = ALIASES.get(key, key)
     for m in MODELS:
         if m["key"] == key:
             return m
@@ -228,7 +235,7 @@ async def ensure_discovered(client) -> None:
         }
         logger.info("image model scan: %s", {k: v for k, v in _discovery.items() if k != "near"})
         _discovery_done = True
-        if found:
+        if found and not _lite()["wire"]:
             _lite()["wire"] = found[0]
             logger.info("image model read off the Flow page for %s: %s%s",
                         _lite()["label"], found[0],
@@ -272,6 +279,6 @@ def forget_all() -> None:
     global _discovery_done, _discovery
     _skip_until.clear()
     _outcome.clear()
-    _lite()["wire"] = None
+    _lite()["wire"] = LITE_WIRE
     _discovery_done = False
     _discovery = {}

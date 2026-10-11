@@ -487,6 +487,9 @@ export class Settings {
     if (key === 'image_api_key') return imageApiKey();
 
     const stored = getSetting(key, this.encryptionKey);
+    // Google replaced Nano Banana 2 with 2.1 on 2026-10-10; a pick saved
+    // before then means 2.1.
+    if (key === 'image_model' && stored === 'NANO_BANANA_2') return 'NANO_BANANA_2_1';
     if (stored !== '') return stored;
 
     return BY_KEY.get(key)?.default ?? '';

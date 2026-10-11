@@ -384,11 +384,11 @@ class FlowClient:
     def _resolve_image_model(image_model_name: str | None) -> str:
         """Resolve an image model name to the value the API expects.
 
-        Accepts a friendly alias from models.json (NANO_BANANA_2) or a raw
-        API name (NARWHAL). Defaults to NARWHAL — what the UI currently sends.
+        Accepts a friendly alias from models.json (NANO_BANANA_2_1) or a raw
+        API name (BELUGA). Defaults to BELUGA — what the UI currently sends.
         """
         if not image_model_name:
-            return "NARWHAL"
+            return "BELUGA"
         return IMAGE_MODELS.get(image_model_name, image_model_name)
 
     # ─── High-level API Methods ──────────────────────────────

@@ -168,15 +168,15 @@ describe('web UI after the layout changes', () => {
         throw new Error('no image service in tests');
       }) as unknown as typeof fetch;
       try {
-        await post('/settings', { image_model: 'NANO_BANANA_2' });
+        await post('/settings', { image_model: 'NANO_BANANA_2_1' });
       } finally {
         globalThis.fetch = realFetch;
       }
 
       const { Settings } = await import('../src/settings.js');
-      expect(new Settings(KEY).get('image_model')).toBe('NANO_BANANA_2');
+      expect(new Settings(KEY).get('image_model')).toBe('NANO_BANANA_2_1');
       const after = await get('/settings');
-      expect(after.body).toMatch(/value="NANO_BANANA_2"\s+selected/);
+      expect(after.body).toMatch(/value="NANO_BANANA_2_1"\s+selected/);
     });
 
     it('still resolves the hidden values', async () => {

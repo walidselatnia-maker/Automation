@@ -5,6 +5,7 @@ import type { Settings } from '../settings.js';
 import { checkSite as realCheckSite, listPosts as realListPosts, type SitePost, type SiteCheck } from './client.js';
 import { registerKeywordRoutes } from './keyword-routes.js';
 import { registerPictureRoutes, type PictureRouteDeps } from './picture-routes.js';
+import { registerImageModelRoutes } from './image-model.js';
 import { describeProjectId, flowProjectFor } from './pictures.js';
 import { platformReady, registerPlatformRoutes } from './platform-routes.js';
 import {
@@ -66,6 +67,7 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
 
   if (deps.settings) {
     registerPlatformRoutes(app, { settings: deps.settings, encryptionKey: deps.encryptionKey, readFlash, fetchImpl: deps.fetchImpl });
+    registerImageModelRoutes(app, { settings: deps.settings, readFlash, fetchImpl: deps.fetchImpl });
     registerPictureRoutes(app, {
       settings: deps.settings,
       makePicture: deps.makePicture,

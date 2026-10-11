@@ -15,7 +15,7 @@ export const SETUP_DONE_KEY = 'newsite_platform_setup_done';
 export const IMAGE_MODELS = [
   { value: 'auto', label: 'Automatic: Pro first, then the others as fallbacks' },
   { value: 'NANO_BANANA_PRO', label: 'Nano Banana Pro' },
-  { value: 'NANO_BANANA_2', label: 'Nano Banana 2' },
+  { value: 'NANO_BANANA_2_1', label: 'Nano Banana 2.1' },
   { value: 'NANO_BANANA_2_LITE', label: 'Nano Banana 2 Lite' },
 ] as const;
 

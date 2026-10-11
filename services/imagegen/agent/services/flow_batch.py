@@ -62,14 +62,21 @@ CAPTCHA_VIDEO = "VIDEO_GENERATION"
 CAPTCHA_SLOT = "__CAPTCHA__"
 
 #: Wire names this path accepts. Everything else is rejected outright by Flow.
-#: ``GEM_PIX_2`` is Nano Banana Pro, ``NARWHAL`` is Banana 2. Flow Kit uses Pro
+#: ``GEM_PIX_2`` is Nano Banana Pro, ``BELUGA`` is Banana 2.1 and ``HARBOR_SEAL``
+#: is Banana 2 Lite (read off the Flow page on 2026-10-10, when Banana 2,
+#: ``NARWHAL``, was replaced by 2.1 and stopped being accepted). Flow Kit uses Pro
 #: by default (see agent/models.json), which is also what the new path defaults
 #: to; a caller that wants Banana 2 has to name it.
-IMAGE_MODELS = {"GEM_PIX_2", "NARWHAL"}
+IMAGE_MODELS = {"GEM_PIX_2", "BELUGA", "HARBOR_SEAL"}
 IMAGE_MODEL = "GEM_PIX_2"
 
 #: The nicknames models.json speaks, resolved to wire names.
-IMAGE_MODEL_BY_NICKNAME = {"NANO_BANANA_PRO": "GEM_PIX_2", "NANO_BANANA_2": "NARWHAL"}
+IMAGE_MODEL_BY_NICKNAME = {
+    "NANO_BANANA_PRO": "GEM_PIX_2",
+    "NANO_BANANA_2_1": "BELUGA",
+    "NANO_BANANA_2": "BELUGA",
+    "NANO_BANANA_2_LITE": "HARBOR_SEAL",
+}
 
 #: Image aspect ratios, measured by generating one of each and reading the
 #: JPEG header. This slot was mistaken for a variant count at first — 1 means

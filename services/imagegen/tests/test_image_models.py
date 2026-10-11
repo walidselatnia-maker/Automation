@@ -1,12 +1,12 @@
-"""Pro, then 2, then whatever the page says -- or exactly the one that was picked.
+"""Pro, then 2.1, then 2 Lite -- or exactly the one that was picked.
 
-Flow offers three image models. Two wire names are known; the third is read
-off the Flow page. The platform's Settings page picks one, or Automatic. What
-these pin is the seam this service owns: the automatic order, what counts as
-a refusal, that a non-refusal stops the walk rather than spending another
-captcha, that a picked model is sent alone, that every answer is recorded for
-the page to show, and that a name read off the page which Flow does not
-recognise is marked so after costing exactly one attempt.
+Flow offers three image models, all three wire names read off a real request
+from the Flow page on 2026-10-10: GEM_PIX_2 (Pro), BELUGA (2.1) and
+HARBOR_SEAL (2 Lite). The platform's Settings page picks one, or Automatic.
+What these pin is the seam this service owns: the automatic order, what counts
+as a refusal, that a non-refusal stops the walk rather than spending another
+captcha, that a picked model is sent alone, and that every answer is recorded
+for the page to show.
 """
 import asyncio
 
@@ -26,11 +26,7 @@ CAPTCHA = {"error": "CAPTCHA_FAILED: grecaptcha not available"}
 BAD_NAME = {"error": "{'code': 400, 'message': 'Request contains an invalid argument.', "
                      "'status': 'INVALID_ARGUMENT'}"}
 
-PAGE_WITH_LITE = {"near": {
-    "GEM_PIX_2": ["IMAGE_ASPECT_RATIO_SQUARE", "NARWHAL", "NARWHAL_LITE_X"],
-    "NARWHAL": ["GEM_PIX_2", "NARWHAL_LITE_X", "PUBLIC_ERROR_QUOTA"],
-}}
-PAGE_WITHOUT = {"near": {"GEM_PIX_2": ["NARWHAL"], "NARWHAL": ["GEM_PIX_2"]}}
+PAGE = {"near": {}}
 
 
 @pytest.fixture(autouse=True)
@@ -47,7 +43,7 @@ def fresh(tmp_path, monkeypatch):
     asyncio.run(schema.close_db())
 
 
-def run_with(monkeypatch, answers, page=PAGE_WITH_LITE, choice="auto"):
+def run_with(monkeypatch, answers, page=PAGE, choice="auto"):
     """One job through _run, with each model answering as `answers` says."""
     asked: list[str] = []
 
@@ -82,38 +78,43 @@ def test_pro_is_asked_first_and_alone_when_it_works(monkeypatch):
     assert stored["status"] == "COMPLETED"
 
 
-def test_a_refused_pro_falls_back_to_2(monkeypatch):
-    stored, asked = run_with(monkeypatch, {"GEM_PIX_2": DENIED, "NARWHAL": OK})
+def test_a_refused_pro_falls_back_to_2_1(monkeypatch):
+    stored, asked = run_with(monkeypatch, {"GEM_PIX_2": DENIED, "BELUGA": OK})
 
-    assert asked == ["GEM_PIX_2", "NARWHAL"]
+    assert asked == ["GEM_PIX_2", "BELUGA"]
     assert stored["status"] == "COMPLETED"
 
 
 def test_no_credits_on_pro_also_falls_back(monkeypatch):
-    stored, asked = run_with(monkeypatch, {"GEM_PIX_2": NO_CREDITS, "NARWHAL": OK})
+    stored, asked = run_with(monkeypatch, {"GEM_PIX_2": NO_CREDITS, "BELUGA": OK})
 
-    assert asked == ["GEM_PIX_2", "NARWHAL"]
+    assert asked == ["GEM_PIX_2", "BELUGA"]
     assert stored["status"] == "COMPLETED"
 
 
-def test_two_refusals_reach_the_name_read_off_the_page(monkeypatch):
-    stored, asked = run_with(monkeypatch, {"NARWHAL_LITE_X": OK})
+def test_two_refusals_reach_lite(monkeypatch):
+    stored, asked = run_with(monkeypatch, {"HARBOR_SEAL": OK})
 
-    assert asked == ["GEM_PIX_2", "NARWHAL", "NARWHAL_LITE_X"]
+    assert asked == ["GEM_PIX_2", "BELUGA", "HARBOR_SEAL"]
     assert stored["status"] == "COMPLETED"
+
+
+def test_the_retired_banana_2_name_is_never_sent(monkeypatch):
+    _, asked = run_with(monkeypatch, {"HARBOR_SEAL": OK})
+    assert "NARWHAL" not in asked
 
 
 def test_a_captcha_failure_does_not_move_down_the_list(monkeypatch):
-    stored, asked = run_with(monkeypatch, {"GEM_PIX_2": CAPTCHA, "NARWHAL": OK})
+    stored, asked = run_with(monkeypatch, {"GEM_PIX_2": CAPTCHA, "BELUGA": OK})
 
     assert asked == ["GEM_PIX_2"]
     assert stored["status"] == "PENDING"  # captcha failures are retryable
 
 
 def test_a_refused_model_is_skipped_next_time_and_tried_again_later(monkeypatch):
-    run_with(monkeypatch, {"GEM_PIX_2": DENIED, "NARWHAL": OK})
-    _, asked = run_with(monkeypatch, {"NARWHAL": OK})
-    assert asked == ["NARWHAL"]
+    run_with(monkeypatch, {"GEM_PIX_2": DENIED, "BELUGA": OK})
+    _, asked = run_with(monkeypatch, {"BELUGA": OK})
+    assert asked == ["BELUGA"]
 
     monkeypatch.setattr(image_models, "RETRY_AFTER_S", 0)
     image_models.refused("GEM_PIX_2")
@@ -124,20 +125,25 @@ def test_a_refused_model_is_skipped_next_time_and_tried_again_later(monkeypatch)
 # ─── Picked by hand ─────────────────────────────────────────
 
 def test_a_picked_model_is_sent_alone(monkeypatch):
-    stored, asked = run_with(monkeypatch, {"NARWHAL": OK}, choice="NANO_BANANA_2")
+    stored, asked = run_with(monkeypatch, {"BELUGA": OK}, choice="NANO_BANANA_2_1")
 
-    assert asked == ["NARWHAL"]
+    assert asked == ["BELUGA"]
     assert stored["status"] == "COMPLETED"
 
 
-def test_picking_lite_sends_the_name_read_off_the_page(monkeypatch):
-    # This is the verification: a person picks the third model on the Settings
-    # page and runs one article. It is sent alone, and its answer is recorded.
-    stored, asked = run_with(monkeypatch, {"NARWHAL_LITE_X": OK}, choice="NANO_BANANA_2_LITE")
+def test_a_saved_banana_2_choice_now_means_2_1(monkeypatch):
+    stored, asked = run_with(monkeypatch, {"BELUGA": OK}, choice="NANO_BANANA_2")
 
-    assert asked == ["NARWHAL_LITE_X"]
+    assert asked == ["BELUGA"]
     assert stored["status"] == "COMPLETED"
-    assert outcome("NARWHAL_LITE_X") == image_models.ACCEPTED
+
+
+def test_picking_lite_sends_its_name(monkeypatch):
+    stored, asked = run_with(monkeypatch, {"HARBOR_SEAL": OK}, choice="NANO_BANANA_2_LITE")
+
+    assert asked == ["HARBOR_SEAL"]
+    assert stored["status"] == "COMPLETED"
+    assert outcome("HARBOR_SEAL") == image_models.ACCEPTED
 
 
 def test_a_picked_model_is_not_skipped_for_a_recent_refusal(monkeypatch):
@@ -146,14 +152,6 @@ def test_a_picked_model_is_not_skipped_for_a_recent_refusal(monkeypatch):
     _, asked = run_with(monkeypatch, {"GEM_PIX_2": OK}, choice="NANO_BANANA_PRO")
 
     assert asked == ["GEM_PIX_2"]
-
-
-def test_picking_lite_before_it_is_found_fails_plainly(monkeypatch):
-    stored, asked = run_with(monkeypatch, {}, page=PAGE_WITHOUT, choice="NANO_BANANA_2_LITE")
-
-    assert asked == []
-    assert stored["status"] == "FAILED"
-    assert "not been found on the Flow page" in stored["error_message"]
 
 
 def test_an_unknown_choice_is_treated_as_automatic_by_the_api():
@@ -165,79 +163,36 @@ def test_an_unknown_choice_is_treated_as_automatic_by_the_api():
 # ─── What the page shows ────────────────────────────────────
 
 def test_every_answer_is_recorded_for_the_settings_page(monkeypatch):
-    run_with(monkeypatch, {"GEM_PIX_2": DENIED, "NARWHAL": OK})
+    run_with(monkeypatch, {"GEM_PIX_2": DENIED, "BELUGA": OK})
 
     assert outcome("GEM_PIX_2") == image_models.REFUSED
-    assert outcome("NARWHAL") == image_models.ACCEPTED
-    assert outcome("NARWHAL_LITE_X") == image_models.UNTRIED
-
-
-def test_a_discovered_name_flow_rejects_is_marked_and_left_out_of_automatic(monkeypatch):
-    run_with(monkeypatch, {"NARWHAL_LITE_X": BAD_NAME})
-    assert outcome("NARWHAL_LITE_X") == image_models.REJECTED
-
-    _, asked = run_with(monkeypatch, {})
-    assert "NARWHAL_LITE_X" not in asked
+    assert outcome("BELUGA") == image_models.ACCEPTED
+    assert outcome("HARBOR_SEAL") == image_models.UNTRIED
 
 
 def test_a_known_name_is_not_marked_rejected_for_invalid_argument(monkeypatch):
-    stored, asked = run_with(monkeypatch, {"GEM_PIX_2": BAD_NAME, "NARWHAL": OK})
+    stored, asked = run_with(monkeypatch, {"GEM_PIX_2": BAD_NAME, "BELUGA": OK})
 
     assert asked == ["GEM_PIX_2"]
     assert stored["status"] == "FAILED"
     assert outcome("GEM_PIX_2") == image_models.UNTRIED  # a different fault, not recorded against it
 
 
-def test_the_catalogue_names_all_three_and_says_which_was_discovered(monkeypatch):
+def test_the_catalogue_names_all_three(monkeypatch):
     run_with(monkeypatch, {"GEM_PIX_2": OK})
 
     cat = image_models.catalogue()
-    assert [m["key"] for m in cat] == ["NANO_BANANA_PRO", "NANO_BANANA_2", "NANO_BANANA_2_LITE"]
-    assert [m["discovered"] for m in cat] == [False, False, True]
-    assert cat[2]["wire"] == "NARWHAL_LITE_X"
-
-
-def test_the_catalogue_says_when_lite_has_no_name_yet(monkeypatch):
-    run_with(monkeypatch, {"GEM_PIX_2": OK}, page=PAGE_WITHOUT)
-
-    lite = image_models.catalogue()[2]
-    assert lite["wire"] is None
-    assert lite["outcome"] == "unknown"
+    assert [m["key"] for m in cat] == ["NANO_BANANA_PRO", "NANO_BANANA_2_1", "NANO_BANANA_2_LITE"]
+    assert [m["wire"] for m in cat] == ["GEM_PIX_2", "BELUGA", "HARBOR_SEAL"]
+    assert [m["discovered"] for m in cat] == [False, False, False]
 
 
 # ─── Discovery ──────────────────────────────────────────────
 
-def test_the_scan_is_read_off_the_bridge_envelope(monkeypatch):
-    """The bridge answers {id, result: {...}}. The scan is the result.
-
-    Read off the envelope, discovery found nothing forever and the Settings
-    page showed a scan with every field missing -- inline 0, fetched 0, no
-    page, no counts -- which is exactly what an unread reply looks like.
-    """
-    asked: list[str] = []
-
-    class FakeClient:
-        connected = True
-
-        async def discover_image_models(self, known):
-            return {"id": "req-1", "result": {**PAGE_WITH_LITE, "debug": {"fetched": ["a.js (100)"]}}}
-
-        async def generate_images_batch(self, image_model_name=None, **kwargs):
-            asked.append(image_model_name)
-            return OK if image_model_name == "NARWHAL_LITE_X" else DENIED
-
-    monkeypatch.setattr(processor, "get_flow_client", lambda: FakeClient())
-    job = asyncio.run(jobs.create("soup"))
-    job["attempts"] = 1
-    asyncio.run(processor.WorkerController()._run(job))
-
-    assert image_models.catalogue()[2]["wire"] == "NARWHAL_LITE_X"
-    assert image_models.discovery_report()["fetched"] == ["a.js (100)"]
-    assert asked[-1] == "NARWHAL_LITE_X"
-
-
-def test_only_a_name_near_every_known_one_is_taken():
-    assert image_models.take_discovered(PAGE_WITH_LITE["near"]) == ["NARWHAL_LITE_X"]
+def test_a_scan_does_not_replace_the_known_lite_name(monkeypatch):
+    page = {"near": {w: ["SOMETHING_NEW"] for w in image_models.KNOWN}}
+    run_with(monkeypatch, {"GEM_PIX_2": OK}, page=page)
+    assert image_models.catalogue()[2]["wire"] == "HARBOR_SEAL"
 
 
 def test_the_page_is_asked_once_not_once_per_job(monkeypatch):
@@ -249,7 +204,7 @@ def test_the_page_is_asked_once_not_once_per_job(monkeypatch):
         async def discover_image_models(self, known):
             nonlocal asks
             asks += 1
-            return PAGE_WITH_LITE
+            return PAGE
 
         async def generate_images_batch(self, image_model_name=None, **kwargs):
             return OK
@@ -263,7 +218,7 @@ def test_the_page_is_asked_once_not_once_per_job(monkeypatch):
     assert asks == 1
 
 
-def test_a_page_that_does_not_answer_leaves_the_two_known_names(monkeypatch):
+def test_a_page_that_does_not_answer_leaves_the_three_known_names(monkeypatch):
     asked: list[str] = []
 
     class FakeClient:
@@ -274,11 +229,11 @@ def test_a_page_that_does_not_answer_leaves_the_two_known_names(monkeypatch):
 
         async def generate_images_batch(self, image_model_name=None, **kwargs):
             asked.append(image_model_name)
-            return OK if image_model_name == "NARWHAL" else DENIED
+            return OK if image_model_name == "HARBOR_SEAL" else DENIED
 
     monkeypatch.setattr(processor, "get_flow_client", lambda: FakeClient())
     job = asyncio.run(jobs.create("soup"))
     job["attempts"] = 1
     asyncio.run(processor.WorkerController()._run(job))
 
-    assert asked == ["GEM_PIX_2", "NARWHAL"]
+    assert asked == ["GEM_PIX_2", "BELUGA", "HARBOR_SEAL"]

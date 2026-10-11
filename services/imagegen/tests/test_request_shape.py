@@ -103,7 +103,7 @@ def test_request_item_fields_and_order():
 
 
 def test_model_defaults_to_what_the_ui_sends():
-    assert capture()["body"]["requests"][0]["imageModelName"] == "NARWHAL"
+    assert capture()["body"]["requests"][0]["imageModelName"] == "BELUGA"
 
 
 def test_prompt_is_wrapped_as_a_structured_prompt():

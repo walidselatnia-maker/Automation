@@ -1579,10 +1579,14 @@ export interface ImageModelCatalogue {
 }
 
 
-/** The three image models Flow offers, in fallback order. Keys match the image service. */
+/**
+ * The three image models Flow offers, in fallback order. Keys match the image
+ * service. Nano Banana 2 became 2.1 on 2026-10-10; a setting saved as
+ * NANO_BANANA_2 means 2.1.
+ */
 const IMAGE_MODEL_CHOICES = [
   { key: 'NANO_BANANA_PRO', label: 'Nano Banana Pro' },
-  { key: 'NANO_BANANA_2', label: 'Nano Banana 2' },
+  { key: 'NANO_BANANA_2_1', label: 'Nano Banana 2.1' },
   { key: 'NANO_BANANA_2_LITE', label: 'Nano Banana 2 Lite' },
 ];
 
@@ -1596,7 +1600,8 @@ const IMAGE_MODEL_CHOICES = [
  * shown here: pick the third one, run an article, and this line says whether
  * it worked. That is the verification, and it costs one image.
  */
-function imageModelPicker(current: string, catalogue: ImageModelCatalogue | null): Html {
+function imageModelPicker(saved: string, catalogue: ImageModelCatalogue | null): Html {
+  const current = saved === 'NANO_BANANA_2' ? 'NANO_BANANA_2_1' : saved;
   const verdict = (m: ImageModelCatalogue['models'][number]): Html => {
     if (!m.wire) return html`<span class="badge">not found on the Flow page yet</span>`;
     switch (m.outcome) {

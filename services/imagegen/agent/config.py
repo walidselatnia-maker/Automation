@@ -76,7 +76,7 @@ IMAGE_USE_BATCH = os.environ.get("IMAGE_USE_BATCH", "1") == "1"
 
 # --- Models -------------------------------------------------
 # Part of the frozen request surface: the alias table decides which model name
-# reaches Google, and NARWHAL is what the UI sends.
+# reaches Google, and BELUGA (Nano Banana 2.1) is what the UI sends.
 _MODELS_FILE = Path(__file__).parent / "models.json"
 with open(_MODELS_FILE) as _f:
     _MODELS = json.load(_f)
