@@ -9,7 +9,7 @@ import type { SitePost } from '../src/newsite/client.js';
 import { listPosts } from '../src/newsite/client.js';
 
 const KEY = randomBytes(32);
-const API_KEY = 'sk_k0_CEdT0mjNX4H0D8YPgqQIXtBD356wD';
+const API_KEY = 'sk_test_FAKE0000000000000000000000';
 const PILLAR = 'pumpkin chocolate chip cookies';
 
 const SEARCHES = [

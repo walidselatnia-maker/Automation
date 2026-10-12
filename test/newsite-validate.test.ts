@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { normalizeDomain, validate } from '../src/newsite/validate.js';
 
-const KEY = 'sk_k0_CEdT0mjNX4H0D8YPgqQIXtBD356wD';
+const KEY = 'sk_test_FAKE0000000000000000000000';
 
 describe('new website validation', () => {
   describe('address', () => {

@@ -10,7 +10,7 @@ import { checkSite } from '../src/newsite/client.js';
 import type { NewWebsiteRow } from '../src/newsite/repo.js';
 
 const KEY = randomBytes(32);
-const API_KEY = 'sk_k0_CEdT0mjNX4H0D8YPgqQIXtBD356wD';
+const API_KEY = 'sk_test_FAKE0000000000000000000000';
 
 const GOOD = {
   name: 'Long Livo',
