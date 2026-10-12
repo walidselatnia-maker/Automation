@@ -1,4 +1,7 @@
 import { html, raw, type Html } from '../web/views/layout.js';
+import { websiteChannels } from './channels.js';
+
+const channelNames = (websiteId: number): string => websiteChannels(websiteId).map((c) => c.name).join(', ');
 import type { NewWebsiteRow } from './repo.js';
 import { PERSONAS } from './validate.js';
 
@@ -91,7 +94,7 @@ export function newWebsiteListPage(rows: NewWebsiteRow[], platformReady = true):
                   <div><dt>Posts per day</dt><dd class="ns-num">${r.daily_target || 'No target'}</dd></div>
                   <div><dt>Voice</dt><dd>${r.persona}</dd></div>
                   <div><dt>Gap between posts</dt><dd class="ns-num">${gap(r.interval_minutes)}</dd></div>
-                  <div><dt>Buffer</dt><dd>${r.buffer_token_encrypted ? 'Connected' : 'Not connected'}</dd></div>
+                  <div><dt>Channels</dt><dd>${channelNames(r.id) || 'None yet'}</dd></div>
                   <div><dt>Approval</dt><dd>${r.auto_publish ? 'Publishes automatically' : 'Waits for my approval'}</dd></div>
                 </dl>
               </article>
@@ -112,7 +115,7 @@ export function newWebsiteListPage(rows: NewWebsiteRow[], platformReady = true):
   `;
 }
 
-const STEP_NAMES = ['Website', 'Niche', 'Persona', 'Publishing', 'Social and images', 'Review'];
+const STEP_NAMES = ['Website', 'Niche', 'Persona', 'Publishing', 'Channels and images', 'Review'];
 
 export const WIZARD_CSS = `
 .wz { max-width: 680px; margin: 0 auto; background: var(--surface); border: 1px solid var(--line);
@@ -170,6 +173,7 @@ export const WIZARD_CSS = `
 .wz-foot .ns-btn.primary { min-width: 140px; }
 .wz-check { display: flex; align-items: center; gap: 10px; margin: -6px 0 20px; font-size: 14px; color: var(--soft); cursor: pointer; }
 .wz-check input { width: 16px; height: 16px; accent-color: var(--accent); }
+.wz-ch-platform { font-style: normal; color: var(--faint); font-size: 12px; }
 .wz-saveerr { color: var(--bad); font-size: 14px; font-weight: 500; margin-top: 16px; }
 .wz-saveerr:empty { display: none; }
 @media (max-width: 640px) {
@@ -210,7 +214,15 @@ const selected = (on: boolean): Html => raw(on ? 'selected' : '');
  * field filled in. Saved secrets are never sent back to the page: an empty
  * key or token field means "keep the saved one".
  */
-export function newWebsiteWizardPage(existing?: NewWebsiteRow): Html {
+/** A channel this website may post to, and whether it already does. */
+export interface WizardChannel {
+  id: number;
+  name: string;
+  platform: string;
+  checked: boolean;
+}
+
+export function newWebsiteWizardPage(existing?: NewWebsiteRow, channels: WizardChannel[] = []): Html {
   const e = existing;
   const preset = e && (PERSONAS as readonly string[]).includes(e.persona) ? e.persona : '';
   const custom = e && !preset ? e.persona : '';
@@ -298,20 +310,18 @@ export function newWebsiteWizardPage(existing?: NewWebsiteRow): Html {
           </div>
 
           <div class="wz-step">
-            <h2>Social and images</h2>
+            <h2>Channels and images</h2>
             <p>All optional. You can leave these empty and fill them in later.</p>
-            ${field('bufferToken', 'Buffer token', html`<input id="wz-bufferToken" name="bufferToken" type="password" spellcheck="false"
-                placeholder="${e?.buffer_token_encrypted ? 'Leave empty to keep the saved token' : ''}" />`, {
-              optional: 'optional',
-              hint: 'Schedules the Pinterest and social posts.',
-            })}
-            ${e?.buffer_token_encrypted
-              ? html`<label class="wz-check"><input type="checkbox" name="removeBuffer" value="1" /> Remove the saved Buffer token</label>`
-              : raw('')}
-            ${field('pinUsername', 'Pinterest username', html`<input id="wz-pinUsername" name="pinUsername" spellcheck="false" value="${e?.pin_username ?? ''}" />`, {
-              optional: 'optional',
-              hint: 'Only if the Buffer account has more than one Pinterest profile.',
-            })}
+            <div class="wz-field">
+              <label>Share this website’s articles on</label>
+              ${channels.length
+                ? html`<div class="wz-channels">${channels.map(
+                    (c) => html`<label class="wz-check" style="margin:0 0 8px"><input type="checkbox" name="channelId" value="${String(c.id)}" data-name="${c.name}" ${c.checked ? raw('checked') : raw('')} />
+                      ${c.name} <em class="wz-ch-platform">${c.platform === 'facebook' ? 'Facebook' : 'Pinterest'}</em></label>`,
+                  )}</div>`
+                : html`<div class="wz-hint">No channel to share on yet. Add Pinterest or Facebook on the <a href="/new-website/channels">Channels</a> page, then come back.</div>`}
+              <div class="wz-hint">One post per channel for each article, with the link in the first comment.</div>
+            </div>
             ${field('projectId', 'Google Flow project', html`<input id="wz-projectId" name="projectId" spellcheck="false" placeholder="The code after /project/ in the address bar" value="${e?.project_id ?? ''}" />`, {
               optional: 'optional',
               hint: 'Where this website’s images are made. Empty uses the shared project from Settings.',
@@ -348,11 +358,9 @@ const SCRIPT = `<script>
   var host = function (v) { return v.toLowerCase().replace(/^https?:\\/\\//, '').replace(/[\\/?#].*$/, ''); };
   var persona = function () { return val('customPersona') || val('persona'); };
   var EDIT = form.getAttribute('data-edit') === '1';
-  var HAS_BUFFER = form.getAttribute('data-has-buffer') === '1';
-  var bufferText = function () {
-    if (val('bufferToken')) return HAS_BUFFER ? 'New token' : 'Added';
-    if (HAS_BUFFER) return f('removeBuffer') && f('removeBuffer').checked ? 'Removed' : 'Saved token kept';
-    return 'Not added';
+  var channelsText = function () {
+    var names = [].slice.call(form.querySelectorAll('input[name=channelId]:checked')).map(function (b) { return b.getAttribute('data-name'); });
+    return names.length ? names.join(', ') : 'No channel';
   };
 
   function identity() {
@@ -399,7 +407,7 @@ const SCRIPT = `<script>
       [2, 'Voice', [['Persona', persona()]]],
       [3, 'Publishing', [['Status', f('status').selectedOptions[0].text], ['Approval', f('autoPublish').selectedOptions[0].text],
         ['Posts per day', val('dailyTarget')], ['Gap between posts', val('gapAmount') + ' ' + val('gapUnit')]]],
-      [4, 'Social and images', [['Buffer token', bufferText()], ['Pinterest username', val('pinUsername') || '—'],
+      [4, 'Channels and images', [['Shares on', channelsText()],
         ['Google Flow project', val('projectId') || 'Shared project from Settings']]]
     ];
     var box = $('wz-sum');

@@ -720,6 +720,63 @@ export const MIGRATIONS: Migration[] = [
       addColumn(db, 'keyword_seo', 'retry_at', 'INTEGER');
     },
   },
+
+  {
+    id: '029-newsite-channels',
+    description: 'Social channels of the new dashboard, the websites that post to each, and every social post',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS newsite_channels (
+          id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+          platform             TEXT    NOT NULL,
+          name                 TEXT    NOT NULL DEFAULT '',
+          -- Pinterest: the Buffer account and the Pinterest channel in it.
+          buffer_token_enc     TEXT    NOT NULL DEFAULT '',
+          buffer_channel_id    TEXT    NOT NULL DEFAULT '',
+          -- Facebook: the business token and the page it posts to.
+          fb_token_enc         TEXT    NOT NULL DEFAULT '',
+          fb_page_id           TEXT    NOT NULL DEFAULT '',
+          paid_buffer          INTEGER NOT NULL DEFAULT 0,
+          post_image           INTEGER NOT NULL DEFAULT 1,
+          post_reel            INTEGER NOT NULL DEFAULT 0,
+          multi_website        INTEGER NOT NULL DEFAULT 0,
+          next_template        INTEGER NOT NULL DEFAULT 0,
+          created_at           TEXT    NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS newsite_website_channels (
+          website_id INTEGER NOT NULL REFERENCES new_websites (id) ON DELETE CASCADE,
+          channel_id INTEGER NOT NULL REFERENCES newsite_channels (id) ON DELETE CASCADE,
+          PRIMARY KEY (website_id, channel_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS newsite_social_posts (
+          id           INTEGER PRIMARY KEY AUTOINCREMENT,
+          seo_id       INTEGER NOT NULL REFERENCES keyword_seo (id) ON DELETE CASCADE,
+          channel_id   INTEGER NOT NULL REFERENCES newsite_channels (id) ON DELETE CASCADE,
+          kind         TEXT    NOT NULL,
+          -- pending: to work on; picture: waiting for its picture; waiting: the
+          -- channel is full, tried again at retry_at; sent; failed.
+          status       TEXT    NOT NULL DEFAULT 'pending',
+          template     INTEGER NOT NULL DEFAULT 0,
+          title        TEXT    NOT NULL DEFAULT '',
+          text         TEXT    NOT NULL DEFAULT '',
+          alt          TEXT    NOT NULL DEFAULT '',
+          overlay      TEXT    NOT NULL DEFAULT '',
+          board_name   TEXT    NOT NULL DEFAULT '',
+          picture_id   INTEGER,
+          external_id  TEXT    NOT NULL DEFAULT '',
+          comment_id   TEXT    NOT NULL DEFAULT '',
+          error        TEXT    NOT NULL DEFAULT '',
+          retry_at     INTEGER,
+          created_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+          sent_at      TEXT,
+          UNIQUE (seo_id, channel_id, kind)
+        );
+        CREATE INDEX IF NOT EXISTS newsite_social_posts_status ON newsite_social_posts (status, id);
+      `);
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */

@@ -37,6 +37,11 @@ const NAV: NavItem[] = [
     icon: ICON('<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>'),
   },
   {
+    href: '/new-website/channels',
+    label: 'Channels',
+    icon: ICON('<circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M8.2 10.9l7.6-3.8M8.2 13.1l7.6 3.8"/>'),
+  },
+  {
     href: '/new-website/image-model',
     label: 'Image model',
     icon: ICON('<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-9 9"/>'),

@@ -6,6 +6,7 @@ import { checkSite as realCheckSite, listPosts as realListPosts, type SitePost, 
 import { registerKeywordRoutes } from './keyword-routes.js';
 import { registerPictureRoutes, type PictureRouteDeps } from './picture-routes.js';
 import { registerImageModelRoutes } from './image-model.js';
+import { registerChannelRoutes, type ChannelLookups } from './channels-routes.js';
 import { registerPublishRoutes } from './publish-routes.js';
 import { addStepPicture, publishWhenReady, type PublishDeps } from './publish.js';
 import { describeProjectId, flowProjectFor, NEXT_STEP_KEY } from './pictures.js';
@@ -22,7 +23,14 @@ import {
 } from './repo.js';
 import { decrypt } from '../lib/crypto.js';
 import { newLayout, type NewFlash } from './layout.js';
-import { newWebsiteListPage, newWebsiteWizardPage } from './view.js';
+import { newWebsiteListPage, newWebsiteWizardPage, type WizardChannel } from './view.js';
+import { channelsFor, setWebsiteChannels, websiteChannelIds } from './channels.js';
+
+/** The channels a website's wizard offers, ticked when the website already posts to them. */
+const wizardChannels = (websiteId: number): WizardChannel[] => {
+  const mine = new Set(websiteChannelIds(websiteId));
+  return channelsFor(websiteId).map((c) => ({ id: c.id, name: c.name, platform: c.platform, checked: mine.has(c.id) }));
+};
 import { STEP_FIELDS, stepOf, validate, type CleanWebsite, type Errors } from './validate.js';
 
 /** What the new dashboard needs from the server that hosts it. */
@@ -47,6 +55,8 @@ export interface NewWebsiteDeps {
   dataDir?: string;
   /** Start the picture maker. Tests turn it off. */
   autoPictures?: boolean;
+  /** Buffer and Facebook lookups for the channel wizards; tests pass their own. */
+  channelLookups?: ChannelLookups;
 }
 
 const readFlash = (query: unknown): NewFlash => {
@@ -77,6 +87,7 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
   if (deps.settings) {
     registerPlatformRoutes(app, { settings: deps.settings, encryptionKey: deps.encryptionKey, readFlash, fetchImpl: deps.fetchImpl });
     registerImageModelRoutes(app, { settings: deps.settings, readFlash, fetchImpl: deps.fetchImpl });
+    registerChannelRoutes(app, { encryptionKey: deps.encryptionKey, readFlash, lookups: deps.channelLookups });
     const publish: PublishDeps = { settings: deps.settings, encryptionKey: deps.encryptionKey, fetchImpl: deps.fetchImpl, dataDir: deps.dataDir, ask };
     registerPublishRoutes(app, { ...publish, autoResume: deps.autoPictures });
     publish.startPictures = registerPictureRoutes(app, {
@@ -166,13 +177,13 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
 
   app.get('/new-website/add', async (_request, reply) => {
     if (!ready()) return reply.redirect(`/new-website/platform?error=${encodeURIComponent(NOT_READY)}`, 303);
-    return send(reply, newLayout({ title: 'Add website', active: '/new-website', body: newWebsiteWizardPage() }));
+    return send(reply, newLayout({ title: 'Add website', active: '/new-website', body: newWebsiteWizardPage(undefined, wizardChannels(0)) }));
   });
 
   app.get('/new-website/:id/edit', async (request, reply) => {
     const site = getNewWebsite(Number((request.params as { id: string }).id) || 0);
     if (!site) return reply.redirect(`/new-website?error=${encodeURIComponent('That website no longer exists.')}`, 303);
-    return send(reply, newLayout({ title: `Edit ${site.name}`, active: '/new-website', body: newWebsiteWizardPage(site) }));
+    return send(reply, newLayout({ title: `Edit ${site.name}`, active: '/new-website', body: newWebsiteWizardPage(site, wizardChannels(site.id)) }));
   });
 
   /** One wizard step: say what is wrong, or let the browser move on. */
@@ -202,14 +213,22 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
       return reply.send({ errors, step });
     }
 
+    let websiteId: number;
     try {
-      if (site) updateNewWebsite(site.id, clean as CleanWebsite, deps.encryptionKey);
-      else createNewWebsite(clean as CleanWebsite, deps.encryptionKey);
+      if (site) {
+        updateNewWebsite(site.id, clean as CleanWebsite, deps.encryptionKey);
+        websiteId = site.id;
+      } else websiteId = createNewWebsite(clean as CleanWebsite, deps.encryptionKey);
     } catch {
       // The unique domain: two saves at once got past the check above.
       return reply.send({ errors: { domain: 'This website has already been added.' }, step: 0 });
     }
-    return reply.send({ saved: true, redirect: '/new-website' });
+    const picked = (Array.isArray(raw.channelId) ? raw.channelId : raw.channelId === undefined ? [] : [raw.channelId]).map(Number).filter(Boolean);
+    const refused = setWebsiteChannels(websiteId, picked);
+    return reply.send({
+      saved: true,
+      redirect: refused.length ? `/new-website?error=${encodeURIComponent(refused.join(' '))}` : '/new-website',
+    });
   });
 
   app.post('/new-website/:id/delete', async (request, reply) => {

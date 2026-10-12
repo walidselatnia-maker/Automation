@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
 import formbody from '@fastify/formbody';
-import { all, closeDatabase, openDatabase } from '../src/db/index.js';
+import { all, closeDatabase, openDatabase, run } from '../src/db/index.js';
 import { decrypt } from '../src/lib/crypto.js';
 import { registerNewWebsiteRoutes } from '../src/newsite/routes.js';
 import type { SiteCheck } from '../src/newsite/client.js';
@@ -123,6 +123,17 @@ describe('new website routes', () => {
     const list = await app.inject({ method: 'GET', url: '/new-website' });
     expect(list.body).toContain('f.longlivo.com');
     expect(list.body).not.toContain(API_KEY);
+  });
+
+  it('saves which channels the website shares its articles on', async () => {
+    run(`INSERT INTO newsite_channels (platform, name, buffer_channel_id) VALUES ('pinterest', 'longlivo', 'ch1')`);
+    run(`INSERT INTO newsite_channels (platform, name, fb_page_id) VALUES ('facebook', 'Easy Cakes', 'p1')`);
+    const wizard = await app.inject({ method: 'GET', url: '/new-website/add' });
+    expect(wizard.body).toContain('Share this website’s articles on');
+    expect(wizard.body).toContain('data-name="longlivo"');
+    const r = (await post('/new-website/save', { ...GOOD, channelId: '2' })).json();
+    expect(r.saved).toBe(true);
+    expect(all('SELECT website_id, channel_id FROM newsite_website_channels')).toEqual([{ website_id: 1, channel_id: 2 }]);
   });
 
   it('does not touch the old sites table', async () => {
