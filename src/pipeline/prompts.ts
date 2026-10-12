@@ -154,6 +154,10 @@ export const PROMPT_MODELS: Record<string, { model: string; format: 'json' | nul
   'article-images': { model: 'gpt-oss:120b', format: 'json' },
   // Publishing: which of the website's own categories an article goes in.
   'pick-category': { model: 'gpt-oss:120b', format: 'json' },
+  // Social sharing: one pin's words, the board it goes to, one Facebook post.
+  'newsite-pin-text': { model: 'gpt-oss:120b', format: 'json' },
+  'newsite-pick-board': { model: 'gpt-oss:120b', format: 'json' },
+  'newsite-fb-post': { model: 'gpt-oss:120b', format: 'json' },
 };
 
 /* -------------------------------------------------------------------------

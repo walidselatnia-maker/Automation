@@ -1,0 +1,8 @@
+Keyword: {{keyword}}
+Article title: {{title}}
+Website niche: {{niche}}
+
+The boards on this Pinterest account:
+{{boardsJson}}
+
+Answer with the JSON only.

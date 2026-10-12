@@ -237,3 +237,23 @@ def test_a_page_that_does_not_answer_leaves_the_three_known_names(monkeypatch):
     asyncio.run(processor.WorkerController()._run(job))
 
     assert asked == ["GEM_PIX_2", "BELUGA", "HARBOR_SEAL"]
+
+
+def test_a_pin_job_asks_flow_for_a_3_4_picture(monkeypatch):
+    seen: dict = {}
+
+    class FakeClient:
+        connected = True
+
+        async def discover_image_models(self, known):
+            return PAGE
+
+        async def generate_images_batch(self, image_model_name=None, **kwargs):
+            seen.update(kwargs)
+            return OK
+
+    monkeypatch.setattr(processor, "get_flow_client", lambda: FakeClient())
+    job = asyncio.run(jobs.create("a pin", "PORTRAIT_3_4"))
+    job["attempts"] = 1
+    asyncio.run(processor.WorkerController()._run(job))
+    assert seen["aspect_ratio"] == "IMAGE_ASPECT_RATIO_PORTRAIT_FOUR_THREE"

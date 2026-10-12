@@ -6,7 +6,7 @@ import { createLogger, errorMessage } from '../lib/logger.js';
 import type { Settings } from '../settings.js';
 import { listAuthors, listCategories, patchPost, savePost, uploadMedia, type Fetch } from './client.js';
 import { parseImageSet } from './images.js';
-import { isStepSlot, listPictures, pictureDir, queueStepPictures, type PictureRow } from './pictures.js';
+import { isMainSlot, isStepSlot, listPictures, pictureDir, queueStepPictures, type PictureRow } from './pictures.js';
 import { parseRecipe, type Recipe } from './recipe.js';
 import { getNewWebsite, websiteApiKey, type NewWebsiteRow } from './repo.js';
 import { getSeoRow, type SeoRow } from './seo.js';
@@ -39,6 +39,8 @@ export interface PublishDeps {
   random?: () => number;
   /** Wakes the picture maker, so the step pictures just queued get made. */
   startPictures?: () => void;
+  /** Called once the article is posted: its social posts are made next. */
+  afterPublish?: (seoId: number) => void;
   fetchImpl?: Fetch;
   dataDir?: string;
   now?: () => number;
@@ -225,6 +227,7 @@ export async function publishKeyword(seoId: number, deps: PublishDeps): Promise<
       // Without this the queue would sit until the next press or restart.
       deps.startPictures?.();
     }
+    deps.afterPublish?.(seoId);
   } catch (err) {
     const message = errorMessage(err).slice(0, 600);
     log.warn(`Publishing "${t.row.keyword}" failed: ${message}`);

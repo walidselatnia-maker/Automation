@@ -222,6 +222,39 @@ export class FacebookClient {
     return { commentId: body.id };
   }
 
+  /**
+   * Publish an image post to a Page: the picture's bytes and the post text.
+   * Returns the post id, which the link comment is then added to.
+   */
+  async publishPhoto(input: {
+    pageId: string;
+    image: Buffer;
+    contentType: string;
+    message: string;
+  }): Promise<{ postId: string }> {
+    const token = await this.pageToken(input.pageId);
+    const form = new FormData();
+    form.set('source', new Blob([new Uint8Array(input.image)], { type: input.contentType }), 'picture');
+    form.set('caption', input.message);
+    form.set('published', 'true');
+    form.set('access_token', token);
+
+    const response = await fetch(`${GRAPH}/${input.pageId}/photos`, {
+      method: 'POST',
+      body: form,
+      signal: AbortSignal.timeout(120_000),
+    });
+    const body = await this.read<{ id?: string; post_id?: string }>(response, 'Publishing the image post');
+    const postId = body.post_id ?? body.id;
+    if (!postId) throw new FacebookError('Facebook did not return a post id');
+    return { postId };
+  }
+
+  /** Add a comment to any post on a Page (an image post, or a reel by its video id). */
+  async commentOnPost(input: { pageId: string; postId: string; message: string }): Promise<{ commentId: string }> {
+    return this.commentOnReel({ pageId: input.pageId, videoId: input.postId, message: input.message });
+  }
+
   private async startUpload(
     pageId: string,
     pageToken: string,

@@ -52,6 +52,9 @@ logger = logging.getLogger(__name__)
 ASPECT_RATIOS = {
     "VERTICAL": "IMAGE_ASPECT_RATIO_PORTRAIT",
     "HORIZONTAL": "IMAGE_ASPECT_RATIO_LANDSCAPE",
+    # Pinterest pins on the new websites: 3:4 (896 x 1200), the closest Flow
+    # gets to Pinterest's 2:3.
+    "PORTRAIT_3_4": "IMAGE_ASPECT_RATIO_PORTRAIT_FOUR_THREE",
 }
 
 VIDEO_ASPECT_RATIOS = {

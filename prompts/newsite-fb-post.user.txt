@@ -1,0 +1,14 @@
+Article title: {{title}}
+Focus keyword: {{focusKeyword}}
+Keyword: {{keyword}}
+Meta description: {{description}}
+Website niche: {{niche}}
+Author persona: {{persona}}
+
+The start of the article:
+{{articleStart}}
+
+Corrections to make to your previous answer (none on your first try):
+{{problemsJson}}
+
+Answer with the JSON only.

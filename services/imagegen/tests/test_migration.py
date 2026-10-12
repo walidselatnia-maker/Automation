@@ -84,3 +84,44 @@ def test_opening_twice_is_safe(old_database):
 
     names = asyncio.run(columns())
     assert names.count("project_id") == 1
+
+
+CHECKED_SCHEMA = """
+CREATE TABLE job (
+    id            TEXT PRIMARY KEY,
+    prompt        TEXT NOT NULL,
+    orientation   TEXT NOT NULL DEFAULT 'VERTICAL'
+                  CHECK(orientation IN ('VERTICAL','HORIZONTAL')),
+    project_id    TEXT NOT NULL DEFAULT '',
+    status        TEXT NOT NULL DEFAULT 'PENDING',
+    media_id      TEXT,
+    output_url    TEXT,
+    error_message TEXT,
+    attempts      INTEGER NOT NULL DEFAULT 0,
+    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+CREATE INDEX idx_job_status ON job(status, created_at);
+INSERT INTO job (id, prompt, orientation, project_id, status) VALUES ('old-2', 'a pie', 'HORIZONTAL', 'proj-7', 'COMPLETED');
+"""
+
+
+def test_a_table_that_only_allowed_two_orientations_takes_the_pin_shape(tmp_path, monkeypatch):
+    path = tmp_path / "flow_agent.db"
+    connection = sqlite3.connect(path)
+    connection.executescript(CHECKED_SCHEMA)
+    connection.commit()
+    connection.close()
+    monkeypatch.setattr(schema, "DB_PATH", path)
+    monkeypatch.setattr(schema, "_db_connection", None)
+    asyncio.run(schema.init_db())
+    try:
+        old = asyncio.run(jobs.get("old-2"))
+        assert old["prompt"] == "a pie" and old["orientation"] == "HORIZONTAL" and old["project_id"] == "proj-7"
+        pin = asyncio.run(jobs.create("a pin", "PORTRAIT_3_4", "proj-7"))
+        assert pin["orientation"] == "PORTRAIT_3_4"
+        # Opening again leaves the rebuilt table alone.
+        asyncio.run(schema.init_db())
+        assert asyncio.run(jobs.get("old-2"))["status"] == "COMPLETED"
+    finally:
+        asyncio.run(schema.close_db())

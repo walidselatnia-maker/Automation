@@ -9,6 +9,8 @@ import { registerImageModelRoutes } from './image-model.js';
 import { registerChannelRoutes, type ChannelLookups } from './channels-routes.js';
 import { registerPublishRoutes } from './publish-routes.js';
 import { addStepPicture, publishWhenReady, type PublishDeps } from './publish.js';
+import { createSocialPosts, kickSocial, onPinPicture, type SocialDeps } from './social.js';
+import { registerSocialRoutes } from './social-routes.js';
 import { describeProjectId, flowProjectFor, NEXT_STEP_KEY } from './pictures.js';
 import { platformReady, registerPlatformRoutes } from './platform-routes.js';
 import {
@@ -90,6 +92,10 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
     registerChannelRoutes(app, { encryptionKey: deps.encryptionKey, readFlash, lookups: deps.channelLookups });
     const publish: PublishDeps = { settings: deps.settings, encryptionKey: deps.encryptionKey, fetchImpl: deps.fetchImpl, dataDir: deps.dataDir, ask };
     registerPublishRoutes(app, { ...publish, autoResume: deps.autoPictures });
+    const social: SocialDeps = { settings: deps.settings, encryptionKey: deps.encryptionKey, ask, dataDir: deps.dataDir, fetchImpl: deps.fetchImpl };
+    publish.afterPublish = (seoId) => {
+      if (createSocialPosts(seoId)) void kickSocial(social);
+    };
     publish.startPictures = registerPictureRoutes(app, {
       settings: deps.settings,
       makePicture: deps.makePicture,
@@ -97,7 +103,10 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
       autoPictures: deps.autoPictures,
       afterStep: (pictureId) => addStepPicture(pictureId, publish),
       afterMain: (seoId) => publishWhenReady(seoId, publish),
+      afterPin: (pictureId, ok) => onPinPicture(pictureId, ok, social),
     });
+    social.startPictures = publish.startPictures;
+    registerSocialRoutes(app, { ...social, readFlash, autoStart: deps.autoPictures });
   }
 
   registerKeywordRoutes(app, {

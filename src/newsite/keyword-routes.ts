@@ -22,7 +22,7 @@ import {
 } from './repo.js';
 import { articleStepPage, imagesStepPage, publishStepPage, keywordsPage, recipeStepPage, seoStepPage, skeletonStepPage } from './keywords-view.js';
 import { articleTypeFor } from './skeleton.js';
-import { clearPictures, isStepSlot, listPictures, listPlanPictures } from './pictures.js';
+import { clearPictures, isMainSlot, listPictures, listPlanPictures } from './pictures.js';
 import { sweepRetries } from './retries.js';
 import type { Settings } from '../settings.js';
 import { asPage } from './keywords.js';
@@ -272,7 +272,7 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
   app.post('/new-website/keywords/images/:id/retry', async (request, reply) => {
     const row = getSeoRow(Number((request.params as { id: string }).id) || 0);
     if (!row) return reply.redirect('/new-website/keywords', 303);
-    if (listPictures(row.id).some((p) => p.status === 'making' || (p.status === 'queued' && !isStepSlot(p.slot)))) {
+    if (listPictures(row.id).some((p) => p.status === 'making' || (p.status === 'queued' && isMainSlot(p.slot)))) {
       return reply.redirect(
         `/new-website/keywords/plan/${row.plan_id}/images?error=${encodeURIComponent('Its pictures are being made. Wait for them to finish first.')}`,
         303,

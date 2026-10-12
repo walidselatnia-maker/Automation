@@ -15,8 +15,9 @@ import { parseImageSet } from './images.js';
  * - the same ImageClient, built from the same settings;
  * - the same Flow project, from resolveProjectId (the website's own, else the
  *   shared one from Settings, else the old placeholder);
- * - the same call, generate(prompt, 'HORIZONTAL'): every picture wide (16:9),
- *   as the new websites want, where the old dashboard used VERTICAL;
+ * - the same call, generate(prompt, shape): every article picture wide
+ *   (HORIZONTAL, 16:9), as the new websites want, where the old dashboard
+ *   used VERTICAL; a Pinterest pin 3:4 (PORTRAIT_3_4);
  * - the same pause between images (image_gap_seconds), counted from when the
  *   previous image came back;
  * - one image at a time, and a failed image stops its article there, like a
@@ -53,6 +54,20 @@ export interface PictureRow {
 /** A recipe step's picture: made in the slow queue. */
 export const isStepSlot = (slot: string): boolean => slot.startsWith('step-');
 
+/**
+ * A Pinterest pin's picture (slot "pin-<social post id>"). It goes through the
+ * same queue, one at a time with the same gap, but it is not one of the
+ * article's pictures: its prompt is its own, not one of AI#4's.
+ */
+export const isPinSlot = (slot: string): boolean => slot.startsWith('pin-');
+
+/** One of the article's main pictures (not a step, not a pin). */
+export const isMainSlot = (slot: string): boolean => !isStepSlot(slot) && !isPinSlot(slot);
+
+/** The shape Flow is asked for. */
+export type PictureShape = 'HORIZONTAL' | 'PORTRAIT_3_4';
+export const shapeOf = (slot: string): PictureShape => (isPinSlot(slot) ? 'PORTRAIT_3_4' : 'HORIZONTAL');
+
 /** Minutes between two step pictures: a random wait in this range. */
 export const STEP_GAP_MINUTES = [15, 30] as const;
 /** When the next step picture may be made (ms since 1970), kept across restarts. */
@@ -67,7 +82,7 @@ export const listPictures = (seoId: number): PictureRow[] =>
 
 export const listPlanPictures = (planId: number): PictureRow[] =>
   all<PictureRow>(
-    `SELECT p.* FROM newsite_pictures p JOIN keyword_seo s ON s.id = p.seo_id WHERE s.plan_id = ? ORDER BY s.position, p.position`,
+    `SELECT p.* FROM newsite_pictures p JOIN keyword_seo s ON s.id = p.seo_id WHERE s.plan_id = ? AND p.slot NOT LIKE 'pin-%' ORDER BY s.position, p.position`,
     planId,
   );
 
@@ -93,7 +108,7 @@ export function clearPictures(seoId: number, dataDir = resolveDataDir()): void {
  * rewritten since is made again. Returns how many were queued.
  */
 export const queuePictures = (seoId: number, dataDir = resolveDataDir()): number =>
-  queueLane(seoId, (slot) => !isStepSlot(slot), dataDir);
+  queueLane(seoId, isMainSlot, dataDir);
 
 /** Put one keyword's step pictures in the slow queue. Returns how many were queued. */
 export function queueStepPictures(seoId: number, settings: Settings, now = Date.now(), random = Math.random, dataDir = resolveDataDir()): number {
@@ -167,6 +182,8 @@ export interface PictureDeps {
   afterStep?: (pictureId: number) => Promise<void>;
   /** Called when all of an article's main pictures are made: it may be published now. */
   afterMain?: (seoId: number) => Promise<void>;
+  /** Called when a pin's picture is made (ok) or failed: its social post carries on. */
+  afterPin?: (pictureId: number, ok: boolean) => Promise<void>;
 }
 
 let running: Promise<void> | null = null;
@@ -196,7 +213,7 @@ export const flowProjectFor = (siteProjectId: string, domain: string, settings: 
 export { describeProjectId };
 
 /** The old dashboard's image client (PipelineContext), built from the same settings. */
-const oldDashboardMaker = (settings: Settings) => (prompt: string, projectId: string) =>
+const oldDashboardMaker = (settings: Settings) => (prompt: string, projectId: string, shape: PictureShape) =>
   new ImageClient({
     baseUrl: settings.get('image_base_url'),
     apiKey: settings.get('image_api_key'),
@@ -205,7 +222,7 @@ const oldDashboardMaker = (settings: Settings) => (prompt: string, projectId: st
     projectId,
     imageModel: settings.get('image_model'),
   })
-    .generate(prompt, 'HORIZONTAL')
+    .generate(prompt, shape)
     .then(({ data, contentType }) => ({ data, contentType }));
 
 const extension = (contentType: string): string =>
@@ -249,10 +266,12 @@ export function kickPictureMaker(deps: PictureDeps): Promise<void> {
           }
         }
         const step = isStepSlot(next.slot);
+        const pin = isPinSlot(next.slot);
 
         // A prompt rewritten after it was queued is not sent: it is stale.
-        const current = currentPrompts(next.seo_id).find((p) => p.slot === next.slot);
-        if (!current || current.prompt !== next.prompt) {
+        // (A pin's prompt is its own, so it cannot go stale this way.)
+        const current = pin ? null : currentPrompts(next.seo_id).find((p) => p.slot === next.slot);
+        if (!pin && (!current || current.prompt !== next.prompt)) {
           run('DELETE FROM newsite_pictures WHERE id = ?', next.id);
           continue;
         }
@@ -271,7 +290,7 @@ export function kickPictureMaker(deps: PictureDeps): Promise<void> {
 
         run(`UPDATE newsite_pictures SET status = 'making', attempts = attempts + 1 WHERE id = ?`, next.id);
         try {
-          const { data, contentType } = await make(next.prompt, project.projectId);
+          const { data, contentType } = await make(next.prompt, project.projectId, shapeOf(next.slot));
           lastImageGeneratedAt = now();
           const dir = pictureDir(next.seo_id, dataDir);
           mkdirSync(dir, { recursive: true });
@@ -279,7 +298,8 @@ export function kickPictureMaker(deps: PictureDeps): Promise<void> {
           writeFileSync(join(dir, file), data);
           run(`UPDATE newsite_pictures SET status = 'done', error = '', file = ?, made_at = datetime('now') WHERE id = ?`, file, next.id);
           if (step) await deps.afterStep?.(next.id).catch((err) => log.warn(`After ${next.slot}: ${errorMessage(err)}`));
-          else if (listPictures(next.seo_id).filter((p) => !isStepSlot(p.slot)).every((p) => p.status === 'done')) {
+          else if (pin) void deps.afterPin?.(next.id, true).catch((err) => log.warn(`After ${next.slot}: ${errorMessage(err)}`));
+          else if (listPictures(next.seo_id).filter((p) => isMainSlot(p.slot)).every((p) => p.status === 'done')) {
             void deps.afterMain?.(next.seo_id).catch((err) => log.warn(`After the main pictures: ${errorMessage(err)}`));
           }
         } catch (err) {
@@ -289,7 +309,10 @@ export function kickPictureMaker(deps: PictureDeps): Promise<void> {
           // Like a failed step in an old run: this article's main pictures
           // stop here until Make pictures is pressed again. A failed step
           // picture only waits for its own retry; the slow queue goes on.
-          if (!step) run(`DELETE FROM newsite_pictures WHERE seo_id = ? AND status = 'queued' AND slot NOT LIKE 'step-%'`, next.seo_id);
+          if (pin) void deps.afterPin?.(next.id, false).catch((e) => log.warn(`After ${next.slot}: ${errorMessage(e)}`));
+          else if (!step) {
+            run(`DELETE FROM newsite_pictures WHERE seo_id = ? AND status = 'queued' AND slot NOT LIKE 'step-%' AND slot NOT LIKE 'pin-%'`, next.seo_id);
+          }
         } finally {
           if (step) deps.settings.set(NEXT_STEP_KEY, String(now() + stepGapMs(random)));
         }

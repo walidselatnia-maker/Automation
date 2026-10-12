@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS job (
     id            TEXT PRIMARY KEY,
     prompt        TEXT NOT NULL,
     orientation   TEXT NOT NULL DEFAULT 'VERTICAL'
-                  CHECK(orientation IN ('VERTICAL','HORIZONTAL')),
+                  CHECK(orientation IN ('VERTICAL','HORIZONTAL','PORTRAIT_3_4')),
 
     -- Sent to Google as clientContext.projectId. Per job, not per container:
     -- one image service serves every site and each site has its own Flow
@@ -122,11 +122,51 @@ async def _add_missing_columns(db) -> None:
     await db.commit()
 
 
+async def _widen_orientation(db) -> None:
+    """Let an existing job table take the PORTRAIT_3_4 orientation.
+
+    The orientation CHECK is part of the table's definition, and SQLite cannot
+    change a CHECK in place: the table is rebuilt instead, every row copied
+    across, in one transaction. A table that already allows it is left alone,
+    so this runs once.
+    """
+    async with db.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'job'") as cursor:
+        row = await cursor.fetchone()
+    if not row or "PORTRAIT_3_4" in row["sql"]:
+        return
+    async with db.execute("PRAGMA table_info(job)") as cursor:
+        old_columns = [r["name"] for r in await cursor.fetchall()]
+    await db.execute("BEGIN")
+    try:
+        await db.execute("ALTER TABLE job RENAME TO job_before_3_4")
+        await db.execute("DROP INDEX IF EXISTS idx_job_status")
+        for statement in SCHEMA.split(";"):
+            if statement.strip():
+                await db.execute(statement)
+        for table, column, definition in ADDED_COLUMNS:
+            if table == "job":
+                async with db.execute("PRAGMA table_info(job)") as cursor:
+                    have = [r["name"] for r in await cursor.fetchall()]
+                if column not in have:
+                    await db.execute(f"ALTER TABLE job ADD COLUMN {column} {definition}")
+        async with db.execute("PRAGMA table_info(job)") as cursor:
+            new_columns = {r["name"] for r in await cursor.fetchall()}
+        shared = ", ".join(c for c in old_columns if c in new_columns)
+        await db.execute(f"INSERT INTO job ({shared}) SELECT {shared} FROM job_before_3_4")
+        await db.execute("DROP TABLE job_before_3_4")
+        await db.execute("COMMIT")
+    except Exception:
+        await db.execute("ROLLBACK")
+        raise
+    logger.info("job table rebuilt to allow the PORTRAIT_3_4 orientation")
+
+
 async def init_db() -> None:
     db = await get_db()
     await db.executescript(SCHEMA)
     await db.commit()
     await _add_missing_columns(db)
+    await _widen_orientation(db)
     logger.info("Database ready at %s", DB_PATH)
 
 
