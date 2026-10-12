@@ -112,7 +112,10 @@ describe('Publishing to the website', () => {
 
   it('posts the article with its cover, gallery, recipe card and SEO, then starts the step pictures', async () => {
     ['feature', 'overhead', 'closeup'].forEach(made);
-    await publishKeyword(seoId, deps());
+    let woken = 0;
+    await publishKeyword(seoId, { ...deps(), startPictures: () => { woken += 1; } });
+    // The picture maker is woken for the step pictures just queued.
+    expect(woken).toBe(1);
 
     const uploads = calls.filter((c) => c.url.endsWith('/media'));
     expect(uploads.map((c) => (c.body as { alt: string }).alt)).toEqual(['alt feature', 'alt overhead', 'alt closeup']);

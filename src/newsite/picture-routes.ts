@@ -31,7 +31,8 @@ const imagesPage = (planId: number, message: string, kind: 'ok' | 'error' = 'ok'
 const queuedMessage = (queued: number, what: string): string =>
   queued ? `Making ${queued} picture${queued === 1 ? '' : 's'}${what}, one at a time.` : 'Nothing to make: those pictures are done.';
 
-export function registerPictureRoutes(app: FastifyInstance, deps: PictureRouteDeps): void {
+/** Registers the routes; returns what wakes the picture maker. */
+export function registerPictureRoutes(app: FastifyInstance, deps: PictureRouteDeps): () => void {
   const { settings } = deps;
   const dataDir = deps.dataDir ?? resolveDataDir();
   const queueAll = (seoId: number): number => queuePictures(seoId, dataDir);
@@ -83,4 +84,5 @@ export function registerPictureRoutes(app: FastifyInstance, deps: PictureRouteDe
     const type = picture!.file.endsWith('.png') ? 'image/png' : picture!.file.endsWith('.jpg') ? 'image/jpeg' : 'image/webp';
     return reply.type(type).header('Cache-Control', 'private, max-age=86400').send(createReadStream(path));
   });
+  return start;
 }

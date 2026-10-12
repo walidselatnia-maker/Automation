@@ -37,6 +37,8 @@ export interface PublishDeps {
   ask?: (promptName: string, variables: Record<string, unknown>) => Promise<string>;
   /** Picks one author when the category has none; tests pass their own. */
   random?: () => number;
+  /** Wakes the picture maker, so the step pictures just queued get made. */
+  startPictures?: () => void;
   fetchImpl?: Fetch;
   dataDir?: string;
   now?: () => number;
@@ -219,7 +221,10 @@ export async function publishKeyword(seoId: number, deps: PublishDeps): Promise<
       seoId,
     );
     // Posted: the recipe's step pictures now join the slow queue.
-    if (recipe) queueStepPictures(seoId, deps.settings, (deps.now ?? Date.now)(), Math.random, deps.dataDir ?? resolveDataDir());
+    if (recipe && queueStepPictures(seoId, deps.settings, (deps.now ?? Date.now)(), Math.random, deps.dataDir ?? resolveDataDir())) {
+      // Without this the queue would sit until the next press or restart.
+      deps.startPictures?.();
+    }
   } catch (err) {
     const message = errorMessage(err).slice(0, 600);
     log.warn(`Publishing "${t.row.keyword}" failed: ${message}`);

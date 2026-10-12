@@ -79,7 +79,7 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
     registerImageModelRoutes(app, { settings: deps.settings, readFlash, fetchImpl: deps.fetchImpl });
     const publish: PublishDeps = { settings: deps.settings, encryptionKey: deps.encryptionKey, fetchImpl: deps.fetchImpl, dataDir: deps.dataDir, ask };
     registerPublishRoutes(app, { ...publish, autoResume: deps.autoPictures });
-    registerPictureRoutes(app, {
+    publish.startPictures = registerPictureRoutes(app, {
       settings: deps.settings,
       makePicture: deps.makePicture,
       dataDir: deps.dataDir,
