@@ -710,6 +710,16 @@ export const MIGRATIONS: Migration[] = [
       addColumn(db, 'keyword_seo', 'post_category', "TEXT NOT NULL DEFAULT ''");
     },
   },
+
+  {
+    id: '028-newsite-auto-retries',
+    description: 'Automatic retries of the AI steps: tries so far per step, and when the next one is due',
+    up(db) {
+      addColumn(db, 'keyword_seo', 'retries_json', "TEXT NOT NULL DEFAULT '{}'");
+      addColumn(db, 'keyword_seo', 'retry_step', "TEXT NOT NULL DEFAULT ''");
+      addColumn(db, 'keyword_seo', 'retry_at', 'INTEGER');
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */

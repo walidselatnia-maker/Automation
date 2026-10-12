@@ -177,6 +177,10 @@ export interface SeoRow {
   posted_at: string | null;
   /** The website category the article was posted in. */
   post_category: string;
+  /** Automatic tries so far, per step (JSON), and the next one: which step, when (ms). */
+  retries_json: string;
+  retry_step: string;
+  retry_at: number | null;
 }
 
 /** One waiting row per keyword: the pillar first, then the sub-keywords in order. */

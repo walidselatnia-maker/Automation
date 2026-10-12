@@ -23,6 +23,8 @@ import {
 import { articleStepPage, imagesStepPage, publishStepPage, keywordsPage, recipeStepPage, seoStepPage, skeletonStepPage } from './keywords-view.js';
 import { articleTypeFor } from './skeleton.js';
 import { clearPictures, isStepSlot, listPictures, listPlanPictures } from './pictures.js';
+import { sweepRetries } from './retries.js';
+import type { Settings } from '../settings.js';
 import { asPage } from './keywords.js';
 import { getSeoRow, kickSeoWriter, listPlanSeo, queuePlanSeo, requeueArticle, requeueImages, requeueRecipe, requeueSeo, requeueSkeleton, resetInterruptedSeo } from './seo.js';
 
@@ -34,6 +36,8 @@ export interface KeywordRouteDeps extends FindDeps {
   /** Start AI#1 after a plan is saved (and resume it at boot). Tests turn it off. */
   autoSeo?: boolean;
   /** Why picture making is paused, or '' when it is not. */
+  /** The platform settings, for automatic retries of the AI steps. */
+  settings?: Settings;
   /** Which Flow project a website's pictures go into, in the old dashboard's words. */
   flowProject?: (site: NewWebsiteRow) => string;
   /** When the slow queue makes its next step picture (ms since 1970). */
@@ -86,6 +90,14 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
   if (deps.autoSeo !== false) {
     resetInterruptedSeo();
     startSeo();
+    // Failed AI steps are tried again by themselves, as the platform's retry
+    // settings say. Checked every minute; a due try restarts the writer.
+    const settings = deps.settings;
+    if (settings) {
+      setInterval(() => {
+        if (sweepRetries(settings)) startSeo();
+      }, 60_000).unref();
+    }
   }
 
   app.get('/new-website/keywords', async (request, reply) => {

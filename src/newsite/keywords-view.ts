@@ -371,6 +371,13 @@ function card(head: Html, body: Html, open = false): Html {
 const roleLabel = (row: SeoRow, intent: string): Html =>
   html`<span class="kw-seo-role">${row.role === 'pillar' ? 'Pillar' : (INTENT_LABEL[intent] ?? 'Sub-keyword')}</span>`;
 
+/** On a failed step: when it tries again by itself, from the platform's retry settings. */
+const retryNote = (row: SeoRow): Html => {
+  if (!row.retry_at) return raw('');
+  const minutes = Math.max(0, Math.round((row.retry_at - Date.now()) / 60_000));
+  return html`<p class="kw-none" style="margin:6px 0 0">Tries again by itself ${minutes ? `in about ${minutes} minute${minutes === 1 ? '' : 's'}` : 'within a minute'} (Platform → Automatic retries).</p>`;
+};
+
 const problemList = (text: string): Html =>
   html`<div class="kw-seo-problems">${text.split('\n').filter(Boolean).map((p) => html`<div>${p}</div>`)}</div>`;
 
@@ -398,7 +405,7 @@ function seoCard(row: SeoRow, intent: string): Html {
           ${row.reasoning ? html`<div class="wide"><dt>Why it works</dt><dd>${row.reasoning}</dd></div>` : raw('')}
         </dl>`
       : html`<p class="kw-none" style="margin:4px 0 0">${row.status === 'writing' ? 'The AI is writing this now.' : 'Waiting for its turn.'}</p>`}
-    ${row.status === 'failed' ? problemList(row.problems) : raw('')}`;
+    ${row.status === 'failed' ? html`${problemList(row.problems)}${retryNote(row)}` : raw('')}`;
   return card(head, body, row.status === 'failed');
 }
 
@@ -442,7 +449,7 @@ function skeletonCard(row: SeoRow, intent: string): Html {
       : html`<p class="kw-none" style="margin:4px 0 0">${row.status !== 'done'
           ? 'The skeleton is made once this keyword has its SEO metadata.'
           : row.skeleton_status === 'writing' ? 'The AI is designing this outline now.' : 'Waiting for its turn.'}</p>`}
-    ${row.skeleton_status === 'failed' ? problemList(row.skeleton_problems) : raw('')}`;
+    ${row.skeleton_status === 'failed' ? html`${problemList(row.skeleton_problems)}${retryNote(row)}` : raw('')}`;
   return card(head, body, row.skeleton_status === 'failed');
 }
 
@@ -546,7 +553,7 @@ function recipeCard(row: SeoRow, intent: string): Html {
       : html`<p class="kw-none" style="margin:4px 0 0">${row.status !== 'done'
           ? 'The recipe is made once this keyword has its SEO metadata.'
           : row.recipe_status === 'writing' ? 'The AI is writing this recipe now.' : 'Waiting for its turn.'}</p>`}
-    ${row.recipe_status === 'failed' ? problemList(row.recipe_problems) : raw('')}`;
+    ${row.recipe_status === 'failed' ? html`${problemList(row.recipe_problems)}${retryNote(row)}` : raw('')}`;
   return card(head, body, row.recipe_status === 'failed');
 }
 
@@ -586,7 +593,7 @@ function articleCard(row: SeoRow, intent: string): Html {
         </form>`
       : raw('')}
     ${failed
-      ? html`${problemList(row.article_problems)}
+      ? html`${problemList(row.article_problems)}${retryNote(row)}
           <p class="kw-none" style="margin:8px 0 16px">${row.article_md
             ? 'The sections written before the failed one are kept below. Carrying on writes from the failed section.'
             : 'The first section failed, so nothing is kept yet.'}</p>`
@@ -679,7 +686,7 @@ function imagesCard(row: SeoRow, intent: string, pictures: PictureRow[]): Html {
             : raw('')}
         </div>`
       : raw('')}
-    ${row.images_status === 'failed' ? problemList(row.images_problems) : raw('')}
+    ${row.images_status === 'failed' ? html`${problemList(row.images_problems)}${retryNote(row)}` : raw('')}
     ${promptsDone
       ? html`<div class="kw-img">
           <dl class="kw-img-theme">

@@ -94,6 +94,7 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
     readFlash,
     isPlatformReady: ready,
     autoSeo: deps.autoSeo,
+    settings: deps.settings,
     nextStepAt: () => Number(deps.settings?.get(NEXT_STEP_KEY) || 0),
     flowProject: (site) => (deps.settings ? describeProjectId(flowProjectFor(site.project_id, site.domain, deps.settings), site.domain) : ''),
     dataDir: deps.dataDir,
