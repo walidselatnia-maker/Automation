@@ -15,6 +15,6 @@ Rules:
 - Use Markdown for lists (- item, 1. step) and **bold** sparingly. No tables, no images, no links.
 - Continue naturally from the end of the previous section you are shown; do not repeat it.
 
-If you are given problems with your last answer, fix every one of them.
+If you are given corrections, your previous answer is shown with them: fix every numbered point exactly as it says, and keep everything else in your previous answer as it is.
 
 Answer with the Markdown of this one section only, nothing before or after it.

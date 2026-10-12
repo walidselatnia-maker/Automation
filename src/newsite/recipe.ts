@@ -1,6 +1,7 @@
 import { get, run } from '../db/index.js';
 import { createLogger, errorMessage } from '../lib/logger.js';
 import type { SeoRow } from './seo.js';
+import { correctUntilRight, keptNote } from './rounds.js';
 
 /**
  * The fixed recipe for one keyword on a recipe website.
@@ -12,7 +13,6 @@ import type { SeoRow } from './seo.js';
  */
 
 const log = createLogger('newsite-recipe');
-const ROUNDS = 3;
 
 export interface Recipe {
   prepMinutes: number;
@@ -157,22 +157,22 @@ interface Context {
   persona: string;
 }
 
-/** Make one keyword's recipe: up to three rounds, then done or failed. */
+/** Make one keyword's recipe, correcting mistakes until it passes (rounds.ts). */
 export async function makeRecipe(row: SeoRow, deps: RecipeDeps): Promise<void> {
   const ctx = get<Context>(
     `SELECT p.pillar, w.niche, w.niche_context, w.persona
        FROM keyword_plans p JOIN new_websites w ON w.id = p.website_id WHERE p.id = ?`,
     row.plan_id,
   );
-  if (!ctx) return;
+  if (!ctx) {
+    run(`UPDATE keyword_seo SET recipe_status = 'failed', recipe_problems = 'Its keyword plan or website is gone.' WHERE id = ?`, row.id);
+    return;
+  }
   run(`UPDATE keyword_seo SET recipe_status = 'writing' WHERE id = ?`, row.id);
 
-  let problems: string[] = [];
-  let last: Recipe | null = null;
-  for (let round = 0; round < ROUNDS; round++) {
-    let raw: string;
-    try {
-      raw = await deps.ask('recipe-card', {
+  const outcome = await correctUntilRight<Recipe>({
+    ask: (corrections) =>
+      deps.ask('recipe-card', {
         keyword: row.keyword,
         role:
           row.role === 'pillar'
@@ -184,19 +184,16 @@ export async function makeRecipe(row: SeoRow, deps: RecipeDeps): Promise<void> {
         niche: ctx.niche,
         nicheContext: ctx.niche_context || '(none)',
         persona: ctx.persona,
-        problemsJson: JSON.stringify(problems),
-      });
-    } catch (err) {
-      log.warn(`Recipe step could not reach the AI for "${row.keyword}": ${errorMessage(err)}`);
-      problems = ['The AI could not be reached. Check the AI keys on the Platform page.'];
-      break;
-    }
-    last = parseRecipe(raw);
-    problems = last ? checkRecipe(last, row.keyword) : ['The AI answer could not be read.'];
-    if (problems.length === 0) break;
-  }
+        problemsJson: corrections,
+      }),
+    parse: parseRecipe,
+    check: (r) => checkRecipe(r, row.keyword),
+    onError: (err) => log.warn(`Recipe step could not reach the AI for "${row.keyword}": ${errorMessage(err)}`),
+  });
+  const { problems, technical } = outcome;
+  const last = outcome.answer;
 
-  const ok = problems.length === 0;
+  const ok = !technical;
   run(
     `UPDATE keyword_seo SET recipe_status = ?, recipe_json = ?, recipe_problems = ?,
        skeleton_status = ?, skeleton_json = '', skeleton_problems = '',
@@ -205,7 +202,7 @@ export async function makeRecipe(row: SeoRow, deps: RecipeDeps): Promise<void> {
      WHERE id = ?`,
     ok ? 'done' : 'failed',
     last ? JSON.stringify(last) : '',
-    problems.join('\n'),
+    ok ? keptNote(problems) : problems.join('\n'),
     // The skeleton is built from the recipe, so it waits for a good one.
     ok ? 'pending' : '',
     row.id,

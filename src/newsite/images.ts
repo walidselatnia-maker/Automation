@@ -4,6 +4,7 @@ import { similarity, words } from '../seo/rules.js';
 import { inventedIngredients } from './article.js';
 import { parseRecipe, recipeText, type Recipe } from './recipe.js';
 import type { SeoRow } from './seo.js';
+import { correctUntilRight, keptNote } from './rounds.js';
 import { parseSkeleton, type Skeleton } from './skeleton.js';
 
 /**
@@ -17,7 +18,6 @@ import { parseSkeleton, type Skeleton } from './skeleton.js';
  */
 
 const log = createLogger('newsite-images');
-const ROUNDS = 3;
 
 export const PROMPT_WORDS = [40, 160] as const;
 export const ALT_WORDS = [8, 12] as const;
@@ -209,14 +209,21 @@ interface Context {
   niche_context: string;
 }
 
-/** Write the image prompts for one keyword: up to three rounds, then done or failed. */
+/** Write the image prompts for one keyword, correcting mistakes until they pass (rounds.ts). */
 export async function makeImagePrompts(row: SeoRow, deps: ImageDeps): Promise<void> {
   const ctx = get<Context>(
     `SELECT w.niche, w.niche_context FROM keyword_plans p JOIN new_websites w ON w.id = p.website_id WHERE p.id = ?`,
     row.plan_id,
   );
   const skeleton = row.skeleton_json ? parseSkeleton(row.skeleton_json) : null;
-  if (!ctx || !skeleton || !row.article_md) return;
+  if (!ctx || !skeleton || !row.article_md) {
+    run(
+      `UPDATE keyword_seo SET images_status = 'failed', images_problems = ? WHERE id = ?`,
+      !ctx ? 'Its keyword plan or website is gone.' : 'The article is missing. Write the article again.',
+      row.id,
+    );
+    return;
+  }
   run(`UPDATE keyword_seo SET images_status = 'writing' WHERE id = ?`, row.id);
 
   const recipe = row.recipe_json ? parseRecipe(row.recipe_json) : null;
@@ -232,12 +239,9 @@ export async function makeImagePrompts(row: SeoRow, deps: ImageDeps): Promise<vo
     }
   }
 
-  let problems: string[] = [];
-  let last: ImageSet | null = null;
-  for (let round = 0; round < ROUNDS; round++) {
-    let raw: string;
-    try {
-      raw = await deps.ask('article-images', {
+  const outcome = await correctUntilRight<ImageSet>({
+    ask: (corrections) =>
+      deps.ask('article-images', {
         keyword: row.keyword,
         title: row.title,
         niche: ctx.niche,
@@ -246,23 +250,20 @@ export async function makeImagePrompts(row: SeoRow, deps: ImageDeps): Promise<vo
         recipeJson: recipe ? JSON.stringify(recipe) : '(no fixed recipe for this page)',
         article: row.article_md.slice(0, 24000),
         slotsJson: JSON.stringify(slots),
-        problemsJson: JSON.stringify(problems),
-      });
-    } catch (err) {
-      log.warn(`AI#4 could not reach the AI for "${row.keyword}": ${errorMessage(err)}`);
-      problems = ['The AI could not be reached. Check the AI keys on the Platform page.'];
-      break;
-    }
-    last = parseImageSet(raw);
-    problems = last ? checkImageSet(last, { keyword: row.keyword, slots, allowedText }) : ['The AI answer could not be read.'];
-    if (problems.length === 0) break;
-  }
+        problemsJson: corrections,
+      }),
+    parse: parseImageSet,
+    check: (set) => checkImageSet(set, { keyword: row.keyword, slots, allowedText }),
+    onError: (err) => log.warn(`AI#4 could not reach the AI for "${row.keyword}": ${errorMessage(err)}`),
+  });
+  const { problems, technical } = outcome;
+  const last = outcome.answer;
 
   run(
     `UPDATE keyword_seo SET images_status = ?, images_json = ?, images_problems = ? WHERE id = ?`,
-    problems.length ? 'failed' : 'done',
+    technical ? 'failed' : 'done',
     last ? JSON.stringify(last) : '',
-    problems.slice(0, 20).join('\n'),
+    technical ? problems.join('\n') : keptNote(problems.slice(0, 20)),
     row.id,
   );
 }

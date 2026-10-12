@@ -2,6 +2,7 @@ import { all, get, run } from '../db/index.js';
 import { createLogger, errorMessage } from '../lib/logger.js';
 import { words } from '../seo/rules.js';
 import { parseRecipe, recipeText, type Recipe } from './recipe.js';
+import { correctUntilRight, keptNote } from './rounds.js';
 import type { SeoRow } from './seo.js';
 import { parseSkeleton, type SkeletonSection } from './skeleton.js';
 
@@ -10,17 +11,14 @@ import { parseSkeleton, type SkeletonSection } from './skeleton.js';
  *
  * One H2 section per request, so even a long pillar stays within what one
  * answer can hold. Each section is checked before the next is written, and
- * its problems go back to the AI, up to three rounds.
+ * a mistake goes back to the AI with its previous answer and exactly what to
+ * fix (rounds.ts), until the section passes.
  *
- * After three rounds the best attempt is kept when only soft problems are
- * left (a little long or short, a little hard to read). A hard problem
- * (wrong headings, a generic AI phrase, an ingredient the recipe does not
- * have) stops the article at that section. The sections already written are
- * kept, so trying again carries on from the section that failed.
+ * Only a technical failure (the AI not reached) stops the article; the
+ * sections already written are kept, so trying again carries on from there.
  */
 
 const log = createLogger('newsite-article');
-const ROUNDS = 3;
 
 /** Phrases that mark text as generic AI writing (the plan's "AI slop" list and its relatives). */
 export const BANNED_PHRASES: RegExp[] = [
@@ -190,7 +188,14 @@ export async function writeArticle(row: SeoRow, deps: ArticleDeps): Promise<void
     row.plan_id,
   );
   const skeleton = row.skeleton_json ? parseSkeleton(row.skeleton_json) : null;
-  if (!ctx || !skeleton) return;
+  if (!ctx || !skeleton || !skeleton.sections.length) {
+    run(
+      `UPDATE keyword_seo SET article_status = 'failed', article_problems = ? WHERE id = ?`,
+      !ctx ? 'Its keyword plan or website is gone.' : 'The skeleton has no sections to write. Make the skeleton again.',
+      row.id,
+    );
+    return;
+  }
   run(`UPDATE keyword_seo SET article_status = 'writing' WHERE id = ?`, row.id);
 
   const recipe: Recipe | null = row.recipe_json ? parseRecipe(row.recipe_json) : null;
@@ -220,6 +225,7 @@ export async function writeArticle(row: SeoRow, deps: ArticleDeps): Promise<void
   // carries on after them.
   const earlier = row.article_md ? row.article_md.split(/\n(?=## )/).map((p) => p.trim()) : [];
   const parts: string[] = [];
+  const notes: string[] = [];
   let failure = '';
 
   for (const [i, section] of skeleton.sections.entries()) {
@@ -230,13 +236,10 @@ export async function writeArticle(row: SeoRow, deps: ArticleDeps): Promise<void
     }
     const target = sectionTarget(section);
     const [min, max] = wordRange(target);
-    let problems: string[] = [];
-    let text = '';
-    let best: { text: string; problems: string[] } | null = null;
-    for (let round = 0; round < ROUNDS; round++) {
-      let raw: string;
-      try {
-        raw = await deps.ask('article-section', {
+    const hardCount = (problems: string[]) => problems.filter((p) => !isSoftProblem(p)).length;
+    const outcome = await correctUntilRight<string>({
+      ask: (corrections) =>
+        deps.ask('article-section', {
           keyword: row.keyword,
           role: row.role === 'pillar' ? 'the pillar page' : 'a sub-page of the pillar',
           pillar: ctx.pillar,
@@ -256,31 +259,22 @@ export async function writeArticle(row: SeoRow, deps: ArticleDeps): Promise<void
           wordRange: `${min} to ${max} words (target ${target})`,
           previousEnding: parts.length ? parts[parts.length - 1]!.slice(-500) : '(this is the first section)',
           recipeJson: recipe ? JSON.stringify(recipe) : '(no fixed recipe for this page)',
-          problemsJson: JSON.stringify(problems),
-        });
-      } catch (err) {
-        log.warn(`AI#3 could not reach the AI for "${row.keyword}": ${errorMessage(err)}`);
-        problems = ['The AI could not be reached. Check the AI keys on the Platform page.'];
-        break;
-      }
-      text = cleanMarkdown(raw);
-      problems = checkSection(text, { section, first: i === 0, focusKeyword: row.focus_keyword, allowedText, keyword: row.keyword });
-      if (problems.length === 0) break;
-      const hard = problems.filter((p) => !isSoftProblem(p)).length;
-      if (!best || hard < best.problems.filter((p) => !isSoftProblem(p)).length || (hard === 0 && problems.length < best.problems.length)) {
-        best = { text, problems };
-      }
-    }
-    // Only soft problems left: keep the best attempt and go on.
-    if (problems.length && best && best.problems.every(isSoftProblem)) {
-      log.info(`AI#3 kept "${section.h2}" for "${row.keyword}" with: ${best.problems.join(' ')}`);
-      text = best.text;
-      problems = [];
-    }
-    if (problems.length) {
-      failure = [`Section "${section.h2}":`, ...problems].join('\n');
+          problemsJson: corrections,
+        }),
+      parse: cleanMarkdown,
+      check: (text) => checkSection(text, { section, first: i === 0, focusKeyword: row.focus_keyword, allowedText, keyword: row.keyword }),
+      // A hard problem (wrong heading, invented ingredient) weighs more than a soft one (length, reading level).
+      rank: (problems) => hardCount(problems) * 100 + problems.length,
+      onError: (err) => log.warn(`AI#3 could not reach the AI for "${row.keyword}": ${errorMessage(err)}`),
+    });
+    if (outcome.technical) {
+      failure = [`Section "${section.h2}":`, ...outcome.problems].join('\n');
       break;
     }
+    const text = outcome.answer!;
+    // Soft problems (a little long or short, a little hard to read) are not worth noting.
+    const left = outcome.problems.filter((p) => !isSoftProblem(p));
+    if (left.length) notes.push([`Section "${section.h2}":`, ...left].join('\n'));
     parts.push(text);
   }
 
@@ -291,7 +285,7 @@ export async function writeArticle(row: SeoRow, deps: ArticleDeps): Promise<void
     failure ? 'failed' : 'done',
     md,
     bodyWords(md),
-    failure,
+    failure || (notes.length ? keptNote(notes) : ''),
     // A finished article gets its image prompts next.
     failure ? '' : 'pending',
     row.id,

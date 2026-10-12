@@ -149,13 +149,27 @@ describe('AI#3 follows the skeleton', () => {
     expect(row!.article_words).toBeGreaterThan(150);
   });
 
-  it('stops at a section that keeps failing, and says which', async () => {
+  it('corrects a section that keeps a mistake, then keeps its best and notes what is left', async () => {
     let calls = 0;
-    await kickSeoWriter({ suggest: async () => [], ask: async () => { calls += 1; return '## Wrong\n\ntoo short'; } });
-    expect(calls).toBe(3);
+    await kickSeoWriter({
+      suggest: async () => [],
+      ask: async (name) => {
+        if (name !== 'article-section') throw new Error('later steps are not part of this test');
+        calls += 1;
+        return '## Wrong\n\ntoo short';
+      },
+    });
+    expect(calls).toBe(20); // 10 rounds for each of the 2 sections
+    const [row] = listPlanSeo(planId);
+    expect(row).toMatchObject({ article_status: 'done' });
+    expect(row!.article_problems).toMatch(/Kept after 10 rounds[\s\S]*Section "Why Pumpkin Chocolate Chip Cookies Stay Soft"/);
+  });
+
+  it('stops only when the AI cannot be reached, and says which section', async () => {
+    await kickSeoWriter({ suggest: async () => [], ask: async () => { throw new Error('no endpoint'); } });
     const [row] = listPlanSeo(planId);
     expect(row).toMatchObject({ article_status: 'failed' });
-    expect(row!.article_problems).toMatch(/Section "Why Pumpkin Chocolate Chip Cookies Stay Soft"/);
+    expect(row!.article_problems).toMatch(/Section "Why Pumpkin Chocolate Chip Cookies Stay Soft":\nThe AI could not be reached/);
   });
 
   it('keeps the best attempt when only soft problems are left', async () => {
@@ -176,7 +190,7 @@ describe('AI#3 follows the skeleton', () => {
     const ask = async (_name: string, vars: Record<string, unknown>) => {
       const sec = JSON.parse(String(vars.sectionJson)) as SkeletonSection;
       asked.push(sec.h2);
-      if (sec.h2.startsWith('Questions') && failSecond) return '## Wrong heading';
+      if (sec.h2.startsWith('Questions') && failSecond) throw new Error('the AI went away');
       return `## ${sec.h2}\n\n${plain(100, 'These pumpkin chocolate chip cookies stay soft.')}`;
     };
     await kickSeoWriter({ suggest: async () => [], ask });

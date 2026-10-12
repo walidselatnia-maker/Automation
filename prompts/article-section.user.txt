@@ -22,7 +22,7 @@ The fixed recipe for this page:
 How the previous section ended:
 {{previousEnding}}
 
-Problems with your last answer (fix all of them, or ignore if empty):
+Corrections to make to your previous answer (none on your first try):
 {{problemsJson}}
 
 Answer with the Markdown of this one section only.

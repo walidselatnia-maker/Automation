@@ -97,22 +97,26 @@ describe('the recipe step on a recipe website', () => {
         return JSON.stringify(name === 'seo-metadata' ? SEO : name === 'recipe-card' ? { ...GOOD, notes: 'x' } : { h1: 'x', sections: [] });
       },
     });
-    expect(order).toEqual(['seo-metadata', 'recipe-card', 'article-skeleton', 'article-skeleton', 'article-skeleton']);
-    expect(listPlanSeo(planId)[0]).toMatchObject({ recipe_status: 'done', skeleton_status: 'failed' });
+    expect(order.slice(0, 3)).toEqual(['seo-metadata', 'recipe-card', 'article-skeleton']);
+    // An outline with no sections is corrected round after round; kept after every round, it gives the
+    // article nothing to write, which stops there instead of looping.
+    expect(order.filter((n) => n === 'article-skeleton')).toHaveLength(10);
+    expect(listPlanSeo(planId)[0]).toMatchObject({ recipe_status: 'done', skeleton_status: 'done', article_status: 'failed' });
   });
 
-  it('holds the skeleton back while the recipe fails', async () => {
+  it('holds the skeleton back while the recipe fails for a technical reason', async () => {
     setup('Recipes');
     const order: string[] = [];
     await kickSeoWriter({
       suggest: async () => [],
       ask: async (name) => {
         order.push(name);
-        return JSON.stringify(name === 'seo-metadata' ? SEO : { ...GOOD, servings: 0 });
+        if (name === 'recipe-card') throw new Error('no endpoint');
+        return JSON.stringify(SEO);
       },
     });
-    expect(order).toEqual(['seo-metadata', 'recipe-card', 'recipe-card', 'recipe-card']);
-    expect(listPlanSeo(planId)[0]).toMatchObject({ recipe_status: 'failed', skeleton_status: '', recipe_problems: expect.stringMatching(/Servings/) });
+    expect(order).toEqual(['seo-metadata', 'recipe-card']);
+    expect(listPlanSeo(planId)[0]).toMatchObject({ recipe_status: 'failed', skeleton_status: '', recipe_problems: expect.stringMatching(/could not be reached/) });
   });
 
   it('skips the recipe on a non-recipe website', async () => {

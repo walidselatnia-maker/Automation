@@ -17,7 +17,7 @@ Niche: {{niche}}
 About the website: {{nicheContext}}
 Author persona: {{persona}}
 
-Problems with your last answer (fix all of them, or ignore if empty):
+Corrections to make to your previous answer (none on your first try):
 {{problemsJson}}
 
 Answer with the JSON object only.

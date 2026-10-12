@@ -36,7 +36,7 @@ Which one you used: Expertise, Experience, Authority or Trustworthiness.
 - Authority: trusted, featured (only if true for the persona).
 - Trustworthiness: honest, transparent methods, no affiliate links.
 
-If you are given problems with your last answer, fix every one of them.
+If you are given corrections, your previous answer is shown with them: fix every numbered point exactly as it says, and keep everything else in your previous answer as it is.
 
 Answer with JSON only, exactly this shape:
 {"title": "...", "description": "...", "focusKeyword": "...", "altText": "...", "eeat": "Experience", "confidence": "high", "reasoning": "2 or 3 sentences on why this metadata works."}

@@ -159,13 +159,13 @@ describe('AI#4 follows the article', () => {
     expect(JSON.parse(row!.images_json).images).toHaveLength(9);
   });
 
-  it('fails after three rounds with the reasons, and can be written again', async () => {
+  it('keeps correcting, then keeps the best with what is left noted, and can be written again', async () => {
     let calls = 0;
     await kickSeoWriter({ suggest: async () => [], ask: async () => { calls += 1; return '{"theme":{},"images":[]}'; } });
-    expect(calls).toBe(3);
+    expect(calls).toBe(10);
     const [row] = listPlanSeo(planId);
-    expect(row).toMatchObject({ images_status: 'failed' });
-    expect(row!.images_problems).toMatch(/one image per slot/);
+    expect(row).toMatchObject({ images_status: 'done' });
+    expect(row!.images_problems).toMatch(/Kept after 10 rounds[\s\S]*one image per slot/);
     requeueImages(row!.id);
     expect(listPlanSeo(planId)[0]).toMatchObject({ images_status: 'pending', images_problems: '' });
   });

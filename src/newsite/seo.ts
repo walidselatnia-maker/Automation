@@ -4,14 +4,15 @@ import { similarity, words } from '../seo/rules.js';
 import { articleTypeFor, makeSkeleton } from './skeleton.js';
 import { makeRecipe } from './recipe.js';
 import { writeArticle } from './article.js';
+import { correctUntilRight, keptNote } from './rounds.js';
 import { makeImagePrompts } from './images.js';
 
 /**
  * AI#1: SEO metadata for every keyword in a saved keyword plan.
  *
  * Runs in the background after a plan is saved, one keyword at a time. The
- * AI writes; the checks below decide. A failed check is sent back to the AI
- * with the exact problems, up to three rounds.
+ * AI writes; the checks below decide. A mistake is sent back to the AI with
+ * its previous answer and exactly what to fix (rounds.ts), until it passes.
  */
 
 const log = createLogger('newsite-seo');
@@ -20,7 +21,6 @@ export const TITLE = [50, 60] as const;
 export const DESCRIPTION = [150, 160] as const;
 export const ALT_WORDS = [8, 12] as const;
 export const EEAT = ['Expertise', 'Experience', 'Authority', 'Trustworthiness'] as const;
-const ROUNDS = 3;
 
 const BANNED = [
   /article about/i,
@@ -284,10 +284,13 @@ const planContext = (planId: number): PlanContext | undefined =>
     planId,
   );
 
-/** Write the metadata for one row: up to three rounds, then done or failed. */
+/** Write the metadata for one row, correcting mistakes until it passes (rounds.ts). */
 export async function writeOne(row: SeoRow, deps: WriterDeps): Promise<void> {
   const plan = planContext(row.plan_id);
-  if (!plan) return;
+  if (!plan) {
+    run(`UPDATE keyword_seo SET status = 'failed', problems = 'Its keyword plan or website is gone.' WHERE id = ?`, row.id);
+    return;
+  }
   run(`UPDATE keyword_seo SET status = 'writing', updated_at = datetime('now') WHERE id = ?`, row.id);
 
   const searches = (await deps.suggest(row.keyword).catch(() => [])).slice(0, 40);
@@ -296,12 +299,9 @@ export async function writeOne(row: SeoRow, deps: WriterDeps): Promise<void> {
     .map((r) => r.title);
   const ctx: SeoContext = { keyword: row.keyword, searches, otherTitles };
 
-  let problems: string[] = [];
-  let last: SeoAnswer | null = null;
-  for (let round = 0; round < ROUNDS; round++) {
-    let raw: string;
-    try {
-      raw = await deps.ask('seo-metadata', {
+  const outcome = await correctUntilRight<SeoAnswer>({
+    ask: (corrections) =>
+      deps.ask('seo-metadata', {
         keyword: row.keyword,
         role: row.role === 'pillar' ? 'the pillar page' : 'a sub-page of the pillar',
         pillar: plan.pillar,
@@ -310,17 +310,14 @@ export async function writeOne(row: SeoRow, deps: WriterDeps): Promise<void> {
         persona: plan.persona,
         searchesJson: JSON.stringify(searches),
         takenTitlesJson: JSON.stringify(otherTitles),
-        problemsJson: JSON.stringify(problems),
-      });
-    } catch (err) {
-      log.warn(`AI#1 could not reach the AI for "${row.keyword}": ${errorMessage(err)}`);
-      problems = ['The AI could not be reached. Check the AI keys on the Platform page.'];
-      break;
-    }
-    last = parseSeoAnswer(raw);
-    problems = last ? checkSeo(last, ctx) : ['The AI answer could not be read.'];
-    if (problems.length === 0) break;
-  }
+        problemsJson: corrections,
+      }),
+    parse: parseSeoAnswer,
+    check: (a) => checkSeo(a, ctx),
+    onError: (err) => log.warn(`AI#1 could not reach the AI for "${row.keyword}": ${errorMessage(err)}`),
+  });
+  const { problems, technical } = outcome;
+  const last = outcome.answer;
 
   // Only a recipe page on a recipe website gets a fixed recipe.
   const isRecipe = articleTypeFor(plan.niche) === 'recipe' && row.page !== 'article';
@@ -332,7 +329,7 @@ export async function writeOne(row: SeoRow, deps: WriterDeps): Promise<void> {
        recipe_status = ?, recipe_json = '', recipe_problems = '',
        article_status = '', article_md = '', article_words = 0, article_problems = '', images_status = '', images_json = '', images_problems = ''
      WHERE id = ?`,
-    problems.length ? 'failed' : 'done',
+    technical ? 'failed' : 'done',
     a.title,
     a.description,
     a.focusKeyword,
@@ -340,11 +337,11 @@ export async function writeOne(row: SeoRow, deps: WriterDeps): Promise<void> {
     a.eeat,
     a.confidence,
     a.reasoning,
-    problems.join('\n'),
+    technical ? problems.join('\n') : keptNote(problems),
     // New metadata means new work after it: on a recipe website the recipe
     // comes next and the skeleton waits for it; elsewhere the skeleton is next.
-    problems.length || isRecipe ? '' : 'pending',
-    problems.length || !isRecipe ? '' : 'pending',
+    technical || isRecipe ? '' : 'pending',
+    technical || !isRecipe ? '' : 'pending',
     row.id,
   );
 }

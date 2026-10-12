@@ -179,7 +179,7 @@ describe('AI#2 follows AI#1', () => {
       },
     });
     expect(asked.map((a) => a.name).slice(0, 3)).toEqual(['seo-metadata', 'recipe-card', 'article-skeleton']);
-    expect(asked.slice(3).every((a) => a.name === 'article-section')).toBe(true);
+    expect(asked.slice(3).every((a) => a.name === 'article-section' || a.name === 'article-images')).toBe(true);
     expect(String(asked[2]!.vars.depth)).toMatch(/PILLAR/);
     expect(String(asked[2]!.vars.recipeJson)).toContain('250 g all-purpose flour');
     expect(asked[2]!.vars).toMatchObject({ title: TITLE, focusKeyword: FOCUS, articleType: 'recipe', persona: 'Storyteller' });
@@ -189,7 +189,7 @@ describe('AI#2 follows AI#1', () => {
     expect(row).toMatchObject({ recipe_status: 'done' });
   });
 
-  it('retries with the problems, then fails with them', async () => {
+  it('sends mistakes back with the previous answer; after every round keeps the best and carries on', async () => {
     const skeletonVars: Record<string, unknown>[] = [];
     await kickSeoWriter({
       suggest: async () => [],
@@ -200,13 +200,14 @@ describe('AI#2 follows AI#1', () => {
         return JSON.stringify({ ...GOOD, sections: GOOD.sections.slice(0, 2) });
       },
     });
-    expect(skeletonVars).toHaveLength(3);
-    expect(String(skeletonVars[1]!.problemsJson)).toMatch(/H2 sections/);
-    expect(listPlanSeo(planId)[0]).toMatchObject({ skeleton_status: 'failed', skeleton_problems: expect.stringMatching(/H2 sections/) });
+    const skeletonAsks = skeletonVars.filter((v) => 'depth' in v);
+    expect(skeletonAsks).toHaveLength(10);
+    expect(String(skeletonAsks[1]!.problemsJson)).toMatch(/H2 sections[\s\S]*Your previous answer:/);
+    expect(listPlanSeo(planId)[0]).toMatchObject({ skeleton_status: 'done', skeleton_problems: expect.stringMatching(/Kept after 10 rounds[\s\S]*H2 sections/) });
   });
 
-  it('makes no skeleton when the metadata failed', async () => {
-    await kickSeoWriter({ suggest: async () => [], ask: async () => '{}' });
+  it('makes no skeleton when the metadata failed for a technical reason', async () => {
+    await kickSeoWriter({ suggest: async () => [], ask: async () => { throw new Error('no endpoint'); } });
     expect(listPlanSeo(planId)[0]).toMatchObject({ status: 'failed', skeleton_status: '' });
   });
 });

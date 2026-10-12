@@ -108,6 +108,7 @@ const CSS = `
 .kw-seo-facts dt { color: var(--soft); font-size: 13px; }
 .kw-seo-facts dd { margin: 0; font-size: 14px; }
 .kw-seo-facts dd.off { color: var(--bad); font-weight: 600; }
+.kw-kept { margin-top: 12px; color: var(--soft); font-size: 13px; display: grid; gap: 2px; border-left: 2px solid var(--line-strong); padding-left: 10px; }
 .kw-seo-problems { margin-top: 12px; color: var(--bad); font-size: 14px; display: grid; gap: 2px; }
 .kw-seo-retry { margin: 0 0 14px; display: flex; justify-content: flex-start; flex-wrap: wrap; }
 .kw-skel { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 12px; }
@@ -378,6 +379,15 @@ const retryNote = (row: SeoRow): Html => {
   return html`<p class="kw-none" style="margin:6px 0 0">Tries again by itself ${minutes ? `in about ${minutes} minute${minutes === 1 ? '' : 's'}` : 'within a minute'} (Platform → Automatic retries).</p>`;
 };
 
+/**
+ * A step that carried on after every round of corrections with something
+ * still wrong: not a fail, but worth seeing.
+ */
+const keptList = (status: string, text: string): Html =>
+  status === 'done' && text
+    ? html`<div class="kw-kept">${text.split('\n').filter(Boolean).map((p) => html`<div>${p}</div>`)}</div>`
+    : raw('');
+
 const problemList = (text: string): Html =>
   html`<div class="kw-seo-problems">${text.split('\n').filter(Boolean).map((p) => html`<div>${p}</div>`)}</div>`;
 
@@ -405,7 +415,7 @@ function seoCard(row: SeoRow, intent: string): Html {
           ${row.reasoning ? html`<div class="wide"><dt>Why it works</dt><dd>${row.reasoning}</dd></div>` : raw('')}
         </dl>`
       : html`<p class="kw-none" style="margin:4px 0 0">${row.status === 'writing' ? 'The AI is writing this now.' : 'Waiting for its turn.'}</p>`}
-    ${row.status === 'failed' ? html`${problemList(row.problems)}${retryNote(row)}` : raw('')}`;
+    ${row.status === 'failed' ? html`${problemList(row.problems)}${retryNote(row)}` : keptList(row.status, row.problems)}`;
   return card(head, body, row.status === 'failed');
 }
 
@@ -449,7 +459,7 @@ function skeletonCard(row: SeoRow, intent: string): Html {
       : html`<p class="kw-none" style="margin:4px 0 0">${row.status !== 'done'
           ? 'The skeleton is made once this keyword has its SEO metadata.'
           : row.skeleton_status === 'writing' ? 'The AI is designing this outline now.' : 'Waiting for its turn.'}</p>`}
-    ${row.skeleton_status === 'failed' ? html`${problemList(row.skeleton_problems)}${retryNote(row)}` : raw('')}`;
+    ${row.skeleton_status === 'failed' ? html`${problemList(row.skeleton_problems)}${retryNote(row)}` : keptList(row.skeleton_status, row.skeleton_problems)}`;
   return card(head, body, row.skeleton_status === 'failed');
 }
 
@@ -553,7 +563,7 @@ function recipeCard(row: SeoRow, intent: string): Html {
       : html`<p class="kw-none" style="margin:4px 0 0">${row.status !== 'done'
           ? 'The recipe is made once this keyword has its SEO metadata.'
           : row.recipe_status === 'writing' ? 'The AI is writing this recipe now.' : 'Waiting for its turn.'}</p>`}
-    ${row.recipe_status === 'failed' ? html`${problemList(row.recipe_problems)}${retryNote(row)}` : raw('')}`;
+    ${row.recipe_status === 'failed' ? html`${problemList(row.recipe_problems)}${retryNote(row)}` : keptList(row.recipe_status, row.recipe_problems)}`;
   return card(head, body, row.recipe_status === 'failed');
 }
 
@@ -597,7 +607,7 @@ function articleCard(row: SeoRow, intent: string): Html {
           <p class="kw-none" style="margin:8px 0 16px">${row.article_md
             ? 'The sections written before the failed one are kept below. Carrying on writes from the failed section.'
             : 'The first section failed, so nothing is kept yet.'}</p>`
-      : raw('')}
+      : keptList(row.article_status, row.article_problems)}
     ${row.article_md
       ? html`<article class="kw-article"><h1>${row.title}</h1>${raw(markdownToHtml(row.article_md))}</article>`
       : failed
@@ -686,7 +696,7 @@ function imagesCard(row: SeoRow, intent: string, pictures: PictureRow[]): Html {
             : raw('')}
         </div>`
       : raw('')}
-    ${row.images_status === 'failed' ? html`${problemList(row.images_problems)}${retryNote(row)}` : raw('')}
+    ${row.images_status === 'failed' ? html`${problemList(row.images_problems)}${retryNote(row)}` : keptList(row.images_status, row.images_problems)}
     ${promptsDone
       ? html`<div class="kw-img">
           <dl class="kw-img-theme">

@@ -24,7 +24,7 @@ Rules:
 - When a fixed recipe is given, never contradict it: any ingredient, amount or step you mention is the recipe's, with no additions. If the keyword is the dish itself, build the outline from the recipe (for a sub-page, the step H3s follow the recipe's steps). If the keyword is about something done to the dish (decorating, frosting, storing, serving, fixing), the outline is about that; the recipe only tells you which cake or dish it is, and its baking steps are not the article.
 - When a fixed recipe is given for the pillar, the second-to-last H2 is the full recipe (with "recipe" in its heading): its ingredients and steps, as extra content just before the FAQ.
 
-If you are given problems with your last answer, fix every one of them.
+If you are given corrections, your previous answer is shown with them: fix every numbered point exactly as it says, and keep everything else in your previous answer as it is.
 
 Answer with JSON only, exactly this shape:
 {"h1": "...", "sections": [{"h2": "...", "covers": "one sentence", "keyPoints": ["...", "..."], "words": 150, "h3": [{"h3": "...", "keyPoints": ["..."], "words": 80}]}]}

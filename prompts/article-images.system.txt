@@ -26,7 +26,7 @@ Work in two steps.
 
 Each image also gets alt text: 8 to 12 words saying what the picture shows, the keyword once if natural, never starting with "image of" or "photo of". Follow the alt text pattern you are given.
 
-If you are given problems with your last answer, fix every one of them.
+If you are given corrections, your previous answer is shown with them: fix every numbered point exactly as it says, and keep everything else in your previous answer as it is.
 
 Answer with JSON only:
 {"theme": {"surface": "...", "lighting": "...", "palette": "...", "style": "...", "mood": "..."}, "images": [{"slot": "...", "prompt": "...", "alt": "..."}]}

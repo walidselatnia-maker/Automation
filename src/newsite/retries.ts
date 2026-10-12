@@ -8,10 +8,11 @@ import { requeueArticle, requeueImages, requeueRecipe, requeueSeo, requeueSkelet
  * prompts), from the platform's retry settings: "Retry failed runs
  * automatically", how many times, and the wait in between.
  *
- * Each step already gets three rounds with its problems sent back to the AI.
- * When it still fails (or the AI could not be reached), it is tried again
- * after the wait, from where it stopped, up to the set number of times per
- * step; then it stays failed and waits for its "again" button.
+ * A mistake by the AI is never a fail: it is corrected round by round
+ * (rounds.ts). Only a technical failure is (the AI could not be reached):
+ * it is tried again after the wait, from where it stopped, up to the set
+ * number of times per step; then it stays failed and waits for its "again"
+ * button.
  */
 
 const log = createLogger('newsite-retries');

@@ -12,7 +12,7 @@ Real Google autocomplete searches for this keyword:
 Titles already used in this plan (do not repeat or closely copy):
 {{takenTitlesJson}}
 
-Problems with your last answer (fix all of them, or ignore if empty):
+Corrections to make to your previous answer (none on your first try):
 {{problemsJson}}
 
 Answer with the JSON object only.

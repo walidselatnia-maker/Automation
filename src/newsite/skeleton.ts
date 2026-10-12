@@ -2,6 +2,7 @@ import { all, get, run } from '../db/index.js';
 import { createLogger, errorMessage } from '../lib/logger.js';
 import { words } from '../seo/rules.js';
 import type { SeoRow } from './seo.js';
+import { correctUntilRight, keptNote } from './rounds.js';
 import { parseRecipe, type Recipe } from './recipe.js';
 
 /**
@@ -13,7 +14,6 @@ import { parseRecipe, type Recipe } from './recipe.js';
  */
 
 const log = createLogger('newsite-skeleton');
-const ROUNDS = 3;
 
 /**
  * The pillar is the hub: the longest, deepest page, covering the whole topic
@@ -146,6 +146,7 @@ export function checkSkeleton(k: Skeleton, ctx: SkeletonContext): string[] {
   if (k.h1 !== ctx.title) problems.push(`The H1 must be exactly the SEO title: "${ctx.title}".`);
 
   const n = k.sections.length;
+  if (n === 0) return ['The outline has no sections. Answer with the full outline: every H2 section with its key points and word count.'];
   const kind = ctx.role === 'pillar' ? 'The pillar' : 'A sub-page';
   if (n < limits.h2[0] || n > limits.h2[1]) {
     problems.push(`There are ${n} H2 sections; ${kind.toLowerCase()} needs ${limits.h2[0]} to ${limits.h2[1]}.`);
@@ -235,14 +236,17 @@ interface Context {
   persona: string;
 }
 
-/** Make one keyword's skeleton: up to three rounds, then done or failed. */
+/** Make one keyword's skeleton, correcting mistakes until it passes (rounds.ts). */
 export async function makeSkeleton(row: SeoRow, deps: SkeletonDeps): Promise<void> {
   const ctx = get<Context>(
     `SELECT p.pillar, w.niche, w.niche_context, w.persona
        FROM keyword_plans p JOIN new_websites w ON w.id = p.website_id WHERE p.id = ?`,
     row.plan_id,
   );
-  if (!ctx) return;
+  if (!ctx) {
+    run(`UPDATE keyword_seo SET skeleton_status = 'failed', skeleton_problems = 'Its keyword plan or website is gone.' WHERE id = ?`, row.id);
+    return;
+  }
   const type: ArticleType = articleTypeFor(ctx.niche) === 'recipe' && row.page !== 'article' ? 'recipe' : 'guide';
   run(`UPDATE keyword_seo SET skeleton_status = 'writing', article_type = ? WHERE id = ?`, type, row.id);
 
@@ -261,12 +265,9 @@ export async function makeSkeleton(row: SeoRow, deps: SkeletonDeps): Promise<voi
       : `This is a SUB-PAGE: one narrow angle of the pillar, covered in depth. ${limits.h2[0]} to ${limits.h2[1]} H2 sections ` +
         `and ${limits.words[0]} to ${limits.words[1]} words in total. Stay on this angle; the pillar covers the broad topic.`;
 
-  let problems: string[] = [];
-  let last: Skeleton | null = null;
-  for (let round = 0; round < ROUNDS; round++) {
-    let raw: string;
-    try {
-      raw = await deps.ask('article-skeleton', {
+  const outcome = await correctUntilRight<Skeleton>({
+    ask: (corrections) =>
+      deps.ask('article-skeleton', {
         keyword: row.keyword,
         role: row.role === 'pillar' ? 'the pillar page' : 'a sub-page of the pillar',
         pillar: ctx.pillar,
@@ -280,30 +281,28 @@ export async function makeSkeleton(row: SeoRow, deps: SkeletonDeps): Promise<voi
         depth,
         subKeywordsJson: JSON.stringify(subKeywords),
         recipeJson: recipe ? JSON.stringify(recipe) : '(no fixed recipe: this is not a recipe website)',
-        problemsJson: JSON.stringify(problems),
-      });
-    } catch (err) {
-      log.warn(`AI#2 could not reach the AI for "${row.keyword}": ${errorMessage(err)}`);
-      problems = ['The AI could not be reached. Check the AI keys on the Platform page.'];
-      break;
-    }
-    last = parseSkeleton(raw);
-    if (last) last.h1 = last.h1 || row.title;
-    problems = last
-      ? checkSkeleton(last, { title: row.title, focusKeyword: row.focus_keyword, keyword: row.keyword, role: row.role, pillar: ctx.pillar, subKeywords, recipe })
-      : ['The AI answer could not be read.'];
-    if (problems.length === 0) break;
-  }
+        problemsJson: corrections,
+      }),
+    parse: (raw) => {
+      const k = parseSkeleton(raw);
+      if (k) k.h1 = k.h1 || row.title;
+      return k;
+    },
+    check: (k) => checkSkeleton(k, { title: row.title, focusKeyword: row.focus_keyword, keyword: row.keyword, role: row.role, pillar: ctx.pillar, subKeywords, recipe }),
+    onError: (err) => log.warn(`AI#2 could not reach the AI for "${row.keyword}": ${errorMessage(err)}`),
+  });
+  const { problems, technical } = outcome;
+  const last = outcome.answer;
 
   run(
     `UPDATE keyword_seo SET skeleton_status = ?, skeleton_json = ?, skeleton_problems = ?,
        article_status = ?, article_md = '', article_words = 0, article_problems = '',
        images_status = '', images_json = '', images_problems = '' WHERE id = ?`,
-    problems.length ? 'failed' : 'done',
+    technical ? 'failed' : 'done',
     last ? JSON.stringify(last) : '',
-    problems.join('\n'),
-    // The article is written from the skeleton, so it follows a good one.
-    problems.length ? '' : 'pending',
+    technical ? problems.join('\n') : keptNote(problems),
+    // The article is written from the skeleton, so it follows it.
+    technical ? '' : 'pending',
     row.id,
   );
 }

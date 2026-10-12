@@ -120,14 +120,26 @@ describe('AI#1 writer', () => {
     expect(retry.persona).toBe('Storyteller');
   });
 
-  it('gives up after three rounds and says why', async () => {
+  it('sends a mistake back with the previous answer, and never counts it as a fail', async () => {
     queuePlanSeo(planId, 'pumpkin chocolate chip cookies', []);
-    let calls = 0;
-    await kickSeoWriter({ suggest: async () => [], ask: async () => { calls += 1; return JSON.stringify({ ...GOOD, title: 'x' }); } });
+    const corrections: string[] = [];
+    await kickSeoWriter({
+      suggest: async () => [],
+      ask: async (name, vars) => {
+        if (name !== 'seo-metadata') throw new Error('later steps are not part of this test');
+        corrections.push(String(vars.problemsJson));
+        return JSON.stringify({ ...GOOD, title: 'x' });
+      },
+    });
     const [row] = listPlanSeo(planId);
-    expect(calls).toBe(3);
-    expect(row).toMatchObject({ status: 'failed' });
-    expect(row!.problems).toMatch(/title is 1 characters/);
+    // The first try has no corrections; every later one has the previous answer and what to fix.
+    expect(corrections[0]).toMatch(/none: this is your first answer/);
+    expect(corrections[1]).toMatch(/\d\. The title is 1 characters/);
+    expect(corrections[1]).toMatch(/Your previous answer:\n\{"title":"x"/);
+    // After every round, the best attempt is kept and the step carries on: a mistake is not a fail.
+    expect(corrections).toHaveLength(10);
+    expect(row).toMatchObject({ status: 'done' });
+    expect(row!.problems).toMatch(/Kept after 10 rounds of corrections; still to fix:[\s\S]*The title is 1 characters/);
   });
 
   it('marks it failed with a plain reason when the AI is down', async () => {

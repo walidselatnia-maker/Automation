@@ -10,7 +10,7 @@ Rules:
 - Notes: short, useful tips or substitutions that stay within the keyword's promise.
 - Match the niche and the author persona.
 
-If you are given problems with your last answer, fix every one of them.
+If you are given corrections, your previous answer is shown with them: fix every numbered point exactly as it says, and keep everything else in your previous answer as it is.
 
 Answer with JSON only, exactly this shape:
 {"prepMinutes": 15, "cookMinutes": 12, "servings": 24, "difficulty": "easy", "cuisine": "American", "course": "Dessert",
