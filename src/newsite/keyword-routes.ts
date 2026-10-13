@@ -24,7 +24,7 @@ import { listChannels, websiteChannels } from './channels.js';
 import { listPlanSocialPosts } from './social.js';
 import { articleStepPage, imagesStepPage, publishStepPage, shareStepPage, keywordsPage, recipeStepPage, seoStepPage, skeletonStepPage } from './keywords-view.js';
 import { articleTypeFor } from './skeleton.js';
-import { clearPictures, isMainSlot, listPictures, listPlanPictures } from './pictures.js';
+import { clearPictures, isMainSlot, listPictures, listPlanPictures, listPlanSocialPictures } from './pictures.js';
 import { sweepRetries } from './retries.js';
 import type { Settings } from '../settings.js';
 import { asPage } from './keywords.js';
@@ -244,7 +244,7 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
                     : step === 'publish'
                       ? publishStepPage(site, plan, rows, listPlanPictures(plan.id))
                       : step === 'share'
-                        ? shareStepPage(site, plan, rows, websiteChannels(site.id), listPlanSocialPosts(plan.id), listChannels())
+                        ? shareStepPage(site, plan, rows, websiteChannels(site.id), listPlanSocialPosts(plan.id), listChannels(), listPlanSocialPictures(plan.id))
                       : imagesStepPage(site, plan, rows, listPlanPictures(plan.id), deps.flowProject?.(site) ?? '', deps.nextStepAt?.() ?? 0),
           flash: deps.readFlash(request.query),
         }),

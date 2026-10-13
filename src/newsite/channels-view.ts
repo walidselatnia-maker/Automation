@@ -19,6 +19,8 @@ const CSS = `
 .ch-card.soon { background: transparent; box-shadow: none; border-style: dashed; }
 .ch-top { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .ch-top h2 { font-size: 18px; }
+.ch-rules { text-decoration: none; }
+.ch-rules:hover .ns-badge { text-decoration: underline; }
 .ch-soon { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: 999px; font: 600 13px/1 var(--body); white-space: nowrap; background: var(--raised); color: var(--soft); border: 1px solid var(--line); }
 .ch-via { border-top: 1px solid var(--line); padding-top: 12px; display: grid; gap: 8px; }
 .ch-via-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
@@ -56,7 +58,7 @@ const VIA_TITLE: Record<Via, string> = { buffer: 'Through Buffer', api: 'Through
 const sites = (n: number): string => (n === 1 ? '1 website' : `${n} websites`);
 
 /** The Channels page: every platform, its channels by how they post, and a way to add one. */
-export function channelsPage(channels: ChannelRow[], usedBy: Map<number, number>): Html {
+export function channelsPage(channels: ChannelRow[], usedBy: Map<number, number>, rulesOk: (platform: Platform) => boolean = () => true): Html {
   return html`
     <style>${raw(CSS)}</style>
     <div class="ns-head">
@@ -75,7 +77,8 @@ export function channelsPage(channels: ChannelRow[], usedBy: Map<number, number>
         }
         const key = p.key as Platform;
         return html`<section class="ch-card">
-          <div class="ch-top"><h2>${p.label}</h2></div>
+          <div class="ch-top"><h2>${p.label}</h2>
+            <a class="ch-rules" href="/new-website/channels/rules/${key}">${rulesOk(key) ? html`<span class="ns-badge ok">Rules approved</span>` : html`<span class="ns-badge bad">Rules need your approval</span>`}</a></div>
           ${VIAS[key].map((via) => {
             const mine = channels.filter((c) => c.platform === key && c.via === via);
             return html`<div class="ch-via">

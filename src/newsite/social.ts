@@ -6,6 +6,7 @@ import { BufferClient, type BufferChannel } from '../integrations/buffer.js';
 import { FacebookClient } from '../integrations/facebook.js';
 import { createLogger, errorMessage } from '../lib/logger.js';
 import { pictureMediaUrl } from '../core/media-links.js';
+import { limitOf, loadPlatformRules, rulesApproved, type PlatformRules, type RulesPlatform } from './platform-rules.js';
 import { loadTemplate } from '../pipeline/prompts.js';
 import type { Settings } from '../settings.js';
 import { bufferTokenOf, fbTokenOf, getChannel, websiteChannels, type ChannelRow } from './channels.js';
@@ -54,7 +55,7 @@ export interface SocialPostRow {
   seo_id: number;
   channel_id: number;
   kind: SocialKind;
-  status: 'pending' | 'picture' | 'waiting' | 'sent' | 'failed';
+  status: 'pending' | 'held' | 'picture' | 'waiting' | 'sent' | 'failed';
   template: number;
   title: string;
   text: string;
@@ -167,6 +168,28 @@ export function createSocialPosts(seoId: number): number {
   return added;
 }
 
+/** The owner approved a platform's rules: its held posts go to work. */
+export function releaseHeld(platform: RulesPlatform): number {
+  return Number(
+    run(
+      `UPDATE newsite_social_posts SET status = 'pending', error = '' WHERE status = 'held' AND channel_id IN (SELECT id FROM newsite_channels WHERE platform = ?)`,
+      platform,
+    ).changes,
+  );
+}
+
+/** Make a post's words and picture again from the article (not once it went out). */
+export function remakeSocialPost(id: number): boolean {
+  const item = getSocialPost(id);
+  if (!item || item.status === 'sent' || item.status === 'picture') return false;
+  if (item.picture_id) run(`DELETE FROM newsite_pictures WHERE id = ? AND status <> 'making'`, item.picture_id);
+  run(
+    `UPDATE newsite_social_posts SET status = 'pending', title = '', text = '', alt = '', overlay = '', picture_id = NULL, error = '', retry_at = NULL WHERE id = ?`,
+    id,
+  );
+  return true;
+}
+
 /** Put a failed post back to work, keeping what it already has. */
 export function retrySocialPost(id: number): void {
   run(`UPDATE newsite_social_posts SET status = 'pending', error = '', retry_at = NULL WHERE id = ? AND status = 'failed'`, id);
@@ -209,22 +232,38 @@ export const parsePinText = (raw: string): PinText | null => {
   return o ? { headline: str(o, 'headline'), cta: str(o, 'cta'), title: str(o, 'title'), description: str(o, 'description'), alt: str(o, 'alt') } : null;
 };
 
-export function checkPinText(p: PinText, domain: string): string[] {
+const range = (n: number, [min, max]: [number, number]): boolean => n >= min && n <= max;
+const EMOJI = /\p{Extended_Pictographic}/gu;
+
+/** A pin against the Pinterest rules file's limits (and the link rule, always). */
+export function checkPinText(p: PinText, domain: string, rules: PlatformRules = loadPlatformRules('pinterest')): string[] {
   const problems: string[] = [];
-  if (words(p.headline) < 2 || words(p.headline) > 6) problems.push(`The headline has ${words(p.headline)} words; write 2 to 6 (it is printed on the picture).`);
-  if (words(p.cta) < 2 || words(p.cta) > 4) problems.push(`The cta has ${words(p.cta)} words; write 2 to 4, like "Save for Later".`);
-  if (p.title.length < 40 || p.title.length > 100) problems.push(`The title is ${p.title.length} characters; write 40 to 100.`);
-  if (p.description.length < 150 || p.description.length > 450) problems.push(`The description is ${p.description.length} characters; write 150 to 450.`);
-  if (words(p.alt) < 8 || words(p.alt) > 20) problems.push(`The alt text has ${words(p.alt)} words; write 8 to 20.`);
+  const [hw, cw, tc, dc, aw] = [
+    limitOf(rules, 'headline_words', [2, 6]),
+    limitOf(rules, 'cta_words', [2, 4]),
+    limitOf(rules, 'title_chars', [40, 100]),
+    limitOf(rules, 'description_chars', [150, 450]),
+    limitOf(rules, 'alt_words', [8, 20]),
+  ];
+  if (!range(words(p.headline), hw)) problems.push(`The headline has ${words(p.headline)} words; write ${hw[0]} to ${hw[1]} (it is printed on the picture).`);
+  if (!range(words(p.cta), cw)) problems.push(`The cta has ${words(p.cta)} words; write ${cw[0]} to ${cw[1]}, like "Save for Later".`);
+  if (!range(p.title.length, tc)) problems.push(`The title is ${p.title.length} characters; write ${tc[0]} to ${tc[1]}.`);
+  if (!range(p.description.length, dc)) problems.push(`The description is ${p.description.length} characters; write ${dc[0]} to ${dc[1]}.`);
+  if (!range(words(p.alt), aw)) problems.push(`The alt text has ${words(p.alt)} words; write ${aw[0]} to ${aw[1]}.`);
   if (/!/.test(p.title)) problems.push('The title has an exclamation mark; remove it.');
   if (/#\w/.test(p.description)) problems.push('The description has hashtags; remove them and use plain words.');
   for (const [field, value] of Object.entries(p)) problems.push(...noLink(field, value, domain));
   return problems;
 }
 
-export function checkFbText(text: string, domain: string): string[] {
+/** A Facebook post against the Facebook rules file's limits (and the link rule, always). */
+export function checkFbText(text: string, domain: string, rules: PlatformRules = loadPlatformRules('facebook')): string[] {
   const problems: string[] = [];
-  if (text.length < 80 || text.length > 500) problems.push(`The post is ${text.length} characters; write 80 to 500.`);
+  const tc = limitOf(rules, 'text_chars', [80, 500]);
+  const em = limitOf(rules, 'emoji', [0, 2]);
+  const emoji = (text.match(EMOJI) ?? []).length;
+  if (!range(text.length, tc)) problems.push(`The post is ${text.length} characters; write ${tc[0]} to ${tc[1]}.`);
+  if (!range(emoji, em)) problems.push(`The post has ${emoji} emoji; use ${em[0]} to ${em[1]}.`);
   if (/#\w/.test(text)) problems.push('The post has hashtags; remove them.');
   problems.push(...noLink('post', text, domain));
   return problems;
@@ -245,12 +284,18 @@ const fail = (id: number, error: string): void => {
 
 const articleStart = (md: string): string => md.slice(0, 1500);
 
+/** The article's headings, one per line: what the post must stay about. */
+const articleOutline = (md: string): string =>
+  md.split('\n').filter((l) => /^#{1,3}\s/.test(l)).map((l) => l.replace(/^#+\s*/, '- ')).join('\n') || '- (no headings)';
+
 const nicheOf = (site: NewWebsiteRow): string => site.niche;
 
-async function writePinText(w: Work, deps: SocialDeps): Promise<boolean> {
+async function writePinText(w: Work, deps: SocialDeps, rules: PlatformRules): Promise<boolean> {
   const out = await correctUntilRight<PinText>({
     ask: (corrections) =>
       deps.ask('newsite-pin-text', {
+        platformRules: rules.text,
+        articleOutline: articleOutline(w.row.article_md),
         title: w.row.title,
         focusKeyword: w.row.focus_keyword,
         keyword: w.row.keyword,
@@ -260,7 +305,7 @@ async function writePinText(w: Work, deps: SocialDeps): Promise<boolean> {
         problemsJson: corrections,
       }),
     parse: parsePinText,
-    check: (p) => checkPinText(p, w.site.domain),
+    check: (p) => checkPinText(p, w.site.domain, rules),
   });
   if (out.technical || !out.answer) {
     fail(w.item.id, out.problems.join(' '));
@@ -275,12 +320,35 @@ async function writePinText(w: Work, deps: SocialDeps): Promise<boolean> {
   return true;
 }
 
+/** The article's own picture descriptions: what a social picture shows. */
+function articleScenes(row: SeoRow): { scene: string; detail: string } {
+  const set = parseImageSet(row.images_json);
+  const prompt = (slot: string) => set?.images.find((im) => im.slot === slot)?.prompt ?? '';
+  const scene = prompt('feature') || prompt('serving') || row.title;
+  return { scene, detail: prompt('closeup') || prompt('overhead') || scene };
+}
+
+/** Put a social picture in the picture queue (3:4, one at a time with the article pictures), and wait for it. */
+function queueSocialPicture(w: Work, slot: string, prompt: string, template: number, deps: SocialDeps): void {
+  run(`DELETE FROM newsite_pictures WHERE seo_id = ? AND slot = ?`, w.row.id, slot);
+  const pictureId = Number(
+    run(
+      `INSERT INTO newsite_pictures (seo_id, slot, position, prompt, alt, status) VALUES (?, ?, 1000, ?, ?, 'queued')`,
+      w.row.id, slot, prompt, w.item.alt,
+    ).lastInsertRowid,
+  );
+  run(`UPDATE newsite_social_posts SET status = 'picture', picture_id = ?, template = ? WHERE id = ?`, pictureId, template, w.item.id);
+  deps.startPictures?.();
+}
+
+/** Facebook's own post picture, from the article's scenes; no words on it. */
+function queueFbPicture(w: Work, deps: SocialDeps): void {
+  queueSocialPicture(w, `fb-${w.item.id}`, loadTemplate('newsite-fb-1.template.txt', articleScenes(w.row)), 1, deps);
+}
+
 /** Queue the pin's own picture, from the next template in the channel's rotation. */
 function queuePinPicture(w: Work, deps: SocialDeps): void {
-  const set = parseImageSet(w.row.images_json);
-  const prompt = (slot: string) => set?.images.find((im) => im.slot === slot)?.prompt ?? '';
-  const scene = prompt('feature') || prompt('serving') || w.row.title;
-  const detail = prompt('closeup') || prompt('overhead') || scene;
+  const { scene, detail } = articleScenes(w.row);
   const template = w.channel.next_template % PIN_TEMPLATES;
   run('UPDATE newsite_channels SET next_template = next_template + 1 WHERE id = ?', w.channel.id);
   const overlay = JSON.parse(w.item.overlay || '{}') as { headline?: string; cta?: string };
@@ -291,15 +359,7 @@ function queuePinPicture(w: Work, deps: SocialDeps): void {
     cta: overlay.cta ?? '',
     domain: w.site.domain,
   });
-  run(`DELETE FROM newsite_pictures WHERE seo_id = ? AND slot = ?`, w.row.id, `pin-${w.item.id}`);
-  const pictureId = Number(
-    run(
-      `INSERT INTO newsite_pictures (seo_id, slot, position, prompt, alt, status) VALUES (?, ?, 1000, ?, ?, 'queued')`,
-      w.row.id, `pin-${w.item.id}`, text, w.item.alt,
-    ).lastInsertRowid,
-  );
-  run(`UPDATE newsite_social_posts SET status = 'picture', picture_id = ?, template = ? WHERE id = ?`, pictureId, template + 1, w.item.id);
-  deps.startPictures?.();
+  queueSocialPicture(w, `pin-${w.item.id}`, text, template + 1, deps);
 }
 
 /** The board for this keyword, from the boards on the channel's Pinterest account. */
@@ -401,11 +461,13 @@ async function sendFacebookThroughBuffer(w: Work, picture: PictureRow, deps: Soc
   }
 }
 
-async function sendFacebookImage(w: Work, deps: SocialDeps, now: number): Promise<void> {
+async function sendFacebookImage(w: Work, deps: SocialDeps, now: number, rules: PlatformRules): Promise<void> {
   if (!w.item.text) {
     const out = await correctUntilRight<string>({
       ask: (corrections) =>
         deps.ask('newsite-fb-post', {
+          platformRules: rules.text,
+          articleOutline: articleOutline(w.row.article_md),
           title: w.row.title,
           focusKeyword: w.row.focus_keyword,
           keyword: w.row.keyword,
@@ -419,15 +481,15 @@ async function sendFacebookImage(w: Work, deps: SocialDeps, now: number): Promis
         const o = parseObject(raw);
         return o ? str(o, 'text') || null : null;
       },
-      check: (t) => checkFbText(t, w.site.domain),
+      check: (t) => checkFbText(t, w.site.domain, rules),
     });
     if (out.technical || !out.answer) return fail(w.item.id, out.problems.join(' '));
     run('UPDATE newsite_social_posts SET text = ? WHERE id = ?', out.answer, w.item.id);
     w.item.text = out.answer;
   }
-  const pictures = listPictures(w.row.id).filter((p) => isMainSlot(p.slot) && p.status === 'done');
-  const picture = pictures.find((p) => p.slot === 'feature') ?? pictures[0];
-  if (!picture) return fail(w.item.id, 'The article has no picture to post.');
+  // Its own picture, made for Facebook: queued once, then the post waits for it.
+  const picture = w.item.picture_id ? get<PictureRow>('SELECT * FROM newsite_pictures WHERE id = ?', w.item.picture_id) : undefined;
+  if (!picture || picture.status !== 'done') return queueFbPicture(w, deps);
   if (w.channel.via === 'buffer') return sendFacebookThroughBuffer(w, picture, deps, now);
   const api = (deps.facebook ?? realFacebook)(fbTokenOf(w.channel, deps.encryptionKey));
   let postId: string;
@@ -454,12 +516,18 @@ async function work(item: SocialPostRow, deps: SocialDeps, now: number): Promise
   if (!row || !channel || !site) return fail(item.id, 'Its article, website or channel is gone.');
   if (row.post_status !== 'published' || !row.post_url) return fail(item.id, 'The article is not posted on the website.');
   const w: Work = { item, row, site, channel };
+  const rules = loadPlatformRules(channel.platform as RulesPlatform);
+  if (!rulesApproved(rules, deps.settings)) {
+    // Nothing is made or sent with rules the owner has not approved.
+    run(`UPDATE newsite_social_posts SET status = 'held', error = ? WHERE id = ?`, `Waiting for you to approve the ${channel.platform === 'pinterest' ? 'Pinterest' : 'Facebook'} rules (Channels page).`, item.id);
+    return;
+  }
   if (item.kind === 'pin') {
-    if (!item.text && !(await writePinText(w, deps))) return;
+    if (!item.text && !(await writePinText(w, deps, rules))) return;
     if (!item.picture_id) return queuePinPicture(w, deps);
     return sendPin(w, deps, now);
   }
-  return sendFacebookImage(w, deps, now);
+  return sendFacebookImage(w, deps, now, rules);
 }
 
 let running: Promise<void> | null = null;

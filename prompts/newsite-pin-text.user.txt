@@ -1,8 +1,15 @@
-Article title: {{title}}
-Focus keyword: {{focusKeyword}}
+The Pinterest rules:
+{{platformRules}}
+
+The article
 Keyword: {{keyword}}
+Focus keyword: {{focusKeyword}}
+Title: {{title}}
 Meta description: {{description}}
 Website niche: {{niche}}
+
+Its headings:
+{{articleOutline}}
 
 The start of the article:
 {{articleStart}}

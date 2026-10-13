@@ -2,8 +2,10 @@ import type { FastifyInstance } from 'fastify';
 import { html, raw, type Html } from '../web/views/layout.js';
 import { listChannels, PLATFORMS, type ChannelRow } from './channels.js';
 import { newLayout, type NewFlash } from './layout.js';
-import { createSocialPosts, getSocialPost, kickSocial, listSocialPosts, retrySocialPost, type SocialDeps, type SocialPostRow } from './social.js';
+import { createSocialPosts, getSocialPost, kickSocial, listSocialPosts, releaseHeld, remakeSocialPost, retrySocialPost, type SocialDeps, type SocialPostRow } from './social.js';
 import { getSeoRow, listPlanSeo } from './seo.js';
+import { approveRules, loadPlatformRules, rulesApproved, type RulesPlatform } from './platform-rules.js';
+import { markdownToHtml } from './markdown.js';
 
 /**
  * The Shared content page: everything that went out, organised as platform,
@@ -33,6 +35,7 @@ const CSS = `
 
 const STATUS: Record<SocialPostRow['status'], string> = {
   pending: 'Queued',
+  held: 'Waiting for the rules to be approved',
   picture: 'Making its picture',
   waiting: 'Waiting for room',
   sent: 'Posted',
@@ -128,6 +131,68 @@ export function registerSocialRoutes(app: FastifyInstance, deps: SocialDeps & { 
     for (const r of listPlanSeo(planId).filter(isPublished)) added += createSocialPosts(r.id);
     void kickSocial(deps);
     return reply.redirect(sharePage(planId, added ? `Sharing ${added} post${added === 1 ? '' : 's'}, one after the other.` : 'Everything published is already shared.'), 303);
+  });
+
+  /** Make a post's words and picture again from the article. */
+  app.post('/new-website/keywords/share/post/:id/remake', async (request, reply) => {
+    const post = getSocialPost(Number((request.params as { id: string }).id) || 0);
+    const row = post ? getSeoRow(post.seo_id) : undefined;
+    if (!post || !row) return reply.redirect('/new-website/keywords', 303);
+    const ok = remakeSocialPost(post.id);
+    void kickSocial(deps);
+    return reply.redirect(sharePage(row.plan_id, ok ? 'Making it again from the article.' : 'It already went out, or its picture is being made.', ok ? 'ok' : 'error'), 303);
+  });
+
+  /* -- Each platform's rules file, and the owner's approval ----------------- */
+
+  /** The page has the title already, and a list item wrapped onto the next line is one item. */
+  const forDisplay = (text: string): string => text.replace(/^# .*\n+/, '').replace(/\n {2,}/g, ' ');
+
+  const PLATFORM_NAME: Record<RulesPlatform, string> = { pinterest: 'Pinterest', facebook: 'Facebook' };
+  const platformOf = (raw: unknown): RulesPlatform | null => (raw === 'pinterest' || raw === 'facebook' ? raw : null);
+
+  app.get('/new-website/channels/rules/:platform', async (request, reply) => {
+    const platform = platformOf((request.params as { platform: string }).platform);
+    if (!platform) return reply.redirect('/new-website/channels', 303);
+    const rules = loadPlatformRules(platform);
+    const ok = rulesApproved(rules, deps.settings);
+    return reply.type('text/html; charset=utf-8').send(
+      newLayout({
+        title: `${PLATFORM_NAME[platform]} rules`,
+        active: '/new-website/channels',
+        flash: deps.readFlash(request.query),
+        body: html`
+          <style>${raw(CSS)}.rl-body { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); padding: 24px 28px; box-shadow: var(--shadow); max-width: 72ch; }
+            .rl-body h1 { font-size: 24px; margin: 0 0 12px; } .rl-body h2 { font-size: 18px; margin: 24px 0 8px; } .rl-body ul { padding-left: 20px; display: grid; gap: 4px; }
+            .rl-state { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 0 0 20px; }</style>
+          <div class="ns-head">
+            <div>
+              <h1 class="ns-title">${PLATFORM_NAME[platform]} rules</h1>
+              <p class="ns-lede">What the sharing phase makes for every ${PLATFORM_NAME[platform]} channel, after an article is published. The AI follows this file, and every post is checked against its Limits. Kept in prompts/platforms/${platform}.md.</p>
+            </div>
+            <a class="ns-btn quiet" href="/new-website/channels">All channels</a>
+          </div>
+          <div class="rl-state">
+            ${ok
+              ? html`<span class="ns-badge ok">Approved</span><span class="sc-meta">Posts are made and sent with these rules. If the file changes, it needs approving again.</span>`
+              : html`<span class="ns-badge bad">Needs your approval</span><span class="sc-meta">Nothing is made or posted on ${PLATFORM_NAME[platform]} until you approve these rules.</span>
+                <form method="post" action="/new-website/channels/rules/${platform}/approve" style="margin:0"><button class="ns-btn primary">Approve these rules</button></form>`}
+          </div>
+          <div class="rl-body">${raw(markdownToHtml(forDisplay(rules.text)))}</div>`,
+      }),
+    );
+  });
+
+  app.post('/new-website/channels/rules/:platform/approve', async (request, reply) => {
+    const platform = platformOf((request.params as { platform: string }).platform);
+    if (!platform) return reply.redirect('/new-website/channels', 303);
+    approveRules(loadPlatformRules(platform), deps.settings);
+    const released = releaseHeld(platform);
+    void kickSocial(deps);
+    return reply.redirect(
+      `/new-website/channels/rules/${platform}?ok=${encodeURIComponent(`${PLATFORM_NAME[platform]} rules approved.${released ? ` ${released} waiting post${released === 1 ? '' : 's'} carry on.` : ''}`)}`,
+      303,
+    );
   });
 
   /** Try a failed post again, from the Share step. */

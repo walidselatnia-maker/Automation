@@ -168,6 +168,8 @@ export const STEP_CONTEXTS: Record<string, Record<string, unknown>> = {
     description: 'd',
     niche: 'n',
     articleStart: 'a',
+    articleOutline: 'o',
+    platformRules: 'r',
     problemsJson: '[]',
   },
   'newsite-pick-board': {
@@ -184,6 +186,8 @@ export const STEP_CONTEXTS: Record<string, Record<string, unknown>> = {
     niche: 'n',
     persona: 'p',
     articleStart: 'a',
+    articleOutline: 'o',
+    platformRules: 'r',
     problemsJson: '[]',
   },
   'pick-category': {

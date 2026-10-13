@@ -11,6 +11,7 @@ import { registerPublishRoutes } from './publish-routes.js';
 import { addStepPicture, publishWhenReady, type PublishDeps } from './publish.js';
 import { createSocialPosts, kickSocial, onPinPicture, type SocialDeps } from './social.js';
 import { registerSocialRoutes } from './social-routes.js';
+import { loadPlatformRules, rulesApproved } from './platform-rules.js';
 import { describeProjectId, flowProjectFor, NEXT_STEP_KEY } from './pictures.js';
 import { platformReady, registerPlatformRoutes } from './platform-routes.js';
 import {
@@ -89,7 +90,18 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
   if (deps.settings) {
     registerPlatformRoutes(app, { settings: deps.settings, encryptionKey: deps.encryptionKey, readFlash, fetchImpl: deps.fetchImpl });
     registerImageModelRoutes(app, deps.settings);
-    registerChannelRoutes(app, { encryptionKey: deps.encryptionKey, readFlash, lookups: deps.channelLookups });
+    registerChannelRoutes(app, {
+      encryptionKey: deps.encryptionKey,
+      readFlash,
+      lookups: deps.channelLookups,
+      rulesOk: (platform) => {
+        try {
+          return rulesApproved(loadPlatformRules(platform), deps.settings!);
+        } catch {
+          return false;
+        }
+      },
+    });
     const publish: PublishDeps = { settings: deps.settings, encryptionKey: deps.encryptionKey, fetchImpl: deps.fetchImpl, dataDir: deps.dataDir, ask };
     registerPublishRoutes(app, { ...publish, autoResume: deps.autoPictures });
     const social: SocialDeps = { settings: deps.settings, encryptionKey: deps.encryptionKey, ask, dataDir: deps.dataDir, fetchImpl: deps.fetchImpl };

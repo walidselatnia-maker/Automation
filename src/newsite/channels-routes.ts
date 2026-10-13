@@ -60,6 +60,8 @@ export interface ChannelRouteDeps {
   encryptionKey: Buffer;
   readFlash: (query: unknown) => NewFlash;
   lookups?: ChannelLookups;
+  /** Whether a platform's rules file is approved, for the Channels page. */
+  rulesOk?: (platform: Platform) => boolean;
 }
 
 /**
@@ -144,7 +146,7 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
   app.get('/new-website/channels', async (request, reply) => {
     const channels = listChannels();
     const usedBy = new Map(channels.map((c) => [c.id, channelWebsiteIds(c.id).length]));
-    return send(reply, page('Channels', channelsPage(channels, usedBy), request));
+    return send(reply, page('Channels', channelsPage(channels, usedBy, deps.rulesOk), request));
   });
 
   /* -- Step 1: connect ---------------------------------------------------- */

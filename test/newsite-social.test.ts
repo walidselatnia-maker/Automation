@@ -13,6 +13,7 @@ import { shareStepPage } from '../src/newsite/keywords-view.js';
 import { listPlanSeo, queuePlanSeo } from '../src/newsite/seo.js';
 import { listChannels, saveBufferChannel, saveFacebookApiChannel, setWebsiteChannels, websiteChannels } from '../src/newsite/channels.js';
 import { kickPictureMaker, pictureDir, resetPictureMakerState } from '../src/newsite/pictures.js';
+import { approveRules, loadPlatformRules } from '../src/newsite/platform-rules.js';
 import {
   checkFbText,
   checkPinText,
@@ -22,6 +23,8 @@ import {
   listPlanSocialPosts,
   listSocialPosts,
   onPinPicture,
+  releaseHeld,
+  remakeSocialPost,
   type BufferApi,
   type FacebookApi,
   type SocialDeps,
@@ -98,6 +101,18 @@ describe('Sharing an article on its channels', () => {
     },
   });
 
+  /** The picture maker makes the queued social pictures (3:4), and hands each back to its post. */
+  const makeSocialPictures = async (): Promise<string[]> => {
+    const shapes: string[] = [];
+    await kickPictureMaker({
+      settings, dataDir, now: () => clock, sleep: async () => {},
+      make: async (_p: string, _proj: string, shape: string) => { shapes.push(shape); return { data: Buffer.from('pic'), contentType: 'image/png' }; },
+      afterPin: (id, ok) => onPinPicture(id, ok, deps()),
+    });
+    await kickSocial(deps());
+    return shapes;
+  };
+
   /** A made picture: a row and its file. */
   const made = (slot: string) => {
     run(`INSERT INTO newsite_pictures (seo_id, slot, position, prompt, alt, status, file) VALUES (?, ?, 0, ?, 'alt', 'done', ?)`, seoId, slot, `prompt ${slot}`, `${slot}.png`);
@@ -110,6 +125,9 @@ describe('Sharing an article on its channels', () => {
     settings = new Settings(KEY);
     settings.set('buffer_hold_hours', '12');
     settings.set('public_base_url', 'https://dash.example.com');
+    // The owner approved both platforms' rules (a test of holding is below).
+    approveRules(loadPlatformRules('pinterest'), settings);
+    approveRules(loadPlatformRules('facebook'), settings);
     websiteId = createNewWebsite(
       {
         name: 'Long Livo', domain: 'f.longlivo.com', apiKey: 'sk_test_ABCDEFGHIJKLMNOP', niche: 'Recipes', nicheContext: '',
@@ -267,11 +285,19 @@ describe('Sharing an article on its channels', () => {
     expect(getSocialPost(id)).toMatchObject({ status: 'sent' });
   });
 
-  it('a Facebook image post: the feature picture and the words, the link only in the first comment', async () => {
-    made('feature');
+  it('a Facebook image post: its words, its own 3:4 picture from the article, the link only in the first comment', async () => {
     setWebsiteChannels(websiteId, [fbChannel()]);
     createSocialPosts(seoId);
     await kickSocial(deps());
+    // Words written from the article and the Facebook rules; its own picture queued.
+    const [item] = listSocialPosts();
+    expect(item).toMatchObject({ status: 'picture' });
+    expect(asked.find((a) => a.name === 'newsite-fb-post')!.vars.platformRules).toContain('# Facebook rules');
+    const pic = get<{ slot: string; prompt: string }>('SELECT slot, prompt FROM newsite_pictures WHERE id = ?', item!.picture_id)!;
+    expect(pic.slot).toBe(`fb-${item!.id}`);
+    expect(pic.prompt).toContain('FEATURE SCENE');
+    expect(pic.prompt).toMatch(/No words/);
+    expect(await makeSocialPictures()).toEqual(['PORTRAIT_3_4']);
     expect(fbPosts).toHaveLength(1);
     expect(fbPosts[0]!.message).not.toMatch(/http|longlivo/);
     expect(comments).toEqual([{ postId: 'page_123', message: POST_URL }]);
@@ -279,10 +305,10 @@ describe('Sharing an article on its channels', () => {
   });
 
   it('a Facebook image post through Buffer on a paid plan: the link only as Buffer’s first comment', async () => {
-    made('feature');
     setWebsiteChannels(websiteId, [fbBufferChannel(true)]);
     createSocialPosts(seoId);
     await kickSocial(deps());
+    await makeSocialPictures();
     expect(fbPosts).toHaveLength(0); // not through the Facebook API
     expect(bufferFb).toHaveLength(1);
     expect(bufferFb[0]).toMatchObject({ channelId: 'ch-fb', firstComment: POST_URL });
@@ -294,23 +320,59 @@ describe('Sharing an article on its channels', () => {
 
   it('a pin needs the platform’s public address: Buffer fetches the picture from it', async () => {
     settings.set('public_base_url', '');
-    made('feature');
     setWebsiteChannels(websiteId, [fbBufferChannel(true)]);
     createSocialPosts(seoId);
     await kickSocial(deps());
+    await makeSocialPictures();
     expect(bufferFb).toHaveLength(0);
     expect(listSocialPosts()[0]).toMatchObject({ status: 'failed' });
     expect(listSocialPosts()[0]!.error).toMatch(/no public address yet.*Platform settings/);
   });
 
   it('a Facebook image post through Buffer on the free plan goes out with no link at all', async () => {
-    made('feature');
     setWebsiteChannels(websiteId, [fbBufferChannel(false)]);
     createSocialPosts(seoId);
     await kickSocial(deps());
+    await makeSocialPictures();
     expect(bufferFb[0]!.firstComment).toBe('');
     expect(bufferFb[0]!.text).not.toMatch(/http|longlivo/);
     expect(listSocialPosts()[0]!.error).toMatch(/without the link/);
+  });
+
+  it('makes and sends nothing until the owner approves the platform’s rules', async () => {
+    settings.set('newsite_rules_approved_pinterest', '');
+    setWebsiteChannels(websiteId, [pinChannel()]);
+    createSocialPosts(seoId);
+    await kickSocial(deps());
+    expect(listSocialPosts()[0]).toMatchObject({ status: 'held', text: '' });
+    expect(listSocialPosts()[0]!.error).toMatch(/approve the Pinterest rules/);
+    expect(asked).toHaveLength(0);
+    // Approved: the held post goes to work.
+    approveRules(loadPlatformRules('pinterest'), settings);
+    expect(releaseHeld('pinterest')).toBe(1);
+    await kickSocial(deps());
+    expect(listSocialPosts()[0]).toMatchObject({ status: 'picture' });
+  });
+
+  it('checks a pin against the numbers in the Pinterest rules file', () => {
+    const rules = loadPlatformRules('pinterest');
+    expect(rules.limits.title_chars).toEqual([40, 100]);
+    const tight = { ...rules, limits: { ...rules.limits, title_chars: [10, 20] as [number, number] } };
+    expect(checkPinText(GOOD_PIN, 'f.longlivo.com', tight).join(' ')).toMatch(/write 10 to 20/);
+    expect(checkPinText(GOOD_PIN, 'f.longlivo.com', rules)).toEqual([]);
+  });
+
+  it('makes a post again from the article (words and picture), but never one that went out', async () => {
+    setWebsiteChannels(websiteId, [pinChannel()]);
+    createSocialPosts(seoId);
+    await kickSocial(deps());
+    await makeSocialPictures();
+    const [sent] = listSocialPosts();
+    expect(sent!.status).toBe('sent');
+    expect(remakeSocialPost(sent!.id)).toBe(false);
+    run(`UPDATE newsite_social_posts SET status = 'failed' WHERE id = ?`, sent!.id);
+    expect(remakeSocialPost(sent!.id)).toBe(true);
+    expect(getSocialPost(sent!.id)).toMatchObject({ status: 'pending', text: '', picture_id: null });
   });
 
   it('makes no image post for a page set to post reels only', () => {
