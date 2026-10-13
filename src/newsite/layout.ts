@@ -49,68 +49,113 @@ const NAV: NavItem[] = [
 ];
 
 const CSS = `
+/*
+ * The design system. Colour has one meaning each, everywhere:
+ *   blue  (--accent) = something you can do: primary buttons, links, the
+ *                      selected item, focus, progress;
+ *   green (--good)   = done, working, connected;
+ *   red   (--bad)    = a problem: errors, failures, warnings, and buttons
+ *                      that remove something.
+ * Everything else is neutral. The brand red is only the logo mark.
+ * Text has three levels, all readable on every surface:
+ *   --ink (main), --soft (secondary), --faint (hints and meta).
+ */
 :root {
-  --page: #f3f4f5; --surface: #ffffff; --raised: #f7f8f9; --line: #e1e4e8; --line-strong: #c9ced4;
-  --ink: #16191d; --soft: #59626b; --faint: #8b939b;
-  --accent: #e63946; --accent-ink: #ffffff; --accent-tint: rgba(230,57,70,.08);
-  --good: #13795b; --bad: #c42b1c;
-  --r-card: 8px; --r-ctl: 6px;
+  --page: #eceff3; --surface: #ffffff; --raised: #f4f6f9; --line: #d6dce4; --line-strong: #aeb8c5;
+  --ink: #111820; --soft: #3c4755; --faint: #566271;
+  --accent: #1f5fd1; --accent-hover: #194fb0; --accent-ink: #ffffff; --accent-text: #1a52b8; --accent-tint: #e7effc;
+  --good: #146c43; --good-tint: #e3f3ea;
+  --bad: #b42318; --bad-hover: #9a1d14; --bad-tint: #fdeceb;
+  --brand: #e63946;
+  --shadow: 0 1px 2px rgba(17, 24, 32, .06), 0 1px 1px rgba(17, 24, 32, .04);
+  --r-card: 10px; --r-ctl: 7px;
   --display: 'Bricolage Grotesque', 'Segoe UI', system-ui, sans-serif;
   --body: 'IBM Plex Sans', 'Segoe UI', system-ui, sans-serif;
   --mono: 'IBM Plex Mono', ui-monospace, Menlo, monospace;
 }
 :root.dark {
-  --page: #111316; --surface: #181b1f; --raised: #1e2227; --line: #2b3036; --line-strong: #3b4249;
-  --ink: #eceef0; --soft: #a2aab2; --faint: #6e7780;
-  --accent-tint: rgba(230,57,70,.14); --good: #46c08f; --bad: #ff7b6b;
+  --page: #0e1217; --surface: #181e26; --raised: #212833; --line: #323b47; --line-strong: #4f5b6b;
+  --ink: #eef2f6; --soft: #c5cdd7; --faint: #9ea9b6;
+  --accent: #2f6fd6; --accent-hover: #3d7ce3; --accent-ink: #ffffff; --accent-text: #8cb6ff; --accent-tint: rgba(110, 160, 255, .16);
+  --good: #5fd39a; --good-tint: rgba(95, 211, 154, .14);
+  --bad: #ff8b7e; --bad-hover: #c9372b; --bad-tint: rgba(255, 139, 126, .14);
+  --shadow: none;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; }
-body { background: var(--page); color: var(--ink); font: 15px/1.55 var(--body); -webkit-font-smoothing: antialiased; }
-a { color: inherit; }
+body { background: var(--page); color: var(--ink); font: 15px/1.6 var(--body); -webkit-font-smoothing: antialiased; }
+a { color: var(--accent-text); }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+input[type=checkbox], input[type=radio] { accent-color: var(--accent); }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } }
 
 /* -- shell */
 .ns-side { position: fixed; inset: 0 auto 0 0; width: 240px; display: flex; flex-direction: column;
-  background: var(--surface); border-right: 1px solid var(--line); padding: 28px 16px 20px; }
-.ns-brand { display: block; padding: 0 12px 32px; text-decoration: none; }
+  background: var(--surface); border-right: 1px solid var(--line); padding: 28px 14px 20px; }
+.ns-brand { display: block; padding: 0 12px 28px; text-decoration: none; color: var(--ink); }
 .ns-brand b { display: block; font: 700 18px/1.2 var(--display); letter-spacing: -.02em; }
-.ns-brand b::after { content: '.'; color: var(--accent); }
-.ns-brand small { display: block; margin-top: 2px; font-size: 12px; color: var(--faint); }
-.ns-nav { display: flex; flex-direction: column; gap: 2px; }
-.ns-nav a { display: flex; align-items: center; gap: 12px; padding: 9px 12px; border-radius: var(--r-ctl);
+.ns-brand b::after { content: '.'; color: var(--brand); }
+.ns-brand small { display: block; margin-top: 2px; font-size: 13px; color: var(--faint); }
+.ns-nav { display: flex; flex-direction: column; gap: 4px; }
+.ns-nav a { position: relative; display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: var(--r-ctl);
   color: var(--soft); text-decoration: none; font-weight: 500; }
 .ns-nav a:hover { background: var(--raised); color: var(--ink); }
-.ns-nav a.on { background: var(--accent-tint); color: var(--accent); }
+.ns-nav a.on { background: var(--accent-tint); color: var(--accent-text); font-weight: 600; }
+.ns-nav a.on::before { content: ''; position: absolute; left: -14px; top: 8px; bottom: 8px; width: 3px; border-radius: 0 3px 3px 0; background: var(--accent); }
 .ns-nav svg, .ns-foot svg { width: 18px; height: 18px; flex: none; }
 .ns-foot { margin-top: auto; border-top: 1px solid var(--line); padding-top: 12px; display: flex; flex-direction: column; gap: 2px; }
 .ns-foot a, .ns-foot button { display: flex; align-items: center; gap: 12px; padding: 9px 12px; border-radius: var(--r-ctl);
   color: var(--soft); text-decoration: none; font: 500 14px/1.4 var(--body); background: none; border: 0; cursor: pointer; text-align: left; }
 .ns-foot a:hover, .ns-foot button:hover { background: var(--raised); color: var(--ink); }
-.ns-main { margin-left: 240px; padding: 48px 56px 72px; }
-.ns-wrap { max-width: 880px; margin: 0 auto; }
+.ns-main { margin-left: 240px; padding: 44px 56px 80px; }
+.ns-wrap { max-width: 900px; margin: 0 auto; }
 
-/* -- type and pieces */
-h1, h2, h3 { font-family: var(--display); letter-spacing: -.02em; margin: 0; }
-.ns-title { font-size: 32px; line-height: 1.1; font-weight: 700; }
-.ns-lede { color: var(--soft); margin: 10px 0 0; max-width: 56ch; }
+/* -- type */
+h1, h2, h3, h4 { font-family: var(--display); letter-spacing: -.015em; margin: 0; color: var(--ink); }
+.ns-title { font-size: 30px; line-height: 1.15; font-weight: 700; }
+.ns-lede { color: var(--soft); margin: 10px 0 0; max-width: 62ch; }
 .ns-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px;
   padding-bottom: 24px; margin-bottom: 32px; border-bottom: 1px solid var(--line); }
+.ns-mono { font-family: var(--mono); font-size: 13px; }
+.ns-num { font-variant-numeric: tabular-nums; }
+
+/* -- buttons: primary (blue), secondary (outlined), quiet (for going back), danger (red, removes something) */
 .ns-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 40px; padding: 0 18px;
   border-radius: var(--r-ctl); border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink);
   font: 600 14px/1 var(--body); text-decoration: none; cursor: pointer; white-space: nowrap; }
-.ns-btn:hover { border-color: var(--soft); }
+.ns-btn:hover { background: var(--raised); border-color: var(--soft); }
 .ns-btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
-.ns-btn.primary:hover { background: #d42f3c; border-color: #d42f3c; }
-.ns-btn.quiet { border-color: transparent; background: transparent; color: var(--soft); }
-.ns-btn.quiet:hover { color: var(--ink); background: var(--raised); }
-.ns-btn:disabled, .ns-btn:disabled:hover { opacity: .55; cursor: not-allowed; }
+.ns-btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.ns-btn.quiet { background: transparent; border-color: var(--line); color: var(--soft); }
+.ns-btn.quiet:hover { background: var(--raised); border-color: var(--line-strong); color: var(--ink); }
+.ns-btn.danger { background: var(--surface); border-color: var(--bad); color: var(--bad); }
+.ns-btn.danger:hover { background: var(--bad-hover); border-color: var(--bad-hover); color: #fff; }
+.ns-btn.small { height: 32px; padding: 0 12px; font-size: 13px; }
+.ns-btn:disabled, .ns-btn.disabled, .ns-btn:disabled:hover, .ns-btn.disabled:hover {
+  background: var(--raised); border-color: var(--line); color: var(--faint); cursor: not-allowed; opacity: 1; }
 .ns-btn.busy { cursor: progress; }
-.ns-mono { font-family: var(--mono); font-size: 13px; }
-.ns-num { font-variant-numeric: tabular-nums; }
-.ns-flash { border-left: 3px solid; padding: 10px 16px; margin-bottom: 28px; font-weight: 500; background: var(--surface); }
-.ns-flash.ok { border-color: var(--good); color: var(--good); }
-.ns-flash.error { border-color: var(--bad); color: var(--bad); }
+
+/* -- status badges: one look for every "Done / Failed / Writing…" */
+.ns-badge { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: 999px;
+  font: 600 13px/1 var(--body); white-space: nowrap; background: var(--raised); color: var(--soft); border: 1px solid var(--line); }
+.ns-badge::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.ns-badge.ok { background: var(--good-tint); color: var(--good); border-color: transparent; }
+.ns-badge.bad { background: var(--bad-tint); color: var(--bad); border-color: transparent; }
+.ns-badge.busy { background: var(--accent-tint); color: var(--accent-text); border-color: transparent; }
+
+/* -- tags: a neutral word that says what something is (Pillar, Feature, Recipe) */
+.ns-tag { display: inline-block; padding: 2px 8px; border-radius: 5px; background: var(--raised); border: 1px solid var(--line);
+  color: var(--soft); font: 600 13px/1.5 var(--body); white-space: nowrap; }
+
+/* -- alerts: page messages and in-page notes */
+.ns-flash, .ns-alert { border: 1px solid; border-left-width: 4px; border-radius: var(--r-ctl); padding: 12px 16px; margin-bottom: 28px;
+  font-weight: 500; background: var(--surface); color: var(--ink); }
+.ns-flash.ok, .ns-alert.ok { border-color: var(--good); background: var(--good-tint); color: var(--ink); }
+.ns-flash.error, .ns-alert.bad { border-color: var(--bad); background: var(--bad-tint); color: var(--ink); }
+.ns-alert.info { border-color: var(--accent); background: var(--accent-tint); }
+
+/* -- cards */
+.ns-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); box-shadow: var(--shadow); }
 
 @media (max-width: 860px) {
   .ns-side { position: static; width: auto; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 16px; border-right: 0; border-bottom: 1px solid var(--line); }
@@ -118,6 +163,7 @@ h1, h2, h3 { font-family: var(--display); letter-spacing: -.02em; margin: 0; }
   .ns-brand small { display: none; }
   .ns-nav { flex-direction: row; flex-wrap: wrap; }
   .ns-nav a { padding: 8px 10px; }
+  .ns-nav a.on::before { display: none; }
   .ns-foot { margin: 0 0 0 auto; border: 0; padding: 0; flex-direction: row; }
   .ns-foot span { display: none; }
   .ns-main { margin: 0; padding: 28px 16px 48px; }

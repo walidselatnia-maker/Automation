@@ -13,19 +13,19 @@ import { kickSocial, listSocialPosts, retrySocialPost, type SocialDeps, type Soc
 const CSS = `
 .sc-platform { margin: 0 0 32px; }
 .sc-platform > h2 { font-size: 20px; margin: 0 0 12px; }
-.sc-channel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); margin: 0 0 16px; overflow: hidden; }
+.sc-channel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); margin: 0 0 16px; overflow: hidden; box-shadow: var(--shadow); }
 .sc-channel > h3 { font-size: 15px; padding: 14px 18px; margin: 0; border-bottom: 1px solid var(--line); background: var(--raised); }
 .sc-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 16px; padding: 14px 18px; border-bottom: 1px solid var(--line); }
 .sc-item:last-child { border-bottom: 0; }
 .sc-item a { color: var(--ink); font-weight: 600; text-decoration: none; }
-.sc-item a:hover { color: var(--accent); }
-.sc-meta { color: var(--soft); font-size: 13px; }
+.sc-item a:hover { color: var(--accent-text); }
+.sc-meta { color: var(--faint); font-size: 13px; }
 .sc-text { color: var(--soft); font-size: 13px; margin-top: 4px; max-width: 70ch; }
-.sc-err { color: var(--bad); font-size: 13px; margin-top: 4px; }
-.sc-status { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; white-space: nowrap; }
-.sc-status.sent { color: var(--good); }
-.sc-status.failed { color: var(--bad); }
-.sc-status.waiting, .sc-status.picture, .sc-status.pending { color: var(--faint); }
+.sc-err { margin-top: 8px; font-size: 13px; padding: 8px 12px; border-left: 4px solid var(--bad); background: var(--bad-tint); color: var(--ink); border-radius: var(--r-ctl); }
+.sc-status { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: 999px; font: 600 13px/1 var(--body); white-space: nowrap; background: var(--raised); color: var(--soft); border: 1px solid var(--line); }
+.sc-status.sent { background: var(--good-tint); color: var(--good); border-color: transparent; }
+.sc-status.failed { background: var(--bad-tint); color: var(--bad); border-color: transparent; }
+.sc-status.waiting, .sc-status.picture, .sc-status.pending { background: var(--accent-tint); color: var(--accent-text); border-color: transparent; }
 .sc-item form { margin: 6px 0 0; }
 .sc-none { color: var(--soft); }
 `;
@@ -50,7 +50,7 @@ function itemRow(i: Item): Html {
       ${i.text ? html`<div class="sc-text">${i.text}</div>` : raw('')}
       ${i.error ? html`<div class="sc-err">${i.error}</div>` : raw('')}
       ${i.status === 'failed'
-        ? html`<form method="post" action="/new-website/shared/${i.id}/retry"><button class="ns-btn quiet kw-remove">Try again</button></form>`
+        ? html`<form method="post" action="/new-website/shared/${i.id}/retry"><button class="ns-btn small">Try again</button></form>`
         : raw('')}
     </div>
     <span class="sc-status ${i.status}">${STATUS[i.status]}</span>

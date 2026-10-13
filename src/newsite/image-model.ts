@@ -32,13 +32,13 @@ const WIRE: Record<string, string> = {
 const CSS = `
 .im-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
 .im-card { display: flex; flex-direction: column; gap: 10px; width: 100%; text-align: left; padding: 20px; cursor: pointer;
-  background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); color: var(--ink); font: inherit; }
-.im-card:hover { border-color: var(--line-strong); }
-.im-card.on { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+  background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--r-card); color: var(--ink); font: inherit; }
+.im-card:hover { border-color: var(--accent); }
+.im-card.on { border-color: var(--accent); background: var(--accent-tint); box-shadow: inset 0 0 0 1px var(--accent); }
 .im-top { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .im-card h2 { font-size: 18px; }
-.im-pick { font-size: 12px; font-weight: 600; color: var(--faint); white-space: nowrap; }
-.im-card.on .im-pick { color: var(--accent); }
+.im-pick { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: 999px; font: 600 13px/1 var(--body); white-space: nowrap; background: var(--raised); color: var(--soft); border: 1px solid var(--line); }
+.im-card.on .im-pick { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
 .im-about { margin: 0; color: var(--soft); font-size: 14px; }
 .im-foot { margin-top: auto; display: flex; justify-content: space-between; align-items: center; gap: 12px; font-size: 12px; }
 .im-wire { color: var(--faint); }

@@ -19,22 +19,22 @@ export interface PlatformView {
 const modelLabel = (v: string): string => IMAGE_MODELS.find((m) => m.value === v)?.label ?? v;
 
 const PAGE_CSS = `
-.pf-note { border-left: 3px solid var(--accent); padding: 12px 16px; margin-bottom: 28px; background: var(--surface); }
+.pf-note { margin-bottom: 28px; border-color: var(--accent); background: var(--accent-tint); padding: 12px 16px; border-radius: var(--r-ctl); border: 1px solid; border-left-width: 4px; color: var(--ink); font-weight: 500; }
 .pf-note b { display: block; margin-bottom: 2px; }
 .pf-note span { color: var(--soft); font-size: 14px; }
-.pf-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); padding: 4px 32px; }
-.pf-group { display: grid; grid-template-columns: 200px 1fr; gap: 24px; padding: 22px 0; border-top: 1px solid var(--line); }
+.pf-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); padding: 4px 32px; box-shadow: var(--shadow); }
+.pf-group { display: grid; grid-template-columns: 200px 1fr; gap: 24px; padding: 24px 0; border-top: 1px solid var(--line); }
 .pf-group:first-child { border-top: 0; }
+.pf-group > div:first-child { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
 .pf-group h2 { font-size: 17px; }
-.pf-state { display: block; margin-top: 4px; font-size: 13px; font-weight: 600; color: var(--faint); }
-.pf-state.ok { color: var(--good); }
-.pf-state.bad { color: var(--bad); }
+.pf-state { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: 999px; font: 600 13px/1 var(--body); white-space: nowrap; background: var(--raised); color: var(--soft); border: 1px solid var(--line); }
+.pf-state.ok { background: var(--good-tint); color: var(--good); border-color: transparent; }
+.pf-state.bad { background: var(--bad-tint); color: var(--bad); border-color: transparent; }
 .pf-group dl { display: grid; grid-template-columns: 190px 1fr; gap: 6px 16px; margin: 0; }
-.pf-group dt { color: var(--soft); font-size: 14px; }
+.pf-group dt { color: var(--faint); font-size: 14px; }
 .pf-group dd { margin: 0; font-weight: 500; overflow-wrap: anywhere; }
-.pf-group dd small { display: block; font-weight: 400; color: var(--bad); font-size: 13px; }
-.ns-btn.pf-change { height: 30px; padding: 0 10px; font-size: 13px; margin: 8px 0 0 -10px; color: var(--accent); }
-.ns-btn.pf-change:hover { color: var(--accent); background: var(--accent-tint); }
+.pf-group dd small { display: block; font-weight: 500; color: var(--bad); font-size: 13px; }
+.ns-btn.pf-change { height: 32px; padding: 0 12px; font-size: 13px; }
 .pf-wide { grid-column: 1 / -1; }
 @media (max-width: 720px) {
   .pf-card { padding: 4px 20px; }
@@ -53,7 +53,7 @@ const codeOr = (value: string): Html => (value ? html`<dd class="ns-mono">${valu
 
 /** A part's title, its state, and the button that opens just that part to change it. */
 const head = (title: string, step: number, st: Html, done: boolean): Html =>
-  html`<div><h2>${title}</h2>${st}${done ? html`<a class="ns-btn quiet pf-change" href="/new-website/platform/setup?section=${String(step)}">Change</a>` : raw('')}</div>`;
+  html`<div><h2>${title}</h2>${st}${done ? html`<a class="ns-btn small pf-change" href="/new-website/platform/setup?section=${String(step)}">Change</a>` : raw('')}</div>`;
 
 export function platformPage(v: PlatformView): Html {
   const flow = v.value('flow_project_id');
@@ -123,15 +123,14 @@ const EXTRA_CSS = `
 .pf-keys { list-style: none; margin: 0 0 24px; padding: 0; border-top: 1px solid var(--line); }
 .pf-keys li { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--line); }
 .pf-keys li.gone b, .pf-keys li.gone span { text-decoration: line-through; color: var(--faint); }
-.pf-keys span { display: block; color: var(--soft); font-size: 13px; }
-.pf-keys button { height: 32px; padding: 0 10px; font-size: 13px; }
+.pf-keys span { display: block; color: var(--faint); font-size: 13px; }
+.pf-keys button { height: 32px; padding: 0 12px; font-size: 13px; }
 .pf-models { display: flex; flex-wrap: wrap; gap: 8px 20px; }
 .pf-models label { display: flex; align-items: center; gap: 8px; font-weight: 500; font-size: 14px; margin: 0; cursor: pointer; }
-.pf-models input { width: 16px; height: 16px; accent-color: var(--accent); }
 .pf-sub { font: 600 16px var(--display); margin: 8px 0 14px; }
-.pf-warn { border-left: 3px solid var(--accent); padding: 8px 12px; color: var(--soft); font-size: 14px; margin: -4px 0 20px; }
-.pf-status { font-size: 14px; margin: 0 0 20px; padding-left: 12px; border-left: 3px solid var(--good); color: var(--good); font-weight: 500; }
-.pf-status.bad { border-color: var(--bad); color: var(--bad); }
+.pf-warn { margin: -4px 0 20px; font-size: 14px; border-color: var(--bad); background: var(--bad-tint); padding: 12px 16px; border-radius: var(--r-ctl); border: 1px solid; border-left-width: 4px; color: var(--ink); font-weight: 500; }
+.pf-status { font-size: 14px; margin: 0 0 20px; border-color: var(--good); background: var(--good-tint); padding: 12px 16px; border-radius: var(--r-ctl); border: 1px solid; border-left-width: 4px; color: var(--ink); font-weight: 500; }
+.pf-status.bad { border-color: var(--bad); background: var(--bad-tint); }
 .pf-test { display: flex; align-items: center; gap: 12px; margin-top: -4px; }
 .pf-test span { font-size: 14px; font-weight: 500; }
 `;
@@ -178,7 +177,7 @@ export function platformWizardPage(v: PlatformView, section = -1): Html {
               ? html`<div class="pf-sub">Saved keys</div>
                 <ul class="pf-keys">${v.keys.map(
                   (k) => html`<li data-key="${k.id}"><div><b>${k.name}</b><span>${k.models.join(', ')}</span></div>
-                    <button type="button" class="ns-btn quiet" data-remove="${k.id}">Remove</button></li>`,
+                    <button type="button" class="ns-btn danger small" data-remove="${k.id}">Remove</button></li>`,
                 )}</ul>`
               : raw('')}
             <div class="pf-sub">${v.keys.length ? 'Add another key' : 'Add a key'}</div>

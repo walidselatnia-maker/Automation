@@ -28,18 +28,16 @@ const day = (createdAt: string): string => {
 
 const CSS = `
 .kw-site { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; color: var(--soft); font-size: 14px; }
-.kw-site select { height: 36px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: var(--r-ctl);
-  background: var(--surface); color: var(--ink); font: 500 14px var(--body); }
+.kw-site select { height: 38px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: var(--r-ctl); }
 .kw-site strong { color: var(--ink); }
 #kw-find label { display: block; font-weight: 600; font-size: 14px; margin-bottom: 8px; }
 .kw-row { display: grid; grid-template-columns: 1fr auto; gap: 12px; }
-.kw-row input { height: 44px; padding: 0 14px; border: 1px solid var(--line); border-radius: var(--r-ctl);
-  background: var(--surface); color: var(--ink); font: 15px var(--body); min-width: 0; }
-.kw-row input:hover { border-color: var(--line-strong); }
+.kw-row input { height: 44px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: var(--r-ctl); }
+.kw-row input:hover { border-color: var(--soft); }
 .kw-row input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-tint); }
 .kw-row .ns-btn { height: 44px; }
 .kw-hint { color: var(--faint); font-size: 13px; margin-top: 8px; }
-.kw-error { color: var(--bad); font-size: 14px; font-weight: 500; margin-top: 12px; }
+.kw-error { color: var(--bad); font-size: 14px; font-weight: 600; margin-top: 12px; }
 .kw-error:empty { display: none; }
 .kw-status { color: var(--soft); font-size: 14px; margin-top: 12px; }
 .kw-status:empty { display: none; }
@@ -53,20 +51,20 @@ const CSS = `
 .kw-list { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
 .kw-item { display: grid; grid-template-columns: 1fr auto; gap: 16px; align-items: start; padding: 16px 0; border-bottom: 1px solid var(--line); }
 .kw-item b { font-weight: 600; font-size: 16px; }
-.kw-intent { display: inline-block; margin-left: 10px; font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--accent); }
+.kw-intent { margin-left: 10px; vertical-align: 1px; display: inline-block; padding: 2px 8px; border-radius: 5px; background: var(--raised); border: 1px solid var(--line); color: var(--soft); font: 600 13px/1.5 var(--body); white-space: nowrap; }
 .kw-why { color: var(--soft); font-size: 14px; margin-top: 4px; }
 .kw-page { display: flex; align-items: center; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
-.kw-page-chip { height: 28px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--line-strong); background: var(--surface);
-  color: var(--ink); font: 600 12px var(--body); cursor: pointer; }
-.kw-page-chip.recipe { border-color: var(--good); color: var(--good); }
+.kw-page-chip { height: 30px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--line-strong); background: var(--surface);
+  color: var(--ink); font: 600 13px var(--body); cursor: pointer; }
+.kw-page-chip.recipe { border-color: var(--accent); color: var(--accent-text); background: var(--accent-tint); }
 .kw-page-chip:hover { background: var(--raised); }
 .kw-page-why { color: var(--faint); font-size: 13px; }
 .kw-pillar-page { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: -4px 0 16px; padding: 12px 14px; background: var(--raised); border-radius: var(--r-ctl); }
 .kw-pillar-page[hidden] { display: none; }
 .kw-pillar-page .kw-page { margin-top: 0; }
 .kw-pillar-label { font-weight: 600; font-size: 14px; }
-.kw-remove { height: 32px; padding: 0 10px; font-size: 13px; }
-.kw-remove:hover { color: var(--bad); background: var(--accent-tint); }
+.kw-remove { height: 32px; padding: 0 12px; font-size: 13px; }
+.kw-remove:hover { color: var(--ink); }
 .kw-empty { color: var(--soft); padding: 16px 0; border-bottom: 1px solid var(--line); }
 .kw-add { margin-top: 20px; }
 .kw-add label { display: block; font-weight: 600; font-size: 14px; margin-bottom: 8px; }
@@ -90,14 +88,14 @@ const CSS = `
 .kw-plain li { display: grid; grid-template-columns: 110px 1fr; gap: 12px; font-size: 15px; }
 .kw-plain li span { color: var(--soft); font-size: 13px; padding-top: 1px; }
 .kw-seo-list { list-style: none; margin: 16px 0 0; padding: 0; display: grid; gap: 12px; }
-.kw-seo { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); padding: 18px 20px; }
+.kw-seo { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); padding: 18px 20px; box-shadow: var(--shadow); }
 .kw-seo-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
 .kw-seo-head b { font-weight: 600; }
-.kw-seo-role { font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--accent); min-width: 84px; }
-.kw-seo-status { margin-left: auto; font-size: 13px; font-weight: 600; color: var(--faint); }
-.kw-seo-status.done { color: var(--good); }
-.kw-seo-status.failed { color: var(--bad); }
-.kw-seo-status.writing { color: var(--ink); }
+.kw-seo-role { min-width: 0; display: inline-block; padding: 2px 8px; border-radius: 5px; background: var(--raised); border: 1px solid var(--line); color: var(--soft); font: 600 13px/1.5 var(--body); white-space: nowrap; }
+.kw-seo-status { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: 999px; font: 600 13px/1 var(--body); white-space: nowrap; background: var(--raised); color: var(--soft); border: 1px solid var(--line); }
+.kw-seo-status.done { background: var(--good-tint); color: var(--good); border-color: transparent; }
+.kw-seo-status.failed { background: var(--bad-tint); color: var(--bad); border-color: transparent; }
+.kw-seo-status.writing { background: var(--accent-tint); color: var(--accent-text); border-color: transparent; }
 .kw-serp { margin: 14px 0 0; padding: 14px 16px; border-left: 3px solid var(--line-strong); background: var(--raised); }
 .kw-serp-title { color: #1a0dab; font-size: 18px; line-height: 1.3; }
 :root.dark .kw-serp-title { color: #8ab4f8; }
@@ -105,11 +103,11 @@ const CSS = `
 .kw-seo-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 32px; margin: 14px 0 0; }
 .kw-seo-facts div { display: grid; grid-template-columns: 120px 1fr; gap: 12px; }
 .kw-seo-facts div.wide { grid-column: 1 / -1; }
-.kw-seo-facts dt { color: var(--soft); font-size: 13px; }
+.kw-seo-facts dt { color: var(--faint); font-size: 13px; }
 .kw-seo-facts dd { margin: 0; font-size: 14px; }
 .kw-seo-facts dd.off { color: var(--bad); font-weight: 600; }
-.kw-kept { margin-top: 12px; color: var(--soft); font-size: 13px; display: grid; gap: 2px; border-left: 2px solid var(--line-strong); padding-left: 10px; }
-.kw-seo-problems { margin-top: 12px; color: var(--bad); font-size: 14px; display: grid; gap: 2px; }
+.kw-kept { margin-top: 12px; color: var(--soft); font-size: 13px; display: grid; gap: 2px; border-left: 3px solid var(--line-strong); padding-left: 10px; }
+.kw-seo-problems { margin-top: 12px; padding: 10px 14px; border-radius: var(--r-ctl); border-left: 4px solid var(--bad); background: var(--bad-tint); color: var(--ink); font-size: 14px; display: grid; gap: 4px; }
 .kw-seo-retry { margin: 0 0 14px; display: flex; justify-content: flex-start; flex-wrap: wrap; }
 .kw-skel { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 12px; }
 .kw-skel summary { display: flex; justify-content: space-between; gap: 12px; font-size: 14px; font-weight: 600; color: var(--ink); }
@@ -123,34 +121,34 @@ const CSS = `
 .kw-skel-h3s { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 6px; }
 .kw-recipe { border-top: 1px solid var(--line); padding-top: 14px; }
 .kw-recipe-facts { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; margin: 0 0 16px; }
-.kw-recipe-facts dt { color: var(--soft); font-size: 12px; }
+.kw-recipe-facts dt { color: var(--faint); font-size: 13px; }
 .kw-recipe-facts dd { margin: 2px 0 0; font-weight: 600; font-size: 14px; }
 .kw-recipe-facts dd.cap { text-transform: capitalize; }
 .kw-recipe-cols { display: grid; grid-template-columns: 2fr 3fr; gap: 28px; }
 .kw-recipe h4 { font: 600 15px var(--display); margin: 0 0 8px; }
-.kw-recipe-group { font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--soft); margin: 10px 0 4px; }
+.kw-recipe-group { font-size: 13px; font-weight: 600; color: var(--soft); margin: 12px 0 4px; }
 .kw-recipe ul, .kw-recipe ol { margin: 0; padding-left: 18px; display: grid; gap: 6px; font-size: 14px; }
 .kw-recipe-foot { margin-top: 16px; color: var(--soft); font-size: 13px; }
 .kw-recipe-notes { margin-top: 8px; font-size: 14px; color: var(--soft); }
 .kw-recipe-notes b { color: var(--ink); margin-right: 6px; }
 .kw-img-theme { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px 20px; margin: 0 0 18px;
   padding: 14px 16px; background: var(--raised); border-radius: var(--r-ctl); }
-.kw-img-theme dt { color: var(--soft); font-size: 12px; }
+.kw-img-theme dt { color: var(--faint); font-size: 13px; }
 .kw-img-theme dd { margin: 2px 0 0; font-size: 14px; }
 .kw-img-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 0; border-top: 1px solid var(--line); }
 .kw-img-list li { padding: 14px 0; border-bottom: 1px solid var(--line); display: grid; grid-template-columns: minmax(0, 1fr) 176px; gap: 20px; align-items: start; }
 .kw-pic { display: block; aspect-ratio: 16 / 9; border-radius: var(--r-ctl); overflow: hidden; background: var(--raised); border: 1px solid var(--line); }
 .kw-pic img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .kw-pic-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 8px; text-align: center;
-  color: var(--faint); font-size: 12px; aspect-ratio: auto; min-height: 99px; }
-.kw-pic-empty.making { color: var(--accent); }
+  color: var(--soft); font-size: 13px; aspect-ratio: auto; min-height: 99px; }
+.kw-pic-empty.making { color: var(--accent-text); }
 .kw-pic-empty.failed { color: var(--bad); border-color: var(--bad); }
-.kw-pic-empty small { color: var(--soft); font-size: 11px; line-height: 1.4; max-height: 5.6em; overflow: hidden; overflow-wrap: anywhere; max-width: 100%; }
+.kw-pic-empty small { color: var(--faint); font-size: 12px; line-height: 1.4; max-height: 5.6em; overflow: hidden; overflow-wrap: anywhere; max-width: 100%; }
 .kw-pic-empty .ns-btn { height: 30px; padding: 0 10px; font-size: 12px; }
 .kw-pic-actions { gap: 8px; align-items: center; }
 .kw-pic-actions form { margin: 0; }
 .kw-project { font-size: 14px; color: var(--soft); overflow-wrap: anywhere; }
-.kw-img-slot { font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--accent); }
+.kw-img-slot { text-transform: capitalize; display: inline-block; padding: 2px 8px; border-radius: 5px; background: var(--raised); border: 1px solid var(--line); color: var(--soft); font: 600 13px/1.5 var(--body); white-space: nowrap; }
 .kw-img-prompt { margin: 6px 0 8px; font-size: 14px; line-height: 1.6; max-width: 72ch; }
 .kw-img-alt { color: var(--soft); font-size: 13px; }
 .kw-img-alt b { color: var(--ink); margin-right: 6px; }
@@ -163,11 +161,10 @@ const CSS = `
 /* Steps: the wizard card, wider for lists. */
 .wz.kw-wz { max-width: 820px; }
 .kw-wz .wz-bar { grid-template-columns: repeat(4, 1fr); }
-.kw-steps-names { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 8px; font-size: 12px; font-weight: 600; opacity: .75; }
-.kw-steps-names span.on { opacity: 1; }
-.kw-foot-top { border-top: 0; border-bottom: 1px solid var(--line); }
+.kw-steps-names { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 10px; font-size: 13px; font-weight: 500; color: var(--faint); }
+.kw-steps-names span.on { color: var(--accent-text); font-weight: 600; }
+.kw-foot-top { border-top: 0; border-bottom: 1px solid var(--line); background: var(--raised); }
 .kw-foot-top form { margin: 0; }
-.wz-foot a.ns-btn.disabled { pointer-events: none; opacity: .5; }
 
 /* Saved plans under step 1: a compact list, each opening its steps. */
 .kw-saved { max-width: 820px; margin: 40px auto 0; }
@@ -175,12 +172,12 @@ const CSS = `
 .kw-saved-row { display: grid; grid-template-columns: 1fr auto auto; gap: 16px; align-items: center; padding: 16px 0; border-top: 1px solid var(--line); }
 .kw-saved-row a.kw-open { text-decoration: none; }
 .kw-saved-row a.kw-open b { font: 600 17px var(--display); }
-.kw-saved-row a.kw-open:hover b { color: var(--accent); }
-.kw-saved-meta { color: var(--soft); font-size: 14px; margin-top: 2px; }
+.kw-saved-row a.kw-open:hover b { color: var(--accent-text); }
+.kw-saved-meta { color: var(--faint); font-size: 14px; margin-top: 2px; }
 
 /* Keyword cards that open and close. */
 .acc-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
-.acc { border: 1px solid var(--line); border-radius: var(--r-card); background: var(--surface); }
+.acc { border: 1px solid var(--line); border-radius: var(--r-card); background: var(--surface); box-shadow: var(--shadow); }
 .acc.open { border-color: var(--line-strong); }
 .acc-head { width: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 16px 18px; background: none; border: 0;
   color: var(--ink); font: inherit; text-align: left; cursor: pointer; border-radius: var(--r-card); }
@@ -202,6 +199,8 @@ const CSS = `
   .kw-img-list li { grid-template-columns: 1fr; gap: 10px; }
   .kw-pic { max-width: 320px; }
   .kw-row { grid-template-columns: 1fr; }
+  .kw-steps-names { grid-template-columns: 1fr !important; }
+  .kw-steps-names span:not(.on) { display: none; }
   .kw-dropped li, .kw-plain li, .kw-seo-facts, .kw-seo-facts div { grid-template-columns: 1fr; gap: 2px; }
 }
 `;
@@ -335,7 +334,7 @@ export function keywordsPage(
               <form method="post" action="/new-website/keywords/${plan.id}/delete" data-name="${plan.pillar}"
                     onsubmit="return confirm('Delete the plan for ' + this.dataset.name + '?')">
                 <input type="hidden" name="websiteId" value="${current.id}" />
-                <button class="ns-btn quiet kw-remove">Delete</button>
+                <button class="ns-btn danger small">Delete</button>
               </form>
             </div>`;
           })
@@ -398,7 +397,7 @@ function seoCard(row: SeoRow, intent: string): Html {
   const body = html`
     ${row.status === 'done' || row.status === 'failed'
       ? html`<form method="post" action="/new-website/keywords/seo/${row.id}/retry" class="kw-seo-retry">
-          <button class="ns-btn quiet kw-remove">Write again</button>
+          <button class="ns-btn small">Write again</button>
         </form>`
       : raw('')}
     ${shown
@@ -434,7 +433,7 @@ function skeletonCard(row: SeoRow, intent: string): Html {
   const body = html`
     ${row.skeleton_status === 'done' || row.skeleton_status === 'failed'
       ? html`<form method="post" action="/new-website/keywords/skeleton/${row.id}/retry" class="kw-seo-retry">
-          <button class="ns-btn quiet kw-remove">Make skeleton again</button>
+          <button class="ns-btn small">Make skeleton again</button>
         </form>`
       : raw('')}
     ${k
@@ -533,7 +532,7 @@ function recipeCard(row: SeoRow, intent: string): Html {
   const body = html`
     ${row.recipe_status === 'done' || row.recipe_status === 'failed' || (row.status === 'done' && !row.recipe_status)
       ? html`<form method="post" action="/new-website/keywords/recipe/${row.id}/retry" class="kw-seo-retry">
-          <button class="ns-btn quiet kw-remove">${row.recipe_status ? 'Make recipe again' : 'Make recipe'}</button>
+          <button class="ns-btn small">${row.recipe_status ? 'Make recipe again' : 'Make recipe'}</button>
         </form>`
       : raw('')}
     ${r
@@ -599,7 +598,7 @@ function articleCard(row: SeoRow, intent: string): Html {
   const body = html`
     ${row.article_status === 'done' || failed
       ? html`<form method="post" action="/new-website/keywords/article/${row.id}/retry" class="kw-seo-retry">
-          <button class="ns-btn ${failed ? 'primary' : 'quiet kw-remove'}">${failed ? 'Carry on writing' : 'Write article again'}</button>
+          <button class="ns-btn ${failed ? 'primary' : 'small'}">${failed ? 'Carry on writing' : 'Write article again'}</button>
         </form>`
       : raw('')}
     ${failed
@@ -691,7 +690,7 @@ function imagesCard(row: SeoRow, intent: string, pictures: PictureRow[]): Html {
             : raw('')}
           ${row.images_status === 'failed' || !(mainBusy || making)
             ? html`<form method="post" action="/new-website/keywords/images/${row.id}/retry">
-                <button class="ns-btn quiet kw-remove" ${made ? raw(`onclick="return confirm('New prompts mean the ${made} pictures made so far are made again. Carry on?')"`) : raw('')}>Write image prompts again</button>
+                <button class="ns-btn small" ${made ? raw(`onclick="return confirm('New prompts mean the ${made} pictures made so far are made again. Carry on?')"`) : raw('')}>Write image prompts again</button>
               </form>`
             : raw('')}
         </div>`
@@ -794,7 +793,7 @@ function publishCard(row: SeoRow, intent: string, pictures: PictureRow[]): Html 
   const body = html`
     ${!reason && row.post_status !== 'publishing'
       ? html`<form method="post" action="/new-website/keywords/publish/${row.id}" class="kw-seo-retry">
-          <button class="ns-btn ${row.post_status === 'published' ? 'quiet kw-remove' : 'primary'}">${row.post_status === 'published' ? 'Publish again (update the post)' : 'Publish'}</button>
+          <button class="ns-btn ${row.post_status === 'published' ? 'small' : 'primary'}">${row.post_status === 'published' ? 'Publish again (update the post)' : 'Publish'}</button>
         </form>`
       : raw('')}
     ${row.post_status === 'failed' ? problemList(row.post_error) : reason ? html`<p class="kw-none" style="margin:0">${reason}</p>` : raw('')}
@@ -910,7 +909,7 @@ const script = (websiteId: number, recipeSite: boolean): string => `<script>
         text.appendChild(pageChip(function () { return item.page || 'recipe'; }, function (v) { item.page = v; item.pageReason = 'Set by you'; }, item.pageReason));
       }
       if (item.reason) text.appendChild(el('div', 'kw-why', item.reason));
-      var rm = el('button', 'ns-btn quiet kw-remove', 'Remove');
+      var rm = el('button', 'ns-btn small', 'Remove');
       rm.type = 'button';
       rm.setAttribute('aria-label', 'Remove ' + item.keyword);
       rm.onclick = function () { state.items.splice(i, 1); render(); };
