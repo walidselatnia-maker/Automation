@@ -1,5 +1,5 @@
 import { html, raw, type Html } from '../web/views/layout.js';
-import { PLATFORMS, viasOf, viaLabel, type ChannelRow, type Platform, type Via } from './channels.js';
+import { channelColor, PLATFORMS, viasOf, viaLabel, type ChannelRow, type Platform, type Via } from './channels.js';
 import type { RulesCheck } from './platform-rules.js';
 import { WIZARD_CSS, field } from './view.js';
 
@@ -16,11 +16,25 @@ import { WIZARD_CSS, field } from './view.js';
 
 const CSS = `
 .ch-cards { display: grid; gap: 20px; }
-.ch-site { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); padding: 24px 28px; box-shadow: var(--shadow); }
-.ch-site-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; }
-.ch-site-top h2 { font-size: 22px; line-height: 1.2; }
+.ch-group { margin: 0 0 32px; }
+.ch-group-title { display: flex; align-items: center; gap: 10px; font-size: 20px; margin: 0 0 12px; }
+.ch-dot { width: 12px; height: 12px; border-radius: 50%; background: var(--ch-color); flex: none; }
+.ch-count { font: 500 14px var(--body); color: var(--faint); }
+/* A light wash of the platform's colour: the text stays on a calm background. */
+.ch-site { background: color-mix(in srgb, var(--ch-color, #8a94a3) 7%, var(--surface)); border: 1px solid color-mix(in srgb, var(--ch-color, #8a94a3) 22%, var(--line));
+  border-left: 4px solid var(--ch-color, #8a94a3); border-radius: var(--r-card); padding: 18px 24px; box-shadow: var(--shadow); }
+:root.dark .ch-site { background: color-mix(in srgb, var(--ch-color, #8a94a3) 9%, var(--surface)); }
+.ch-site-top { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+.ch-toggle { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; padding: 4px 0; background: none; border: 0; color: var(--ink);
+  font: inherit; text-align: left; cursor: pointer; }
+.ch-toggle-text { flex: 1; min-width: 0; }
+.ch-name { display: block; font: 700 20px/1.25 var(--display); letter-spacing: -.015em; }
+.ch-toggle:hover .ch-name { text-decoration: underline; }
+.ch-chev { width: 20px; height: 20px; flex: none; color: var(--soft); transition: transform .2s ease; }
+.ch-site.open .ch-chev { transform: rotate(180deg); }
+.ch-site[data-toggle]:not(.open) .ch-parts { display: none; }
 .ch-site-top form { margin: 0; }
-.ch-meta { display: flex; flex-wrap: wrap; gap: 6px 10px; margin-top: 6px; color: var(--soft); font-size: 14px; }
+.ch-meta { display: flex; flex-wrap: wrap; gap: 6px 10px; margin-top: 4px; color: var(--soft); font-size: 14px; }
 .ch-meta > * + *::before { content: '\\00B7'; margin-right: 10px; color: var(--faint); }
 .ch-parts { display: grid; grid-template-columns: 1fr 1fr; gap: 0 40px; margin-top: 18px; border-top: 1px solid var(--line); }
 .ch-part { padding: 16px 0 10px; border-bottom: 1px solid var(--line); }
@@ -312,13 +326,51 @@ export function channelsPage(channels: ChannelRow[], websitesOf: Map<number, str
       ${channels.length ? html`<a class="ns-btn primary" href="/new-website/channels/add">Add channel</a>` : raw('')}
     </div>
     ${channels.length
-      ? html`<div class="ch-cards">${channels.map((c) => channelCard(c, websitesOf.get(c.id) ?? [], rulesOf.get(c.id)!))}</div>`
+      ? groupsOf(channels).map(
+          ([platform, mine]) => html`<section class="ch-group" style="--ch-color:${channelColor({ platform })}">
+            <h2 class="ch-group-title"><span class="ch-dot"></span>${platformLabel(platform)} <span class="ch-count">${mine.length === 1 ? '1 channel' : `${mine.length} channels`}</span></h2>
+            <div class="ch-cards">${mine.map((c) => channelCard(c, websitesOf.get(c.id) ?? [], rulesOf.get(c.id)!))}</div>
+          </section>`,
+        )
       : html`<div class="ch-empty">
           <h2>No channels yet</h2>
           <p>Add a Pinterest account, a Facebook page or another platform to share your articles on.</p>
           <a class="ns-btn primary" href="/new-website/channels/add">Add channel</a>
-        </div>`}`;
+        </div>`}
+    ${raw(TOGGLE_SCRIPT)}`;
 }
+
+/** Channels grouped by platform, in the order of Buffer's list. */
+function groupsOf(channels: ChannelRow[]): [string, ChannelRow[]][] {
+  const order = (p: string) => {
+    const i = PLATFORMS.findIndex((x) => x.key === p);
+    return i < 0 ? PLATFORMS.length : i;
+  };
+  const platforms = [...new Set(channels.map((c) => c.platform))].sort((a, b) => order(a) - order(b));
+  return platforms.map((p) => [p, channels.filter((c) => c.platform === p)]);
+}
+
+/** Opens and closes the cards; each card remembers whether it was open, in this browser. */
+const TOGGLE_SCRIPT = `<script>
+(function () {
+  document.querySelectorAll('.ch-site[data-toggle]').forEach(function (card) {
+    var key = 'ch-open-' + card.getAttribute('data-id');
+    var head = card.querySelector('.ch-toggle');
+    function set(open) {
+      card.classList.toggle('open', open);
+      head.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+    var saved = null;
+    try { saved = localStorage.getItem(key); } catch (e) {}
+    set(saved === '1' || location.hash === '#' + card.id);
+    head.addEventListener('click', function () {
+      var open = !card.classList.contains('open');
+      set(open);
+      try { localStorage.setItem(key, open ? '1' : '0'); } catch (e) {}
+    });
+  });
+})();
+</script>`;
 
 /** One part of a channel, with the one button that changes it. */
 const part = (c: ChannelRow, key: string, title: string, rows: [string, string | Html][], button = 'Change'): Html => html`
@@ -328,21 +380,26 @@ const part = (c: ChannelRow, key: string, title: string, rows: [string, string |
   </section>`;
 
 /** A channel's card: its name, then its settings in parts. */
-export function channelCard(c: ChannelRow, websites: string[], rules: RulesCheck): Html {
+export function channelCard(c: ChannelRow, websites: string[], rules: RulesCheck, alwaysOpen = false): Html {
   const isFb = c.platform === 'facebook';
   const firstComment = rules.rules?.link === 'first_comment';
-  return html`<article class="ch-site" id="channel-${String(c.id)}">
+  return html`<article class="ch-site ${alwaysOpen ? 'open' : ''}" id="channel-${String(c.id)}" data-id="${String(c.id)}" ${raw(alwaysOpen ? '' : 'data-toggle')}
+      style="--ch-color:${channelColor(c)}">
     <div class="ch-site-top">
-      <div>
-        <h2>${c.name}</h2>
-        <div class="ch-meta"><span>${platformLabel(c.platform)}</span><span>${c.via === 'buffer' ? 'Through Buffer' : 'Through the Facebook API'}</span></div>
-      </div>
+      <button type="button" class="ch-toggle" aria-expanded="${alwaysOpen ? 'true' : 'false'}" aria-controls="channel-body-${String(c.id)}">
+        <span class="ch-toggle-text">
+          <span class="ch-name">${c.name}</span>
+          <span class="ch-meta"><span>${platformLabel(c.platform)}</span><span>${c.via === 'buffer' ? 'Through Buffer' : 'Through the Facebook API'}</span><span>${websites.length ? websites.join(', ') : 'No website yet'}</span></span>
+        </span>
+        ${rules.rules ? raw('') : html`<span class="ns-badge bad">Rules have problems</span>`}
+        ${alwaysOpen ? raw('') : raw('<svg class="ch-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>')}
+      </button>
       <form method="post" action="/new-website/channels/${String(c.id)}/delete" data-name="${c.name}"
             onsubmit="return confirm('Remove ' + this.dataset.name + '? Websites stop posting to it.')">
         <button class="ns-btn danger small">Remove</button>
       </form>
     </div>
-    <div class="ch-parts">
+    <div class="ch-parts" id="channel-body-${String(c.id)}">
       ${part(c, 'connection', 'Connection', [
         ['Platform', platformLabel(c.platform)],
         ['Posts through', viaLabel(c.via)],
@@ -374,7 +431,7 @@ export function channelPage(c: ChannelRow, websites: string[], rules: RulesCheck
       </div>
       <a class="ns-btn quiet" href="/new-website/channels">All channels</a>
     </div>
-    ${channelCard(c, websites, rules)}`;
+    ${channelCard(c, websites, rules, true)}`;
 }
 
 /* -- Adding a channel: choose the platform, then how it posts -------------- */

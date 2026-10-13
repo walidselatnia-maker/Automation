@@ -21,21 +21,27 @@ export type Platform = string;
  * platform can be used once prompts/platforms/<key>.md exists and is valid;
  * `built` here is only the starting list.
  */
-export const PLATFORMS: { key: string; label: string; built: boolean }[] = [
-  { key: 'pinterest', label: 'Pinterest', built: true },
-  { key: 'facebook', label: 'Facebook', built: true },
-  { key: 'instagram', label: 'Instagram', built: false },
-  { key: 'threads', label: 'Threads', built: false },
-  { key: 'linkedin', label: 'LinkedIn', built: false },
-  { key: 'bluesky', label: 'Bluesky', built: false },
-  { key: 'substack', label: 'Substack', built: false },
-  { key: 'youtube', label: 'YouTube', built: false },
-  { key: 'tiktok', label: 'TikTok', built: false },
-  { key: 'mastodon', label: 'Mastodon', built: false },
-  { key: 'google-business', label: 'Google Business Profile', built: false },
-  { key: 'x', label: 'Twitter / X', built: false },
-  { key: 'start-page', label: 'Start Page', built: false },
+export const PLATFORMS: { key: string; label: string; built: boolean; color: string }[] = [
+  { key: 'pinterest', label: 'Pinterest', built: true, color: '#e60023' },
+  { key: 'facebook', label: 'Facebook', built: true, color: '#1877f2' },
+  { key: 'instagram', label: 'Instagram', built: false, color: '#e1306c' },
+  { key: 'threads', label: 'Threads', built: false, color: '#6b6b6b' },
+  { key: 'linkedin', label: 'LinkedIn', built: false, color: '#0a66c2' },
+  { key: 'bluesky', label: 'Bluesky', built: false, color: '#1185fe' },
+  { key: 'substack', label: 'Substack', built: false, color: '#ff6719' },
+  { key: 'youtube', label: 'YouTube', built: false, color: '#ff0000' },
+  { key: 'tiktok', label: 'TikTok', built: false, color: '#25c4c4' },
+  { key: 'mastodon', label: 'Mastodon', built: false, color: '#6364ff' },
+  { key: 'google-business', label: 'Google Business Profile', built: false, color: '#4285f4' },
+  { key: 'x', label: 'Twitter / X', built: false, color: '#6b6b6b' },
+  { key: 'start-page', label: 'Start Page', built: false, color: '#7c3aed' },
 ];
+
+/**
+ * The colour a channel's card is tinted with: its platform's colour today.
+ * One place to change, so a channel can get its own colour later.
+ */
+export const channelColor = (c: { platform: string }): string => PLATFORMS.find((p) => p.key === c.platform)?.color ?? '#8a94a3';
 
 export interface ChannelRow {
   id: number;
