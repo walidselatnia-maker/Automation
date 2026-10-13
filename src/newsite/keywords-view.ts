@@ -992,7 +992,7 @@ function sharePostRow(p: SocialPostRow, channel: ChannelRow | undefined, planId:
       ${facts ? html`<div class="kw-share-meta">${facts}</div>` : raw('')}
       ${shown.length
         ? html`<dl class="kw-share-words">${shown.map(([k, v]) => html`<div><dt>${fieldLabel(k)}</dt><dd>${v}</dd></div>`)}</dl>`
-        : html`<p class="kw-share-meta">Its words are being written from the article, by ${channel ? html`<a href="/new-website/channels/${String(channel.id)}/rules">this channel’s rules</a>` : 'its channel’s rules'}.</p>`}
+        : html`<p class="kw-share-meta">Its words are being written from the article, by ${channel ? html`<a href="/new-website/channels/${String(channel.id)}">this channel’s rules</a>` : 'its channel’s rules'}.</p>`}
       ${p.error ? html`<div class="${p.status === 'failed' ? 'kw-seo-problems' : 'kw-kept'}">${p.error}</div>` : raw('')}
       <div class="kw-share-actions">
         ${p.status === 'failed'
@@ -1063,7 +1063,6 @@ export function shareStepPage(
   const body = html`
     <h2>Share</h2>
     <p>The sharing phase. Once an article is published, each channel makes its own post from that article, by its platform’s rules file: it writes the words, makes its own picture, then posts. It all starts by itself after publishing, and each channel’s progress and errors are shown here. The article link is never in a post’s words.</p>
-    ${channels.length ? html`<p class="kw-share-rules">Each channel’s rules: ${channels.map((c, i) => html`${i ? ' · ' : ''}<a href="/new-website/channels/${String(c.id)}/rules">${c.name}</a>`)}</p>` : raw('')}
     ${channels.length
       ? html`<div class="kw-share-channels"><span>Shares on</span>${channels.map(
           (c) => html`<span class="ns-tag">${c.name} · ${labelOf(c.platform)}</span>`,

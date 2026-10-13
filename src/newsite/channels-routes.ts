@@ -22,7 +22,14 @@ import {
 } from './channels.js';
 import {
   channelPage,
-  rulesEditorPage,
+  addPlatformStep,
+  addViaStep,
+  connectionPart,
+  PART_TITLE,
+  planPart,
+  postsPart,
+  rulesPart,
+  websitesPart,
   channelsPage,
   checkStep,
   connectStep,
@@ -152,8 +159,39 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
 
   app.get('/new-website/channels', async (request, reply) => {
     const channels = listChannels();
-    const usedBy = new Map(channels.map((c) => [c.id, channelWebsiteIds(c.id).length]));
-    return send(reply, page('Channels', channelsPage(channels, usedBy, listPlatformRules()), request));
+    const names = new Map(channels.map((c) => [c.id, websiteChoices(channelWebsiteIds(c.id)).filter((x) => x.checked).map((x) => x.name)]));
+    const rules = new Map(channels.map((c) => [c.id, channelRules(c)]));
+    return send(reply, page('Channels', channelsPage(channels, names, rules), request));
+  });
+
+  /* -- Add a channel: the platform, then how it posts, then its wizard ---- */
+
+  /** Buffer's platforms, then any platform with only a default rules file. */
+  const platformChoices = () => {
+    const files = listPlatformRules();
+    return [
+      ...PLATFORMS.map((p) => ({ key: p.key, label: p.label, ready: files.some((f) => f.platform === p.key && f.rules) })),
+      ...files.filter((f) => f.rules && !PLATFORMS.some((p) => p.key === f.platform)).map((f) => ({ key: f.platform, label: f.rules!.label, ready: true })),
+    ];
+  };
+
+  app.get('/new-website/channels/add', async (request, reply) => send(reply, page('Add a channel', addPlatformStep(platformChoices()), request)));
+
+  app.post('/new-website/channels/add', async (request, reply) => {
+    const platform = String(body(request).platform ?? '');
+    if (!platformChoices().some((p) => p.key === platform)) {
+      return send(reply, page('Add a channel', addPlatformStep(platformChoices(), 'Pick a platform.'), request));
+    }
+    if (viasOf(platform).length > 1) return send(reply, page('Add a channel', addViaStep(platform), request));
+    return reply.redirect(`/new-website/channels/${platform}/buffer/new`, 303);
+  });
+
+  app.post('/new-website/channels/add/via', async (request, reply) => {
+    const b = body(request);
+    const platform = String(b.platform ?? '');
+    const via = String(b.via ?? '') as Via;
+    if (!viasOf(platform).includes(via)) return reply.redirect('/new-website/channels/add', 303);
+    return reply.redirect(`/new-website/channels/${platform}/${via}/new`, 303);
   });
 
   /* -- Step 1: connect ---------------------------------------------------- */
@@ -331,74 +369,85 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
     }
   };
 
-  const showChannel = async (request: FastifyRequest, id: number, withCheck: boolean) => {
-    const c = getChannel(id);
-    if (!c) return null;
-    return page(c.name, channelPage(c, websiteChoices(channelWebsiteIds(c.id)), withCheck ? await check(c.id) : null, channelRules(c)), request);
-  };
+  /* -- One channel: its card, and one part at a time ------------------------ */
 
-  /* -- A channel's own rules: read, edit, save ---------------------------- */
+  const channelOf = (request: FastifyRequest) => getChannel(Number((request.params as { id: string }).id) || 0);
+  const websiteNames = (id: number): string[] => websiteChoices(channelWebsiteIds(id)).filter((s) => s.checked).map((s) => s.name);
+  const toChannel = (reply: FastifyReply, id: number, msg: string) => reply.redirect(`/new-website/channels/${id}?ok=${encodeURIComponent(msg)}`, 303);
 
-  /** What the editor opens with: the channel's saved rules, or its platform's default until it saves its own. */
+  /** What the rules box opens with: the channel's saved rules, or its platform's default until it saves its own. */
   const rulesTextOf = (c: NonNullable<ReturnType<typeof getChannel>>): string => c.rules_text || defaultRulesText(c.platform, platformLabel(c.platform));
 
-  app.get('/new-website/channels/:id/rules', async (request, reply) => {
-    const c = getChannel(Number((request.params as { id: string }).id) || 0);
-    if (!c) return reply.redirect('/new-website/channels', 303);
-    return send(reply, page(`${c.name} rules`, rulesEditorPage(c, rulesTextOf(c)), request));
-  });
-
-  app.post('/new-website/channels/:id/rules', async (request, reply) => {
-    const c = getChannel(Number((request.params as { id: string }).id) || 0);
-    if (!c) return reply.redirect('/new-website/channels', 303);
-    const text = String(body(request).rules ?? '');
-    const problems = saveChannelRules(c.id, text);
-    if (problems.length) return send(reply, page(`${c.name} rules`, rulesEditorPage(c, text, problems), request));
-    return reply.redirect(`/new-website/channels/${c.id}?ok=${encodeURIComponent('Rules saved. This channel’s next post uses them.')}`, 303);
-  });
-
-  app.post('/new-website/channels/:id/rules/reset', async (request, reply) => {
-    const c = getChannel(Number((request.params as { id: string }).id) || 0);
-    if (!c) return reply.redirect('/new-website/channels', 303);
-    saveChannelRules(c.id, defaultRulesText(c.platform, platformLabel(c.platform)));
-    return reply.redirect(`/new-website/channels/${c.id}/rules?ok=${encodeURIComponent('Back to the default rules. Change them and click Save, or go back to the channel.')}`, 303);
-  });
-
   app.get('/new-website/channels/:id', async (request, reply) => {
-    const id = Number((request.params as { id: string }).id) || 0;
+    const c = channelOf(request);
+    if (!c) return reply.redirect('/new-website/channels', 303);
+    // Right after adding a Buffer channel, its connection is checked first.
     const q = (request.query ?? {}) as Record<string, unknown>;
-    const out = await showChannel(request, id, on(q.check));
-    return out ? send(reply, out) : reply.redirect('/new-website/channels', 303);
+    if (on(q.check)) return send(reply, page(c.name, connectionPart(c, await check(c.id)), request));
+    return send(reply, page(c.name, channelPage(c, websiteNames(c.id), channelRules(c)), request));
   });
 
-  app.post('/new-website/channels/:id/check', async (request, reply) => {
-    const id = Number((request.params as { id: string }).id) || 0;
-    const out = await showChannel(request, id, true);
-    return out ? send(reply, out) : reply.redirect('/new-website/channels', 303);
+  /** One part of a channel, opened alone in the wizard frame. */
+  app.get('/new-website/channels/:id/edit/:part', async (request, reply) => {
+    const c = channelOf(request);
+    const part = String((request.params as { part: string }).part);
+    if (!c) return reply.redirect('/new-website/channels', 303);
+    const title = `${c.name}: ${PART_TITLE[part] ?? ''}`;
+    switch (part) {
+      case 'connection':
+        return send(reply, page(title, connectionPart(c, await check(c.id)), request));
+      case 'websites':
+        return send(reply, page(title, websitesPart(c, websiteChoices(channelWebsiteIds(c.id))), request));
+      case 'posts':
+        return c.platform === 'facebook' ? send(reply, page(title, postsPart(c), request)) : reply.redirect(`/new-website/channels/${c.id}`, 303);
+      case 'plan':
+        return c.via === 'buffer' ? send(reply, page(title, planPart(c), request)) : reply.redirect(`/new-website/channels/${c.id}`, 303);
+      case 'rules':
+        return send(reply, page(title, rulesPart(c, rulesTextOf(c)), request));
+      default:
+        return reply.redirect(`/new-website/channels/${c.id}`, 303);
+    }
   });
 
-  app.post('/new-website/channels/:id/settings', async (request, reply) => {
-    const id = Number((request.params as { id: string }).id) || 0;
-    const c = getChannel(id);
+  app.post('/new-website/channels/:id/edit/:part', async (request, reply) => {
+    const c = channelOf(request);
+    const part = String((request.params as { part: string }).part);
     if (!c) return reply.redirect('/new-website/channels', 303);
     const b = body(request);
-    const back = (msg: string, kind: 'ok' | 'error') => reply.redirect(`/new-website/channels/${id}?${kind}=${encodeURIComponent(msg)}`, 303);
-    const isFb = c.platform === 'facebook';
-    if (isFb && !on(b.postImage) && !on(b.postReel)) return back('Pick what to post: an image post, a reel, or both.', 'error');
-    const websiteIds = list(b.websiteId).map(Number).filter(Boolean);
-    if (websiteIds.length > 1 && !on(b.multiWebsite)) {
-      return back('You picked more than one website. Tick “Connect this channel to multiple websites”, or pick one.', 'error');
+    const title = `${c.name}: ${PART_TITLE[part] ?? ''}`;
+    switch (part) {
+      case 'connection':
+        return send(reply, page(title, connectionPart(c, await check(c.id)), request));
+      case 'websites': {
+        const websiteIds = list(b.websiteId).map(Number).filter(Boolean);
+        const multi = on(b.multiWebsite);
+        if (websiteIds.length > 1 && !multi) {
+          return send(reply, page(title, websitesPart({ ...c, multi_website: 0 }, websiteChoices(websiteIds), 'You picked more than one website. Tick “Connect this channel to multiple websites”, or pick one.'), request));
+        }
+        run('UPDATE newsite_channels SET multi_website = ? WHERE id = ?', multi ? 1 : 0, c.id);
+        const refused = setChannelWebsites(c.id, websiteIds);
+        if (refused) return send(reply, page(title, websitesPart(getChannel(c.id)!, websiteChoices(websiteIds), refused), request));
+        return toChannel(reply, c.id, 'Websites saved.');
+      }
+      case 'posts': {
+        if (!on(b.postImage) && !on(b.postReel)) {
+          return send(reply, page(title, postsPart({ ...c, post_image: 0, post_reel: 0 }, 'Pick what to post: an image post, a reel, or both.'), request));
+        }
+        run('UPDATE newsite_channels SET post_image = ?, post_reel = ? WHERE id = ?', on(b.postImage) ? 1 : 0, on(b.postReel) ? 1 : 0, c.id);
+        return toChannel(reply, c.id, 'What to post saved.');
+      }
+      case 'plan':
+        run('UPDATE newsite_channels SET paid_buffer = ? WHERE id = ?', on(b.paidBuffer) ? 1 : 0, c.id);
+        return toChannel(reply, c.id, 'Buffer plan saved.');
+      case 'rules': {
+        const text = on(b.reset) ? defaultRulesText(c.platform, platformLabel(c.platform)) : String(b.rules ?? '');
+        const problems = saveChannelRules(c.id, text);
+        if (problems.length) return send(reply, page(title, rulesPart(c, text, problems), request));
+        return toChannel(reply, c.id, on(b.reset) ? 'Rules set back to the default. This channel’s next post uses them.' : 'Rules saved. This channel’s next post uses them.');
+      }
+      default:
+        return reply.redirect(`/new-website/channels/${c.id}`, 303);
     }
-    run(
-      `UPDATE newsite_channels SET multi_website = ?, paid_buffer = ?, post_image = ?, post_reel = ? WHERE id = ?`,
-      on(b.multiWebsite) ? 1 : 0,
-      c.via === 'buffer' && c.platform !== 'pinterest' && on(b.paidBuffer) ? 1 : 0,
-      isFb ? (on(b.postImage) ? 1 : 0) : c.post_image,
-      isFb ? (on(b.postReel) ? 1 : 0) : c.post_reel,
-      id,
-    );
-    const refused = setChannelWebsites(id, websiteIds);
-    return refused ? back(refused, 'error') : back('Settings saved.', 'ok');
   });
 
   app.post('/new-website/channels/:id/delete', async (request, reply) => {

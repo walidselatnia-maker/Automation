@@ -57,18 +57,25 @@ describe('New dashboard: channels', () => {
       KEY,
     );
 
-  it('lists every platform, Buffer and the API kept apart: Pinterest through Buffer only, Facebook both ways', async () => {
-    const res = await (await app()).inject({ url: '/new-website/channels' });
-    expect(res.body).toContain('href="/new-website/channels/pinterest/buffer/new"');
-    expect(res.body).not.toContain('/channels/pinterest/api/new');
-    expect(res.body).toContain('href="/new-website/channels/facebook/buffer/new"');
-    expect(res.body).toContain('href="/new-website/channels/facebook/api/new"');
-    expect(res.body).toContain('Through Buffer');
-    expect(res.body).toContain('Through the API');
-    // Every Buffer platform can be added; its channel starts with starter rules it can edit.
-    expect(res.body).toContain('href="/new-website/channels/instagram/buffer/new"');
-    expect(res.body).not.toContain('No rules file');
-    expect((await (await app()).inject({ url: '/new-website/channels/pinterest/api/new' })).statusCode).toBe(303);
+  it('adds channels through one wizard: Add channel, the platform, then how it posts', async () => {
+    const a = await app();
+    const empty = await a.inject({ url: '/new-website/channels' });
+    expect(empty.body).toContain('No channels yet');
+    expect(empty.body).toContain('href="/new-website/channels/add"');
+
+    const platforms = await a.inject({ url: '/new-website/channels/add' });
+    expect(platforms.body).toContain('Step 1 of 2: Platform');
+    for (const name of ['Pinterest', 'Facebook', 'Instagram']) expect(platforms.body).toContain(`<b>${name}</b>`);
+
+    // Pinterest posts through Buffer only: straight to its own wizard.
+    const pin = await post(a, '/new-website/channels/add', { platform: 'pinterest' });
+    expect(pin.headers.location).toBe('/new-website/channels/pinterest/buffer/new');
+    // Facebook: Buffer or the API, then its wizard.
+    const fb = await post(a, '/new-website/channels/add', { platform: 'facebook' });
+    expect(fb.body).toContain('Step 2 of 2: How it posts');
+    expect((await post(a, '/new-website/channels/add/via', { platform: 'facebook', via: 'api' })).headers.location).toBe('/new-website/channels/facebook/api/new');
+    expect((await post(a, '/new-website/channels/add/via', { platform: 'pinterest', via: 'api' })).headers.location).toBe('/new-website/channels/add');
+    expect((await a.inject({ url: '/new-website/channels/pinterest/api/new' })).statusCode).toBe(303);
   });
 
   it('adds a Pinterest channel through Buffer: token, channel, websites, then the check', async () => {
@@ -162,56 +169,66 @@ describe('New dashboard: channels', () => {
     expect(checked.body).toContain('Connected. Buffer answers and lists this page.');
   });
 
-  it('edits a channel’s rules on its own page: Edit rules, change the text, Save', async () => {
-    const a = await app();
+  /** A Pinterest channel added through its wizard. */
+  const addPin = async (a: Awaited<ReturnType<typeof app>>): Promise<number> => {
     const pick = await post(a, '/new-website/channels/pinterest/buffer/connect', { token: BUFFER_TOKEN });
     const draft = draftIn(pick.body);
     await post(a, '/new-website/channels/pinterest/buffer/pick', { draft, pick: 'ch-pin' });
     await post(a, '/new-website/channels/pinterest/buffer/save', { draft });
-    const id = listChannels()[0]!.id;
+    return listChannels()[0]!.id;
+  };
 
-    const channel = await a.inject({ url: `/new-website/channels/${id}` });
-    expect(channel.body).toContain(`href="/new-website/channels/${id}/rules">Edit rules</a>`);
-    expect(channel.body).toContain('Rules OK');
+  it('shows each channel as a card of parts, each with one Change button', async () => {
+    const a = await app();
+    const id = await addPin(a);
+    const list = await a.inject({ url: '/new-website/channels' });
+    for (const part of ['connection', 'websites', 'rules']) expect(list.body).toContain(`href="/new-website/channels/${id}/edit/${part}"`);
+    expect(list.body).not.toContain(`/edit/posts`); // not a Facebook page
+    expect(list.body).toContain('Rules OK');
+    expect(list.body).toContain('href="/new-website/channels/add">Add channel</a>');
+  });
 
-    const editor = await a.inject({ url: `/new-website/channels/${id}/rules` });
+  it('changes the rules alone, in the wizard frame: the text, then Save', async () => {
+    const a = await app();
+    const id = await addPin(a);
+    const editor = await a.inject({ url: `/new-website/channels/${id}/edit/rules` });
     expect(editor.body).toContain('<textarea id="ch-rules-text" name="rules"');
     expect(editor.body).toContain('# Pinterest rules');
+    expect(editor.body).toContain('Only this part changes.');
 
     const text = getChannel(id)!.rules_text.replace('# Pinterest rules', '# Pinterest rules\n\nWrite for busy parents.');
-    const saved = await post(a, `/new-website/channels/${id}/rules`, { rules: text });
-    expect(saved.statusCode).toBe(303);
+    const saved = await post(a, `/new-website/channels/${id}/edit/rules`, { rules: text });
     expect(saved.headers.location).toMatch(/ok=Rules%20saved/);
     expect(getChannel(id)!.rules_text).toContain('Write for busy parents.');
 
-    const bad = await post(a, `/new-website/channels/${id}/rules`, { rules: text.replace('link: pin_link', 'link: sometimes') });
+    const bad = await post(a, `/new-website/channels/${id}/edit/rules`, { rules: text.replace('link: pin_link', 'link: sometimes') });
     expect(bad.statusCode).toBe(200);
-    expect(bad.body).toContain('Not saved. Fix these and click Save again');
+    expect(bad.body).toContain('Not saved. Fix this and save again');
     expect(bad.body).toContain('link must be one of');
-    expect(bad.body).toContain('link: sometimes'); // the text is kept in the editor
+    expect(bad.body).toContain('link: sometimes'); // the text is kept in the box
     expect(getChannel(id)!.rules_text).toContain('link: pin_link');
 
-    await post(a, `/new-website/channels/${id}/rules/reset`, {});
+    await post(a, `/new-website/channels/${id}/edit/rules`, { rules: 'anything', reset: '1' });
     expect(getChannel(id)!.rules_text).not.toContain('Write for busy parents.');
   });
 
-  it('changes a channel’s websites from the channel page', async () => {
+  it('changes the websites alone, in the wizard frame', async () => {
     const a = await app();
     const one = site('One', 'one.example.com');
     const two = site('Two', 'two.example.com');
-    const pick = await post(a, '/new-website/channels/pinterest/buffer/connect', { token: BUFFER_TOKEN });
-    const draft = draftIn(pick.body);
-    await post(a, '/new-website/channels/pinterest/buffer/pick', { draft, pick: 'ch-pin' });
-    await post(a, '/new-website/channels/pinterest/buffer/save', { draft });
-    const id = listChannels()[0]!.id;
+    const id = await addPin(a);
 
-    const page = await a.inject({ url: `/new-website/channels/${id}` });
-    expect(page.body).toContain('one.example.com');
-    const refused = await post(a, `/new-website/channels/${id}/settings`, { websiteId: [String(one), String(two)] });
-    expect(refused.headers.location).toMatch(/error=/);
-    await post(a, `/new-website/channels/${id}/settings`, { websiteId: [String(one), String(two)], multiWebsite: '1' });
+    const part = await a.inject({ url: `/new-website/channels/${id}/edit/websites` });
+    expect(part.body).toContain('one.example.com');
+    const refused = await post(a, `/new-website/channels/${id}/edit/websites`, { websiteId: [String(one), String(two)] });
+    expect(refused.statusCode).toBe(200);
+    expect(refused.body).toContain('You picked more than one website');
+    await post(a, `/new-website/channels/${id}/edit/websites`, { websiteId: [String(one), String(two)], multiWebsite: '1' });
     expect(websiteChannels(one)).toHaveLength(1);
     expect(websiteChannels(two)).toHaveLength(1);
+
+    const check = await a.inject({ url: `/new-website/channels/${id}/edit/connection` });
+    expect(check.body).toContain('Connected. Buffer answers, with 2 boards');
   });
 
   it('lets a single-website channel belong to one website only', async () => {
@@ -231,7 +248,7 @@ describe('New dashboard: channels', () => {
     expect(setWebsiteChannels(two, [channelId])[0]).toMatch(/already used by another website/);
 
     // Set to multiple websites: both may use it.
-    await post(a, `/new-website/channels/${channelId}/settings`, { multiWebsite: '1', websiteId: String(one) });
+    await post(a, `/new-website/channels/${channelId}/edit/websites`, { multiWebsite: '1', websiteId: String(one) });
     expect(getChannel(channelId)!.multi_website).toBe(1);
     expect(setWebsiteChannels(two, [channelId])).toEqual([]);
     expect(websiteChannels(two)).toHaveLength(1);

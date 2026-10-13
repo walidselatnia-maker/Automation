@@ -15,6 +15,26 @@ import { WIZARD_CSS, field } from './view.js';
  */
 
 const CSS = `
+.ch-cards { display: grid; gap: 20px; }
+.ch-site { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); padding: 24px 28px; box-shadow: var(--shadow); }
+.ch-site-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; }
+.ch-site-top h2 { font-size: 22px; line-height: 1.2; }
+.ch-site-top form { margin: 0; }
+.ch-meta { display: flex; flex-wrap: wrap; gap: 6px 10px; margin-top: 6px; color: var(--soft); font-size: 14px; }
+.ch-meta > * + *::before { content: '\\00B7'; margin-right: 10px; color: var(--faint); }
+.ch-parts { display: grid; grid-template-columns: 1fr 1fr; gap: 0 40px; margin-top: 18px; border-top: 1px solid var(--line); }
+.ch-part { padding: 16px 0 10px; border-bottom: 1px solid var(--line); }
+.ch-part-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 6px; }
+.ch-part h3 { font-size: 15px; }
+.ch-part dl { margin: 0; }
+.ch-part dl div { display: grid; grid-template-columns: 140px 1fr; gap: 12px; padding: 4px 0; align-items: baseline; }
+.ch-part dt { color: var(--faint); font-size: 14px; }
+.ch-part dd { margin: 0; font-weight: 500; overflow-wrap: anywhere; }
+.ch-empty { border: 1px dashed var(--line-strong); border-radius: var(--r-card); padding: 56px 32px; text-align: center; }
+.ch-empty h2 { font-size: 22px; margin-bottom: 8px; }
+.ch-empty p { color: var(--soft); margin: 0 auto 24px; max-width: 46ch; }
+.ch-pick-grid { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
+.wz.ch-wz-wide { max-width: 900px; }
 .ch-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
 .ch-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); padding: 20px; display: flex; flex-direction: column; gap: 14px; box-shadow: var(--shadow); }
 .ch-card.soon { background: transparent; box-shadow: none; border-style: dashed; }
@@ -58,7 +78,7 @@ const CSS = `
 .ch-facts dd { margin: 0; font-weight: 500; overflow-wrap: anywhere; }
 .ch-sec { font: 600 15px var(--display); margin: 20px 0 10px; }
 .ch-sec:first-child { margin-top: 0; }
-@media (max-width: 640px) { .ch-facts { grid-template-columns: 1fr; gap: 2px; } }
+@media (max-width: 640px) { .ch-facts, .ch-parts { grid-template-columns: 1fr; gap: 2px; } .ch-part dl div { grid-template-columns: 1fr; gap: 0; } }
 `;
 
 export const platformLabel = (key: string): string => PLATFORMS.find((p) => p.key === key)?.label ?? key.charAt(0).toUpperCase() + key.slice(1);
@@ -66,40 +86,6 @@ export const platformLabel = (key: string): string => PLATFORMS.find((p) => p.ke
 const VIA_TITLE: Record<Via, string> = { buffer: 'Through Buffer', api: 'Through the API' };
 
 const sites = (n: number): string => (n === 1 ? '1 website' : `${n} websites`);
-
-/** The Channels page: every platform, its channels by how they post, and a way to add one. */
-export function channelsPage(channels: ChannelRow[], usedBy: Map<number, number>, rules: RulesCheck[] = []): Html {
-  // Buffer's list, then any platform that only has a rules file.
-  const cards = [...PLATFORMS, ...rules.filter((r) => !PLATFORMS.some((p) => p.key === r.platform)).map((r) => ({ key: r.platform, label: r.rules?.label ?? platformLabel(r.platform), built: true }))];
-  return html`
-    <style>${raw(CSS)}</style>
-    <div class="ns-head">
-      <div>
-        <h1 class="ns-title">Channels</h1>
-        <p class="ns-lede">Where your articles are shared. Each channel posts one way only: through Buffer, or through the platform’s own API.</p>
-      </div>
-    </div>
-    <div class="ch-grid">
-      ${cards.map((p) => {
-        const key = p.key as Platform;
-        return html`<section class="ch-card">
-          <div class="ch-top"><h2>${p.label}</h2></div>
-          ${viasOf(key).map((via) => {
-            const mine = channels.filter((c) => c.platform === key && c.via === via);
-            return html`<div class="ch-via">
-              <div class="ch-via-head"><h3>${VIA_TITLE[via]}</h3>
-                <a class="ns-btn ${mine.length ? 'quiet' : 'primary'}" href="/new-website/channels/${key}/${via}/new">Add</a></div>
-              ${mine.length
-                ? html`<ul class="ch-list">${mine.map(
-                    (c) => html`<li><a href="/new-website/channels/${c.id}"><span>${c.name}</span><small>${sites(usedBy.get(c.id) ?? 0)}</small></a></li>`,
-                  )}</ul>`
-                : html`<p class="ch-none">None yet.</p>`}
-            </div>`;
-          })}
-        </section>`;
-      })}
-    </div>`;
-}
 
 /* -- The wizards ---------------------------------------------------------- */
 
@@ -310,84 +296,217 @@ export function websitesStep(w: WizardContext, websites: WebsiteChoice[], multi:
   );
 }
 
-/* -- One channel ---------------------------------------------------------- */
-
-export function channelPage(c: ChannelRow, websites: WebsiteChoice[], check: { ok: boolean; text: string } | null, rules: RulesCheck): Html {
-  const isFb = c.platform === 'facebook';
-  const used = websites.filter((s) => s.checked).map((s) => s.name);
+/**
+ * The Channels page, the same system as Websites: one "Add channel" button
+ * (a wizard), then a card per channel with its settings in parts. Each part
+ * has one Change button that opens just that part in the wizard frame.
+ */
+export function channelsPage(channels: ChannelRow[], websitesOf: Map<number, string[]>, rulesOf: Map<number, RulesCheck>): Html {
   return html`
-    <style>${raw(WIZARD_CSS)}${raw(CSS)}</style>
+    <style>${raw(CSS)}</style>
+    <div class="ns-head">
+      <div>
+        <h1 class="ns-title">Channels</h1>
+        <p class="ns-lede">Where your articles are shared after they are published. Each channel makes and posts its own content, by its own rules.</p>
+      </div>
+      ${channels.length ? html`<a class="ns-btn primary" href="/new-website/channels/add">Add channel</a>` : raw('')}
+    </div>
+    ${channels.length
+      ? html`<div class="ch-cards">${channels.map((c) => channelCard(c, websitesOf.get(c.id) ?? [], rulesOf.get(c.id)!))}</div>`
+      : html`<div class="ch-empty">
+          <h2>No channels yet</h2>
+          <p>Add a Pinterest account, a Facebook page or another platform to share your articles on.</p>
+          <a class="ns-btn primary" href="/new-website/channels/add">Add channel</a>
+        </div>`}`;
+}
+
+/** One part of a channel, with the one button that changes it. */
+const part = (c: ChannelRow, key: string, title: string, rows: [string, string | Html][], button = 'Change'): Html => html`
+  <section class="ch-part">
+    <div class="ch-part-head"><h3>${title}</h3><a class="ns-btn small" href="/new-website/channels/${String(c.id)}/edit/${key}">${button}</a></div>
+    <dl>${rows.map(([k, v]) => html`<div><dt>${k}</dt><dd>${v}</dd></div>`)}</dl>
+  </section>`;
+
+/** A channel's card: its name, then its settings in parts. */
+export function channelCard(c: ChannelRow, websites: string[], rules: RulesCheck): Html {
+  const isFb = c.platform === 'facebook';
+  const firstComment = rules.rules?.link === 'first_comment';
+  return html`<article class="ch-site" id="channel-${String(c.id)}">
+    <div class="ch-site-top">
+      <div>
+        <h2>${c.name}</h2>
+        <div class="ch-meta"><span>${platformLabel(c.platform)}</span><span>${c.via === 'buffer' ? 'Through Buffer' : 'Through the Facebook API'}</span></div>
+      </div>
+      <form method="post" action="/new-website/channels/${String(c.id)}/delete" data-name="${c.name}"
+            onsubmit="return confirm('Remove ' + this.dataset.name + '? Websites stop posting to it.')">
+        <button class="ns-btn danger small">Remove</button>
+      </form>
+    </div>
+    <div class="ch-parts">
+      ${part(c, 'connection', 'Connection', [
+        ['Platform', platformLabel(c.platform)],
+        ['Posts through', viaLabel(c.via)],
+      ], 'Check')}
+      ${part(c, 'websites', 'Websites', [
+        ['Shares articles of', websites.length ? websites.join(', ') : 'No website yet'],
+        ['Several websites', c.multi_website ? 'Yes' : 'No, one only'],
+      ])}
+      ${isFb
+        ? part(c, 'posts', 'What to post', [['Each article gets', [c.post_image ? 'An image post' : '', c.post_reel ? 'A reel (coming next)' : ''].filter(Boolean).join(' and ') || 'Nothing']])
+        : raw('')}
+      ${c.via === 'buffer' && firstComment ? part(c, 'plan', 'Buffer plan', [['Plan', c.paid_buffer ? 'Paid (first comment with the link)' : 'Free (posts go out with no link)']]) : raw('')}
+      ${part(c, 'rules', 'Rules', [
+        ['State', rules.rules ? html`<span class="ns-badge ok">Rules OK</span>` : html`<span class="ns-badge bad">Rules have problems</span>`],
+        ['Each post', rules.rules ? `${rules.rules.postLabel}, with ${rules.rules.fields.join(', ')}` : rules.errors[0] ?? ''],
+      ])}
+    </div>
+  </article>`;
+}
+
+/** The page of one channel: its card. */
+export function channelPage(c: ChannelRow, websites: string[], rules: RulesCheck): Html {
+  return html`
+    <style>${raw(CSS)}</style>
     <div class="ns-head">
       <div>
         <h1 class="ns-title">${c.name}</h1>
-        <p class="ns-lede">${platformLabel(c.platform)} channel, ${c.via === 'buffer' ? 'through Buffer' : 'through the Facebook API'}</p>
+        <p class="ns-lede">${platformLabel(c.platform)} channel. Use Change on a part to edit just that part.</p>
       </div>
       <a class="ns-btn quiet" href="/new-website/channels">All channels</a>
     </div>
-    ${check ? html`<p class="${check.ok ? 'ch-ok' : 'ch-bad'}">${check.text}</p>` : raw('')}
-    <dl class="ch-facts">
-      <dt>Platform</dt><dd>${platformLabel(c.platform)}</dd>
-      <dt>Posts through</dt><dd>${viaLabel(c.via)}</dd>
-      <dt>Used by</dt><dd>${used.length ? used.join(', ') : 'No website yet'}</dd>
-      ${isFb ? html`<dt>Posts</dt><dd>${[c.post_image ? 'Image post' : '', c.post_reel ? 'Reel (coming next)' : ''].filter(Boolean).join(' and ') || 'Nothing'}</dd>` : raw('')}
-    </dl>
-    <section class="ch-rules-box">
-      <div class="ch-rules-head">
-        <div>
-          <h2 class="ch-sec" style="margin:0">Rules</h2>
-          <p class="ch-none" style="margin:4px 0 0">What this channel writes and makes for each published article. These rules are this channel’s own.</p>
-        </div>
-        <a class="ns-btn primary" href="/new-website/channels/${c.id}/rules">Edit rules</a>
-      </div>
-      ${rules.rules
-        ? html`<p class="ch-rules-sum"><span class="ns-badge ok">Rules OK</span> Each post: ${rules.rules.postLabel} · the AI writes ${rules.rules.fields.join(', ')} · picture ${rules.rules.pictureShape === 'PORTRAIT_3_4' ? '3:4 portrait' : '16:9 wide'}</p>`
-        : html`<div class="ns-alert bad" style="margin:12px 0 0"><b>These rules have problems, so this channel makes nothing until they are fixed:</b><ul>${rules.errors.map((e) => html`<li>${e}</li>`)}</ul></div>`}
-    </section>
-    <form method="post" action="/new-website/channels/${c.id}/settings" class="wz" style="max-width:none">
-      <div class="wz-body">
-        <h2 class="ch-sec">Websites</h2>
-        ${websiteBoxes(websites, Boolean(c.multi_website))}
-        ${isFb
-          ? html`<h2 class="ch-sec">What to post</h2>
-            <label class="wz-check" style="margin:0 0 12px"><input type="checkbox" name="postImage" value="1" ${checked(Boolean(c.post_image))} /> An image post for each article</label>
-            <label class="wz-check" style="margin:0 0 12px"><input type="checkbox" name="postReel" value="1" ${checked(Boolean(c.post_reel))} /> A reel for each article (coming next)</label>`
-          : raw('')}
-        ${c.via === 'buffer' && c.platform !== 'pinterest' ? html`<h2 class="ch-sec">Buffer plan</h2>${paidBox(Boolean(c.paid_buffer))}` : raw('')}
-      </div>
-      <div class="wz-foot">
-        <button class="ns-btn quiet" formaction="/new-website/channels/${c.id}/check">Check the connection</button>
-        <button class="ns-btn primary">Save settings</button>
-      </div>
-    </form>
-    <form method="post" action="/new-website/channels/${c.id}/delete" style="margin-top:24px" onsubmit="return confirm('Remove this channel? Websites stop posting to it.')">
-      <button class="ns-btn danger">Remove this channel</button>
-    </form>`;
+    ${channelCard(c, websites, rules)}`;
 }
 
-/** The channel's rules in a plain text editor: read, change, save. */
-export function rulesEditorPage(c: ChannelRow, text: string, errors: string[] = []): Html {
+/* -- Adding a channel: choose the platform, then how it posts -------------- */
+
+const ADD_STEPS = ['Platform', 'How it posts'];
+
+function addWizard(step: number, body: Html, foot: Html, error = ''): Html {
   return html`
     <style>${raw(WIZARD_CSS)}${raw(CSS)}</style>
-    <div class="ns-head">
-      <div>
-        <h1 class="ns-title">${c.name}: rules</h1>
-        <p class="ns-lede">${platformLabel(c.platform)} channel. Change the text and click Save: this channel’s next post uses the new rules. Other channels keep their own.</p>
+    <div class="wz">
+      <div class="wz-head">
+        <h1>Add a channel</h1>
+        <p class="wz-id">Choose where to share, then connect it.</p>
+        <div class="wz-bar" style="grid-template-columns:repeat(${ADD_STEPS.length},1fr)">${ADD_STEPS.map((_, i) => html`<i class="${i <= step ? 'on' : ''}"></i>`)}</div>
+        <div class="wz-stepname">Step ${step + 1} of ${ADD_STEPS.length}: ${ADD_STEPS[step]}</div>
       </div>
-      <a class="ns-btn quiet" href="/new-website/channels/${c.id}">Back to the channel</a>
-    </div>
-    ${errors.length
-      ? html`<div class="ns-alert bad" role="alert"><b>Not saved. Fix these and click Save again:</b><ul>${errors.map((e) => html`<li>${e}</li>`)}</ul></div>`
-      : raw('')}
-    <p class="ch-editor-help">The part between the two <code>---</code> lines tells the platform what to make: <b>fields</b> are what the AI writes, <b>post_text</b> is the field that becomes the post, <b>picture_shape</b> is PORTRAIT_3_4 or HORIZONTAL, <b>link</b> is pin_link, first_comment or none. Everything below it is what the AI follows. Under <b>## Limits</b>, a line like <code>- title_chars: 40-100</code> is checked on every post.</p>
-    <form method="post" action="/new-website/channels/${c.id}/rules">
-      <label for="ch-rules-text" class="ch-sec" style="display:block">Rules</label>
-      <textarea id="ch-rules-text" name="rules" class="ch-editor" spellcheck="false">${text}</textarea>
-      <div class="ch-editor-foot">
-        <button class="ns-btn small" formaction="/new-website/channels/${c.id}/rules/reset" onclick="return confirm('Replace this channel’s rules with the platform’s default rules?')">Start again from the default rules</button>
-        <div>
-          <a class="ns-btn quiet" href="/new-website/channels/${c.id}">Cancel</a>
-          <button class="ns-btn primary">Save</button>
-        </div>
-      </div>
-    </form>`;
+      <div class="wz-body">${error ? html`<p class="ch-bad" role="alert">${error}</p>` : raw('')}${body}</div>
+      <div class="wz-foot">${foot}</div>
+    </div>`;
 }
+
+export function addPlatformStep(platforms: { key: string; label: string; ready: boolean }[], error = ''): Html {
+  return addWizard(
+    0,
+    html`<form id="ch-form" method="post" action="/new-website/channels/add">
+      <h2>Platform</h2>
+      <p>Where this channel shares your articles.</p>
+      <div class="ch-pick ch-pick-grid">
+        ${platforms.map(
+          (p, i) => html`<label class="ch-option"><input type="radio" name="platform" value="${p.key}" ${checked(i === 0)} />
+            <div><b>${p.label}</b><span>${p.ready ? 'Ready-made rules' : 'Starts with simple rules you can change'}</span></div></label>`,
+        )}
+      </div>
+    </form>`,
+    html`<a class="ns-btn quiet" href="/new-website/channels">Cancel</a><button class="ns-btn primary" form="ch-form">Next</button>`,
+    error,
+  );
+}
+
+export function addViaStep(platform: string): Html {
+  return addWizard(
+    1,
+    html`<form id="ch-form" method="post" action="/new-website/channels/add/via">
+      <input type="hidden" name="platform" value="${platform}" />
+      <h2>How it posts</h2>
+      <p>${platformLabel(platform)} can post through Buffer or through its own API. A channel uses one of them only.</p>
+      <div class="ch-pick">
+        <label class="ch-option"><input type="radio" name="via" value="buffer" checked />
+          <div><b>Through Buffer</b><span>Buffer queues the posts and sends them at its times.</span></div></label>
+        <label class="ch-option"><input type="radio" name="via" value="api" />
+          <div><b>Through the Facebook API</b><span>Posts straight to the page, with the link as the first comment.</span></div></label>
+      </div>
+    </form>`,
+    html`<a class="ns-btn quiet" href="/new-website/channels/add">Previous</a><button class="ns-btn primary" form="ch-form">Next</button>`,
+  );
+}
+
+/* -- Changing one part of a channel, in the wizard frame --------------------- */
+
+export const PART_TITLE: Record<string, string> = {
+  connection: 'Connection',
+  websites: 'Websites',
+  posts: 'What to post',
+  plan: 'Buffer plan',
+  rules: 'Rules',
+};
+
+/** The wizard frame for one part of a saved channel: its title, the part, Cancel and Save. */
+export function partPage(c: ChannelRow, key: string, body: Html, opts: { error?: string | string[]; save?: boolean; wide?: boolean } = {}): Html {
+  const errors = Array.isArray(opts.error) ? opts.error : opts.error ? [opts.error] : [];
+  const back = `/new-website/channels/${String(c.id)}`;
+  return html`
+    <style>${raw(WIZARD_CSS)}${raw(CSS)}</style>
+    <div class="wz ${opts.wide ? 'ch-wz-wide' : ''}">
+      <div class="wz-head">
+        <h1>${c.name}: ${PART_TITLE[key] ?? key}</h1>
+        <p class="wz-id">${platformLabel(c.platform)} channel. Only this part changes.</p>
+      </div>
+      <form id="ch-form" method="post" action="${back}/edit/${key}">
+        <div class="wz-body">
+          ${errors.length
+            ? html`<div class="ch-bad" role="alert"><b>Not saved. Fix this and save again:</b><ul>${errors.map((e) => html`<li>${e}</li>`)}</ul></div>`
+            : raw('')}
+          ${body}
+        </div>
+        <div class="wz-foot">
+          <a class="ns-btn quiet" href="${back}">${opts.save === false ? 'Back to the channel' : 'Cancel'}</a>
+          ${opts.save === false ? html`<button class="ns-btn primary">Check again</button>` : html`<button class="ns-btn primary">Save</button>`}
+        </div>
+      </form>
+    </div>`;
+}
+
+export const connectionPart = (c: ChannelRow, result: { ok: boolean; text: string }): Html =>
+  partPage(
+    c,
+    'connection',
+    html`<h2>Connection</h2>
+      <p>The platform was asked, just now, whether this channel can still post.</p>
+      <p class="${result.ok ? 'ch-ok' : 'ch-bad'}">${result.text}</p>`,
+    { save: false },
+  );
+
+export const websitesPart = (c: ChannelRow, websites: WebsiteChoice[], error = ''): Html =>
+  partPage(c, 'websites', html`<h2>Websites</h2><p>Which websites share their articles on this channel.</p>${websiteBoxes(websites, Boolean(c.multi_website))}`, { error });
+
+export const postsPart = (c: ChannelRow, error = ''): Html =>
+  partPage(
+    c,
+    'posts',
+    html`<h2>What to post</h2><p>For each article. One of them or both.</p>
+      <div class="ch-pick">
+        <label class="ch-option"><input type="checkbox" name="postImage" value="1" ${checked(Boolean(c.post_image))} />
+          <div><b>Image post</b><span>Its own picture and words, made from the article.</span></div></label>
+        <label class="ch-option"><input type="checkbox" name="postReel" value="1" ${checked(Boolean(c.post_reel))} />
+          <div><b>Reel</b><span>Coming next: picking it now saves the choice.</span></div></label>
+      </div>`,
+    { error },
+  );
+
+export const planPart = (c: ChannelRow): Html =>
+  partPage(c, 'plan', html`<h2>Buffer plan</h2><p>The article link goes in the first comment, never in the post. The platform cannot see your Buffer plan, so tell it here.</p>${paidBox(Boolean(c.paid_buffer))}`);
+
+/** The channel's rules in a plain text box: read, change, save. */
+export const rulesPart = (c: ChannelRow, text: string, errors: string[] = []): Html =>
+  partPage(
+    c,
+    'rules',
+    html`<h2>Rules</h2>
+      <p>What this channel writes and makes for each published article. Change the text and click Save: this channel’s next post uses it. Other channels keep their own rules.</p>
+      <p class="ch-editor-help">The lines between the two <code>---</code> say what to make: <b>fields</b> are what the AI writes, <b>post_text</b> is the field that becomes the post, <b>picture_shape</b> is PORTRAIT_3_4 or HORIZONTAL, <b>link</b> is pin_link, first_comment or none. Under <b>## Limits</b>, a line like <code>- title_chars: 40-100</code> is checked on every post.</p>
+      <textarea id="ch-rules-text" name="rules" class="ch-editor" spellcheck="false" aria-label="Rules">${text}</textarea>
+      <label class="wz-check" style="margin:12px 0 0"><input type="checkbox" name="reset" value="1" /> Replace them with the default rules for ${platformLabel(c.platform)}</label>`,
+    { error: errors, wide: true },
+  );
