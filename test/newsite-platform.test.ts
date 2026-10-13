@@ -201,6 +201,10 @@ describe('platform routes', () => {
     expect(settings.get('public_base_url')).toBe('');
     await app.inject({ method: 'GET', url: '/new-website/platform', headers: { host: 'dash.example.com', 'x-forwarded-proto': 'https' } });
     expect(settings.get('public_base_url')).toBe('https://dash.example.com');
+    // A forwarded host header is never trusted.
+    settings.set('public_base_url', '');
+    await app.inject({ method: 'GET', url: '/new-website/platform', headers: { host: 'dash.example.com', 'x-forwarded-host': 'evil.example.com', 'x-forwarded-proto': 'https' } });
+    expect(settings.get('public_base_url')).toBe('https://dash.example.com');
     // Set once, it is not changed by visits from another address.
     await app.inject({ method: 'GET', url: '/new-website/platform', headers: { host: 'other.example.com', 'x-forwarded-proto': 'https' } });
     expect(settings.get('public_base_url')).toBe('https://dash.example.com');

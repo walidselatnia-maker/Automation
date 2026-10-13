@@ -92,12 +92,14 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
     // Buffer fetches pin and post pictures from this platform's public address.
     // When none is set, the https address the owner opens the dashboard at is
     // remembered as it (never a local one): it is where this platform answers.
-    // Runs after the login check, so only a signed-in visit can set it.
+    // Runs after the login check, so only a signed-in visit can set it, and it
+    // shows on Platform settings → Images, where the owner can change it.
     app.addHook('preHandler', async (request) => {
       if (!request.url.startsWith('/new-website') || settings.get('public_base_url').trim()) return;
       const header = (name: string) => String(request.headers[name] ?? '').split(',')[0]!.trim();
       const proto = header('x-forwarded-proto') || request.protocol;
-      const host = header('x-forwarded-host') || header('host');
+      // The real Host only: a forwarded host header is easy to fake, so it is never trusted here.
+      const host = header('host');
       const origin = `${proto}://${host}`;
       if (host && !publicBaseUrlProblem(origin)) settings.set('public_base_url', origin);
     });
