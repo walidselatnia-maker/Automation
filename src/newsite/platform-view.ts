@@ -94,6 +94,7 @@ export function platformPage(v: PlatformView): Html {
           <dt>Shared Flow project</dt>${codeOr(flow)}
           <dt>Image model</dt><dd>${modelLabel(v.value('image_model'))}</dd>
           <dt>Pause between images</dt><dd class="ns-num">${v.value('image_gap_seconds')} seconds</dd>
+          <dt>Public address</dt>${v.value('public_base_url') ? html`<dd class="ns-mono">${v.value('public_base_url')}</dd>` : html`<dd>Not set<small>Needed for sharing: Buffer fetches the pictures from here.</small></dd>`}
         </dl>
         <div class="pf-wide">${imageModelCards(v.value('image_model'), v.catalogue)}</div>
       </section>
@@ -240,6 +241,10 @@ export function platformWizardPage(v: PlatformView, section = -1): Html {
               optional: 'optional',
               hint: 'Used by every website that has no project of its own.',
             })}
+            ${field('public_base_url', 'Public address of this platform', html`<input id="wz-public_base_url" name="public_base_url" spellcheck="false" value="${v.value('public_base_url')}" placeholder="https://dashboard.example.com" />`, {
+              optional: 'needed for sharing',
+              hint: 'Where this platform answers on the internet. Buffer fetches pin and post pictures from here, by links that expire. Must be https.',
+            })}
             <div class="wz-two">
               ${field('image_model', 'Image model', select('image_model', v.value('image_model'), [...IMAGE_MODELS]))}
               ${numberField(v, 'image_gap_seconds', 'Pause between images', 'Seconds')}
@@ -344,7 +349,7 @@ const script = (v: PlatformView, section: number): string => `<script>
         ['Retries', val('auto_retry_enabled') === 'true' ? val('auto_retry_max') + ' attempt(s), ' + val('auto_retry_delay_minutes') + ' minutes apart' : 'Off'],
         ['Hold a keyword after', val('pair_failure_limit') + ' failures'], ['Time limits', val('run_step_timeout_minutes') + ' min per step, ' + val('run_timeout_minutes') + ' min per run'],
         ['Keep logs for', val('retention_days') + ' days']]],
-      [3, 'Images', [['Shared Flow project', val('flow_project_id') || 'Not set'], ['Image model', opt('image_model')], ['Pause between images', val('image_gap_seconds') + ' seconds']]],
+      [3, 'Images', [['Shared Flow project', val('flow_project_id') || 'Not set'], ['Image model', opt('image_model')], ['Pause between images', val('image_gap_seconds') + ' seconds'], ['Public address', val('public_base_url') || 'Not set']]],
       [4, 'Notifications', [['Telegram', opt('telegram_enabled')], ['Bot token', val('telegram_bot_token') ? 'New token' : (HAS_TG ? 'Saved token kept' : 'Not set')], ['Chat ID', val('telegram_chat_id') || '—']]]
     ];
     var box = $('wz-sum');

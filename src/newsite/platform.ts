@@ -1,5 +1,6 @@
 import { SETTING_SPECS } from '../settings.js';
 import { KNOWN_MODELS } from '../pipeline/prompts.js';
+import { publicBaseUrlProblem } from '../core/media-links.js';
 
 /**
  * Platform setup for the new dashboard.
@@ -53,7 +54,7 @@ export const PLATFORM_STEPS: string[][] = [
   ['llm_base_url', 'newKeyName', 'newKeyValue', 'newKeyModels', 'removeKeys'],
   ['timezone'],
   AUTOMATION_KEYS,
-  ['flow_project_id', 'image_model', 'image_gap_seconds'],
+  ['flow_project_id', 'image_model', 'image_gap_seconds', 'public_base_url'],
   ['telegram_enabled', 'telegram_bot_token', 'telegram_chat_id'],
   [],
 ];
@@ -185,6 +186,13 @@ export function validatePlatform(
     if (Number(clean.settings.run_timeout_minutes) < Number(clean.settings.run_step_timeout_minutes)) {
       errors.run_timeout_minutes = 'A whole run cannot be shorter than one of its steps.';
     }
+  }
+
+  if (want('public_base_url')) {
+    const v = str(raw, 'public_base_url').replace(/\/+$/, '');
+    const problem = publicBaseUrlProblem(v);
+    if (problem) errors.public_base_url = problem;
+    else clean.settings.public_base_url = v;
   }
 
   if (want('flow_project_id')) {

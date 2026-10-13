@@ -9,6 +9,7 @@ import {
   checkMediaToken,
   linkDays,
   mediaPath,
+  pictureMediaUrl,
   publicBaseUrlProblem,
   reelMediaUrl,
   DEFAULT_LINK_DAYS,
@@ -20,6 +21,11 @@ import { createReel, insertKeyword, upsertSite, type ReelView } from '../src/db/
 import { bufferReelDeps } from '../src/reels/buffer.js';
 import { Settings } from '../src/settings.js';
 import { buildServer } from '../src/web/server.js';
+import { run } from '../src/db/index.js';
+import { createNewWebsite, saveKeywordPlan } from '../src/newsite/repo.js';
+import { listPlanSeo, queuePlanSeo } from '../src/newsite/seo.js';
+import { pictureDir } from '../src/newsite/pictures.js';
+import { resolveDataDir } from '../src/config.js';
 import { setLogLevel } from '../src/lib/logger.js';
 
 /**
@@ -305,6 +311,51 @@ describe('fetching a reel video without logging in', () => {
     expect((await app.inject({ method: 'GET', url: '/settings/reels' })).statusCode).toBe(401);
     expect((await app.inject({ method: 'POST', url: pathFor() })).statusCode).toBe(401);
     expect((await app.inject({ method: 'GET', url: '/media/reel/1/1/x.mp4' })).statusCode).toBe(404);
+  });
+
+  describe('a new-website picture (pins, image posts through Buffer)', () => {
+    const PICTURE = Buffer.from('not really a png');
+    let pictureId: number;
+
+    beforeEach(() => {
+      const websiteId = createNewWebsite(
+        {
+          name: 'Long Livo', domain: 'f.longlivo.com', apiKey: 'sk_test_ABCDEFGHIJKLMNOP', niche: 'Recipes', nicheContext: '',
+          persona: 'Storyteller', status: 'active', autoPublish: true, dailyTarget: 3, intervalMinutes: 480,
+          bufferToken: '', pinUsername: '', projectId: '',
+        },
+        SECRET,
+      );
+      const planId = saveKeywordPlan(websiteId, 'strawberry cake', [], 'recipe');
+      queuePlanSeo(planId, 'strawberry cake', [], 'recipe');
+      const seoId = listPlanSeo(planId)[0]!.id;
+      pictureId = Number(
+        run(`INSERT INTO newsite_pictures (seo_id, slot, position, prompt, alt, status, file) VALUES (?, 'pin-1', 0, 'p', 'a', 'done', 'pin-1.png')`, seoId).lastInsertRowid,
+      );
+      mkdirSync(pictureDir(seoId, resolveDataDir()), { recursive: true });
+      writeFileSync(join(pictureDir(seoId, resolveDataDir()), 'pin-1.png'), PICTURE);
+    });
+
+    const picturePath = (id = pictureId, expiresAt = Date.now() + 60_000, secret = SECRET) =>
+      new URL(pictureMediaUrl('https://dash.example.com', id, 'png', 1, secret, expiresAt - 86_400_000)).pathname;
+
+    it('hands the picture to a request with no cookie, by its signed link', async () => {
+      const response = await app.inject({ method: 'GET', url: picturePath() });
+      expect(response.statusCode).toBe(200);
+      expect(response.headers['content-type']).toContain('image/png');
+      expect(response.headers['cache-control']).toBe('private, no-store');
+      expect(response.rawPayload.equals(PICTURE)).toBe(true);
+    });
+
+    it('refuses an edited, foreign or expired link', async () => {
+      const good = picturePath();
+      expect((await app.inject({ method: 'GET', url: good.replace(`/picture/${pictureId}/`, `/picture/${pictureId + 1}/`) })).statusCode).toBe(404);
+      expect((await app.inject({ method: 'GET', url: picturePath(pictureId, Date.now() + 60_000, randomBytes(32)) })).statusCode).toBe(404);
+      expect((await app.inject({ method: 'GET', url: picturePath(pictureId, Date.now() - 1000) })).statusCode).toBe(410);
+      // A reel's signature does not open a picture with the same id.
+      const reelSig = mediaPath('reel', pictureId, Date.now() + 60_000, SECRET).split('/').slice(-3).join('/').replace('.mp4', '.png');
+      expect((await app.inject({ method: 'GET', url: `/media/picture/${reelSig}` })).statusCode).toBe(404);
+    });
   });
 });
 

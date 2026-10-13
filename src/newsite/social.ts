@@ -5,13 +5,14 @@ import { resolveDataDir } from '../config.js';
 import { BufferClient, type BufferChannel } from '../integrations/buffer.js';
 import { FacebookClient } from '../integrations/facebook.js';
 import { createLogger, errorMessage } from '../lib/logger.js';
+import { pictureMediaUrl } from '../core/media-links.js';
 import { loadTemplate } from '../pipeline/prompts.js';
 import type { Settings } from '../settings.js';
 import { bufferTokenOf, fbTokenOf, getChannel, websiteChannels, type ChannelRow } from './channels.js';
-import { uploadMedia, type Fetch } from './client.js';
+import type { Fetch } from './client.js';
 import { parseImageSet } from './images.js';
 import { isMainSlot, listPictures, pictureDir, type PictureRow } from './pictures.js';
-import { getNewWebsite, websiteApiKey, type NewWebsiteRow } from './repo.js';
+import { getNewWebsite, type NewWebsiteRow } from './repo.js';
 import { correctUntilRight } from './rounds.js';
 import { getSeoRow, type SeoRow } from './seo.js';
 
@@ -315,6 +316,21 @@ async function pickBoard(w: Work, boards: { serviceId: string; name: string }[],
   return boards.find((b) => b.name.toLowerCase() === name) ?? boards[0]!;
 }
 
+/**
+ * Where Buffer fetches a picture from: this platform itself. The pictures live
+ * on its disk and are served by a signed link that expires (the same door
+ * the old dashboard's reels use, /media/...), so Buffer can fetch them
+ * without logging in and nobody can guess one.
+ */
+function pictureLink(picture: PictureRow, deps: SocialDeps, now: number): string {
+  const base = deps.settings.get('public_base_url').trim();
+  if (!base) {
+    throw new Error('This platform has no public address yet, so Buffer cannot fetch the picture. Set it in Platform settings → Images, then try again.');
+  }
+  const ext = (picture.file.split('.').pop() ?? 'png').toLowerCase();
+  return pictureMediaUrl(base, picture.id, ext, Number(deps.settings.get('reel_media_link_days')), deps.encryptionKey, now);
+}
+
 const typeOf = (file: string): string => (file.endsWith('.png') ? 'image/png' : file.endsWith('.jpg') ? 'image/jpeg' : 'image/webp');
 
 async function sendPin(w: Work, deps: SocialDeps, now: number): Promise<void> {
@@ -330,17 +346,10 @@ async function sendPin(w: Work, deps: SocialDeps, now: number): Promise<void> {
     if (!found) throw new Error('Buffer no longer lists this Pinterest channel. Check it on the Channels page.');
     if (!found.boards.length) throw new Error('This Pinterest channel has no boards.');
     const board = await pickBoard(w, found.boards, deps);
-    const data = readFileSync(join(pictureDir(picture.seo_id, deps.dataDir ?? resolveDataDir()), picture.file));
-    const media = await uploadMedia(
-      w.site.domain,
-      websiteApiKey(w.site, deps.encryptionKey),
-      { data, name: picture.file, type: typeOf(picture.file), alt: w.item.alt },
-      deps.fetchImpl,
-    );
     const postId = await api.createPin({
       text: w.item.text,
       channelId: w.channel.buffer_channel_id,
-      imageUrl: media.url,
+      imageUrl: pictureLink(picture, deps, now),
       altText: w.item.alt,
       title: w.item.title,
       // The pin's own link: never in its text.
@@ -372,17 +381,10 @@ function waitForRoom(w: Work, err: unknown, deps: SocialDeps, now: number): void
 async function sendFacebookThroughBuffer(w: Work, picture: PictureRow, deps: SocialDeps, now: number): Promise<void> {
   const api = (deps.buffer ?? realBuffer)(bufferTokenOf(w.channel, deps.encryptionKey));
   try {
-    const data = readFileSync(join(pictureDir(picture.seo_id, deps.dataDir ?? resolveDataDir()), picture.file));
-    const media = await uploadMedia(
-      w.site.domain,
-      websiteApiKey(w.site, deps.encryptionKey),
-      { data, name: picture.file, type: typeOf(picture.file), alt: picture.alt },
-      deps.fetchImpl,
-    );
     const postId = await api.createFacebookPost({
       text: w.item.text,
       channelId: w.channel.buffer_channel_id,
-      imageUrl: media.url,
+      imageUrl: pictureLink(picture, deps, now),
       altText: picture.alt,
       // The link, only ever as the first comment; Buffer's free plan has none.
       firstComment: w.channel.paid_buffer ? w.row.post_url : '',

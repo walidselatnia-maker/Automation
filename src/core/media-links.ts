@@ -32,8 +32,8 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
  */
 const PURPOSE = 'media-link-v1';
 
-/** What a link may point at. One kind so far; the signature covers it anyway. */
-export type MediaKind = 'reel';
+/** What a link may point at: a reel video, or a new-website picture (a pin, an image post). */
+export type MediaKind = 'reel' | 'picture';
 
 export type MediaCheck =
   | { ok: true }
@@ -113,12 +113,32 @@ export function mediaPath(
   id: number,
   expiresAt: number,
   secret: Buffer,
+  ext = 'mp4',
 ): string {
   const sig = signature(kind, id, expiresAt, secret);
   // The extension is last and the signature is base64url, which has no dots,
   // so the two can never be confused for one another. Fetchers that sniff the
   // extension rather than the content type get the answer they want.
-  return `/media/${kind}/${id}/${expiresAt}/${sig}.mp4`;
+  return `/media/${kind}/${id}/${expiresAt}/${sig}.${ext}`;
+}
+
+/**
+ * The absolute address of one new-website picture (newsite_pictures id), for
+ * Buffer to fetch: the pictures live on this platform's disk and are served
+ * from here, never uploaded somewhere else first.
+ */
+export function pictureMediaUrl(
+  baseUrl: string,
+  pictureId: number,
+  ext: string,
+  days: number,
+  secret: Buffer,
+  now: number = Date.now(),
+): string {
+  const base = baseUrl.trim().replace(/\/+$/, '');
+  if (!base) throw new Error('No public address for this platform yet.');
+  const expiresAt = now + linkDays(days) * 86_400_000;
+  return `${base}${mediaPath('picture', pictureId, expiresAt, secret, ext)}`;
 }
 
 /**

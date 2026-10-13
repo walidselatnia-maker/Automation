@@ -109,6 +109,7 @@ describe('Sharing an article on its channels', () => {
     openDatabase(':memory:');
     settings = new Settings(KEY);
     settings.set('buffer_hold_hours', '12');
+    settings.set('public_base_url', 'https://dash.example.com');
     websiteId = createNewWebsite(
       {
         name: 'Long Livo', domain: 'f.longlivo.com', apiKey: 'sk_test_ABCDEFGHIJKLMNOP', niche: 'Recipes', nicheContext: '',
@@ -196,10 +197,10 @@ describe('Sharing an article on its channels', () => {
       title: GOOD_PIN.title,
       text: GOOD_PIN.description,
       linkUrl: POST_URL,
-      imageUrl: 'https://f.longlivo.com/media/pin.webp',
       boardServiceId: 'b2', // the AI picked "Strawberry Desserts" for this keyword
     });
     expect(pins[0]!.text).not.toContain('http');
+    expect(pins[0]!.imageUrl).toMatch(/^https:\/\/dash\.example\.com\/media\/picture\/\d+\/\d+\/[A-Za-z0-9_-]+\.png$/);
     expect(getSocialPost(item!.id)).toMatchObject({ status: 'sent', external_id: 'buffer-post-1', board_name: 'Strawberry Desserts' });
   });
 
@@ -284,9 +285,22 @@ describe('Sharing an article on its channels', () => {
     await kickSocial(deps());
     expect(fbPosts).toHaveLength(0); // not through the Facebook API
     expect(bufferFb).toHaveLength(1);
-    expect(bufferFb[0]).toMatchObject({ channelId: 'ch-fb', firstComment: POST_URL, imageUrl: 'https://f.longlivo.com/media/pin.webp' });
+    expect(bufferFb[0]).toMatchObject({ channelId: 'ch-fb', firstComment: POST_URL });
+    // Buffer fetches the picture from this platform, by a signed link: nothing is uploaded elsewhere.
+    expect(bufferFb[0]!.imageUrl).toMatch(/^https:\/\/dash\.example\.com\/media\/picture\/\d+\/\d+\/[A-Za-z0-9_-]+\.png$/);
     expect(bufferFb[0]!.text).not.toMatch(/http|longlivo/);
     expect(listSocialPosts()[0]).toMatchObject({ status: 'sent', external_id: 'buffer-fb-1', error: '' });
+  });
+
+  it('a pin needs the platform’s public address: Buffer fetches the picture from it', async () => {
+    settings.set('public_base_url', '');
+    made('feature');
+    setWebsiteChannels(websiteId, [fbBufferChannel(true)]);
+    createSocialPosts(seoId);
+    await kickSocial(deps());
+    expect(bufferFb).toHaveLength(0);
+    expect(listSocialPosts()[0]).toMatchObject({ status: 'failed' });
+    expect(listSocialPosts()[0]!.error).toMatch(/no public address yet.*Platform settings/);
   });
 
   it('a Facebook image post through Buffer on the free plan goes out with no link at all', async () => {

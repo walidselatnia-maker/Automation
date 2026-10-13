@@ -17,6 +17,9 @@ import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { checkMediaToken } from '../core/media-links.js';
 import { getReel } from '../db/repos.js';
+import { get } from '../db/index.js';
+import { pictureDir } from '../newsite/pictures.js';
+import { resolveDataDir } from '../config.js';
 import { createLogger } from '../lib/logger.js';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 
@@ -33,6 +36,8 @@ export interface MediaOptions {
   secret: Buffer;
   /** Where finished reel videos are written. */
   clipsDir: string;
+  /** The platform's data folder: new-website pictures live under it. */
+  dataDir?: string;
 }
 
 /**
@@ -146,6 +151,47 @@ export function registerMedia(app: FastifyInstance, options: MediaOptions): void
         // stopping early and queueing a truncated one.
         .header('content-length', info.size)
         .send(createReadStream(file));
+    },
+  );
+
+  /**
+   * A new-website picture (a pin's 3:4 picture, an article's feature picture),
+   * for Buffer to fetch when it posts. Same rules as a reel: the link proves
+   * itself, and anything wrong with it is just "not found".
+   */
+  app.get<{ Params: { id: string; expires: string; file: string } }>(
+    '/media/picture/:id/:expires/:file',
+    async (request, reply) => {
+      const { id: rawId, expires: rawExpires, file: rawFile } = request.params;
+      const match = /^([A-Za-z0-9_-]{1,100})\.(png|jpg|jpeg|webp)$/.exec(rawFile);
+      if (!/^\d+$/.test(rawId) || !/^\d+$/.test(rawExpires) || !match) return notFound(reply);
+
+      const id = Number(rawId);
+      const check = checkMediaToken({ kind: 'picture', id, expiresAt: Number(rawExpires), signature: match[1]! }, options.secret);
+      if (!check.ok) {
+        if (check.reason === 'expired') {
+          log.warn(`picture ${id}: a media link expired before it was fetched`);
+          return reply.code(410).type('text/plain; charset=utf-8').send('Gone');
+        }
+        return notFound(reply);
+      }
+
+      const picture = get<{ seo_id: number; file: string; status: string }>('SELECT seo_id, file, status FROM newsite_pictures WHERE id = ?', id);
+      if (!picture || picture.status !== 'done' || !picture.file || /[\\/]/.test(picture.file)) return notFound(reply);
+      const path = join(pictureDir(picture.seo_id, options.dataDir ?? resolveDataDir()), picture.file);
+      const info = await stat(path).catch(() => null);
+      if (!info?.isFile()) {
+        log.warn(`picture ${id}: a valid media link, but no file on disk at ${path}`);
+        return notFound(reply);
+      }
+      log.info(`picture ${id}: serving it to ${request.ip} (${String(request.headers['user-agent'] ?? 'no user-agent').slice(0, 80)})`);
+      const type = picture.file.endsWith('.png') ? 'image/png' : picture.file.endsWith('.webp') ? 'image/webp' : 'image/jpeg';
+      return reply
+        .type(type)
+        .header('cache-control', 'private, no-store')
+        .header('x-robots-tag', 'noindex, nofollow, noarchive')
+        .header('content-length', info.size)
+        .send(createReadStream(path));
     },
   );
 }
