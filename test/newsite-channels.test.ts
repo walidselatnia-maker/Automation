@@ -65,7 +65,10 @@ describe('New dashboard: channels', () => {
     expect(res.body).toContain('href="/new-website/channels/facebook/api/new"');
     expect(res.body).toContain('Through Buffer');
     expect(res.body).toContain('Through the API');
-    expect(res.body).toMatch(/Instagram<\/h2><span class="ch-soon">Coming soon/);
+    // A platform with no rules file says how to add it.
+    expect(res.body).toMatch(/Instagram<\/h2><span class="ch-soon">No rules file/);
+    expect(res.body).toContain('Add prompts/platforms/instagram.md');
+    expect(res.body).toContain('Rules file OK');
     expect((await (await app()).inject({ url: '/new-website/channels/pinterest/api/new' })).statusCode).toBe(303);
   });
 

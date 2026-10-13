@@ -20,6 +20,9 @@ export interface PromptPair {
 let promptsDir = './prompts';
 const cache = new Map<string, string>();
 
+/** Where the shipped prompt files live (for listing a folder of them). */
+export const promptsDirectory = (): string => resolve(promptsDir);
+
 export function configurePrompts(dir: string): void {
   promptsDir = dir;
   cache.clear();
@@ -155,9 +158,8 @@ export const PROMPT_MODELS: Record<string, { model: string; format: 'json' | nul
   // Publishing: which of the website's own categories an article goes in.
   'pick-category': { model: 'gpt-oss:120b', format: 'json' },
   // Social sharing: one pin's words, the board it goes to, one Facebook post.
-  'newsite-pin-text': { model: 'gpt-oss:120b', format: 'json' },
+  'newsite-social-post': { model: 'gpt-oss:120b', format: 'json' },
   'newsite-pick-board': { model: 'gpt-oss:120b', format: 'json' },
-  'newsite-fb-post': { model: 'gpt-oss:120b', format: 'json' },
 };
 
 /* -------------------------------------------------------------------------

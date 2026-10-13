@@ -1,5 +1,8 @@
-The Facebook rules:
+The {{label}} rules:
 {{platformRules}}
+
+Write these fields: {{fields}}
+Answer as JSON: {{shape}}
 
 The article
 Keyword: {{keyword}}

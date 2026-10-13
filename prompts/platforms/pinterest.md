@@ -1,3 +1,14 @@
+---
+platform: pinterest
+label: Pinterest
+post_label: Pin
+fields: headline, cta, title, description, alt
+post_text: description
+alt_field: alt
+picture_shape: PORTRAIT_3_4
+picture_templates: newsite-pin-1.template.txt, newsite-pin-2.template.txt, newsite-pin-3.template.txt, newsite-pin-4.template.txt
+link: pin_link
+---
 # Pinterest rules
 
 These rules decide what the sharing phase makes for a Pinterest channel, after
@@ -60,5 +71,7 @@ outside them goes back to the AI with the exact problem to fix.
 - headline_words: 2-6
 - cta_words: 2-4
 - title_chars: 40-100
+- title_exclamations: 0-0
 - description_chars: 150-450
+- description_hashtags: 0-0
 - alt_words: 8-20

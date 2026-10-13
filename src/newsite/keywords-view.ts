@@ -937,39 +937,40 @@ export function publishStepPage(site: NewWebsiteRow, plan: KeywordPlan, rows: Se
 
 const SHARE_STATUS: Record<SocialPostRow['status'], string> = {
   pending: 'Writing its words',
-  held: 'Waiting for the rules to be approved',
   picture: 'Making its picture',
   waiting: 'Waiting for room in Buffer',
   sent: 'Posted',
   failed: 'Failed',
 };
-const SHARE_CLASS: Record<SocialPostRow['status'], string> = { held: '', pending: 'writing', picture: 'writing', waiting: 'writing', sent: 'done', failed: 'failed' };
-const KIND_LABEL: Record<string, string> = { pin: 'Pin', fb_image: 'Image post' };
+const SHARE_CLASS: Record<SocialPostRow['status'], string> = { pending: 'writing', picture: 'writing', waiting: 'writing', sent: 'done', failed: 'failed' };
 const PLATFORM_LABEL: Record<string, string> = { pinterest: 'Pinterest', facebook: 'Facebook' };
+const labelOf = (platform: string): string => PLATFORM_LABEL[platform] ?? platform.charAt(0).toUpperCase() + platform.slice(1);
+/** A field name as a label: "description" -> "Description", "cta" -> "Cta". */
+const fieldLabel = (f: string): string => ({ cta: 'Call to action', alt: 'Alt text', text: 'Post' } as Record<string, string>)[f] ?? (f.charAt(0).toUpperCase() + f.slice(1)).replace(/_/g, ' ');
 
 /** Posts still being made: the page refreshes itself while there are any. */
 const sharingBusy = (posts: SocialPostRow[]): boolean => posts.some((p) => p.status === 'pending' || p.status === 'picture');
 
 /** One post on one channel: the words and picture it was made with, where it stands, and what you can do. */
 function sharePostRow(p: SocialPostRow, channel: ChannelRow | undefined, planId: number, picture: PictureRow | undefined): Html {
-  const where = channel ? `${channel.name} · ${PLATFORM_LABEL[channel.platform] ?? channel.platform} through ${channel.via === 'buffer' ? 'Buffer' : 'the API'}` : 'A removed channel';
+  const where = channel ? `${channel.name} · ${labelOf(channel.platform)} through ${channel.via === 'buffer' ? 'Buffer' : 'the API'}` : 'A removed channel';
+  const viaBuffer = channel?.via === 'buffer';
+  const status = p.status === 'sent' && viaBuffer ? 'Queued in Buffer' : SHARE_STATUS[p.status];
   const facts = [
-    KIND_LABEL[p.kind] ?? p.kind,
     p.board_name ? `board “${p.board_name}”` : '',
-    p.kind === 'pin' && p.template ? `template ${p.template}` : '',
-    p.sent_at ? `went out ${p.sent_at} UTC` : '',
+    p.template ? `picture template ${p.template}` : '',
+    p.status === 'sent' && viaBuffer && p.due_at ? `Buffer posts it ${p.due_at.replace('T', ' ').slice(0, 16)} UTC` : '',
+    p.status === 'sent' && !viaBuffer && p.sent_at ? `posted ${p.sent_at} UTC` : '',
+    p.external_id ? `id ${p.external_id}` : '',
     p.status === 'waiting' && p.retry_at ? `tries again ${new Date(p.retry_at).toISOString().slice(0, 16).replace('T', ' ')} UTC` : '',
   ].filter(Boolean).join(' · ');
-  let overlay: { headline?: string; cta?: string } = {};
+  let fields: Record<string, string> = {};
   try {
-    overlay = JSON.parse(p.overlay || '{}') as typeof overlay;
+    fields = JSON.parse(p.fields_json || '{}') as Record<string, string>;
   } catch {
-    /* shown without it */
+    /* shown without them */
   }
-  const words: [string, string][] = p.kind === 'pin'
-    ? [['On the picture', [overlay.headline, overlay.cta].filter(Boolean).join(' · ')], ['Title', p.title], ['Description', p.text], ['Alt text', p.alt]]
-    : [['Post', p.text]];
-  const shown = words.filter(([, v]) => v);
+  const shown = Object.entries(fields).filter(([, v]) => v);
   const pictureBox = picture?.status === 'done'
     ? html`<a class="kw-share-pic" href="/new-website/pictures/${String(picture.id)}/file" target="_blank" rel="noopener"><img src="/new-website/pictures/${String(picture.id)}/file" alt="${p.alt || p.title}" loading="lazy" /></a>`
     : html`<div class="kw-share-pic empty">${picture?.status === 'failed' ? 'Picture failed' : picture ? 'Making its picture…' : 'No picture yet'}</div>`;
@@ -977,18 +978,17 @@ function sharePostRow(p: SocialPostRow, channel: ChannelRow | undefined, planId:
   return html`<li class="kw-share-post">
     ${pictureBox}
     <div class="kw-share-main">
-      <div class="kw-share-top"><b>${where}</b><span class="kw-seo-status ${SHARE_CLASS[p.status]}">${SHARE_STATUS[p.status]}</span></div>
-      <div class="kw-share-meta">${facts}</div>
+      <div class="kw-share-top"><b>${where}</b><span class="kw-seo-status ${SHARE_CLASS[p.status]}">${status}</span></div>
+      ${facts ? html`<div class="kw-share-meta">${facts}</div>` : raw('')}
       ${shown.length
-        ? html`<dl class="kw-share-words">${shown.map(([k, v]) => html`<div><dt>${k}</dt><dd>${v}</dd></div>`)}</dl>`
-        : html`<p class="kw-share-meta">${p.status === 'held' ? 'Its words and picture are made once you approve the rules.' : 'Its words are being written from the article.'}</p>`}
+        ? html`<dl class="kw-share-words">${shown.map(([k, v]) => html`<div><dt>${fieldLabel(k)}</dt><dd>${v}</dd></div>`)}</dl>`
+        : html`<p class="kw-share-meta">Its words are being written from the article, by the ${channel ? html`<a href="/new-website/channels/rules/${channel.platform}">${labelOf(channel.platform)} rules</a>` : 'platform rules'}.</p>`}
       ${p.error ? html`<div class="${p.status === 'failed' ? 'kw-seo-problems' : 'kw-kept'}">${p.error}</div>` : raw('')}
       <div class="kw-share-actions">
-        ${p.status === 'held' && channel ? html`<a class="ns-btn small primary" href="/new-website/channels/rules/${channel.platform}">Review the rules</a>` : raw('')}
         ${p.status === 'failed'
           ? html`<form method="post" action="/new-website/keywords/share/post/${p.id}/retry"><button class="ns-btn small primary">Try again</button></form>`
           : raw('')}
-        ${canRemake && p.status !== 'held' && (p.text || p.picture_id)
+        ${canRemake && (p.text || p.picture_id)
           ? html`<form method="post" action="/new-website/keywords/share/post/${p.id}/remake"><button class="ns-btn small">Make again</button></form>`
           : raw('')}
       </div>
@@ -998,7 +998,7 @@ function sharePostRow(p: SocialPostRow, channel: ChannelRow | undefined, planId:
 
 /** Channels this keyword's article should be on but has no post for yet. */
 const missingChannels = (posts: SocialPostRow[], channels: ChannelRow[]): ChannelRow[] =>
-  channels.filter((c) => (c.platform === 'pinterest' || c.post_image) && !posts.some((p) => p.channel_id === c.id));
+  channels.filter((c) => (c.platform !== 'facebook' || c.post_image) && !posts.some((p) => p.channel_id === c.id));
 
 function shareCard(row: SeoRow, intent: string, posts: SocialPostRow[], channels: ChannelRow[], allChannels: ChannelRow[], planId: number, pictures: PictureRow[]): Html {
   const published = row.post_status === 'published' && Boolean(row.post_url);
@@ -1029,7 +1029,7 @@ function shareCard(row: SeoRow, intent: string, posts: SocialPostRow[], channels
         ? html`<p class="kw-none" style="margin:0">This website shares on no channel yet.</p>`
         : raw('')}
     ${posts.length ? html`<ul class="kw-share-list">${posts.map((p) => sharePostRow(p, byId.get(p.channel_id), planId, pictures.find((x) => x.id === p.picture_id)))}</ul>` : raw('')}`;
-  return card(head, body, failed > 0 || posts.some((p) => p.status === 'held'));
+  return card(head, body, failed > 0);
 }
 
 /** The step after Publish: each published article shared on its website's channels. */
@@ -1052,11 +1052,11 @@ export function shareStepPage(
   const shared = published.filter((r) => postsOf(r.id).length && postsOf(r.id).every((p) => p.status === 'sent')).length;
   const body = html`
     <h2>Share</h2>
-    <p>The sharing phase. Once an article is published, each channel makes its own post from that article, following its platform’s rules: Pinterest writes a pin and makes a 3:4 pin picture, Facebook writes a post and makes its own 3:4 picture. Then each one is posted. It all starts by itself after publishing. The article link is never in a post: a pin carries it as its own link, and on Facebook it is the first comment.</p>
-    <p class="kw-share-rules">Rules: <a href="/new-website/channels/rules/pinterest">Pinterest</a> · <a href="/new-website/channels/rules/facebook">Facebook</a></p>
+    <p>The sharing phase. Once an article is published, each channel makes its own post from that article, by its platform’s rules file: it writes the words, makes its own picture, then posts. It all starts by itself after publishing, and each channel’s progress and errors are shown here. The article link is never in a post’s words.</p>
+    <p class="kw-share-rules">Rules: ${[...new Set(channels.map((c) => c.platform))].map((pl, i) => html`${i ? ' · ' : ''}<a href="/new-website/channels/rules/${pl}">${labelOf(pl)}</a>`)}</p>
     ${channels.length
       ? html`<div class="kw-share-channels"><span>Shares on</span>${channels.map(
-          (c) => html`<span class="ns-tag">${c.name} · ${PLATFORM_LABEL[c.platform] ?? c.platform}</span>`,
+          (c) => html`<span class="ns-tag">${c.name} · ${labelOf(c.platform)}</span>`,
         )}<a class="ns-btn small" href="/new-website/${String(site.id)}/edit?section=4">Change</a></div>`
       : html`<div class="ns-alert info"><b>${site.name} shares on no channel yet.</b>
           Pick its channels in the website’s settings, or add one first.

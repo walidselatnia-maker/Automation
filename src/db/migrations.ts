@@ -787,6 +787,22 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`UPDATE newsite_channels SET via = CASE platform WHEN 'pinterest' THEN 'buffer' ELSE 'api' END WHERE via = ''`);
     },
   },
+
+  {
+    id: '031-newsite-social-fields',
+    description: 'Each social post keeps every field its platform rules asked for, and when Buffer will post it',
+    up(db) {
+      addColumn(db, 'newsite_social_posts', 'fields_json', "TEXT NOT NULL DEFAULT '{}'");
+      addColumn(db, 'newsite_social_posts', 'due_at', "TEXT NOT NULL DEFAULT ''");
+      // A social picture's shape comes from its platform's rules file.
+      addColumn(db, 'newsite_pictures', 'shape', "TEXT NOT NULL DEFAULT ''");
+      // A post's kind is now its platform: the rules file of that name runs it.
+      db.exec(`UPDATE newsite_social_posts SET kind = 'pinterest' WHERE kind = 'pin'`);
+      db.exec(`UPDATE newsite_social_posts SET kind = 'facebook' WHERE kind = 'fb_image'`);
+      // Posts held for an approval that no longer exists go back to work.
+      db.exec(`UPDATE newsite_social_posts SET status = 'pending', error = '' WHERE status = 'held'`);
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */

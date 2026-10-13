@@ -14,7 +14,7 @@ import {
   saveBufferChannel,
   saveFacebookApiChannel,
   setChannelWebsites,
-  VIAS,
+  viasOf,
   type Platform,
   type Via,
 } from './channels.js';
@@ -34,6 +34,7 @@ import {
 } from './channels-view.js';
 import { newLayout, type NewFlash } from './layout.js';
 import { listNewWebsites } from './repo.js';
+import { checkPlatformRules, listPlatformRules } from './platform-rules.js';
 
 /** What the wizards ask Buffer and Facebook; replaceable so tests call neither. */
 export interface ChannelLookups {
@@ -60,8 +61,6 @@ export interface ChannelRouteDeps {
   encryptionKey: Buffer;
   readFlash: (query: unknown) => NewFlash;
   lookups?: ChannelLookups;
-  /** Whether a platform's rules file is approved, for the Channels page. */
-  rulesOk?: (platform: Platform) => boolean;
 }
 
 /**
@@ -95,15 +94,18 @@ const list = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : v ===
 const on = (v: unknown): boolean => v === '1' || v === 'on' || v === true;
 
 /** Is this Buffer channel one of the platform's? */
+const letters = (s: string): string => s.toLowerCase().replace(/[^a-z]/g, '');
 const isOf = (platform: Platform) => (c: BufferChannel): boolean =>
-  platform === 'pinterest' ? c.service.toLowerCase() === 'pinterest' || c.boards.length > 0 : c.service.toLowerCase() === 'facebook';
+  letters(c.service) === letters(platform) || (platform === 'pinterest' && c.boards.length > 0);
 
 /** The platform and way in the address, when it is one we build. */
 function routeOf(request: FastifyRequest): WizardContext | null {
   const p = request.params as { platform?: string; via?: string };
-  const platform = p.platform as Platform;
+  const platform = String(p.platform ?? '') as Platform;
   const via = p.via as Via;
-  return VIAS[platform]?.includes(via) ? { platform, via } : null;
+  // A platform can be connected once its rules file is there and valid.
+  const rules = /^[a-z0-9-]+$/.test(platform) ? checkPlatformRules(platform).rules : null;
+  return rules && viasOf(platform).includes(via) ? { platform, via, firstComment: via === 'buffer' && rules.link === 'first_comment' } : null;
 }
 
 export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDeps): void {
@@ -146,7 +148,7 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
   app.get('/new-website/channels', async (request, reply) => {
     const channels = listChannels();
     const usedBy = new Map(channels.map((c) => [c.id, channelWebsiteIds(c.id).length]));
-    return send(reply, page('Channels', channelsPage(channels, usedBy, deps.rulesOk), request));
+    return send(reply, page('Channels', channelsPage(channels, usedBy, listPlatformRules()), request));
   });
 
   /* -- Step 1: connect ---------------------------------------------------- */
@@ -170,7 +172,7 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
         choices = (await lookups.bufferChannels(token)).filter(isOf(w.platform)).map((c) => ({
           id: c.id,
           name: c.name,
-          note: w.platform === 'pinterest' ? (c.boards.length === 1 ? '1 board' : `${c.boards.length} boards`) : 'Facebook page in Buffer',
+          note: w.platform === 'pinterest' ? (c.boards.length === 1 ? '1 board' : `${c.boards.length} boards`) : `${platformLabel(w.platform)} in Buffer`,
         }));
       } else {
         choices = (await lookups.facebookPages(token)).map((p) => ({ id: p.id, name: p.name, note: `Page ${p.id}` }));
@@ -201,7 +203,7 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
     const ids = new Set(list(b.pick));
     const picked = d.choices.filter((c) => ids.has(c.id));
     if (!picked.length) {
-      const msg = w.platform === 'pinterest' ? 'Pick one channel.' : 'Pick at least one page.';
+      const msg = w.platform === 'pinterest' ? 'Pick one channel.' : 'Pick at least one.';
       return send(reply, page(title(w), pickStep(ctx, choiceList(ctx, d), msg), request));
     }
     d.picked = w.platform === 'pinterest' ? picked.slice(0, 1) : picked;
@@ -220,7 +222,8 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
       );
       return send(reply, page(title(w), checkStep(ctx, results), request));
     }
-    if (w.platform === 'facebook') return send(reply, page(title(w), planStep(ctx, d.paidBuffer), request));
+    if (w.firstComment) return send(reply, page(title(w), planStep(ctx, d.paidBuffer), request));
+    if (w.platform === 'facebook') return send(reply, page(title(w), postStep(ctx, { image: d.postImage, reel: d.postReel }), request));
     return send(reply, page(title(w), websitesStep(ctx, websiteChoices([]), false), request));
   });
 
@@ -240,7 +243,9 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
     const d = w && draftOf(w, b.draft);
     if (!w || !d?.picked.length) return reply.redirect(lost, 303);
     d.paidBuffer = on(b.paidBuffer);
-    return send(reply, page(title(w), postStep({ ...w, draft: String(b.draft) }, { image: d.postImage, reel: d.postReel }), request));
+    const ctx = { ...w, draft: String(b.draft) };
+    if (w.platform === 'facebook') return send(reply, page(title(w), postStep(ctx, { image: d.postImage, reel: d.postReel }), request));
+    return send(reply, page(title(w), websitesStep(ctx, websiteChoices([]), false), request));
   });
 
   app.post('/new-website/channels/:platform/:via/what', async (request, reply) => {
@@ -282,8 +287,8 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
               name: p.name,
               bufferToken: d.token,
               bufferChannelId: p.id,
-              paidBuffer: w.platform === 'facebook' && d.paidBuffer,
-              postImage: w.platform === 'pinterest' || d.postImage,
+              paidBuffer: Boolean(w.firstComment) && d.paidBuffer,
+              postImage: w.platform !== 'facebook' || d.postImage,
               postReel: w.platform === 'facebook' && d.postReel,
               multiWebsite: multi,
             },
@@ -312,7 +317,7 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
           if (!found.boards.length) return { ok: false, text: 'This Pinterest channel has no boards. Create boards on Pinterest first.' };
           return { ok: true, text: `Connected. Buffer answers, with ${found.boards.length} board${found.boards.length === 1 ? '' : 's'} to pick from.` };
         }
-        return { ok: true, text: 'Connected. Buffer answers and lists this page.' };
+        return { ok: true, text: `Connected. Buffer answers and lists this ${c.platform === 'facebook' ? 'page' : 'channel'}.` };
       }
       await lookups.facebookPageCheck(fbTokenOf(c, deps.encryptionKey), c.fb_page_id);
       return { ok: true, text: 'Connected. Facebook gives this page a posting token.' };
@@ -355,7 +360,7 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
     run(
       `UPDATE newsite_channels SET multi_website = ?, paid_buffer = ?, post_image = ?, post_reel = ? WHERE id = ?`,
       on(b.multiWebsite) ? 1 : 0,
-      isFb && c.via === 'buffer' && on(b.paidBuffer) ? 1 : 0,
+      c.via === 'buffer' && c.platform !== 'pinterest' && on(b.paidBuffer) ? 1 : 0,
       isFb ? (on(b.postImage) ? 1 : 0) : c.post_image,
       isFb ? (on(b.postReel) ? 1 : 0) : c.post_reel,
       id,

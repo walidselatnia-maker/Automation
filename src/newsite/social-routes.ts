@@ -2,9 +2,9 @@ import type { FastifyInstance } from 'fastify';
 import { html, raw, type Html } from '../web/views/layout.js';
 import { listChannels, PLATFORMS, type ChannelRow } from './channels.js';
 import { newLayout, type NewFlash } from './layout.js';
-import { createSocialPosts, getSocialPost, kickSocial, listSocialPosts, releaseHeld, remakeSocialPost, retrySocialPost, type SocialDeps, type SocialPostRow } from './social.js';
+import { createSocialPosts, getSocialPost, kickSocial, listSocialPosts, remakeSocialPost, retrySocialPost, type SocialDeps, type SocialPostRow } from './social.js';
 import { getSeoRow, listPlanSeo } from './seo.js';
-import { approveRules, loadPlatformRules, rulesApproved, type RulesPlatform } from './platform-rules.js';
+import { checkPlatformRules, listPlatformRules } from './platform-rules.js';
 import { markdownToHtml } from './markdown.js';
 
 /**
@@ -34,15 +34,15 @@ const CSS = `
 `;
 
 const STATUS: Record<SocialPostRow['status'], string> = {
-  pending: 'Queued',
-  held: 'Waiting for the rules to be approved',
+  pending: 'Being made',
   picture: 'Making its picture',
   waiting: 'Waiting for room',
-  sent: 'Posted',
+  sent: 'Sent',
   failed: 'Failed',
 };
 
-const KIND: Record<string, string> = { pin: 'Pin', fb_image: 'Image post' };
+/** What a post is called, from its platform's rules file. */
+const kindLabel = (platform: string): string => checkPlatformRules(platform).rules?.postLabel ?? 'Post';
 
 type Item = ReturnType<typeof listSocialPosts>[number];
 
@@ -50,7 +50,7 @@ function itemRow(i: Item): Html {
   return html`<div class="sc-item">
     <div>
       ${i.post_url ? html`<a href="${i.post_url}" target="_blank" rel="noopener">${i.title_seo || i.keyword}</a>` : html`<b>${i.title_seo || i.keyword}</b>`}
-      <div class="sc-meta">${KIND[i.kind] ?? i.kind}${i.board_name ? ` · board “${i.board_name}”` : ''}${i.template ? ` · template ${i.template}` : ''} · queued ${i.created_at} UTC${i.sent_at ? ` · went out ${i.sent_at} UTC` : ''}</div>
+      <div class="sc-meta">${kindLabel(i.kind)}${i.board_name ? ` · board “${i.board_name}”` : ''}${i.template ? ` · template ${i.template}` : ''} · queued ${i.created_at} UTC${i.due_at ? ` · queued in Buffer, goes out ${i.due_at.replace('T', ' ').slice(0, 16)} UTC` : i.sent_at ? ` · posted ${i.sent_at} UTC` : ''}</div>
       ${i.text ? html`<div class="sc-text">${i.text}</div>` : raw('')}
       ${i.error ? html`<div class="sc-err">${i.error}</div>` : raw('')}
       ${i.status === 'failed'
@@ -143,55 +143,52 @@ export function registerSocialRoutes(app: FastifyInstance, deps: SocialDeps & { 
     return reply.redirect(sharePage(row.plan_id, ok ? 'Making it again from the article.' : 'It already went out, or its picture is being made.', ok ? 'ok' : 'error'), 303);
   });
 
-  /* -- Each platform's rules file, and the owner's approval ----------------- */
+  /* -- Each platform's rules file ------------------------------------------ */
 
   /** The page has the title already, and a list item wrapped onto the next line is one item. */
   const forDisplay = (text: string): string => text.replace(/^# .*\n+/, '').replace(/\n {2,}/g, ' ');
 
-  const PLATFORM_NAME: Record<RulesPlatform, string> = { pinterest: 'Pinterest', facebook: 'Facebook' };
-  const platformOf = (raw: unknown): RulesPlatform | null => (raw === 'pinterest' || raw === 'facebook' ? raw : null);
-
   app.get('/new-website/channels/rules/:platform', async (request, reply) => {
-    const platform = platformOf((request.params as { platform: string }).platform);
-    if (!platform) return reply.redirect('/new-website/channels', 303);
-    const rules = loadPlatformRules(platform);
-    const ok = rulesApproved(rules, deps.settings);
+    const platform = String((request.params as { platform: string }).platform ?? '');
+    if (!/^[a-z0-9-]+$/.test(platform)) return reply.redirect('/new-website/channels', 303);
+    const check = checkPlatformRules(platform);
+    const others = listPlatformRules().filter((r) => r.platform !== platform);
     return reply.type('text/html; charset=utf-8').send(
       newLayout({
-        title: `${PLATFORM_NAME[platform]} rules`,
+        title: `${check.rules?.label ?? platform} rules`,
         active: '/new-website/channels',
         flash: deps.readFlash(request.query),
         body: html`
           <style>${raw(CSS)}.rl-body { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); padding: 24px 28px; box-shadow: var(--shadow); max-width: 72ch; }
-            .rl-body h1 { font-size: 24px; margin: 0 0 12px; } .rl-body h2 { font-size: 18px; margin: 24px 0 8px; } .rl-body ul { padding-left: 20px; display: grid; gap: 4px; }
-            .rl-state { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 0 0 20px; }</style>
+            .rl-body h2 { font-size: 18px; margin: 24px 0 8px; } .rl-body ul { padding-left: 20px; display: grid; gap: 4px; }
+            .rl-state { display: grid; gap: 8px; margin: 0 0 20px; } .rl-facts { display: grid; grid-template-columns: 170px 1fr; gap: 6px 16px; margin: 0 0 20px; font-size: 14px; }
+            .rl-facts dt { color: var(--faint); } .rl-facts dd { margin: 0; font-weight: 500; }</style>
           <div class="ns-head">
             <div>
-              <h1 class="ns-title">${PLATFORM_NAME[platform]} rules</h1>
-              <p class="ns-lede">What the sharing phase makes for every ${PLATFORM_NAME[platform]} channel, after an article is published. The AI follows this file, and every post is checked against its Limits. Kept in prompts/platforms/${platform}.md.</p>
+              <h1 class="ns-title">${check.rules?.label ?? platform} rules</h1>
+              <p class="ns-lede">What the sharing phase makes for every ${check.rules?.label ?? platform} channel after an article is published. Edit prompts/${check.file} to change it: the next post uses the new rules. Add a file to that folder for another platform; remove it to stop one.</p>
             </div>
             <a class="ns-btn quiet" href="/new-website/channels">All channels</a>
           </div>
           <div class="rl-state">
-            ${ok
-              ? html`<span class="ns-badge ok">Approved</span><span class="sc-meta">Posts are made and sent with these rules. If the file changes, it needs approving again.</span>`
-              : html`<span class="ns-badge bad">Needs your approval</span><span class="sc-meta">Nothing is made or posted on ${PLATFORM_NAME[platform]} until you approve these rules.</span>
-                <form method="post" action="/new-website/channels/rules/${platform}/approve" style="margin:0"><button class="ns-btn primary">Approve these rules</button></form>`}
+            ${check.rules
+              ? html`<div><span class="ns-badge ok">This rules file is valid</span></div>`
+              : html`<div class="ns-alert bad"><b>This rules file has problems, so nothing is made for ${platform} until they are fixed:</b>
+                  <ul>${check.errors.map((e) => html`<li>${e}</li>`)}</ul></div>`}
           </div>
-          <div class="rl-body">${raw(markdownToHtml(forDisplay(rules.text)))}</div>`,
+          ${check.rules
+            ? html`<dl class="rl-facts">
+                <dt>Each post</dt><dd>${check.rules.postLabel}</dd>
+                <dt>Fields the AI writes</dt><dd>${check.rules.fields.join(', ')}</dd>
+                <dt>Post text</dt><dd>${check.rules.postText}</dd>
+                <dt>Picture</dt><dd>${check.rules.pictureShape === 'PORTRAIT_3_4' ? '3:4 portrait' : '16:9 wide'}, from ${check.rules.pictureTemplates.join(', ')}</dd>
+                <dt>The article link</dt><dd>${{ pin_link: 'The post’s own link', first_comment: 'The first comment', none: 'Not added' }[check.rules.link]}</dd>
+                <dt>Limits</dt><dd>${Object.entries(check.rules.limits).map(([k, [a, b]]) => `${k} ${a}–${b}`).join(' · ') || 'None'}</dd>
+              </dl>
+              <div class="rl-body">${raw(markdownToHtml(forDisplay(check.rules.text)))}</div>`
+            : raw('')}
+          ${others.length ? html`<p class="sc-meta" style="margin-top:20px">Other rules files: ${others.map((r) => html`<a href="/new-website/channels/rules/${r.platform}">${r.platform}</a> `)}</p>` : raw('')}`,
       }),
-    );
-  });
-
-  app.post('/new-website/channels/rules/:platform/approve', async (request, reply) => {
-    const platform = platformOf((request.params as { platform: string }).platform);
-    if (!platform) return reply.redirect('/new-website/channels', 303);
-    approveRules(loadPlatformRules(platform), deps.settings);
-    const released = releaseHeld(platform);
-    void kickSocial(deps);
-    return reply.redirect(
-      `/new-website/channels/rules/${platform}?ok=${encodeURIComponent(`${PLATFORM_NAME[platform]} rules approved.${released ? ` ${released} waiting post${released === 1 ? '' : 's'} carry on.` : ''}`)}`,
-      303,
     );
   });
 

@@ -49,6 +49,8 @@ export interface PictureRow {
   made_at: string | null;
   /** The picture's id in the website's media library, once uploaded. */
   media_id: number | null;
+  /** A social picture's shape, from its platform's rules file; empty means by slot. */
+  shape: string;
 }
 
 /** A recipe step's picture: made in the slow queue. */
@@ -60,7 +62,7 @@ export const isStepSlot = (slot: string): boolean => slot.startsWith('step-');
  * both 3:4. It goes through the same queue, one at a time with the same gap,
  * but it is not one of the article's pictures: its prompt is its own.
  */
-export const isPinSlot = (slot: string): boolean => slot.startsWith('pin-') || slot.startsWith('fb-');
+export const isPinSlot = (slot: string): boolean => /^(pin|fb|social)-/.test(slot);
 
 /** One of the article's main pictures (not a step, not a pin). */
 export const isMainSlot = (slot: string): boolean => !isStepSlot(slot) && !isPinSlot(slot);
@@ -84,13 +86,13 @@ export const listPictures = (seoId: number): PictureRow[] =>
 /** A plan's social pictures (pins and Facebook post pictures), for the Share step. */
 export const listPlanSocialPictures = (planId: number): PictureRow[] =>
   all<PictureRow>(
-    `SELECT p.* FROM newsite_pictures p JOIN keyword_seo s ON s.id = p.seo_id WHERE s.plan_id = ? AND (p.slot LIKE 'pin-%' OR p.slot LIKE 'fb-%') ORDER BY p.id`,
+    `SELECT p.* FROM newsite_pictures p JOIN keyword_seo s ON s.id = p.seo_id WHERE s.plan_id = ? AND (p.slot LIKE 'pin-%' OR p.slot LIKE 'fb-%' OR p.slot LIKE 'social-%') ORDER BY p.id`,
     planId,
   );
 
 export const listPlanPictures = (planId: number): PictureRow[] =>
   all<PictureRow>(
-    `SELECT p.* FROM newsite_pictures p JOIN keyword_seo s ON s.id = p.seo_id WHERE s.plan_id = ? AND p.slot NOT LIKE 'pin-%' AND p.slot NOT LIKE 'fb-%' ORDER BY s.position, p.position`,
+    `SELECT p.* FROM newsite_pictures p JOIN keyword_seo s ON s.id = p.seo_id WHERE s.plan_id = ? AND p.slot NOT LIKE 'pin-%' AND p.slot NOT LIKE 'fb-%' AND p.slot NOT LIKE 'social-%' ORDER BY s.position, p.position`,
     planId,
   );
 
@@ -298,7 +300,7 @@ export function kickPictureMaker(deps: PictureDeps): Promise<void> {
 
         run(`UPDATE newsite_pictures SET status = 'making', attempts = attempts + 1 WHERE id = ?`, next.id);
         try {
-          const { data, contentType } = await make(next.prompt, project.projectId, shapeOf(next.slot));
+          const { data, contentType } = await make(next.prompt, project.projectId, (next.shape as PictureShape) || shapeOf(next.slot));
           lastImageGeneratedAt = now();
           const dir = pictureDir(next.seo_id, dataDir);
           mkdirSync(dir, { recursive: true });
@@ -319,7 +321,7 @@ export function kickPictureMaker(deps: PictureDeps): Promise<void> {
           // picture only waits for its own retry; the slow queue goes on.
           if (pin) void deps.afterPin?.(next.id, false).catch((e) => log.warn(`After ${next.slot}: ${errorMessage(e)}`));
           else if (!step) {
-            run(`DELETE FROM newsite_pictures WHERE seo_id = ? AND status = 'queued' AND slot NOT LIKE 'step-%' AND slot NOT LIKE 'pin-%' AND slot NOT LIKE 'fb-%'`, next.seo_id);
+            run(`DELETE FROM newsite_pictures WHERE seo_id = ? AND status = 'queued' AND slot NOT LIKE 'step-%' AND slot NOT LIKE 'pin-%' AND slot NOT LIKE 'fb-%' AND slot NOT LIKE 'social-%'`, next.seo_id);
           }
         } finally {
           if (step) deps.settings.set(NEXT_STEP_KEY, String(now() + stepGapMs(random)));

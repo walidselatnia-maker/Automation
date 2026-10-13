@@ -1,5 +1,6 @@
 import { html, raw, type Html } from '../web/views/layout.js';
-import { PLATFORMS, VIAS, viaLabel, type ChannelRow, type Platform, type Via } from './channels.js';
+import { PLATFORMS, viasOf, viaLabel, type ChannelRow, type Platform, type Via } from './channels.js';
+import type { RulesCheck } from './platform-rules.js';
 import { WIZARD_CSS, field } from './view.js';
 
 /**
@@ -51,14 +52,17 @@ const CSS = `
 @media (max-width: 640px) { .ch-facts { grid-template-columns: 1fr; gap: 2px; } }
 `;
 
-export const platformLabel = (key: string): string => PLATFORMS.find((p) => p.key === key)?.label ?? key;
+export const platformLabel = (key: string): string => PLATFORMS.find((p) => p.key === key)?.label ?? key.charAt(0).toUpperCase() + key.slice(1);
 
 const VIA_TITLE: Record<Via, string> = { buffer: 'Through Buffer', api: 'Through the API' };
 
 const sites = (n: number): string => (n === 1 ? '1 website' : `${n} websites`);
 
 /** The Channels page: every platform, its channels by how they post, and a way to add one. */
-export function channelsPage(channels: ChannelRow[], usedBy: Map<number, number>, rulesOk: (platform: Platform) => boolean = () => true): Html {
+export function channelsPage(channels: ChannelRow[], usedBy: Map<number, number>, rules: RulesCheck[] = []): Html {
+  const rulesOf = new Map(rules.map((r) => [r.platform, r]));
+  // Buffer's list, then any platform that only has a rules file.
+  const cards = [...PLATFORMS, ...rules.filter((r) => !PLATFORMS.some((p) => p.key === r.platform)).map((r) => ({ key: r.platform, label: r.rules?.label ?? platformLabel(r.platform), built: true }))];
   return html`
     <style>${raw(CSS)}</style>
     <div class="ns-head">
@@ -68,18 +72,20 @@ export function channelsPage(channels: ChannelRow[], usedBy: Map<number, number>
       </div>
     </div>
     <div class="ch-grid">
-      ${PLATFORMS.map((p) => {
-        if (!p.built) {
+      ${cards.map((p) => {
+        const key = p.key as Platform;
+        const check = rulesOf.get(key);
+        const mine0 = channels.filter((c) => c.platform === key);
+        if (!check && !mine0.length) {
           return html`<section class="ch-card soon">
-            <div class="ch-top"><h2>${p.label}</h2><span class="ch-soon">Coming soon</span></div>
-            <p class="ch-none">Later.</p>
+            <div class="ch-top"><h2>${p.label}</h2><span class="ch-soon">No rules file</span></div>
+            <p class="ch-none">Add prompts/platforms/${key}.md to share on ${p.label}.</p>
           </section>`;
         }
-        const key = p.key as Platform;
         return html`<section class="ch-card">
           <div class="ch-top"><h2>${p.label}</h2>
-            <a class="ch-rules" href="/new-website/channels/rules/${key}">${rulesOk(key) ? html`<span class="ns-badge ok">Rules approved</span>` : html`<span class="ns-badge bad">Rules need your approval</span>`}</a></div>
-          ${VIAS[key].map((via) => {
+            <a class="ch-rules" href="/new-website/channels/rules/${key}">${check?.rules ? html`<span class="ns-badge ok">Rules file OK</span>` : html`<span class="ns-badge bad">Rules file has problems</span>`}</a></div>
+          ${viasOf(key).map((via) => {
             const mine = channels.filter((c) => c.platform === key && c.via === via);
             return html`<div class="ch-via">
               <div class="ch-via-head"><h3>${VIA_TITLE[via]}</h3>
@@ -99,17 +105,25 @@ export function channelsPage(channels: ChannelRow[], usedBy: Map<number, number>
 /* -- The wizards ---------------------------------------------------------- */
 
 /** The steps of each wizard, by platform and how it posts. */
-export function stepsOf(platform: Platform, via: Via): string[] {
+export function stepsOf(platform: Platform, via: Via, firstComment = platform === 'facebook'): string[] {
   if (via === 'api') return ['Connect', 'Pick pages', 'Check', 'What to post', 'Websites'];
-  return platform === 'pinterest'
-    ? ['Connect', 'Pick the channel', 'Websites', 'Check']
-    : ['Connect', 'Pick pages', 'Buffer plan', 'What to post', 'Websites', 'Check'];
+  if (platform === 'pinterest') return ['Connect', 'Pick the channel', 'Websites', 'Check'];
+  return [
+    'Connect',
+    platform === 'facebook' ? 'Pick pages' : 'Pick channels',
+    ...(firstComment ? ['Buffer plan'] : []),
+    ...(platform === 'facebook' ? ['What to post'] : []),
+    'Websites',
+    'Check',
+  ];
 }
 
 export interface WizardContext {
   platform: Platform;
   via: Via;
   draft?: string;
+  /** The platform's rules put the link in a first comment (asks about the Buffer plan). */
+  firstComment?: boolean;
 }
 
 const titleOf = (w: WizardContext): string => `Add ${platformLabel(w.platform)}`;
@@ -118,7 +132,7 @@ const base = (w: WizardContext): string => `/new-website/channels/${w.platform}/
 
 /** The shell every channel wizard step shares. */
 function wizard(w: WizardContext, stepName: string, body: Html, foot: Html, error = ''): Html {
-  const names = stepsOf(w.platform, w.via);
+  const names = stepsOf(w.platform, w.via, w.firstComment);
   const step = Math.max(0, names.indexOf(stepName));
   return html`
     <style>${raw(WIZARD_CSS)}${raw(CSS)}</style>
@@ -150,7 +164,7 @@ export function connectStep(w: WizardContext, error = ''): Html {
     html`<form id="ch-form" method="post" action="${base(w)}/connect">
       <h2>Connect</h2>
       ${buffer
-        ? html`<p>Paste the Buffer access token of the account your ${platformLabel(w.platform)} ${w.platform === 'facebook' ? 'pages are' : 'channel is'} in.</p>
+        ? html`<p>Paste the Buffer access token of the account your ${platformLabel(w.platform)} ${w.platform === 'pinterest' ? 'channel is' : 'channels are'} in.</p>
           ${field('token', 'Buffer access token', html`<input id="wz-token" name="token" type="password" spellcheck="false" autocomplete="off" required />`, {
             hint: 'In Buffer: Settings → API → Access token.',
           })}`
@@ -172,17 +186,18 @@ export interface PickChoice {
 /** Pick the channel (Pinterest, one) or the pages (Facebook, one or more). */
 export function pickStep(w: WizardContext, choices: PickChoice[], error = ''): Html {
   const one = w.platform === 'pinterest';
+  const name = one ? 'Pick the channel' : w.platform === 'facebook' ? 'Pick pages' : 'Pick channels';
   return wizard(
     w,
-    one ? 'Pick the channel' : 'Pick pages',
+    name,
     html`<form id="ch-form" method="post" action="${base(w)}/pick">
       ${draftInput(w)}
-      <h2>${one ? 'Pick the channel' : 'Pick pages'}</h2>
+      <h2>${name}</h2>
       <p>${one
         ? 'The Pinterest channels in this Buffer account. Pins go to the boards of the one you pick; the AI chooses the board for each article.'
-        : w.via === 'buffer'
-          ? 'The Facebook pages connected in this Buffer account. Each page you pick becomes its own channel.'
-          : 'The pages this token can post to. Each page you pick becomes its own channel.'}</p>
+        : w.via === 'api'
+          ? 'The pages this token can post to. Each page you pick becomes its own channel.'
+          : `The ${platformLabel(w.platform)} ${w.platform === 'facebook' ? 'pages' : 'channels'} connected in this Buffer account. Each one you pick becomes its own channel.`}</p>
       <div class="ch-pick">
         ${choices.map(
           (c, i) => html`<label class="ch-option"><input type="${one ? 'radio' : 'checkbox'}" name="pick" value="${c.id}" ${checked(one && i === 0)} />
@@ -326,7 +341,7 @@ export function channelPage(c: ChannelRow, websites: WebsiteChoice[], check: { o
             <label class="wz-check" style="margin:0 0 12px"><input type="checkbox" name="postImage" value="1" ${checked(Boolean(c.post_image))} /> An image post for each article</label>
             <label class="wz-check" style="margin:0 0 12px"><input type="checkbox" name="postReel" value="1" ${checked(Boolean(c.post_reel))} /> A reel for each article (coming next)</label>`
           : raw('')}
-        ${isFb && c.via === 'buffer' ? html`<h2 class="ch-sec">Buffer plan</h2>${paidBox(Boolean(c.paid_buffer))}` : raw('')}
+        ${c.via === 'buffer' && c.platform !== 'pinterest' ? html`<h2 class="ch-sec">Buffer plan</h2>${paidBox(Boolean(c.paid_buffer))}` : raw('')}
       </div>
       <div class="wz-foot">
         <button class="ns-btn quiet" formaction="/new-website/channels/${c.id}/check">Check the connection</button>

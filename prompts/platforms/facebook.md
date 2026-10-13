@@ -1,3 +1,14 @@
+---
+platform: facebook
+label: Facebook
+post_label: Image post
+fields: text, alt
+post_text: text
+alt_field: alt
+picture_shape: PORTRAIT_3_4
+picture_templates: newsite-fb-1.template.txt
+link: first_comment
+---
 # Facebook rules
 
 These rules decide what the sharing phase makes for a Facebook channel (a page),
@@ -29,6 +40,7 @@ Nothing is added that the article does not say.
 - Never generic phrases such as "mouth-watering", "delve", "game-changer",
   "look no further", "you won't believe".
 - Stay true to the article: no ingredient, claim or number it does not have.
+- Alt text: what the post picture shows, for people who cannot see it.
 
 ## The post picture
 
@@ -50,4 +62,6 @@ The platform checks every post against these numbers before it is sent. An
 answer outside them goes back to the AI with the exact problem to fix.
 
 - text_chars: 80-500
-- emoji: 0-2
+- text_emoji: 0-2
+- text_hashtags: 0-0
+- alt_words: 8-20

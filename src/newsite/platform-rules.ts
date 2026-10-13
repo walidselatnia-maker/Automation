@@ -1,31 +1,70 @@
-import { createHash } from 'node:crypto';
-import { readShippedPrompt } from '../pipeline/prompts.js';
-import type { Settings } from '../settings.js';
+import { existsSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { promptsDirectory, readShippedPrompt } from '../pipeline/prompts.js';
 
 /**
- * Each social platform's rules, kept as a data file (prompts/platforms/<name>.md),
- * never in the code: what the sharing phase makes for that platform, its words,
- * its picture and its limits.
+ * Each social platform's rules, kept as a data file: prompts/platforms/<name>.md.
  *
- * The whole file is given to the AI that writes the platform's content, and the
- * "## Limits" part ("- title_chars: 40-100") is what the platform checks the
- * answer against. The owner approves a rules file before anything is posted
- * with it; changing the file asks for approval again.
+ * The platform finds every file in that folder by itself and reads it fresh
+ * each time a post is made, so editing a file changes what the next post does,
+ * removing it stops that platform, and adding one (for a platform Buffer
+ * posts to) connects it to the Sharing phase. Nothing about a platform's
+ * content lives in the code.
+ *
+ * A file has a short header between two "---" lines that tells the engine
+ * how to run it, then the rules themselves, which the AI is given whole:
+ *
+ *   ---
+ *   platform: pinterest           the channel's platform (and Buffer's service name)
+ *   label: Pinterest
+ *   post_label: Pin               what one post is called on the pages
+ *   fields: headline, cta, title, description, alt
+ *   post_text: description        the field that is the post's text
+ *   alt_field: alt                the field that describes the picture (optional)
+ *   picture_shape: PORTRAIT_3_4   PORTRAIT_3_4 or HORIZONTAL
+ *   picture_templates: newsite-pin-1.template.txt, newsite-pin-2.template.txt
+ *   link: pin_link                pin_link, first_comment or none
+ *   ---
+ *
+ * and a "## Limits" part the checks read, one "- name: min-max" per line:
+ * <field>_chars, <field>_words, <field>_emoji, <field>_hashtags,
+ * <field>_exclamations. The link rule (no link or web address in any field)
+ * is checked always.
  */
 
-export type RulesPlatform = 'pinterest' | 'facebook';
+export type LinkMode = 'pin_link' | 'first_comment' | 'none';
+export type PictureShape = 'PORTRAIT_3_4' | 'HORIZONTAL';
 
 export interface PlatformRules {
-  platform: RulesPlatform;
-  /** The whole file, as given to the AI. */
+  platform: string;
+  label: string;
+  postLabel: string;
+  fields: string[];
+  postText: string;
+  altField: string;
+  pictureShape: PictureShape;
+  pictureTemplates: string[];
+  link: LinkMode;
+  /** The whole file without its header, as given to the AI. */
   text: string;
   /** From the Limits part: name -> [min, max]. */
   limits: Record<string, [number, number]>;
-  /** Changes whenever the file changes. */
-  hash: string;
+  file: string;
 }
 
-const APPROVED_KEY = (platform: RulesPlatform) => `newsite_rules_approved_${platform}`;
+/** A rules file and what is wrong with it, if anything. */
+export interface RulesCheck {
+  platform: string;
+  file: string;
+  rules: PlatformRules | null;
+  errors: string[];
+}
+
+const SHAPES: PictureShape[] = ['PORTRAIT_3_4', 'HORIZONTAL'];
+const LINKS: LinkMode[] = ['pin_link', 'first_comment', 'none'];
+const MEASURES = ['chars', 'words', 'emoji', 'hashtags', 'exclamations'];
+
+const rulesFolder = (): string => join(promptsDirectory(), 'platforms');
 
 /** Read the "- name: min-max" lines under "## Limits". */
 export function parseLimits(text: string): Record<string, [number, number]> {
@@ -37,17 +76,99 @@ export function parseLimits(text: string): Record<string, [number, number]> {
   return limits;
 }
 
-/** The rules file as shipped in prompts/platforms/. */
-export function loadPlatformRules(platform: RulesPlatform): PlatformRules {
-  const text = readShippedPrompt(`platforms/${platform}.md`).replace(/\r\n/g, '\n');
-  if (!text.trim()) throw new Error(`The ${platform} rules file (prompts/platforms/${platform}.md) is missing.`);
-  return { platform, text, limits: parseLimits(text), hash: createHash('sha256').update(text).digest('hex').slice(0, 16) };
+const list = (v: string | undefined): string[] => (v ?? '').split(',').map((x) => x.trim()).filter(Boolean);
+
+/** Read and check one rules file's text. Every problem is reported, none is skipped. */
+export function parseRules(platformFromName: string, raw: string, file = `platforms/${platformFromName}.md`): RulesCheck {
+  const text = raw.replace(/\r\n/g, '\n');
+  const errors: string[] = [];
+  const m = /^---\n([\s\S]*?)\n---\n?/.exec(text);
+  if (!m) {
+    return { platform: platformFromName, file, rules: null, errors: ['The file must start with a header between two "---" lines (platform, fields, post_text, picture_shape, picture_templates, link).'] };
+  }
+  const head: Record<string, string> = {};
+  for (const line of m[1]!.split('\n')) {
+    const kv = /^\s*([a-z_]+)\s*:\s*(.*?)\s*(#.*)?$/.exec(line);
+    if (kv) head[kv[1]!] = kv[2]!;
+    else if (line.trim()) errors.push(`Header line not understood: "${line.trim()}". Write it as name: value.`);
+  }
+  const body = text.slice(m[0].length);
+  const platform = head.platform ?? '';
+  if (!platform) errors.push('The header needs "platform:" (the channel platform, like pinterest).');
+  else if (platform !== platformFromName) errors.push(`The header says platform "${platform}" but the file is named ${platformFromName}.md. Make them the same.`);
+
+  const fields = list(head.fields);
+  if (!fields.length) errors.push('The header needs "fields:" (the words the AI writes, like headline, title, description, alt).');
+  for (const f of fields) if (!/^[a-z_]+$/.test(f)) errors.push(`Field "${f}" must be lowercase letters and underscores.`);
+  const postText = head.post_text ?? '';
+  if (!postText) errors.push('The header needs "post_text:" (which field is the post\'s text).');
+  else if (!fields.includes(postText)) errors.push(`post_text "${postText}" is not one of the fields (${fields.join(', ')}).`);
+  const altField = head.alt_field ?? '';
+  if (altField && !fields.includes(altField)) errors.push(`alt_field "${altField}" is not one of the fields (${fields.join(', ')}).`);
+
+  const pictureShape = (head.picture_shape ?? '') as PictureShape;
+  if (!SHAPES.includes(pictureShape)) errors.push(`picture_shape must be one of ${SHAPES.join(', ')}.`);
+  const pictureTemplates = list(head.picture_templates);
+  if (!pictureTemplates.length) errors.push('The header needs "picture_templates:" (one or more picture prompt files in prompts/).');
+  for (const t of pictureTemplates) if (!readShippedPrompt(t).trim()) errors.push(`Picture template "${t}" is not in the prompts folder.`);
+
+  const link = (head.link ?? '') as LinkMode;
+  if (!LINKS.includes(link)) errors.push(`link must be one of ${LINKS.join(', ')}.`);
+
+  const limits = parseLimits(body);
+  for (const [name, [min, max]] of Object.entries(limits)) {
+    const measure = MEASURES.find((x) => name.endsWith(`_${x}`));
+    const field = measure ? name.slice(0, -(measure.length + 1)) : '';
+    if (!measure || !fields.includes(field)) {
+      errors.push(`Limit "${name}" is not <field>_${MEASURES.join('|')} for one of the fields (${fields.join(', ')}).`);
+    }
+    if (min > max) errors.push(`Limit "${name}" goes from ${min} to ${max}; the first number must be the smaller.`);
+  }
+  if (!body.trim()) errors.push('The file has no rules after its header.');
+
+  const rules: PlatformRules = {
+    platform: platformFromName,
+    label: head.label || platformFromName,
+    postLabel: head.post_label || 'Post',
+    fields,
+    postText,
+    altField,
+    pictureShape,
+    pictureTemplates,
+    link,
+    text: body.trim(),
+    limits,
+    file,
+  };
+  return { platform: platformFromName, file, rules: errors.length ? null : rules, errors };
 }
 
-/** The limit, or the fallback when the file does not have it. */
-export const limitOf = (rules: PlatformRules, name: string, fallback: [number, number]): [number, number] => rules.limits[name] ?? fallback;
+/** Every rules file in prompts/platforms/, checked. */
+export function listPlatformRules(): RulesCheck[] {
+  const dir = rulesFolder();
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
+    .filter((f) => f.endsWith('.md'))
+    .sort()
+    .map((f) => {
+      const platform = f.slice(0, -3);
+      return parseRules(platform, readShippedPrompt(`platforms/${f}`), `platforms/${f}`);
+    });
+}
 
-/** Has the owner approved this platform's rules as they are now? */
-export const rulesApproved = (rules: PlatformRules, settings: Settings): boolean => settings.get(APPROVED_KEY(rules.platform)) === rules.hash;
+/** One platform's rules file, checked; a missing file is an error too. */
+export function checkPlatformRules(platform: string): RulesCheck {
+  const raw = readShippedPrompt(`platforms/${platform}.md`);
+  if (!raw.trim()) return { platform, file: `platforms/${platform}.md`, rules: null, errors: [`There is no rules file for ${platform} (prompts/platforms/${platform}.md).`] };
+  return parseRules(platform, raw);
+}
 
-export const approveRules = (rules: PlatformRules, settings: Settings): void => settings.set(APPROVED_KEY(rules.platform), rules.hash);
+/** One platform's rules, or an error that says exactly what is wrong with its file. */
+export function loadPlatformRules(platform: string): PlatformRules {
+  const check = checkPlatformRules(platform);
+  if (!check.rules) throw new Error(`The ${platform} rules file (prompts/${check.file}) has problems: ${check.errors.join(' ')}`);
+  return check.rules;
+}
+
+/** The limit, if the rules file sets one. */
+export const limitOf = (rules: PlatformRules, name: string): [number, number] | undefined => rules.limits[name];

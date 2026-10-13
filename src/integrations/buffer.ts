@@ -169,21 +169,28 @@ export class BufferClient {
   }
 
   /**
-   * Queue a Facebook image post. `firstComment` is the link comment: Buffer
-   * only adds it on a paid plan, so it is left out when empty. Field names
-   * from Buffer's FacebookPostMetadataInput (type: post, firstComment).
+   * Queue an image post on any Buffer channel and return what Buffer said:
+   * the post's id and when it is due to go out. `metadata` is the
+   * service-specific part, already written as GraphQL (for example
+   * `pinterest: { title: "…", url: "…", boardServiceId: "…" }`), or empty.
+   *
+   * Only a reply carrying a post id counts as accepted: an error, or any
+   * answer without an id, throws, so nothing is ever recorded as sent that
+   * Buffer did not take.
    */
-  async createFacebookPost(input: {
+  async createImagePost(input: {
     text: string;
     channelId: string;
     imageUrl: string;
     altText: string;
-    firstComment: string;
-  }): Promise<string> {
+    metadata: string;
+  }): Promise<{ id: string; dueAt: string }> {
     const q = (value: string): string => JSON.stringify(value ?? '');
-    const comment = input.firstComment ? `\n          firstComment: ${q(input.firstComment)}` : '';
-
-    const mutation = `mutation CreateFacebookPost {
+    const metadata = input.metadata.trim() ? `
+      metadata: {
+        ${input.metadata.trim()}
+      }` : '';
+    const mutation = `mutation CreateImagePost {
   createPost(
     input: {
       text: ${q(input.text)}
@@ -199,17 +206,13 @@ export class BufferClient {
             }
           }
         }
-      ]
-      metadata: {
-        facebook: {
-          type: post${comment}
-        }
-      }
+      ]${metadata}
     }
   ) {
     ... on PostActionSuccess {
       post {
         id
+        dueAt
       }
     }
     ... on MutationError {
@@ -219,17 +222,20 @@ export class BufferClient {
 }`;
 
     const data = await this.graphql<{
-      createPost: { post?: { id: string }; message?: string };
+      createPost: { post?: { id: string; dueAt?: string | null }; message?: string };
     }>(mutation);
 
     if (data.createPost?.message) {
       throw new BufferError(`Buffer rejected the post: ${data.createPost.message}`);
     }
-
     const id = data.createPost?.post?.id;
-    if (!id) throw new BufferError('Buffer did not return a post id');
+    if (!id) throw new BufferError('Buffer did not confirm the post (no post id in its answer), so it was not recorded as sent.');
+    return { id, dueAt: String(data.createPost.post?.dueAt ?? '') };
+  }
 
-    return id;
+  /** GraphQL text for a string value, escaped. */
+  static literal(value: string): string {
+    return JSON.stringify(value ?? '');
   }
 
   /**

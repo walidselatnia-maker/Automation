@@ -12,9 +12,14 @@ import { decrypt, encrypt } from '../lib/crypto.js';
  * so a fresh install starts with no channels at all.
  */
 
-export type Platform = 'pinterest' | 'facebook';
+/** A channel's platform: Buffer's service name, and the name of its rules file. */
+export type Platform = string;
 
-/** Every platform Buffer offers, in the order the Channels page lists them. Only some are built. */
+/**
+ * Every platform Buffer offers, in the order the Channels page lists them. A
+ * platform can be used once prompts/platforms/<key>.md exists and is valid;
+ * `built` here is only the starting list.
+ */
 export const PLATFORMS: { key: string; label: string; built: boolean }[] = [
   { key: 'pinterest', label: 'Pinterest', built: true },
   { key: 'facebook', label: 'Facebook', built: true },
@@ -68,7 +73,7 @@ export const fbTokenOf = (c: ChannelRow, key: Buffer): string => secret(c.fb_tok
 export type Via = 'buffer' | 'api';
 
 /** The ways each built platform can be connected. Pinterest only goes through Buffer. */
-export const VIAS: Record<Platform, Via[]> = { pinterest: ['buffer'], facebook: ['buffer', 'api'] };
+export const viasOf = (platform: string): Via[] => (platform === 'facebook' ? ['buffer', 'api'] : ['buffer']);
 
 export const viaLabel = (via: string): string => (via === 'buffer' ? 'Buffer' : 'API');
 

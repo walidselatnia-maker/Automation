@@ -6,13 +6,13 @@ import { BufferClient, type BufferChannel } from '../integrations/buffer.js';
 import { FacebookClient } from '../integrations/facebook.js';
 import { createLogger, errorMessage } from '../lib/logger.js';
 import { pictureMediaUrl } from '../core/media-links.js';
-import { limitOf, loadPlatformRules, rulesApproved, type PlatformRules, type RulesPlatform } from './platform-rules.js';
+import { checkPlatformRules, type PlatformRules } from './platform-rules.js';
 import { loadTemplate } from '../pipeline/prompts.js';
 import type { Settings } from '../settings.js';
 import { bufferTokenOf, fbTokenOf, getChannel, websiteChannels, type ChannelRow } from './channels.js';
 import type { Fetch } from './client.js';
 import { parseImageSet } from './images.js';
-import { isMainSlot, listPictures, pictureDir, type PictureRow } from './pictures.js';
+import { pictureDir, type PictureRow } from './pictures.js';
 import { getNewWebsite, type NewWebsiteRow } from './repo.js';
 import { correctUntilRight } from './rounds.js';
 import { getSeoRow, type SeoRow } from './seo.js';
@@ -48,45 +48,39 @@ export const isQueueFull = (err: unknown): boolean => {
   return QUEUE_FULL.some((m) => text.includes(m));
 };
 
-export type SocialKind = 'pin' | 'fb_image';
+/** A post's platform: the rules file of that name (prompts/platforms/<kind>.md) runs it. */
+export type SocialKind = string;
 
 export interface SocialPostRow {
   id: number;
   seo_id: number;
   channel_id: number;
   kind: SocialKind;
-  status: 'pending' | 'held' | 'picture' | 'waiting' | 'sent' | 'failed';
+  status: 'pending' | 'picture' | 'waiting' | 'sent' | 'failed';
   template: number;
   title: string;
   text: string;
   alt: string;
   overlay: string;
+  /** Every field the platform's rules asked for, as the AI wrote it (JSON). */
+  fields_json: string;
   board_name: string;
   picture_id: number | null;
   external_id: string;
   comment_id: string;
   error: string;
   retry_at: number | null;
+  /** When Buffer said it will post it (Buffer's own answer); empty for a direct post. */
+  due_at: string;
   created_at: string;
   sent_at: string | null;
 }
 
-export const PIN_TEMPLATES = 4;
-
-/** What a channel can do; replaceable so tests call no real Buffer or Facebook. */
+/** What a Buffer account can do; replaceable so tests call no real Buffer. */
 export interface BufferApi {
   channels: () => Promise<BufferChannel[]>;
-  createPin: (input: {
-    text: string;
-    channelId: string;
-    imageUrl: string;
-    altText: string;
-    title: string;
-    linkUrl: string;
-    boardServiceId: string;
-  }) => Promise<string>;
-  /** A Facebook image post; the link comment only when the plan allows first comments. */
-  createFacebookPost: (input: { text: string; channelId: string; imageUrl: string; altText: string; firstComment: string }) => Promise<string>;
+  /** Queue an image post; only resolves when Buffer confirms it with a post id. */
+  createImagePost: (input: { text: string; channelId: string; imageUrl: string; altText: string; metadata: string }) => Promise<{ id: string; dueAt: string }>;
 }
 
 export interface FacebookApi {
@@ -99,11 +93,11 @@ export interface SocialDeps {
   encryptionKey: Buffer;
   ask: (promptName: string, variables: Record<string, unknown>) => Promise<string>;
   dataDir?: string;
-  /** For uploading the pin picture to the website (its public link is what Buffer fetches). */
+  /** Checks that a picture link answers from the internet before Buffer is asked to fetch it. */
   fetchImpl?: Fetch;
   buffer?: (token: string) => BufferApi;
   facebook?: (token: string) => FacebookApi;
-  /** Wakes the picture maker once a pin picture is queued. */
+  /** Wakes the picture maker once a social picture is queued. */
   startPictures?: () => void;
   now?: () => number;
   /** Wakes the poster when a waiting post is due; tests pass their own. */
@@ -114,8 +108,7 @@ const realBuffer = (token: string): BufferApi => {
   const client = new BufferClient(token);
   return {
     channels: async () => client.getChannels(await client.getOrganizationId()),
-    createPin: (input) => client.createPost(input),
-    createFacebookPost: (input) => client.createFacebookPost(input),
+    createImagePost: (input) => client.createImagePost(input),
   };
 };
 
@@ -140,6 +133,16 @@ export const listPlanSocialPosts = (planId: number): SocialPostRow[] =>
 export const getSocialPost = (id: number): SocialPostRow | undefined =>
   get<SocialPostRow>('SELECT * FROM newsite_social_posts WHERE id = ?', id);
 
+/** The fields a post was written with. */
+export const postFields = (p: Pick<SocialPostRow, 'fields_json'>): Record<string, string> => {
+  try {
+    const v = JSON.parse(p.fields_json || '{}') as unknown;
+    return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, string>) : {};
+  } catch {
+    return {};
+  }
+};
+
 /** The website a keyword belongs to. */
 function websiteOf(seoId: number): NewWebsiteRow | undefined {
   const plan = get<{ website_id: number }>(
@@ -151,31 +154,19 @@ function websiteOf(seoId: number): NewWebsiteRow | undefined {
 
 /**
  * Once an article is posted: one social post per channel its website shares
- * on. Publishing it again adds nothing new (one post per channel and kind).
+ * on, run by that channel's platform rules. Publishing it again adds nothing
+ * new (one post per channel and platform). A Facebook page set to reels only
+ * gets no image post.
  */
 export function createSocialPosts(seoId: number): number {
   const site = websiteOf(seoId);
   if (!site) return 0;
   let added = 0;
   for (const c of websiteChannels(site.id)) {
-    const kinds: SocialKind[] = c.platform === 'pinterest' ? ['pin'] : c.post_image ? ['fb_image'] : [];
-    for (const kind of kinds) {
-      added += Number(
-        run('INSERT OR IGNORE INTO newsite_social_posts (seo_id, channel_id, kind) VALUES (?, ?, ?)', seoId, c.id, kind).changes,
-      );
-    }
+    if (c.platform === 'facebook' && !c.post_image) continue;
+    added += Number(run('INSERT OR IGNORE INTO newsite_social_posts (seo_id, channel_id, kind) VALUES (?, ?, ?)', seoId, c.id, c.platform).changes);
   }
   return added;
-}
-
-/** The owner approved a platform's rules: its held posts go to work. */
-export function releaseHeld(platform: RulesPlatform): number {
-  return Number(
-    run(
-      `UPDATE newsite_social_posts SET status = 'pending', error = '' WHERE status = 'held' AND channel_id IN (SELECT id FROM newsite_channels WHERE platform = ?)`,
-      platform,
-    ).changes,
-  );
 }
 
 /** Make a post's words and picture again from the article (not once it went out). */
@@ -184,7 +175,7 @@ export function remakeSocialPost(id: number): boolean {
   if (!item || item.status === 'sent' || item.status === 'picture') return false;
   if (item.picture_id) run(`DELETE FROM newsite_pictures WHERE id = ? AND status <> 'making'`, item.picture_id);
   run(
-    `UPDATE newsite_social_posts SET status = 'pending', title = '', text = '', alt = '', overlay = '', picture_id = NULL, error = '', retry_at = NULL WHERE id = ?`,
+    `UPDATE newsite_social_posts SET status = 'pending', title = '', text = '', alt = '', overlay = '', fields_json = '{}', picture_id = NULL, error = '', retry_at = NULL WHERE id = ?`,
     id,
   );
   return true;
@@ -195,23 +186,50 @@ export function retrySocialPost(id: number): void {
   run(`UPDATE newsite_social_posts SET status = 'pending', error = '', retry_at = NULL WHERE id = ? AND status = 'failed'`, id);
 }
 
-/* -- Checks: the link rule and each platform's limits ---------------------- */
+/* -- Checks: the platform's Limits, and the link rule always ----------------- */
 
 const LINKISH = /https?:\/\/|www\.|\b[a-z0-9-]+\.(com|net|org|co|io|blog|recipes|info)\b|link in (the )?bio/i;
+const EMOJI = /\p{Extended_Pictographic}/gu;
 
-const words = (s: string): number => s.split(/\s+/).filter(Boolean).length;
+const count = {
+  chars: (s: string) => s.length,
+  words: (s: string) => s.split(/\s+/).filter(Boolean).length,
+  emoji: (s: string) => (s.match(EMOJI) ?? []).length,
+  hashtags: (s: string) => (s.match(/#\w/g) ?? []).length,
+  exclamations: (s: string) => (s.match(/!/g) ?? []).length,
+};
+const UNIT: Record<keyof typeof count, string> = { chars: 'characters', words: 'words', emoji: 'emoji', hashtags: 'hashtags', exclamations: 'exclamation marks' };
 
-const noLink = (field: string, value: string, domain: string): string[] =>
-  LINKISH.test(value) || (domain && value.toLowerCase().includes(domain.toLowerCase()))
-    ? [`The ${field} has a link or web address in it. Remove it: the link is never in the text (${field === 'post' ? 'it goes in the first comment' : 'the pin carries the link itself'}).`]
-    : [];
-
-export interface PinText {
-  headline: string;
-  cta: string;
-  title: string;
-  description: string;
-  alt: string;
+/**
+ * Everything wrong with an answer, measured against the rules file: each
+ * field present, each limit met, and no link anywhere (the link is never in
+ * a post's words, whatever the platform).
+ */
+export function checkFields(fields: Record<string, string>, rules: PlatformRules, domain: string): string[] {
+  const problems: string[] = [];
+  for (const f of rules.fields) {
+    const value = fields[f] ?? '';
+    if (!value) {
+      problems.push(`The ${f} is missing; write it.`);
+      continue;
+    }
+    for (const measure of Object.keys(count) as (keyof typeof count)[]) {
+      const limit = rules.limits[`${f}_${measure}`];
+      if (!limit) continue;
+      const n = count[measure](value);
+      if (n < limit[0] || n > limit[1]) {
+        problems.push(
+          limit[1] === 0
+            ? `The ${f} has ${n} ${UNIT[measure]}; it must have none.`
+            : `The ${f} has ${n} ${UNIT[measure]}; write ${limit[0]} to ${limit[1]}.`,
+        );
+      }
+    }
+    if (LINKISH.test(value) || (domain && value.toLowerCase().includes(domain.toLowerCase()))) {
+      problems.push(`The ${f} has a link or web address in it. Remove it: the link is never in a post's words.`);
+    }
+  }
+  return problems;
 }
 
 const str = (o: Record<string, unknown>, k: string): string => (typeof o[k] === 'string' ? (o[k] as string).replace(/\s+/g, ' ').trim() : '');
@@ -227,48 +245,6 @@ const parseObject = (raw: string): Record<string, unknown> | null => {
   }
 };
 
-export const parsePinText = (raw: string): PinText | null => {
-  const o = parseObject(raw);
-  return o ? { headline: str(o, 'headline'), cta: str(o, 'cta'), title: str(o, 'title'), description: str(o, 'description'), alt: str(o, 'alt') } : null;
-};
-
-const range = (n: number, [min, max]: [number, number]): boolean => n >= min && n <= max;
-const EMOJI = /\p{Extended_Pictographic}/gu;
-
-/** A pin against the Pinterest rules file's limits (and the link rule, always). */
-export function checkPinText(p: PinText, domain: string, rules: PlatformRules = loadPlatformRules('pinterest')): string[] {
-  const problems: string[] = [];
-  const [hw, cw, tc, dc, aw] = [
-    limitOf(rules, 'headline_words', [2, 6]),
-    limitOf(rules, 'cta_words', [2, 4]),
-    limitOf(rules, 'title_chars', [40, 100]),
-    limitOf(rules, 'description_chars', [150, 450]),
-    limitOf(rules, 'alt_words', [8, 20]),
-  ];
-  if (!range(words(p.headline), hw)) problems.push(`The headline has ${words(p.headline)} words; write ${hw[0]} to ${hw[1]} (it is printed on the picture).`);
-  if (!range(words(p.cta), cw)) problems.push(`The cta has ${words(p.cta)} words; write ${cw[0]} to ${cw[1]}, like "Save for Later".`);
-  if (!range(p.title.length, tc)) problems.push(`The title is ${p.title.length} characters; write ${tc[0]} to ${tc[1]}.`);
-  if (!range(p.description.length, dc)) problems.push(`The description is ${p.description.length} characters; write ${dc[0]} to ${dc[1]}.`);
-  if (!range(words(p.alt), aw)) problems.push(`The alt text has ${words(p.alt)} words; write ${aw[0]} to ${aw[1]}.`);
-  if (/!/.test(p.title)) problems.push('The title has an exclamation mark; remove it.');
-  if (/#\w/.test(p.description)) problems.push('The description has hashtags; remove them and use plain words.');
-  for (const [field, value] of Object.entries(p)) problems.push(...noLink(field, value, domain));
-  return problems;
-}
-
-/** A Facebook post against the Facebook rules file's limits (and the link rule, always). */
-export function checkFbText(text: string, domain: string, rules: PlatformRules = loadPlatformRules('facebook')): string[] {
-  const problems: string[] = [];
-  const tc = limitOf(rules, 'text_chars', [80, 500]);
-  const em = limitOf(rules, 'emoji', [0, 2]);
-  const emoji = (text.match(EMOJI) ?? []).length;
-  if (!range(text.length, tc)) problems.push(`The post is ${text.length} characters; write ${tc[0]} to ${tc[1]}.`);
-  if (!range(emoji, em)) problems.push(`The post has ${emoji} emoji; use ${em[0]} to ${em[1]}.`);
-  if (/#\w/.test(text)) problems.push('The post has hashtags; remove them.');
-  problems.push(...noLink('post', text, domain));
-  return problems;
-}
-
 /* -- The poster ----------------------------------------------------------- */
 
 interface Work {
@@ -276,10 +252,11 @@ interface Work {
   row: SeoRow;
   site: NewWebsiteRow;
   channel: ChannelRow;
+  rules: PlatformRules;
 }
 
 const fail = (id: number, error: string): void => {
-  run(`UPDATE newsite_social_posts SET status = 'failed', error = ? WHERE id = ?`, error.slice(0, 600), id);
+  run(`UPDATE newsite_social_posts SET status = 'failed', error = ? WHERE id = ?`, error.slice(0, 900), id);
 };
 
 const articleStart = (md: string): string => md.slice(0, 1500);
@@ -288,35 +265,42 @@ const articleStart = (md: string): string => md.slice(0, 1500);
 const articleOutline = (md: string): string =>
   md.split('\n').filter((l) => /^#{1,3}\s/.test(l)).map((l) => l.replace(/^#+\s*/, '- ')).join('\n') || '- (no headings)';
 
-const nicheOf = (site: NewWebsiteRow): string => site.niche;
-
-async function writePinText(w: Work, deps: SocialDeps, rules: PlatformRules): Promise<boolean> {
-  const out = await correctUntilRight<PinText>({
+/** Step 1: the post's words, written from the article by the platform's rules, checked against its limits. */
+async function writeFields(w: Work, deps: SocialDeps): Promise<boolean> {
+  const { rules } = w;
+  const out = await correctUntilRight<Record<string, string>>({
     ask: (corrections) =>
-      deps.ask('newsite-pin-text', {
+      deps.ask('newsite-social-post', {
+        label: rules.label,
         platformRules: rules.text,
-        articleOutline: articleOutline(w.row.article_md),
+        fields: rules.fields.join(', '),
+        shape: JSON.stringify(Object.fromEntries(rules.fields.map((f) => [f, '...']))),
         title: w.row.title,
         focusKeyword: w.row.focus_keyword,
         keyword: w.row.keyword,
         description: w.row.description,
-        niche: nicheOf(w.site),
+        niche: w.site.niche,
+        persona: w.site.persona,
+        articleOutline: articleOutline(w.row.article_md),
         articleStart: articleStart(w.row.article_md),
         problemsJson: corrections,
       }),
-    parse: parsePinText,
-    check: (p) => checkPinText(p, w.site.domain, rules),
+    parse: (raw) => {
+      const o = parseObject(raw);
+      return o ? Object.fromEntries(rules.fields.map((f) => [f, str(o, f)])) : null;
+    },
+    check: (fields) => checkFields(fields, rules, w.site.domain),
   });
   if (out.technical || !out.answer) {
     fail(w.item.id, out.problems.join(' '));
     return false;
   }
-  const p = out.answer;
-  run(
-    `UPDATE newsite_social_posts SET title = ?, text = ?, alt = ?, overlay = ? WHERE id = ?`,
-    p.title, p.description, p.alt, JSON.stringify({ headline: p.headline, cta: p.cta }), w.item.id,
-  );
-  Object.assign(w.item, { title: p.title, text: p.description, alt: p.alt, overlay: JSON.stringify({ headline: p.headline, cta: p.cta }) });
+  const f = out.answer;
+  const text = f[rules.postText] ?? '';
+  const alt = rules.altField ? f[rules.altField] ?? '' : '';
+  const title = f.title ?? '';
+  run(`UPDATE newsite_social_posts SET fields_json = ?, text = ?, alt = ?, title = ? WHERE id = ?`, JSON.stringify(f), text, alt, title, w.item.id);
+  Object.assign(w.item, { fields_json: JSON.stringify(f), text, alt, title });
   return true;
 }
 
@@ -328,38 +312,22 @@ function articleScenes(row: SeoRow): { scene: string; detail: string } {
   return { scene, detail: prompt('closeup') || prompt('overhead') || scene };
 }
 
-/** Put a social picture in the picture queue (3:4, one at a time with the article pictures), and wait for it. */
-function queueSocialPicture(w: Work, slot: string, prompt: string, template: number, deps: SocialDeps): void {
-  run(`DELETE FROM newsite_pictures WHERE seo_id = ? AND slot = ?`, w.row.id, slot);
+/** Step 2: the post's own picture, from the next of the rules' templates for this channel, in the picture queue. */
+function queuePicture(w: Work, deps: SocialDeps): void {
+  const { rules } = w;
+  const index = w.channel.next_template % rules.pictureTemplates.length;
+  run('UPDATE newsite_channels SET next_template = next_template + 1 WHERE id = ?', w.channel.id);
+  const prompt = loadTemplate(rules.pictureTemplates[index]!, { ...articleScenes(w.row), ...postFields(w.item), domain: w.site.domain });
+  const slot = `social-${w.item.id}`;
+  run(`DELETE FROM newsite_pictures WHERE seo_id = ? AND slot IN (?, ?, ?)`, w.row.id, slot, `pin-${w.item.id}`, `fb-${w.item.id}`);
   const pictureId = Number(
     run(
-      `INSERT INTO newsite_pictures (seo_id, slot, position, prompt, alt, status) VALUES (?, ?, 1000, ?, ?, 'queued')`,
-      w.row.id, slot, prompt, w.item.alt,
+      `INSERT INTO newsite_pictures (seo_id, slot, position, prompt, alt, status, shape) VALUES (?, ?, 1000, ?, ?, 'queued', ?)`,
+      w.row.id, slot, prompt, w.item.alt, rules.pictureShape,
     ).lastInsertRowid,
   );
-  run(`UPDATE newsite_social_posts SET status = 'picture', picture_id = ?, template = ? WHERE id = ?`, pictureId, template, w.item.id);
+  run(`UPDATE newsite_social_posts SET status = 'picture', picture_id = ?, template = ? WHERE id = ?`, pictureId, index + 1, w.item.id);
   deps.startPictures?.();
-}
-
-/** Facebook's own post picture, from the article's scenes; no words on it. */
-function queueFbPicture(w: Work, deps: SocialDeps): void {
-  queueSocialPicture(w, `fb-${w.item.id}`, loadTemplate('newsite-fb-1.template.txt', articleScenes(w.row)), 1, deps);
-}
-
-/** Queue the pin's own picture, from the next template in the channel's rotation. */
-function queuePinPicture(w: Work, deps: SocialDeps): void {
-  const { scene, detail } = articleScenes(w.row);
-  const template = w.channel.next_template % PIN_TEMPLATES;
-  run('UPDATE newsite_channels SET next_template = next_template + 1 WHERE id = ?', w.channel.id);
-  const overlay = JSON.parse(w.item.overlay || '{}') as { headline?: string; cta?: string };
-  const text = loadTemplate(`newsite-pin-${template + 1}.template.txt`, {
-    scene,
-    detail,
-    headline: overlay.headline ?? '',
-    cta: overlay.cta ?? '',
-    domain: w.site.domain,
-  });
-  queueSocialPicture(w, `pin-${w.item.id}`, text, template + 1, deps);
 }
 
 /** The board for this keyword, from the boards on the channel's Pinterest account. */
@@ -368,7 +336,7 @@ async function pickBoard(w: Work, boards: { serviceId: string; name: string }[],
     .ask('newsite-pick-board', {
       keyword: w.row.keyword,
       title: w.row.title,
-      niche: nicheOf(w.site),
+      niche: w.site.niche,
       boardsJson: JSON.stringify(boards.map((b) => b.name)),
     })
     .catch(() => '');
@@ -377,10 +345,8 @@ async function pickBoard(w: Work, boards: { serviceId: string; name: string }[],
 }
 
 /**
- * Where Buffer fetches a picture from: this platform itself. The pictures live
- * on its disk and are served by a signed link that expires (the same door
- * the old dashboard's reels use, /media/...), so Buffer can fetch them
- * without logging in and nobody can guess one.
+ * Where Buffer fetches a picture from: this platform itself, by a signed link
+ * that expires (the same door the old dashboard's reels use, /media/...).
  */
 function pictureLink(picture: PictureRow, deps: SocialDeps, now: number): string {
   const base = deps.settings.get('public_base_url').trim();
@@ -391,40 +357,24 @@ function pictureLink(picture: PictureRow, deps: SocialDeps, now: number): string
   return pictureMediaUrl(base, picture.id, ext, Number(deps.settings.get('reel_media_link_days')), deps.encryptionKey, now);
 }
 
-const typeOf = (file: string): string => (file.endsWith('.png') ? 'image/png' : file.endsWith('.jpg') ? 'image/jpeg' : 'image/webp');
-
-async function sendPin(w: Work, deps: SocialDeps, now: number): Promise<void> {
-  const picture = w.item.picture_id ? get<PictureRow>('SELECT * FROM newsite_pictures WHERE id = ?', w.item.picture_id) : undefined;
-  if (!picture || picture.status !== 'done') {
-    // Its picture is gone (prompts were rewritten): make a new one.
-    queuePinPicture(w, deps);
-    return;
-  }
-  const api = (deps.buffer ?? realBuffer)(bufferTokenOf(w.channel, deps.encryptionKey));
+/**
+ * Buffer fails a post whose picture it cannot download ("Image could not be
+ * read from its URL"), so the link is tried first, the way Buffer will try it.
+ */
+async function checkPictureLink(url: string, deps: SocialDeps): Promise<void> {
+  let status = 0;
   try {
-    const found = (await api.channels()).find((c) => c.id === w.channel.buffer_channel_id);
-    if (!found) throw new Error('Buffer no longer lists this Pinterest channel. Check it on the Channels page.');
-    if (!found.boards.length) throw new Error('This Pinterest channel has no boards.');
-    const board = await pickBoard(w, found.boards, deps);
-    const postId = await api.createPin({
-      text: w.item.text,
-      channelId: w.channel.buffer_channel_id,
-      imageUrl: pictureLink(picture, deps, now),
-      altText: w.item.alt,
-      title: w.item.title,
-      // The pin's own link: never in its text.
-      linkUrl: w.row.post_url,
-      boardServiceId: board.serviceId,
-    });
-    run(
-      `UPDATE newsite_social_posts SET status = 'sent', external_id = ?, board_name = ?, error = '', retry_at = NULL, sent_at = datetime('now') WHERE id = ?`,
-      postId, board.name, w.item.id,
-    );
+    const res = await (deps.fetchImpl ?? fetch)(url, { method: 'GET', signal: AbortSignal.timeout(20_000) });
+    status = res.status;
+    const type = res.headers.get('content-type') ?? '';
+    if (res.ok && type.startsWith('image/')) return;
   } catch (err) {
-    if (isQueueFull(err)) return waitForRoom(w, err, deps, now);
-    fail(w.item.id, errorMessage(err));
+    throw new Error(`Buffer could not download the picture: ${new URL(url).origin} did not answer (${errorMessage(err)}). Check the public address in Platform settings → Images.`);
   }
+  throw new Error(`Buffer could not download the picture: ${new URL(url).origin} answered HTTP ${status} instead of the picture. Check the public address in Platform settings → Images, and that /media/ reaches this platform.`);
 }
+
+const typeOf = (file: string): string => (file.endsWith('.png') ? 'image/png' : file.endsWith('.jpg') || file.endsWith('.jpeg') ? 'image/jpeg' : 'image/webp');
 
 /** A full Buffer queue: the post waits and tries again; it is never skipped. */
 function waitForRoom(w: Work, err: unknown, deps: SocialDeps, now: number): void {
@@ -437,23 +387,50 @@ function waitForRoom(w: Work, err: unknown, deps: SocialDeps, now: number): void
   );
 }
 
-/** A Facebook image post through the channel's Buffer account. */
-async function sendFacebookThroughBuffer(w: Work, picture: PictureRow, deps: SocialDeps, now: number): Promise<void> {
+/** The service-specific part of a Buffer post, as GraphQL. Unknown services need none. */
+function bufferMetadata(w: Work, extra: { boardServiceId?: string; firstComment: string }): string {
+  const q = BufferClient.literal;
+  const comment = extra.firstComment ? ` firstComment: ${q(extra.firstComment)}` : '';
+  switch (w.channel.platform) {
+    case 'pinterest':
+      return `pinterest: { title: ${q(postFields(w.item).title ?? w.item.title)} url: ${q(w.row.post_url)} boardServiceId: ${q(extra.boardServiceId ?? '')} }`;
+    case 'facebook':
+      return `facebook: { type: post${comment} }`;
+    case 'instagram':
+      return `instagram: { type: post${comment} }`;
+    case 'linkedin':
+      return comment ? `linkedin: {${comment} }` : '';
+    default:
+      return '';
+  }
+}
+
+/** Step 3, through Buffer: the confirmed post id and its due time are recorded, nothing less. */
+async function sendThroughBuffer(w: Work, picture: PictureRow, deps: SocialDeps, now: number): Promise<void> {
   const api = (deps.buffer ?? realBuffer)(bufferTokenOf(w.channel, deps.encryptionKey));
   try {
-    const postId = await api.createFacebookPost({
+    const found = (await api.channels()).find((c) => c.id === w.channel.buffer_channel_id);
+    if (!found) throw new Error(`Buffer no longer lists this ${w.rules.label} channel. Check it on the Channels page.`);
+    let board: { serviceId: string; name: string } | undefined;
+    if (w.channel.platform === 'pinterest') {
+      if (!found.boards.length) throw new Error('This Pinterest channel has no boards. Create one on Pinterest first.');
+      board = await pickBoard(w, found.boards, deps);
+    }
+    // The link, only ever where the rules put it: the pin's own link, or the first comment (paid Buffer plans only).
+    const firstComment = w.rules.link === 'first_comment' && w.channel.paid_buffer ? w.row.post_url : '';
+    const url = pictureLink(picture, deps, now);
+    await checkPictureLink(url, deps);
+    const { id, dueAt } = await api.createImagePost({
       text: w.item.text,
       channelId: w.channel.buffer_channel_id,
-      imageUrl: pictureLink(picture, deps, now),
-      altText: picture.alt,
-      // The link, only ever as the first comment; Buffer's free plan has none.
-      firstComment: w.channel.paid_buffer ? w.row.post_url : '',
+      imageUrl: url,
+      altText: w.item.alt || w.row.title,
+      metadata: bufferMetadata(w, { boardServiceId: board?.serviceId, firstComment }),
     });
+    const note = w.rules.link === 'first_comment' && !w.channel.paid_buffer ? 'Queued without the link: Buffer’s free plan cannot add a first comment.' : '';
     run(
-      `UPDATE newsite_social_posts SET status = 'sent', external_id = ?, error = ?, retry_at = NULL, sent_at = datetime('now') WHERE id = ?`,
-      postId,
-      w.channel.paid_buffer ? '' : 'Posted without the link: Buffer’s free plan cannot add a first comment.',
-      w.item.id,
+      `UPDATE newsite_social_posts SET status = 'sent', external_id = ?, due_at = ?, board_name = ?, error = ?, retry_at = NULL, sent_at = datetime('now') WHERE id = ?`,
+      id, dueAt, board?.name ?? '', note, w.item.id,
     );
   } catch (err) {
     if (isQueueFull(err)) return waitForRoom(w, err, deps, now);
@@ -461,36 +438,8 @@ async function sendFacebookThroughBuffer(w: Work, picture: PictureRow, deps: Soc
   }
 }
 
-async function sendFacebookImage(w: Work, deps: SocialDeps, now: number, rules: PlatformRules): Promise<void> {
-  if (!w.item.text) {
-    const out = await correctUntilRight<string>({
-      ask: (corrections) =>
-        deps.ask('newsite-fb-post', {
-          platformRules: rules.text,
-          articleOutline: articleOutline(w.row.article_md),
-          title: w.row.title,
-          focusKeyword: w.row.focus_keyword,
-          keyword: w.row.keyword,
-          description: w.row.description,
-          niche: nicheOf(w.site),
-          persona: w.site.persona,
-          articleStart: articleStart(w.row.article_md),
-          problemsJson: corrections,
-        }),
-      parse: (raw) => {
-        const o = parseObject(raw);
-        return o ? str(o, 'text') || null : null;
-      },
-      check: (t) => checkFbText(t, w.site.domain, rules),
-    });
-    if (out.technical || !out.answer) return fail(w.item.id, out.problems.join(' '));
-    run('UPDATE newsite_social_posts SET text = ? WHERE id = ?', out.answer, w.item.id);
-    w.item.text = out.answer;
-  }
-  // Its own picture, made for Facebook: queued once, then the post waits for it.
-  const picture = w.item.picture_id ? get<PictureRow>('SELECT * FROM newsite_pictures WHERE id = ?', w.item.picture_id) : undefined;
-  if (!picture || picture.status !== 'done') return queueFbPicture(w, deps);
-  if (w.channel.via === 'buffer') return sendFacebookThroughBuffer(w, picture, deps, now);
+/** Step 3, through the Facebook API: the photo, then the link as the first comment. */
+async function sendThroughFacebook(w: Work, picture: PictureRow, deps: SocialDeps): Promise<void> {
   const api = (deps.facebook ?? realFacebook)(fbTokenOf(w.channel, deps.encryptionKey));
   let postId: string;
   try {
@@ -500,7 +449,7 @@ async function sendFacebookImage(w: Work, deps: SocialDeps, now: number, rules: 
     return fail(w.item.id, errorMessage(err));
   }
   run(`UPDATE newsite_social_posts SET status = 'sent', external_id = ?, error = '', sent_at = datetime('now') WHERE id = ?`, postId, w.item.id);
-  // The link, always in the first comment, never in the post.
+  if (w.rules.link !== 'first_comment') return;
   try {
     const { commentId } = await api.commentOnPost({ pageId: w.channel.fb_page_id, postId, message: w.row.post_url });
     run('UPDATE newsite_social_posts SET comment_id = ? WHERE id = ?', commentId, w.item.id);
@@ -509,25 +458,24 @@ async function sendFacebookImage(w: Work, deps: SocialDeps, now: number, rules: 
   }
 }
 
+/** One post, one step further: words, then picture, then sending. */
 async function work(item: SocialPostRow, deps: SocialDeps, now: number): Promise<void> {
   const row = getSeoRow(item.seo_id);
   const channel = getChannel(item.channel_id);
   const site = row ? websiteOf(row.id) : undefined;
   if (!row || !channel || !site) return fail(item.id, 'Its article, website or channel is gone.');
-  if (row.post_status !== 'published' || !row.post_url) return fail(item.id, 'The article is not posted on the website.');
-  const w: Work = { item, row, site, channel };
-  const rules = loadPlatformRules(channel.platform as RulesPlatform);
-  if (!rulesApproved(rules, deps.settings)) {
-    // Nothing is made or sent with rules the owner has not approved.
-    run(`UPDATE newsite_social_posts SET status = 'held', error = ? WHERE id = ?`, `Waiting for you to approve the ${channel.platform === 'pinterest' ? 'Pinterest' : 'Facebook'} rules (Channels page).`, item.id);
-    return;
-  }
-  if (item.kind === 'pin') {
-    if (!item.text && !(await writePinText(w, deps, rules))) return;
-    if (!item.picture_id) return queuePinPicture(w, deps);
-    return sendPin(w, deps, now);
-  }
-  return sendFacebookImage(w, deps, now, rules);
+  if (row.post_status !== 'published' || !row.post_url) return fail(item.id, 'The article is not published on the website yet.');
+  // Read fresh every time: an edited rules file counts from the next post on.
+  const check = checkPlatformRules(channel.platform);
+  if (!check.rules) return fail(item.id, `The ${channel.platform} rules file (prompts/${check.file}) has problems: ${check.errors.join(' ')}`);
+  const w: Work = { item, row, site, channel, rules: check.rules };
+
+  if (!item.text && !(await writeFields(w, deps))) return;
+  const picture = item.picture_id ? get<PictureRow>('SELECT * FROM newsite_pictures WHERE id = ?', item.picture_id) : undefined;
+  if (!picture || picture.status !== 'done') return queuePicture(w, deps);
+  if (channel.via === 'buffer') return sendThroughBuffer(w, picture, deps, now);
+  if (channel.platform === 'facebook') return sendThroughFacebook(w, picture, deps);
+  return fail(item.id, `Posting to ${w.rules.label} through its own API is not built; connect it through Buffer.`);
 }
 
 let running: Promise<void> | null = null;
@@ -548,9 +496,9 @@ export function kickSocial(deps: SocialDeps): Promise<void> {
   const now = deps.now ?? Date.now;
   running = Promise.resolve()
     .then(async () => {
-      // A pin whose picture is gone, finished or failed while nobody was
-      // listening (a restart, or its article's prompts rewritten) goes back
-      // to work: sendPin makes a new picture or sends the finished one.
+      // A post whose picture is gone, finished or failed while nobody was
+      // listening (a restart) goes back to work: it makes a new picture or
+      // sends the finished one.
       run(
         `UPDATE newsite_social_posts SET status = 'pending'
           WHERE status = 'picture'
@@ -580,7 +528,7 @@ export function kickSocial(deps: SocialDeps): Promise<void> {
   return running;
 }
 
-/** A pin's picture is made (or failed): its post carries on. */
+/** A social post's picture is made (or failed): its post carries on. */
 export function onPinPicture(pictureId: number, ok: boolean, deps: SocialDeps): Promise<void> {
   const item = get<SocialPostRow>(`SELECT * FROM newsite_social_posts WHERE picture_id = ? AND status = 'picture'`, pictureId);
   if (!item) return Promise.resolve();
