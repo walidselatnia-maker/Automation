@@ -21,10 +21,12 @@ import { getSeoRow, type SeoRow } from './seo.js';
  * One post per channel, each its own: a Pinterest pin (its own 3:4 picture
  * from one of four rotating templates, its own words, a board the AI picks
  * for the keyword) sent through the channel's Buffer account, and a Facebook
- * image post sent through the Facebook API.
+ * image post sent the way its channel posts: through the Facebook API, or
+ * through Buffer.
  *
  * The link rule never bends: the article link is never in a post's text. A
- * pin carries it as the pin's own link; on Facebook it is the first comment.
+ * pin carries it as the pin's own link; on Facebook it is the first comment
+ * (through Buffer only on a paid plan; on a free one the post has no link).
  *
  * A Buffer channel that is full makes its post wait (buffer_hold_hours, as
  * the old dashboard waits) and try again; it is never skipped.
@@ -81,6 +83,8 @@ export interface BufferApi {
     linkUrl: string;
     boardServiceId: string;
   }) => Promise<string>;
+  /** A Facebook image post; the link comment only when the plan allows first comments. */
+  createFacebookPost: (input: { text: string; channelId: string; imageUrl: string; altText: string; firstComment: string }) => Promise<string>;
 }
 
 export interface FacebookApi {
@@ -109,6 +113,7 @@ const realBuffer = (token: string): BufferApi => {
   return {
     channels: async () => client.getChannels(await client.getOrganizationId()),
     createPin: (input) => client.createPost(input),
+    createFacebookPost: (input) => client.createFacebookPost(input),
   };
 };
 
@@ -340,23 +345,54 @@ async function sendPin(w: Work, deps: SocialDeps, now: number): Promise<void> {
       postId, board.name, w.item.id,
     );
   } catch (err) {
-    const message = errorMessage(err);
-    if (isQueueFull(err)) {
-      // A full Buffer queue: the pin waits and tries again; it is never skipped.
-      const hours = Math.max(1, deps.settings.getNumber('buffer_hold_hours'));
-      run(
-        `UPDATE newsite_social_posts SET status = 'waiting', retry_at = ?, error = ? WHERE id = ?`,
-        now + hours * 3_600_000,
-        `Buffer did not take it yet (${message.slice(0, 200)}). Tries again in ${hours} hours.`,
-        w.item.id,
-      );
-      return;
-    }
-    fail(w.item.id, message);
+    if (isQueueFull(err)) return waitForRoom(w, err, deps, now);
+    fail(w.item.id, errorMessage(err));
   }
 }
 
-async function sendFacebookImage(w: Work, deps: SocialDeps): Promise<void> {
+/** A full Buffer queue: the post waits and tries again; it is never skipped. */
+function waitForRoom(w: Work, err: unknown, deps: SocialDeps, now: number): void {
+  const hours = Math.max(1, deps.settings.getNumber('buffer_hold_hours'));
+  run(
+    `UPDATE newsite_social_posts SET status = 'waiting', retry_at = ?, error = ? WHERE id = ?`,
+    now + hours * 3_600_000,
+    `Buffer did not take it yet (${errorMessage(err).slice(0, 200)}). Tries again in ${hours} hours.`,
+    w.item.id,
+  );
+}
+
+/** A Facebook image post through the channel's Buffer account. */
+async function sendFacebookThroughBuffer(w: Work, picture: PictureRow, deps: SocialDeps, now: number): Promise<void> {
+  const api = (deps.buffer ?? realBuffer)(bufferTokenOf(w.channel, deps.encryptionKey));
+  try {
+    const data = readFileSync(join(pictureDir(picture.seo_id, deps.dataDir ?? resolveDataDir()), picture.file));
+    const media = await uploadMedia(
+      w.site.domain,
+      websiteApiKey(w.site, deps.encryptionKey),
+      { data, name: picture.file, type: typeOf(picture.file), alt: picture.alt },
+      deps.fetchImpl,
+    );
+    const postId = await api.createFacebookPost({
+      text: w.item.text,
+      channelId: w.channel.buffer_channel_id,
+      imageUrl: media.url,
+      altText: picture.alt,
+      // The link, only ever as the first comment; Buffer's free plan has none.
+      firstComment: w.channel.paid_buffer ? w.row.post_url : '',
+    });
+    run(
+      `UPDATE newsite_social_posts SET status = 'sent', external_id = ?, error = ?, retry_at = NULL, sent_at = datetime('now') WHERE id = ?`,
+      postId,
+      w.channel.paid_buffer ? '' : 'Posted without the link: Buffer’s free plan cannot add a first comment.',
+      w.item.id,
+    );
+  } catch (err) {
+    if (isQueueFull(err)) return waitForRoom(w, err, deps, now);
+    fail(w.item.id, errorMessage(err));
+  }
+}
+
+async function sendFacebookImage(w: Work, deps: SocialDeps, now: number): Promise<void> {
   if (!w.item.text) {
     const out = await correctUntilRight<string>({
       ask: (corrections) =>
@@ -383,6 +419,7 @@ async function sendFacebookImage(w: Work, deps: SocialDeps): Promise<void> {
   const pictures = listPictures(w.row.id).filter((p) => isMainSlot(p.slot) && p.status === 'done');
   const picture = pictures.find((p) => p.slot === 'feature') ?? pictures[0];
   if (!picture) return fail(w.item.id, 'The article has no picture to post.');
+  if (w.channel.via === 'buffer') return sendFacebookThroughBuffer(w, picture, deps, now);
   const api = (deps.facebook ?? realFacebook)(fbTokenOf(w.channel, deps.encryptionKey));
   let postId: string;
   try {
@@ -413,7 +450,7 @@ async function work(item: SocialPostRow, deps: SocialDeps, now: number): Promise
     if (!item.picture_id) return queuePinPicture(w, deps);
     return sendPin(w, deps, now);
   }
-  return sendFacebookImage(w, deps);
+  return sendFacebookImage(w, deps, now);
 }
 
 let running: Promise<void> | null = null;

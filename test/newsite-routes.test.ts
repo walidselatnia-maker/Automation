@@ -181,6 +181,19 @@ describe('new website routes', () => {
       expect(page.body).not.toContain('buffer-token-123');
     });
 
+    it('shows every setting on the card, each part with its own Change that opens that part alone', async () => {
+      const row = await saved();
+      const list = await app.inject({ method: 'GET', url: '/new-website' });
+      for (const n of [0, 1, 2, 3, 4]) expect(list.body).toContain(`/new-website/${row.id}/edit?section=${n}`);
+      for (const label of ['Address', 'API key', 'More detail', 'Persona', 'Status', 'Approval', 'Posts per day', 'Gap between posts', 'Shares on', 'Google Flow project']) {
+        expect(list.body).toContain(`<dt>${label}</dt>`);
+      }
+      const one = await app.inject({ method: 'GET', url: `/new-website/${row.id}/edit?section=3` });
+      expect(one.body).toContain('Long Livo: Publishing');
+      expect(one.body).toContain('data-section="3"');
+      expect(one.body).not.toContain(API_KEY);
+    });
+
     it('keeps the saved key and token when left empty, and checks the site with the saved key', async () => {
       const row = await saved();
       asked = [];

@@ -169,6 +169,70 @@ export class BufferClient {
   }
 
   /**
+   * Queue a Facebook image post. `firstComment` is the link comment: Buffer
+   * only adds it on a paid plan, so it is left out when empty. Field names
+   * from Buffer's FacebookPostMetadataInput (type: post, firstComment).
+   */
+  async createFacebookPost(input: {
+    text: string;
+    channelId: string;
+    imageUrl: string;
+    altText: string;
+    firstComment: string;
+  }): Promise<string> {
+    const q = (value: string): string => JSON.stringify(value ?? '');
+    const comment = input.firstComment ? `\n          firstComment: ${q(input.firstComment)}` : '';
+
+    const mutation = `mutation CreateFacebookPost {
+  createPost(
+    input: {
+      text: ${q(input.text)}
+      channelId: ${q(input.channelId)}
+      schedulingType: automatic
+      mode: addToQueue
+      assets: [
+        {
+          image: {
+            url: ${q(input.imageUrl)}
+            metadata: {
+              altText: ${q(input.altText)}
+            }
+          }
+        }
+      ]
+      metadata: {
+        facebook: {
+          type: post${comment}
+        }
+      }
+    }
+  ) {
+    ... on PostActionSuccess {
+      post {
+        id
+      }
+    }
+    ... on MutationError {
+      message
+    }
+  }
+}`;
+
+    const data = await this.graphql<{
+      createPost: { post?: { id: string }; message?: string };
+    }>(mutation);
+
+    if (data.createPost?.message) {
+      throw new BufferError(`Buffer rejected the post: ${data.createPost.message}`);
+    }
+
+    const id = data.createPost?.post?.id;
+    if (!id) throw new BufferError('Buffer did not return a post id');
+
+    return id;
+  }
+
+  /**
    * Queue a video post -- a reel, on a channel that takes one.
    *
    * Buffer fetches the video from `videoUrl` itself rather than taking bytes,

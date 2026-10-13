@@ -31,7 +31,7 @@ import { channelsFor, setWebsiteChannels, websiteChannelIds } from './channels.j
 /** The channels a website's wizard offers, ticked when the website already posts to them. */
 const wizardChannels = (websiteId: number): WizardChannel[] => {
   const mine = new Set(websiteChannelIds(websiteId));
-  return channelsFor(websiteId).map((c) => ({ id: c.id, name: c.name, platform: c.platform, checked: mine.has(c.id) }));
+  return channelsFor(websiteId).map((c) => ({ id: c.id, name: c.name, platform: c.platform, via: c.via, checked: mine.has(c.id) }));
 };
 import { STEP_FIELDS, stepOf, validate, type CleanWebsite, type Errors } from './validate.js';
 
@@ -88,7 +88,7 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
 
   if (deps.settings) {
     registerPlatformRoutes(app, { settings: deps.settings, encryptionKey: deps.encryptionKey, readFlash, fetchImpl: deps.fetchImpl });
-    registerImageModelRoutes(app, { settings: deps.settings, readFlash, fetchImpl: deps.fetchImpl });
+    registerImageModelRoutes(app, deps.settings);
     registerChannelRoutes(app, { encryptionKey: deps.encryptionKey, readFlash, lookups: deps.channelLookups });
     const publish: PublishDeps = { settings: deps.settings, encryptionKey: deps.encryptionKey, fetchImpl: deps.fetchImpl, dataDir: deps.dataDir, ask };
     registerPublishRoutes(app, { ...publish, autoResume: deps.autoPictures });
@@ -192,7 +192,11 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
   app.get('/new-website/:id/edit', async (request, reply) => {
     const site = getNewWebsite(Number((request.params as { id: string }).id) || 0);
     if (!site) return reply.redirect(`/new-website?error=${encodeURIComponent('That website no longer exists.')}`, 303);
-    return send(reply, newLayout({ title: `Edit ${site.name}`, active: '/new-website', body: newWebsiteWizardPage(site, wizardChannels(site.id)) }));
+    const section = Number((request.query as { section?: string } | undefined)?.section ?? -1);
+    return send(
+      reply,
+      newLayout({ title: `Edit ${site.name}`, active: '/new-website', body: newWebsiteWizardPage(site, wizardChannels(site.id), Number.isInteger(section) ? section : -1) }),
+    );
   });
 
   /** One wizard step: say what is wrong, or let the browser move on. */

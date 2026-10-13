@@ -777,6 +777,16 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+
+  {
+    id: '030-newsite-channel-via',
+    description: 'How each channel posts: through Buffer or through the platform API, kept apart',
+    up(db) {
+      addColumn(db, 'newsite_channels', 'via', "TEXT NOT NULL DEFAULT ''");
+      // Until now Pinterest only went through Buffer and Facebook only through its API.
+      db.exec(`UPDATE newsite_channels SET via = CASE platform WHEN 'pinterest' THEN 'buffer' ELSE 'api' END WHERE via = ''`);
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */

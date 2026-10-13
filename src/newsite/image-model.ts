@@ -2,12 +2,12 @@ import type { FastifyInstance } from 'fastify';
 import { html, raw, type Html } from '../web/views/layout.js';
 import type { ImageModelCatalogue } from '../web/views/pages.js';
 import type { Settings } from '../settings.js';
-import { newLayout, type NewFlash } from './layout.js';
 import { IMAGE_MODELS } from './platform.js';
 import type { Fetch } from './platform.js';
 
 /**
- * The image model setting, as a page of its own in the new dashboard.
+ * The image model setting, shown as cards in the Images part of the
+ * Platform settings page (it is one platform setting, not a page of its own).
  *
  * The same setting the old dashboard's picker writes (image_model): the image
  * service reads it with every picture. Each card also shows what Google last
@@ -54,19 +54,14 @@ const verdict = (m: ImageModelCatalogue['models'][number] | undefined): Html => 
   return html`<span class="im-verdict ${m.outcome}" title="${m.error ?? ''}">${text}</span>`;
 };
 
-export function imageModelPage(current: string, catalogue: ImageModelCatalogue | null): Html {
+/** The model cards: click one to use it. */
+export function imageModelCards(current: string, catalogue: ImageModelCatalogue | null): Html {
   // A setting saved before Nano Banana 2 became 2.1 still means 2.1.
   const picked = current === 'NANO_BANANA_2' ? 'NANO_BANANA_2_1' : current || 'auto';
   const known = new Map((catalogue?.models ?? []).map((m) => [m.key === 'NANO_BANANA_2' ? 'NANO_BANANA_2_1' : m.key, m]));
   return html`
     <style>${raw(CSS)}</style>
-    <div class="ns-head">
-      <div>
-        <h1 class="ns-title">Image model</h1>
-        <p class="ns-lede">Which Google Flow model makes the pictures, for the whole platform. Click a card to use it.</p>
-      </div>
-    </div>
-    <p class="im-order">Fallback order on Automatic: Nano Banana Pro, then Nano Banana 2.1, then Nano Banana 2 Lite.</p>
+    <p class="im-order">Which Google Flow model makes the pictures. Click a card to use it. On Automatic: Nano Banana Pro, then Nano Banana 2.1, then Nano Banana 2 Lite.</p>
     <form method="post" action="/new-website/image-model" class="im-grid">
       ${IMAGE_MODELS.map(
         (m) => html`<button class="im-card ${m.value === picked ? 'on' : ''}" name="image_model" value="${m.value}" aria-pressed="${m.value === picked ? 'true' : 'false'}">
@@ -80,48 +75,33 @@ export function imageModelPage(current: string, catalogue: ImageModelCatalogue |
     </form>`;
 }
 
-export interface ImageModelRouteDeps {
-  settings: Settings;
-  readFlash: (query: unknown) => NewFlash;
-  fetchImpl?: Fetch;
+/** What Google last said to each model, from the image service. Best effort, like the old Settings page. */
+export async function imageCatalogue(settings: Settings, fetchImpl: Fetch = fetch): Promise<ImageModelCatalogue | null> {
+  const base = settings.get('image_base_url').replace(/\/+$/, '');
+  if (!base) return null;
+  try {
+    const res = await fetchImpl(`${base}/flow/image-models`, {
+      headers: { 'X-API-Key': settings.get('image_api_key') },
+      signal: AbortSignal.timeout(5_000),
+    });
+    return res.ok ? ((await res.json()) as ImageModelCatalogue) : null;
+  } catch {
+    return null;
+  }
 }
 
-export function registerImageModelRoutes(app: FastifyInstance, deps: ImageModelRouteDeps): void {
-  const { settings } = deps;
-  const fetchImpl = deps.fetchImpl ?? fetch;
+const HOME = '/new-website/platform';
 
-  /** What Google last said to each model, from the image service. Best effort, like the old Settings page. */
-  const catalogue = async (): Promise<ImageModelCatalogue | null> => {
-    const base = settings.get('image_base_url').replace(/\/+$/, '');
-    if (!base) return null;
-    try {
-      const res = await fetchImpl(`${base}/flow/image-models`, {
-        headers: { 'X-API-Key': settings.get('image_api_key') },
-        signal: AbortSignal.timeout(5_000),
-      });
-      return res.ok ? ((await res.json()) as ImageModelCatalogue) : null;
-    } catch {
-      return null;
-    }
-  };
-
-  app.get('/new-website/image-model', async (request, reply) =>
-    reply.type('text/html; charset=utf-8').send(
-      newLayout({
-        title: 'Image model',
-        active: '/new-website/image-model',
-        body: imageModelPage(settings.get('image_model'), await catalogue()),
-        flash: deps.readFlash(request.query),
-      }),
-    ),
-  );
+export function registerImageModelRoutes(app: FastifyInstance, settings: Settings): void {
+  // The old address of the page: the cards now live on Platform settings.
+  app.get('/new-website/image-model', async (_request, reply) => reply.redirect(`${HOME}#images`, 303));
 
   app.post('/new-website/image-model', async (request, reply) => {
     const value = String((request.body as Record<string, unknown> | undefined)?.image_model ?? '');
     const model = IMAGE_MODELS.find((m) => m.value === value);
-    if (!model) return reply.redirect(`/new-website/image-model?error=${encodeURIComponent('Pick one of the models.')}`, 303);
+    if (!model) return reply.redirect(`${HOME}?error=${encodeURIComponent('Pick one of the models.')}#images`, 303);
     settings.set('image_model', model.value);
     const name = model.value === 'auto' ? 'Automatic' : model.label;
-    return reply.redirect(`/new-website/image-model?ok=${encodeURIComponent(`Pictures now use ${name}.`)}`, 303);
+    return reply.redirect(`${HOME}?ok=${encodeURIComponent(`Pictures now use ${name}.`)}#images`, 303);
   });
 }

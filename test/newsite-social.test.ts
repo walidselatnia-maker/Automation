@@ -7,7 +7,7 @@ import { closeDatabase, get, openDatabase, run } from '../src/db/index.js';
 import { Settings } from '../src/settings.js';
 import { createNewWebsite, saveKeywordPlan } from '../src/newsite/repo.js';
 import { listPlanSeo, queuePlanSeo } from '../src/newsite/seo.js';
-import { saveFacebookChannel, savePinterestChannel, setWebsiteChannels } from '../src/newsite/channels.js';
+import { saveBufferChannel, saveFacebookApiChannel, setWebsiteChannels } from '../src/newsite/channels.js';
 import { kickPictureMaker, pictureDir, resetPictureMakerState } from '../src/newsite/pictures.js';
 import {
   checkFbText,
@@ -42,6 +42,7 @@ describe('Sharing an article on its channels', () => {
   let asked: { name: string; vars: Record<string, unknown> }[];
   let pins: Parameters<BufferApi['createPin']>[0][];
   let fbPosts: { message: string }[];
+  let bufferFb: Parameters<BufferApi['createFacebookPost']>[0][];
   let comments: { postId: string; message: string }[];
   let bufferFull: boolean;
   let pinAnswer: string;
@@ -53,6 +54,11 @@ describe('Sharing an article on its channels', () => {
       if (bufferFull) throw new Error('Buffer rejected the post: You have reached the limit of 10 posts in your queue');
       pins.push(input);
       return 'buffer-post-1';
+    },
+    createFacebookPost: async (input) => {
+      if (bufferFull) throw new Error('Buffer rejected the post: You have reached the limit of 10 posts in your queue');
+      bufferFb.push(input);
+      return 'buffer-fb-1';
     },
   });
   const facebook = (): FacebookApi => ({
@@ -121,6 +127,7 @@ describe('Sharing an article on its channels', () => {
     asked = [];
     pins = [];
     fbPosts = [];
+    bufferFb = [];
     comments = [];
     bufferFull = false;
     pinAnswer = JSON.stringify(GOOD_PIN);
@@ -133,9 +140,18 @@ describe('Sharing an article on its channels', () => {
     rmSync(dataDir, { recursive: true, force: true });
   });
 
-  const pinChannel = () => savePinterestChannel({ name: 'longlivo', bufferToken: 'tok', bufferChannelId: 'ch-pin', multiWebsite: false }, KEY);
+  const pinChannel = () =>
+    saveBufferChannel(
+      { platform: 'pinterest', name: 'longlivo', bufferToken: 'tok', bufferChannelId: 'ch-pin', paidBuffer: false, postImage: true, postReel: false, multiWebsite: false },
+      KEY,
+    );
   const fbChannel = (postImage = true) =>
-    saveFacebookChannel({ name: 'Easy Cakes', fbToken: 'fbtok', pageId: 'p1', paidBuffer: false, postImage, postReel: false, multiWebsite: false }, KEY);
+    saveFacebookApiChannel({ name: 'Easy Cakes', fbToken: 'fbtok', pageId: 'p1', postImage, postReel: false, multiWebsite: false }, KEY);
+  const fbBufferChannel = (paidBuffer: boolean) =>
+    saveBufferChannel(
+      { platform: 'facebook', name: 'Easy Cakes', bufferToken: 'tok', bufferChannelId: 'ch-fb', paidBuffer, postImage: true, postReel: false, multiWebsite: false },
+      KEY,
+    );
 
   it('makes one post per channel the website shares on, once', () => {
     setWebsiteChannels(websiteId, [pinChannel(), fbChannel()]);
@@ -254,6 +270,28 @@ describe('Sharing an article on its channels', () => {
     expect(fbPosts[0]!.message).not.toMatch(/http|longlivo/);
     expect(comments).toEqual([{ postId: 'page_123', message: POST_URL }]);
     expect(listSocialPosts()[0]).toMatchObject({ status: 'sent', external_id: 'page_123', comment_id: 'c1' });
+  });
+
+  it('a Facebook image post through Buffer on a paid plan: the link only as Buffer’s first comment', async () => {
+    made('feature');
+    setWebsiteChannels(websiteId, [fbBufferChannel(true)]);
+    createSocialPosts(seoId);
+    await kickSocial(deps());
+    expect(fbPosts).toHaveLength(0); // not through the Facebook API
+    expect(bufferFb).toHaveLength(1);
+    expect(bufferFb[0]).toMatchObject({ channelId: 'ch-fb', firstComment: POST_URL, imageUrl: 'https://f.longlivo.com/media/pin.webp' });
+    expect(bufferFb[0]!.text).not.toMatch(/http|longlivo/);
+    expect(listSocialPosts()[0]).toMatchObject({ status: 'sent', external_id: 'buffer-fb-1', error: '' });
+  });
+
+  it('a Facebook image post through Buffer on the free plan goes out with no link at all', async () => {
+    made('feature');
+    setWebsiteChannels(websiteId, [fbBufferChannel(false)]);
+    createSocialPosts(seoId);
+    await kickSocial(deps());
+    expect(bufferFb[0]!.firstComment).toBe('');
+    expect(bufferFb[0]!.text).not.toMatch(/http|longlivo/);
+    expect(listSocialPosts()[0]!.error).toMatch(/without the link/);
   });
 
   it('makes no image post for a page set to post reels only', () => {

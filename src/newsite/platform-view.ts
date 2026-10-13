@@ -1,6 +1,8 @@
 import { html, raw, type Html } from '../web/views/layout.js';
 import { AI_MODELS, IMAGE_MODELS, NUMBER_RANGES, TIMEZONES } from './platform.js';
 import { field, WIZARD_CSS } from './view.js';
+import { imageModelCards } from './image-model.js';
+import type { ImageModelCatalogue } from '../web/views/pages.js';
 
 export interface PlatformView {
   ready: boolean;
@@ -10,6 +12,8 @@ export interface PlatformView {
   hasTelegramToken: boolean;
   /** Null when the image service answers. */
   imageProblem: string | null;
+  /** What Google last said to each image model; null when the service does not say. */
+  catalogue: ImageModelCatalogue | null;
 }
 
 const modelLabel = (v: string): string => IMAGE_MODELS.find((m) => m.value === v)?.label ?? v;
@@ -29,6 +33,9 @@ const PAGE_CSS = `
 .pf-group dt { color: var(--soft); font-size: 14px; }
 .pf-group dd { margin: 0; font-weight: 500; overflow-wrap: anywhere; }
 .pf-group dd small { display: block; font-weight: 400; color: var(--bad); font-size: 13px; }
+.ns-btn.pf-change { height: 30px; padding: 0 10px; font-size: 13px; margin: 8px 0 0 -10px; color: var(--accent); }
+.ns-btn.pf-change:hover { color: var(--accent); background: var(--accent-tint); }
+.pf-wide { grid-column: 1 / -1; }
 @media (max-width: 720px) {
   .pf-card { padding: 4px 20px; }
   .pf-group, .pf-group dl { grid-template-columns: 1fr; gap: 4px; }
@@ -44,17 +51,22 @@ const switchState = (on: boolean): Html => html`<span class="pf-state ${on ? 'ok
 /** A code-like value in the code font; "Not set" in plain text. */
 const codeOr = (value: string): Html => (value ? html`<dd class="ns-mono">${value}</dd>` : html`<dd>Not set</dd>`);
 
+/** A part's title, its state, and the button that opens just that part to change it. */
+const head = (title: string, step: number, st: Html, done: boolean): Html =>
+  html`<div><h2>${title}</h2>${st}${done ? html`<a class="ns-btn quiet pf-change" href="/new-website/platform/setup?section=${String(step)}">Change</a>` : raw('')}</div>`;
+
 export function platformPage(v: PlatformView): Html {
   const flow = v.value('flow_project_id');
+  const d = v.done;
   return html`
     <style>${raw(PAGE_CSS)}</style>
     <div class="ns-head">
       <div>
-        <h1 class="ns-title">Platform</h1>
-        <p class="ns-lede">Settings for the whole platform: the AI, the timezone, automation, images and
-          notifications. They are shared with the old dashboard.</p>
+        <h1 class="ns-title">Platform settings</h1>
+        <p class="ns-lede">Settings for the whole platform: the timezone, automation, images, notifications and the AI.
+          Use Change on any part to edit just that part. They are shared with the old dashboard.</p>
       </div>
-      <a class="ns-btn primary" href="/new-website/platform/setup">${v.done ? 'Edit settings' : 'Set up the platform'}</a>
+      ${d ? raw('') : html`<a class="ns-btn primary" href="/new-website/platform/setup">Set up the platform</a>`}
     </div>
     ${v.ready
       ? raw('')
@@ -62,20 +74,11 @@ export function platformPage(v: PlatformView): Html {
           <span>Websites and keywords need at least one working AI key and a saved setup.</span></div>`}
     <div class="pf-card">
       <section class="pf-group">
-        <div><h2>AI connection</h2>${state(v.keys.length > 0, `${v.keys.length} key${v.keys.length === 1 ? '' : 's'}`, 'No AI key')}</div>
-        <dl>
-          <dt>Provider</dt><dd class="ns-mono">${v.value('llm_base_url')}</dd>
-          ${v.keys.length
-            ? v.keys.map((k) => html`<dt>${k.name}</dt><dd>${k.models.join(', ') || 'no models'}${k.enabled ? raw('') : html` · off`}${k.lastError ? html`<small>Last error: ${k.lastError.slice(0, 140)}</small>` : raw('')}</dd>`)
-            : html`<dt>Keys</dt><dd>None yet</dd>`}
-        </dl>
-      </section>
-      <section class="pf-group">
-        <div><h2>Timezone</h2>${state(true, 'Set', '')}</div>
+        ${head('Timezone', 1, state(true, 'Set', ''), d)}
         <dl><dt>Timezone</dt><dd>${v.value('timezone')}</dd></dl>
       </section>
       <section class="pf-group">
-        <div><h2>Automation</h2>${switchState(v.value('automation_enabled') === 'true')}</div>
+        ${head('Automation', 2, switchState(v.value('automation_enabled') === 'true'), d)}
         <dl>
           <dt>Check every</dt><dd class="ns-num">${v.value('tick_minutes')} minutes</dd>
           <dt>Automatic retries</dt><dd>${v.value('auto_retry_enabled') === 'true' ? `${v.value('auto_retry_max')} attempt(s), ${v.value('auto_retry_delay_minutes')} minutes apart` : 'Off'}</dd>
@@ -84,20 +87,30 @@ export function platformPage(v: PlatformView): Html {
           <dt>Keep logs for</dt><dd class="ns-num">${v.value('retention_days')} days</dd>
         </dl>
       </section>
-      <section class="pf-group">
-        <div><h2>Images</h2>${state(!v.imageProblem && Boolean(flow), 'Ready', v.imageProblem ? 'Service not answering' : 'No Flow project')}</div>
+      <section class="pf-group" id="images">
+        ${head('Images', 3, state(!v.imageProblem && Boolean(flow), 'Ready', v.imageProblem ? 'Service not answering' : 'No Flow project'), d)}
         <dl>
           <dt>Image service</dt><dd>${v.imageProblem ? html`Not connected<small>${v.imageProblem}</small>` : 'Connected'}</dd>
           <dt>Shared Flow project</dt>${codeOr(flow)}
           <dt>Image model</dt><dd>${modelLabel(v.value('image_model'))}</dd>
           <dt>Pause between images</dt><dd class="ns-num">${v.value('image_gap_seconds')} seconds</dd>
         </dl>
+        <div class="pf-wide">${imageModelCards(v.value('image_model'), v.catalogue)}</div>
       </section>
       <section class="pf-group">
-        <div><h2>Notifications</h2>${switchState(v.value('telegram_enabled') === 'true')}</div>
+        ${head('Notifications', 4, switchState(v.value('telegram_enabled') === 'true'), d)}
         <dl>
           <dt>Telegram bot</dt><dd>${v.hasTelegramToken ? 'Token saved' : 'No token'}</dd>
           <dt>Chat ID</dt>${codeOr(v.value('telegram_chat_id'))}
+        </dl>
+      </section>
+      <section class="pf-group">
+        ${head('AI connection', 0, state(v.keys.length > 0, `${v.keys.length} key${v.keys.length === 1 ? '' : 's'}`, 'No AI key'), d)}
+        <dl>
+          <dt>Provider</dt><dd class="ns-mono">${v.value('llm_base_url')}</dd>
+          ${v.keys.length
+            ? v.keys.map((k) => html`<dt>${k.name}</dt><dd>${k.models.join(', ') || 'no models'}${k.enabled ? raw('') : html` · off`}${k.lastError ? html`<small>Last error: ${k.lastError.slice(0, 140)}</small>` : raw('')}</dd>`)
+            : html`<dt>Keys</dt><dd>None yet</dd>`}
         </dl>
       </section>
     </div>
@@ -135,15 +148,20 @@ const numberField = (v: PlatformView, key: string, label: string, hint: string):
   });
 };
 
-export function platformWizardPage(v: PlatformView): Html {
+/**
+ * The platform wizard. With a section (once the platform is set up), it opens
+ * on that one part alone, with Cancel and Save: no walking through the steps.
+ */
+export function platformWizardPage(v: PlatformView, section = -1): Html {
+  const one = section >= 0 && section < STEP_NAMES.length - 1;
   return html`
     <style>${raw(WIZARD_CSS)}${raw(EXTRA_CSS)}</style>
     <div class="wz">
       <div class="wz-head">
-        <h1>${v.done ? 'Platform settings' : 'Set up the platform'}</h1>
-        <p class="wz-id">Shared with the old dashboard. Nothing is saved until the last step.</p>
-        <div class="wz-bar" id="wz-bar">${STEP_NAMES.map(() => html`<i></i>`)}</div>
-        <div class="wz-stepname" id="wz-stepname"></div>
+        <h1>${one ? `Change: ${STEP_NAMES[section]}` : v.done ? 'Platform settings' : 'Set up the platform'}</h1>
+        <p class="wz-id">${one ? 'Shared with the old dashboard. Only this part changes.' : 'Shared with the old dashboard. Nothing is saved until the last step.'}</p>
+        <div class="wz-bar" id="wz-bar" ${raw(one ? 'style="display:none"' : '')}>${STEP_NAMES.map(() => html`<i></i>`)}</div>
+        <div class="wz-stepname" id="wz-stepname" ${raw(one ? 'style="display:none"' : '')}></div>
       </div>
 
       <form id="wz-form" autocomplete="off" novalidate>
@@ -250,28 +268,30 @@ export function platformWizardPage(v: PlatformView): Html {
             <h2>Review</h2>
             <p>Check everything. Use Change to go back to a step.</p>
             <div class="wz-sum" id="wz-sum"></div>
-            <div class="wz-saveerr" id="wz-saveerr"></div>
+            ${one ? raw('') : html`<div class="wz-saveerr" id="wz-saveerr"></div>`}
           </div>
         </div>
 
+        ${one ? html`<div class="wz-saveerr" id="wz-saveerr" style="padding:0 32px"></div>` : raw('')}
         <div class="wz-foot">
           <button type="button" class="ns-btn quiet" id="wz-back">Back</button>
           <button type="submit" class="ns-btn primary" id="wz-next">Next</button>
         </div>
       </form>
     </div>
-    ${raw(script(v))}
+    ${raw(script(v, one ? section : -1))}
   `;
 }
 
-const script = (v: PlatformView): string => `<script>
+const script = (v: PlatformView, section: number): string => `<script>
 (function () {
   var NAMES = ${JSON.stringify(STEP_NAMES)};
+  var SECTION = ${section};
   var KEYS = ${JSON.stringify(v.keys.map((k) => ({ id: k.id, name: k.name, models: k.models })))};
   var HAS_TG = ${v.hasTelegramToken ? 'true' : 'false'};
   var form = document.getElementById('wz-form');
   var steps = [].slice.call(form.querySelectorAll('.wz-step'));
-  var cur = 0, busy = false, removed = [];
+  var cur = SECTION >= 0 ? SECTION : 0, busy = false, removed = [];
   var $ = function (id) { return document.getElementById(id); };
   var f = function (n) { return form.elements[n]; };
   var val = function (n) { return (f(n).value || '').trim(); };
@@ -287,6 +307,12 @@ const script = (v: PlatformView): string => `<script>
     steps.forEach(function (s, i) { s.classList.toggle('on', i === cur); });
     [].forEach.call($('wz-bar').children, function (d, i) { d.className = i <= cur ? 'on' : ''; });
     $('wz-stepname').textContent = 'Step ' + (cur + 1) + ' of ' + NAMES.length + ' — ' + NAMES[cur];
+    if (SECTION >= 0) {
+      $('wz-back').textContent = 'Cancel';
+      $('wz-back').style.visibility = 'visible';
+      $('wz-next').textContent = 'Save';
+      return;
+    }
     $('wz-back').style.visibility = cur ? 'visible' : 'hidden';
     $('wz-next').textContent = cur === NAMES.length - 1 ? 'Save platform settings' : 'Next';
     if (cur === NAMES.length - 1) summary();
@@ -357,17 +383,23 @@ const script = (v: PlatformView): string => `<script>
     };
   });
 
-  $('wz-back').onclick = function () { if (!busy && cur) { cur--; showErrors({}); draw(); } };
+  $('wz-back').onclick = function () {
+    if (SECTION >= 0) { location.href = '/new-website/platform'; return; }
+    if (!busy && cur) { cur--; showErrors({}); draw(); }
+  };
 
   form.onsubmit = function (e) {
     e.preventDefault();
     if (busy) return;
     $('wz-saveerr').textContent = '';
-    if (cur === NAMES.length - 1) {
+    if (cur === NAMES.length - 1 || SECTION >= 0) {
       setBusy(true, 'Saving…');
       post('/new-website/platform/save').then(function (r) {
         if (r.saved) { location.href = r.redirect + '?ok=' + encodeURIComponent('Platform settings saved.'); return; }
-        busy = false; cur = r.step || 0; showErrors(r.errors); setBusy(false);
+        busy = false;
+        if (SECTION < 0) cur = r.step || 0;
+        else if ((r.step || 0) !== SECTION) $('wz-saveerr').textContent = Object.keys(r.errors || {}).map(function (k) { return r.errors[k]; }).join(' ');
+        showErrors(r.errors); setBusy(false);
       }).catch(function () { busy = false; $('wz-saveerr').textContent = 'Could not save. Try again.'; setBusy(false); });
       return;
     }

@@ -44,6 +44,16 @@ const LIST_CSS = `
 .nl-edit { height: 34px; padding: 0 12px; font-size: 13px; }
 .nl-remove { height: 34px; padding: 0 12px; font-size: 13px; color: var(--soft); }
 .nl-remove:hover { color: var(--bad); background: var(--accent-tint); }
+.nl-parts { display: grid; grid-template-columns: 1fr 1fr; gap: 0 40px; margin-top: 20px; border-top: 1px solid var(--line); }
+.nl-part { padding: 16px 0 8px; border-bottom: 1px solid var(--line); }
+.nl-part-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 6px; }
+.nl-part h3 { font-size: 15px; }
+.ns-btn.nl-change { height: 30px; padding: 0 10px; font-size: 13px; color: var(--accent); }
+.ns-btn.nl-change:hover { color: var(--accent); background: var(--accent-tint); }
+.nl-part dl { margin: 0; }
+.nl-part dl div { display: grid; grid-template-columns: 140px 1fr; gap: 12px; padding: 4px 0; align-items: baseline; }
+.nl-part dt { color: var(--soft); font-size: 14px; }
+.nl-part dd { margin: 0; font-weight: 500; overflow-wrap: anywhere; }
 .nl-facts { display: grid; grid-template-columns: 1fr 1fr; column-gap: 48px; margin: 24px 0 0; padding-top: 20px; border-top: 1px solid var(--line); }
 .nl-facts div { display: grid; grid-template-columns: 128px 1fr; gap: 16px; padding: 8px 0; align-items: baseline; }
 .nl-facts dt { color: var(--soft); font-size: 14px; }
@@ -52,10 +62,17 @@ const LIST_CSS = `
   .nl-site { padding: 22px 20px; }
   .nl-meta { flex-direction: column; align-items: flex-start; gap: 2px; }
   .nl-meta > * + *::before { content: none; }
-  .nl-facts { grid-template-columns: 1fr; }
+  .nl-facts, .nl-parts { grid-template-columns: 1fr; }
   .nl-facts div { grid-template-columns: 120px 1fr; }
 }
 `;
+
+/** One part of a saved website, with the button that opens just that part. */
+const part = (id: number, step: number, title: string, rows: [string, string][]): Html => html`
+  <section class="nl-part">
+    <div class="nl-part-head"><h3>${title}</h3><a class="ns-btn quiet nl-change" href="/new-website/${String(id)}/edit?section=${String(step)}">Change</a></div>
+    <dl>${rows.map(([k, v]) => html`<div><dt>${k}</dt><dd>${v}</dd></div>`)}</dl>
+  </section>`;
 
 export function newWebsiteListPage(rows: NewWebsiteRow[], platformReady = true): Html {
   return html`
@@ -82,21 +99,34 @@ export function newWebsiteListPage(rows: NewWebsiteRow[], platformReady = true):
                     </div>
                   </div>
                   <div class="nl-actions">
-                  <a class="ns-btn quiet nl-edit" href="/new-website/${r.id}/edit">Edit</a>
                   <form method="post" action="/new-website/${r.id}/delete" data-name="${r.name}"
                         onsubmit="return confirm('Remove ' + this.dataset.name + ' from this dashboard? The website itself is not changed.')">
                     <button class="ns-btn quiet nl-remove">Remove</button>
                   </form>
                   </div>
                 </div>
-                <dl class="nl-facts">
-                  <div><dt>Niche</dt><dd>${r.niche}</dd></div>
-                  <div><dt>Posts per day</dt><dd class="ns-num">${r.daily_target || 'No target'}</dd></div>
-                  <div><dt>Voice</dt><dd>${r.persona}</dd></div>
-                  <div><dt>Gap between posts</dt><dd class="ns-num">${gap(r.interval_minutes)}</dd></div>
-                  <div><dt>Channels</dt><dd>${channelNames(r.id) || 'None yet'}</dd></div>
-                  <div><dt>Approval</dt><dd>${r.auto_publish ? 'Publishes automatically' : 'Waits for my approval'}</dd></div>
-                </dl>
+                <div class="nl-parts">
+                  ${part(r.id, 0, 'Website', [
+                    ['Name', r.name],
+                    ['Address', r.domain],
+                    ['API key', 'Saved'],
+                  ])}
+                  ${part(r.id, 1, 'Niche', [
+                    ['Niche', r.niche],
+                    ['More detail', r.niche_context || '—'],
+                  ])}
+                  ${part(r.id, 2, 'Voice', [['Persona', r.persona]])}
+                  ${part(r.id, 3, 'Publishing', [
+                    ['Status', r.status === 'active' ? 'Active' : 'Paused'],
+                    ['Approval', r.auto_publish ? 'Publishes automatically' : 'Waits for my approval'],
+                    ['Posts per day', String(r.daily_target || 'No target')],
+                    ['Gap between posts', gap(r.interval_minutes)],
+                  ])}
+                  ${part(r.id, 4, 'Channels and images', [
+                    ['Shares on', channelNames(r.id) || 'No channel yet'],
+                    ['Google Flow project', r.project_id || 'Shared project from Platform settings'],
+                  ])}
+                </div>
               </article>
             `,
           )}
@@ -219,11 +249,14 @@ export interface WizardChannel {
   id: number;
   name: string;
   platform: string;
+  via: string;
   checked: boolean;
 }
 
-export function newWebsiteWizardPage(existing?: NewWebsiteRow, channels: WizardChannel[] = []): Html {
+export function newWebsiteWizardPage(existing?: NewWebsiteRow, channels: WizardChannel[] = [], section = -1): Html {
   const e = existing;
+  // A saved website opens on one part alone, with Cancel and Save.
+  const one = Boolean(e) && section >= 0 && section < STEP_NAMES.length - 1;
   const preset = e && (PERSONAS as readonly string[]).includes(e.persona) ? e.persona : '';
   const custom = e && !preset ? e.persona : '';
   const gapNow = gapParts(e?.interval_minutes ?? 480);
@@ -231,13 +264,13 @@ export function newWebsiteWizardPage(existing?: NewWebsiteRow, channels: WizardC
     <style>${raw(WIZARD_CSS)}</style>
     <div class="wz">
       <div class="wz-head">
-        <h1>${e ? `Edit ${e.name}` : 'Add a website'}</h1>
-        <p class="wz-id" id="wz-id">${e ? 'Change what you need. Nothing is saved until the last step.' : 'Fill in the steps below. Nothing is saved until the last step.'}</p>
-        <div class="wz-bar" id="wz-bar">${STEP_NAMES.map(() => html`<i></i>`)}</div>
-        <div class="wz-stepname" id="wz-stepname"></div>
+        <h1>${one ? `${e!.name}: ${STEP_NAMES[section]}` : e ? `Edit ${e.name}` : 'Add a website'}</h1>
+        <p class="wz-id" id="wz-id">${one ? 'Only this part changes.' : e ? 'Change what you need. Nothing is saved until the last step.' : 'Fill in the steps below. Nothing is saved until the last step.'}</p>
+        <div class="wz-bar" id="wz-bar" ${raw(one ? 'style="display:none"' : '')}>${STEP_NAMES.map(() => html`<i></i>`)}</div>
+        <div class="wz-stepname" id="wz-stepname" ${raw(one ? 'style="display:none"' : '')}></div>
       </div>
 
-      <form id="wz-form" autocomplete="off" novalidate data-edit="${e ? '1' : ''}" data-has-buffer="${e?.buffer_token_encrypted ? '1' : ''}">
+      <form id="wz-form" autocomplete="off" novalidate data-edit="${e ? '1' : ''}" data-section="${String(one ? section : -1)}" data-has-buffer="${e?.buffer_token_encrypted ? '1' : ''}">
         ${e ? html`<input type="hidden" name="id" value="${e.id}" />` : raw('')}
         <div class="wz-body">
           <div class="wz-step">
@@ -317,14 +350,14 @@ export function newWebsiteWizardPage(existing?: NewWebsiteRow, channels: WizardC
               ${channels.length
                 ? html`<div class="wz-channels">${channels.map(
                     (c) => html`<label class="wz-check" style="margin:0 0 8px"><input type="checkbox" name="channelId" value="${String(c.id)}" data-name="${c.name}" ${c.checked ? raw('checked') : raw('')} />
-                      ${c.name} <em class="wz-ch-platform">${c.platform === 'facebook' ? 'Facebook' : 'Pinterest'}</em></label>`,
+                      ${c.name} <em class="wz-ch-platform">${c.platform === 'facebook' ? 'Facebook' : 'Pinterest'} · ${c.via === 'buffer' ? 'Buffer' : 'API'}</em></label>`,
                   )}</div>`
                 : html`<div class="wz-hint">No channel to share on yet. Add Pinterest or Facebook on the <a href="/new-website/channels">Channels</a> page, then come back.</div>`}
               <div class="wz-hint">One post per channel for each article, with the link in the first comment.</div>
             </div>
             ${field('projectId', 'Google Flow project', html`<input id="wz-projectId" name="projectId" spellcheck="false" placeholder="The code after /project/ in the address bar" value="${e?.project_id ?? ''}" />`, {
               optional: 'optional',
-              hint: 'Where this website’s images are made. Empty uses the shared project from Settings.',
+              hint: 'Where this website’s images are made. Empty uses the shared project from Platform settings.',
             })}
           </div>
 
@@ -332,9 +365,10 @@ export function newWebsiteWizardPage(existing?: NewWebsiteRow, channels: WizardC
             <h2>Review</h2>
             <p>Check everything. Use Change to go back to a step.</p>
             <div class="wz-sum" id="wz-sum"></div>
-            <div class="wz-saveerr" id="wz-saveerr"></div>
+            ${one ? raw('') : html`<div class="wz-saveerr" id="wz-saveerr"></div>`}
           </div>
         </div>
+        ${one ? html`<div class="wz-saveerr" id="wz-saveerr" style="padding:0 32px"></div>` : raw('')}
 
         <div class="wz-foot">
           <button type="button" class="ns-btn quiet" id="wz-back">Back</button>
@@ -351,7 +385,8 @@ const SCRIPT = `<script>
   var NAMES = ${JSON.stringify(STEP_NAMES)};
   var form = document.getElementById('wz-form');
   var steps = [].slice.call(form.querySelectorAll('.wz-step'));
-  var cur = 0, busy = false;
+  var SECTION = Number(form.getAttribute('data-section'));
+  var cur = SECTION >= 0 ? SECTION : 0, busy = false;
   var $ = function (id) { return document.getElementById(id); };
   var f = function (n) { return form.elements[n]; };
   var val = function (n) { return (f(n).value || '').trim(); };
@@ -375,6 +410,12 @@ const SCRIPT = `<script>
     steps.forEach(function (s, i) { s.classList.toggle('on', i === cur); });
     [].forEach.call($('wz-bar').children, function (d, i) { d.className = i <= cur ? 'on' : ''; });
     $('wz-stepname').textContent = 'Step ' + (cur + 1) + ' of ' + NAMES.length + ' — ' + NAMES[cur];
+    if (SECTION >= 0) {
+      $('wz-back').textContent = 'Cancel';
+      $('wz-back').style.visibility = 'visible';
+      $('wz-next').textContent = 'Save';
+      return;
+    }
     $('wz-back').style.visibility = cur ? 'visible' : 'hidden';
     $('wz-next').textContent = cur === NAMES.length - 1 ? (EDIT ? 'Save changes' : 'Save website') : 'Next';
     if (cur === NAMES.length - 1) summary();
@@ -408,7 +449,7 @@ const SCRIPT = `<script>
       [3, 'Publishing', [['Status', f('status').selectedOptions[0].text], ['Approval', f('autoPublish').selectedOptions[0].text],
         ['Posts per day', val('dailyTarget')], ['Gap between posts', val('gapAmount') + ' ' + val('gapUnit')]]],
       [4, 'Channels and images', [['Shares on', channelsText()],
-        ['Google Flow project', val('projectId') || 'Shared project from Settings']]]
+        ['Google Flow project', val('projectId') || 'Shared project from Platform settings']]]
     ];
     var box = $('wz-sum');
     box.textContent = '';
@@ -436,17 +477,23 @@ const SCRIPT = `<script>
     if (on) $('wz-next').textContent = label; else draw();
   }
 
-  $('wz-back').onclick = function () { if (!busy && cur) { cur--; showErrors({}); draw(); } };
+  $('wz-back').onclick = function () {
+    if (SECTION >= 0) { location.href = '/new-website'; return; }
+    if (!busy && cur) { cur--; showErrors({}); draw(); }
+  };
 
   form.onsubmit = function (e) {
     e.preventDefault();
     if (busy) return;
     $('wz-saveerr').textContent = '';
-    if (cur === NAMES.length - 1) {
+    if (cur === NAMES.length - 1 || SECTION >= 0) {
       setBusy(true, 'Saving…');
       post('/new-website/save').then(function (r) {
-        if (r.saved) { location.href = r.redirect + '?ok=' + encodeURIComponent(EDIT ? 'Website updated.' : 'Website added.'); return; }
-        busy = false; cur = r.step || 0; showErrors(r.errors); setBusy(false);
+        if (r.saved) { location.href = r.redirect + (r.redirect.indexOf('?') < 0 ? '?ok=' + encodeURIComponent(EDIT ? 'Website updated.' : 'Website added.') : ''); return; }
+        busy = false;
+        if (SECTION < 0) cur = r.step || 0;
+        else if ((r.step || 0) !== SECTION) $('wz-saveerr').textContent = Object.keys(r.errors || {}).map(function (k) { return r.errors[k]; }).join(' ');
+        showErrors(r.errors); setBusy(false);
       }).catch(function () { $('wz-saveerr').textContent = 'Could not save. Check your connection and try again.'; setBusy(false); });
       return;
     }

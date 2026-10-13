@@ -206,4 +206,22 @@ describe('platform routes', () => {
     expect(wizard.body).toContain('Set up the platform');
     expect(wizard.body).not.toContain(TG_TOKEN);
   });
+
+  it('once set up: each part has its own Change, the AI connection comes last, and a part opens alone', async () => {
+    expect((await post('/new-website/platform/save', FORM)).json().saved).toBe(true);
+    const page = await app.inject({ method: 'GET', url: '/new-website/platform' });
+    expect(page.body).toContain('Platform settings');
+    for (const n of [0, 1, 2, 3, 4]) expect(page.body).toContain(`/new-website/platform/setup?section=${n}`);
+    expect(page.body.indexOf('<h2>AI connection</h2>')).toBeGreaterThan(page.body.indexOf('<h2>Notifications</h2>'));
+    expect(page.body).toContain('class="im-grid"'); // the image model cards live here now
+
+    const one = await app.inject({ method: 'GET', url: '/new-website/platform/setup?section=3' });
+    expect(one.body).toContain('Change: Images');
+    expect(one.body).toContain('var SECTION = 3;');
+    // Saving a single part sends the whole saved form, so the rest stays as it was.
+    const r = (await post('/new-website/platform/save', { ...FORM, newKeyName: '', newKeyValue: '', image_gap_seconds: '40' })).json();
+    expect(r.saved).toBe(true);
+    expect(settings.get('image_gap_seconds')).toBe('40');
+    expect(listEndpointRows().map((e) => e.name)).toEqual(['Main key']);
+  });
 });

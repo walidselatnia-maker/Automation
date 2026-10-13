@@ -23,7 +23,7 @@ const ICON = (paths: string): string =>
 const NAV: NavItem[] = [
   {
     href: '/new-website/platform',
-    label: 'Platform',
+    label: 'Platform settings',
     icon: ICON('<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/>'),
   },
   {
@@ -45,11 +45,6 @@ const NAV: NavItem[] = [
     href: '/new-website/shared',
     label: 'Shared content',
     icon: ICON('<path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7"/><path d="M12 3v12M7 8l5-5 5 5"/>'),
-  },
-  {
-    href: '/new-website/image-model',
-    label: 'Image model',
-    icon: ICON('<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-9 9"/>'),
   },
 ];
 

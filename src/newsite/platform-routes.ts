@@ -12,6 +12,7 @@ import {
   type Fetch,
   type PlatformContext,
 } from './platform.js';
+import { imageCatalogue } from './image-model.js';
 import { platformPage, platformWizardPage, type PlatformView } from './platform-view.js';
 
 export interface PlatformRouteDeps {
@@ -54,6 +55,7 @@ export function registerPlatformRoutes(app: FastifyInstance, deps: PlatformRoute
     value: (key: string) => settings.get(key),
     hasTelegramToken: settings.has('telegram_bot_token'),
     imageProblem: await checkImageService(settings.get('image_base_url'), settings.get('image_api_key'), fetchImpl),
+    catalogue: await imageCatalogue(settings, fetchImpl),
   });
 
   /** The AI step's live part: a new key must answer before it is accepted. */
@@ -67,7 +69,7 @@ export function registerPlatformRoutes(app: FastifyInstance, deps: PlatformRoute
   app.get('/new-website/platform', async (request, reply) =>
     reply.type('text/html; charset=utf-8').send(
       newLayout({
-        title: 'Platform',
+        title: 'Platform settings',
         active: '/new-website/platform',
         body: platformPage(await view()),
         flash: deps.readFlash(request.query),
@@ -75,11 +77,14 @@ export function registerPlatformRoutes(app: FastifyInstance, deps: PlatformRoute
     ),
   );
 
-  app.get('/new-website/platform/setup', async (_request, reply) =>
-    reply.type('text/html; charset=utf-8').send(
-      newLayout({ title: 'Platform setup', active: '/new-website/platform', body: platformWizardPage(await view()) }),
-    ),
-  );
+  app.get('/new-website/platform/setup', async (request, reply) => {
+    const v = await view();
+    // One part alone, once the platform is set up; the full walk-through the first time.
+    const section = v.done ? Number((request.query as { section?: string } | undefined)?.section ?? -1) : -1;
+    return reply.type('text/html; charset=utf-8').send(
+      newLayout({ title: 'Platform settings', active: '/new-website/platform', body: platformWizardPage(v, Number.isInteger(section) ? section : -1) }),
+    );
+  });
 
   app.post('/new-website/platform/check', async (request, reply) => {
     const raw = body(request);
