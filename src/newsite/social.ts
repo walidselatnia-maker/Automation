@@ -351,7 +351,7 @@ async function pickBoard(w: Work, boards: { serviceId: string; name: string }[],
 function pictureLink(picture: PictureRow, deps: SocialDeps, now: number): string {
   const base = deps.settings.get('public_base_url').trim();
   if (!base) {
-    throw new Error('This platform has no public address yet, so Buffer cannot fetch the picture. Set it in Platform settings → Images, then try again.');
+    throw new Error('This platform has no public address yet, so Buffer cannot fetch the picture. Open the dashboard once at its https address (it is filled in by itself), or set it in Platform settings → Images, then try again.');
   }
   const ext = (picture.file.split('.').pop() ?? 'png').toLowerCase();
   return pictureMediaUrl(base, picture.id, ext, Number(deps.settings.get('reel_media_link_days')), deps.encryptionKey, now);

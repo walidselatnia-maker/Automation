@@ -13,6 +13,7 @@ import { createSocialPosts, kickSocial, onPinPicture, type SocialDeps } from './
 import { registerSocialRoutes } from './social-routes.js';
 import { describeProjectId, flowProjectFor, NEXT_STEP_KEY } from './pictures.js';
 import { platformReady, registerPlatformRoutes } from './platform-routes.js';
+import { publicBaseUrlProblem } from '../core/media-links.js';
 import {
   createNewWebsite,
   deleteNewWebsite,
@@ -87,6 +88,19 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
     });
 
   if (deps.settings) {
+    const settings = deps.settings;
+    // Buffer fetches pin and post pictures from this platform's public address.
+    // When none is set, the https address the owner opens the dashboard at is
+    // remembered as it (never a local one): it is where this platform answers.
+    // Runs after the login check, so only a signed-in visit can set it.
+    app.addHook('preHandler', async (request) => {
+      if (!request.url.startsWith('/new-website') || settings.get('public_base_url').trim()) return;
+      const header = (name: string) => String(request.headers[name] ?? '').split(',')[0]!.trim();
+      const proto = header('x-forwarded-proto') || request.protocol;
+      const host = header('x-forwarded-host') || header('host');
+      const origin = `${proto}://${host}`;
+      if (host && !publicBaseUrlProblem(origin)) settings.set('public_base_url', origin);
+    });
     registerPlatformRoutes(app, { settings: deps.settings, encryptionKey: deps.encryptionKey, readFlash, fetchImpl: deps.fetchImpl });
     registerImageModelRoutes(app, deps.settings);
     registerChannelRoutes(app, { encryptionKey: deps.encryptionKey, readFlash, lookups: deps.channelLookups });

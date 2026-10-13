@@ -196,6 +196,16 @@ describe('platform routes', () => {
     expect(calls.at(-1)!.url).toContain(`/bot${TG_TOKEN}/sendMessage`);
   });
 
+  it('remembers the https address the dashboard is opened at as its public address, never a local one', async () => {
+    await app.inject({ method: 'GET', url: '/new-website/platform', headers: { host: 'localhost:8080' } });
+    expect(settings.get('public_base_url')).toBe('');
+    await app.inject({ method: 'GET', url: '/new-website/platform', headers: { host: 'dash.example.com', 'x-forwarded-proto': 'https' } });
+    expect(settings.get('public_base_url')).toBe('https://dash.example.com');
+    // Set once, it is not changed by visits from another address.
+    await app.inject({ method: 'GET', url: '/new-website/platform', headers: { host: 'other.example.com', 'x-forwarded-proto': 'https' } });
+    expect(settings.get('public_base_url')).toBe('https://dash.example.com');
+  });
+
   it('shows the platform page with the image service problem and no secrets', async () => {
     settings.set('telegram_bot_token', TG_TOKEN);
     const page = await app.inject({ method: 'GET', url: '/new-website/platform' });

@@ -970,6 +970,16 @@ function sharePostRow(p: SocialPostRow, channel: ChannelRow | undefined, planId:
   } catch {
     /* shown without them */
   }
+  if (!Object.keys(fields).length && (p.text || p.title)) {
+    // Words made before each platform's fields were kept on their own.
+    let overlay: Record<string, string> = {};
+    try {
+      overlay = JSON.parse(p.overlay || '{}') as Record<string, string>;
+    } catch {
+      /* without it */
+    }
+    fields = { ...overlay, title: p.title, text: p.text, alt: p.alt };
+  }
   const shown = Object.entries(fields).filter(([, v]) => v);
   const pictureBox = picture?.status === 'done'
     ? html`<a class="kw-share-pic" href="/new-website/pictures/${String(picture.id)}/file" target="_blank" rel="noopener"><img src="/new-website/pictures/${String(picture.id)}/file" alt="${p.alt || p.title}" loading="lazy" /></a>`

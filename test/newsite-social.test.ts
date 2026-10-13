@@ -451,6 +451,30 @@ describe('Sharing an article on its channels', () => {
       expect(out).toContain('Call to action');
     });
 
+    it('shows and sends a pin made before each field was kept on its own', async () => {
+      setWebsiteChannels(websiteId, [pinChannel()]);
+      createSocialPosts(seoId);
+      const [post] = listSocialPosts();
+      // As the earlier version left it: words in title/text/alt/overlay, its picture made, then failed.
+      run(`INSERT INTO newsite_pictures (seo_id, slot, position, prompt, alt, status, file) VALUES (?, ?, 1000, 'p', 'a', 'done', 'pin.png')`, seoId, `pin-${post!.id}`);
+      const pictureId = get<{ id: number }>('SELECT id FROM newsite_pictures WHERE slot = ?', `pin-${post!.id}`)!.id;
+      run(
+        `UPDATE newsite_social_posts SET status = 'failed', error = 'no address', title = ?, text = ?, alt = ?, overlay = ?, picture_id = ? WHERE id = ?`,
+        GOOD_PIN.title, GOOD_PIN.description, GOOD_PIN.alt, JSON.stringify({ headline: GOOD_PIN.headline, cta: GOOD_PIN.cta }), pictureId, post!.id,
+      );
+      const out = page();
+      expect(out).toContain(GOOD_PIN.title);
+      expect(out).toContain(GOOD_PIN.headline);
+      expect(out).not.toContain('Its words are being written');
+      const res = await (await app()).inject({ method: 'POST', url: `/new-website/keywords/share/post/${post!.id}/retry` });
+      expect(res.headers.location).toMatch(/share\?ok=/);
+      await kickSocial(deps());
+      expect(asked.filter((x) => x.name === 'newsite-social-post')).toHaveLength(0); // its words are kept
+      expect(bufferPosts[0]).toMatchObject({ text: GOOD_PIN.description, altText: GOOD_PIN.alt });
+      expect(bufferPosts[0]!.metadata).toContain(JSON.stringify(GOOD_PIN.title));
+      expect(getSocialPost(post!.id)!.status).toBe('sent');
+    });
+
     it('puts a failed post back to work', async () => {
       setWebsiteChannels(websiteId, [fbChannel()]);
       createSocialPosts(seoId);
