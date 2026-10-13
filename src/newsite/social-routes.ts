@@ -25,7 +25,7 @@ const CSS = `
 .sc-status { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: 999px; font: 600 13px/1 var(--body); white-space: nowrap; background: var(--raised); color: var(--soft); border: 1px solid var(--line); }
 .sc-status.sent { background: var(--good-tint); color: var(--good); border-color: transparent; }
 .sc-status.failed { background: var(--bad-tint); color: var(--bad); border-color: transparent; }
-.sc-status.waiting, .sc-status.picture, .sc-status.pending { background: var(--accent-tint); color: var(--accent-text); border-color: transparent; }
+.sc-status.waiting, .sc-status.picture, .sc-status.pending { background: var(--idle); color: var(--idle-ink); border-color: transparent; }
 .sc-item form { margin: 6px 0 0; }
 .sc-none { color: var(--soft); }
 `;

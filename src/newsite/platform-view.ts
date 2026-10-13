@@ -19,7 +19,7 @@ export interface PlatformView {
 const modelLabel = (v: string): string => IMAGE_MODELS.find((m) => m.value === v)?.label ?? v;
 
 const PAGE_CSS = `
-.pf-note { margin-bottom: 28px; border-color: var(--accent); background: var(--accent-tint); padding: 12px 16px; border-radius: var(--r-ctl); border: 1px solid; border-left-width: 4px; color: var(--ink); font-weight: 500; }
+.pf-note { margin-bottom: 28px; border-color: var(--idle-line); background: var(--idle); padding: 12px 16px; border-radius: var(--r-ctl); border: 1px solid; border-left-width: 4px; color: var(--ink); font-weight: 500; }
 .pf-note b { display: block; margin-bottom: 2px; }
 .pf-note span { color: var(--soft); font-size: 14px; }
 .pf-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); padding: 4px 32px; box-shadow: var(--shadow); }

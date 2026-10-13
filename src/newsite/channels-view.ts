@@ -25,17 +25,19 @@ const CSS = `
 .ch-via h3 { font: 600 14px var(--body); color: var(--soft); }
 .ch-via .ns-btn { height: 32px; padding: 0 12px; font-size: 13px; }
 .ch-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
-.ch-list a { display: flex; justify-content: space-between; gap: 10px; padding: 9px 12px; border-radius: var(--r-ctl); background: var(--raised);
-  border: 1px solid var(--line); color: var(--ink); text-decoration: none; font-size: 14px; font-weight: 500; }
-.ch-list a:hover { border-color: var(--accent); color: var(--accent-text); }
-.ch-list small { color: var(--faint); white-space: nowrap; font-size: 13px; }
+.ch-list a { display: flex; justify-content: space-between; gap: 10px; padding: 9px 12px; border-radius: var(--r-ctl);
+  border: 1px solid var(--idle-line); background: var(--idle); color: var(--idle-ink); text-decoration: none; font-size: 14px; font-weight: 500; }
+.ch-list a:hover { background: var(--idle-hover); }
+.ch-list small { color: var(--idle-ink); white-space: nowrap; font-size: 13px; }
 .ch-none { color: var(--faint); font-size: 14px; margin: 0; }
 .ch-pick { display: grid; gap: 10px; margin-bottom: 20px; }
-.ch-option { display: flex; align-items: flex-start; gap: 12px; padding: 14px 16px; border: 1px solid var(--line-strong); border-radius: var(--r-ctl); cursor: pointer; background: var(--surface); }
-.ch-option:hover { border-color: var(--accent); background: var(--raised); }
+.ch-option { display: flex; align-items: flex-start; gap: 12px; padding: 14px 16px; border: 1px solid var(--idle-line); border-radius: var(--r-ctl); cursor: pointer; background: var(--idle); color: var(--idle-ink); }
+.ch-option:hover { background: var(--idle-hover); }
 .ch-option input { margin-top: 3px; width: 16px; height: 16px; }
 .ch-option b { display: block; font-weight: 600; }
-.ch-option span { color: var(--soft); font-size: 13px; }
+.ch-option:has(input:checked) { background: var(--accent-tint); border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); color: var(--ink); }
+.ch-option:has(input:checked) span { color: var(--soft); }
+.ch-option span { color: var(--idle-ink); font-size: 13px; }
 .ch-warn { margin: 0 0 20px; font-size: 14px; border-color: var(--bad); background: var(--bad-tint); padding: 12px 16px; border-radius: var(--r-ctl); border: 1px solid; border-left-width: 4px; color: var(--ink); font-weight: 500; }
 .ch-ok { margin: 0 0 16px; border-color: var(--good); background: var(--good-tint); padding: 12px 16px; border-radius: var(--r-ctl); border: 1px solid; border-left-width: 4px; color: var(--ink); font-weight: 500; }
 .ch-bad { margin: 0 0 16px; border-color: var(--bad); background: var(--bad-tint); padding: 12px 16px; border-radius: var(--r-ctl); border: 1px solid; border-left-width: 4px; color: var(--ink); font-weight: 500; }

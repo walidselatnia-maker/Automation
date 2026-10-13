@@ -150,7 +150,7 @@ export const WIZARD_CSS = `
 .wz-id { margin: 6px 0 0; font-size: 15px; color: var(--soft); min-height: 24px; overflow-wrap: anywhere; }
 .wz-id span + span::before { content: '·'; margin: 0 8px; color: var(--faint); }
 .wz-bar { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; margin-top: 20px; }
-.wz-bar i { height: 6px; border-radius: 3px; background: var(--line); }
+.wz-bar i { height: 6px; border-radius: 3px; background: var(--idle-line); }
 .wz-bar i.on { background: var(--accent); }
 .wz-stepname { margin-top: 10px; font-size: 14px; font-weight: 600; color: var(--accent-text); }
 .wz-body { padding: 32px; }
@@ -177,19 +177,19 @@ export const WIZARD_CSS = `
 .wz-inline { display: grid; grid-template-columns: 1fr 130px; gap: 10px; }
 .wz-ok { display: none; margin-top: 4px; padding: 10px 14px; border-radius: var(--r-ctl); border-left: 4px solid var(--good); background: var(--good-tint); color: var(--ink); font-size: 14px; font-weight: 500; }
 .wz-personas { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 20px; }
-.wz-persona { text-align: left; padding: 14px 16px; border-radius: var(--r-ctl); border: 1px solid var(--line-strong); background: var(--surface);
-  color: var(--ink); font: inherit; cursor: pointer; }
-.wz-persona:hover { border-color: var(--line-strong); background: var(--raised); }
-.wz-persona.sel { border-color: var(--accent); background: var(--accent-tint); box-shadow: inset 0 0 0 1px var(--accent); }
+.wz-persona { text-align: left; padding: 14px 16px; border-radius: var(--r-ctl); border: 1px solid var(--idle-line); background: var(--idle);
+  color: var(--idle-ink); font: inherit; cursor: pointer; }
+.wz-persona:hover { background: var(--idle-hover); }
+.wz-persona.sel { border-color: var(--accent); background: var(--accent-tint); color: var(--ink); box-shadow: inset 0 0 0 1px var(--accent); }
 .wz-persona b { display: block; font-weight: 600; font-size: 15px; margin-bottom: 4px; }
-.wz-persona span { color: var(--soft); font-size: 13px; line-height: 1.5; }
+.wz-persona span { color: inherit; font-size: 13px; line-height: 1.5; }
 .wz-or { display: flex; align-items: center; gap: 12px; color: var(--faint); font-size: 14px; margin: 0 0 16px; }
 .wz-or::before, .wz-or::after { content: ''; flex: 1; height: 1px; background: var(--line); }
 .wz-sum section { padding: 18px 0; border-top: 1px solid var(--line); }
 .wz-sum section:first-child { padding-top: 0; border-top: 0; }
 .wz-sum h3 { display: flex; justify-content: space-between; align-items: baseline; font-size: 16px; margin-bottom: 10px; }
-.wz-sum h3 button { font: 600 13px var(--body); color: var(--accent-text); background: var(--surface); border: 1px solid var(--line-strong); cursor: pointer; padding: 5px 12px; border-radius: var(--r-ctl); }
-.wz-sum h3 button:hover { background: var(--accent-tint); border-color: var(--accent); }
+.wz-sum h3 button { font: 600 13px var(--body); color: var(--idle-ink); background: var(--idle); border: 1px solid var(--idle-line); cursor: pointer; padding: 5px 12px; border-radius: var(--r-ctl); }
+.wz-sum h3 button:hover { background: var(--idle-hover); }
 .wz-sum dl { display: grid; grid-template-columns: 180px 1fr; gap: 8px 16px; margin: 0; }
 .wz-sum dt { color: var(--soft); }
 .wz-sum dd { margin: 0; font-weight: 500; overflow-wrap: anywhere; }
