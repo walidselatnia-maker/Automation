@@ -170,5 +170,67 @@ export function loadPlatformRules(platform: string): PlatformRules {
   return check.rules;
 }
 
+/**
+ * Starter rules for a platform that has no default file yet: a plain post and
+ * a wide picture with no words, no link. The owner edits them on the
+ * channel's page.
+ */
+export function starterRules(platform: string, label: string): string {
+  return `---
+platform: ${platform}
+label: ${label}
+post_label: Post
+fields: text, alt
+post_text: text
+alt_field: alt
+picture_shape: HORIZONTAL
+picture_templates: newsite-social-1.template.txt
+link: none
+---
+# ${label} rules
+
+These rules decide what is made for this ${label} channel after an article is
+published. Everything comes from that article: its keyword, title, headings and
+text. Nothing is added that the article does not say.
+
+## The post
+
+- One short post per article, written for ${label}, in plain friendly words.
+- Start with something specific from the article that makes people stop.
+- Never a link, a web address or a domain name in the post.
+- Stay true to the article: no fact, claim or number it does not have.
+- Alt text: what the post picture shows, for people who cannot see it.
+
+## The picture
+
+- Its own picture made by Google Flow from the article's picture descriptions.
+- Wide (16:9), no words, logos or watermarks.
+
+## Limits
+
+- text_chars: 50-500
+- text_hashtags: 0-3
+- alt_words: 8-20
+`;
+}
+
+/** The rules a new channel starts with: its platform's default file, or the starter rules. */
+export function defaultRulesText(platform: string, label = platform): string {
+  const file = readShippedPrompt(`platforms/${platform}.md`);
+  return file.trim() ? file.replace(/\r\n/g, '\n') : starterRules(platform, label);
+}
+
+/**
+ * A channel's own rules: the text saved on its page, or (until one is saved)
+ * its platform's default rules. Each channel's rules are its own.
+ */
+export function channelRules(channel: { platform: string; name: string; rules_text: string }): RulesCheck {
+  if (channel.rules_text.trim()) return parseRules(channel.platform, channel.rules_text, `the rules of channel “${channel.name}”`);
+  const file = checkPlatformRules(channel.platform);
+  return file.rules || readShippedPrompt(`platforms/${channel.platform}.md`).trim()
+    ? file
+    : parseRules(channel.platform, starterRules(channel.platform, channel.platform), `the starter rules of channel “${channel.name}”`);
+}
+
 /** The limit, if the rules file sets one. */
 export const limitOf = (rules: PlatformRules, name: string): [number, number] | undefined => rules.limits[name];

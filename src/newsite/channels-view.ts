@@ -21,6 +21,15 @@ const CSS = `
 .ch-top { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .ch-top h2 { font-size: 18px; }
 .ch-rules { text-decoration: none; }
+.ch-rules-box { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); padding: 20px 24px; margin: 0 0 20px; box-shadow: var(--shadow); }
+.ch-rules-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+.ch-rules-sum { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 14px 0 0; font-size: 14px; color: var(--soft); }
+.ch-editor { width: 100%; min-height: 60vh; padding: 14px 16px; border: 1px solid var(--line-strong); border-radius: var(--r-ctl); background: var(--surface);
+  color: var(--ink); font: 14px/1.6 var(--mono); resize: vertical; tab-size: 2; }
+.ch-editor:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-tint); }
+.ch-editor-help { color: var(--soft); font-size: 14px; margin: 0 0 14px; max-width: 70ch; }
+.ch-editor-foot { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 14px; }
+.ch-editor-foot div { display: flex; gap: 10px; }
 .ch-rules:hover .ns-badge { text-decoration: underline; }
 .ch-soon { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: 999px; font: 600 13px/1 var(--body); white-space: nowrap; background: var(--raised); color: var(--soft); border: 1px solid var(--line); }
 .ch-via { border-top: 1px solid var(--line); padding-top: 12px; display: grid; gap: 8px; }
@@ -60,7 +69,6 @@ const sites = (n: number): string => (n === 1 ? '1 website' : `${n} websites`);
 
 /** The Channels page: every platform, its channels by how they post, and a way to add one. */
 export function channelsPage(channels: ChannelRow[], usedBy: Map<number, number>, rules: RulesCheck[] = []): Html {
-  const rulesOf = new Map(rules.map((r) => [r.platform, r]));
   // Buffer's list, then any platform that only has a rules file.
   const cards = [...PLATFORMS, ...rules.filter((r) => !PLATFORMS.some((p) => p.key === r.platform)).map((r) => ({ key: r.platform, label: r.rules?.label ?? platformLabel(r.platform), built: true }))];
   return html`
@@ -74,17 +82,8 @@ export function channelsPage(channels: ChannelRow[], usedBy: Map<number, number>
     <div class="ch-grid">
       ${cards.map((p) => {
         const key = p.key as Platform;
-        const check = rulesOf.get(key);
-        const mine0 = channels.filter((c) => c.platform === key);
-        if (!check && !mine0.length) {
-          return html`<section class="ch-card soon">
-            <div class="ch-top"><h2>${p.label}</h2><span class="ch-soon">No rules file</span></div>
-            <p class="ch-none">Add prompts/platforms/${key}.md to share on ${p.label}.</p>
-          </section>`;
-        }
         return html`<section class="ch-card">
-          <div class="ch-top"><h2>${p.label}</h2>
-            <a class="ch-rules" href="/new-website/channels/rules/${key}">${check?.rules ? html`<span class="ns-badge ok">Rules file OK</span>` : html`<span class="ns-badge bad">Rules file has problems</span>`}</a></div>
+          <div class="ch-top"><h2>${p.label}</h2></div>
           ${viasOf(key).map((via) => {
             const mine = channels.filter((c) => c.platform === key && c.via === via);
             return html`<div class="ch-via">
@@ -313,7 +312,7 @@ export function websitesStep(w: WizardContext, websites: WebsiteChoice[], multi:
 
 /* -- One channel ---------------------------------------------------------- */
 
-export function channelPage(c: ChannelRow, websites: WebsiteChoice[], check: { ok: boolean; text: string } | null): Html {
+export function channelPage(c: ChannelRow, websites: WebsiteChoice[], check: { ok: boolean; text: string } | null, rules: RulesCheck): Html {
   const isFb = c.platform === 'facebook';
   const used = websites.filter((s) => s.checked).map((s) => s.name);
   return html`
@@ -332,6 +331,18 @@ export function channelPage(c: ChannelRow, websites: WebsiteChoice[], check: { o
       <dt>Used by</dt><dd>${used.length ? used.join(', ') : 'No website yet'}</dd>
       ${isFb ? html`<dt>Posts</dt><dd>${[c.post_image ? 'Image post' : '', c.post_reel ? 'Reel (coming next)' : ''].filter(Boolean).join(' and ') || 'Nothing'}</dd>` : raw('')}
     </dl>
+    <section class="ch-rules-box">
+      <div class="ch-rules-head">
+        <div>
+          <h2 class="ch-sec" style="margin:0">Rules</h2>
+          <p class="ch-none" style="margin:4px 0 0">What this channel writes and makes for each published article. These rules are this channel’s own.</p>
+        </div>
+        <a class="ns-btn primary" href="/new-website/channels/${c.id}/rules">Edit rules</a>
+      </div>
+      ${rules.rules
+        ? html`<p class="ch-rules-sum"><span class="ns-badge ok">Rules OK</span> Each post: ${rules.rules.postLabel} · the AI writes ${rules.rules.fields.join(', ')} · picture ${rules.rules.pictureShape === 'PORTRAIT_3_4' ? '3:4 portrait' : '16:9 wide'}</p>`
+        : html`<div class="ns-alert bad" style="margin:12px 0 0"><b>These rules have problems, so this channel makes nothing until they are fixed:</b><ul>${rules.errors.map((e) => html`<li>${e}</li>`)}</ul></div>`}
+    </section>
     <form method="post" action="/new-website/channels/${c.id}/settings" class="wz" style="max-width:none">
       <div class="wz-body">
         <h2 class="ch-sec">Websites</h2>
@@ -350,5 +361,33 @@ export function channelPage(c: ChannelRow, websites: WebsiteChoice[], check: { o
     </form>
     <form method="post" action="/new-website/channels/${c.id}/delete" style="margin-top:24px" onsubmit="return confirm('Remove this channel? Websites stop posting to it.')">
       <button class="ns-btn danger">Remove this channel</button>
+    </form>`;
+}
+
+/** The channel's rules in a plain text editor: read, change, save. */
+export function rulesEditorPage(c: ChannelRow, text: string, errors: string[] = []): Html {
+  return html`
+    <style>${raw(WIZARD_CSS)}${raw(CSS)}</style>
+    <div class="ns-head">
+      <div>
+        <h1 class="ns-title">${c.name}: rules</h1>
+        <p class="ns-lede">${platformLabel(c.platform)} channel. Change the text and click Save: this channel’s next post uses the new rules. Other channels keep their own.</p>
+      </div>
+      <a class="ns-btn quiet" href="/new-website/channels/${c.id}">Back to the channel</a>
+    </div>
+    ${errors.length
+      ? html`<div class="ns-alert bad" role="alert"><b>Not saved. Fix these and click Save again:</b><ul>${errors.map((e) => html`<li>${e}</li>`)}</ul></div>`
+      : raw('')}
+    <p class="ch-editor-help">The part between the two <code>---</code> lines tells the platform what to make: <b>fields</b> are what the AI writes, <b>post_text</b> is the field that becomes the post, <b>picture_shape</b> is PORTRAIT_3_4 or HORIZONTAL, <b>link</b> is pin_link, first_comment or none. Everything below it is what the AI follows. Under <b>## Limits</b>, a line like <code>- title_chars: 40-100</code> is checked on every post.</p>
+    <form method="post" action="/new-website/channels/${c.id}/rules">
+      <label for="ch-rules-text" class="ch-sec" style="display:block">Rules</label>
+      <textarea id="ch-rules-text" name="rules" class="ch-editor" spellcheck="false">${text}</textarea>
+      <div class="ch-editor-foot">
+        <button class="ns-btn small" formaction="/new-website/channels/${c.id}/rules/reset" onclick="return confirm('Replace this channel’s rules with the platform’s default rules?')">Start again from the default rules</button>
+        <div>
+          <a class="ns-btn quiet" href="/new-website/channels/${c.id}">Cancel</a>
+          <button class="ns-btn primary">Save</button>
+        </div>
+      </div>
     </form>`;
 }

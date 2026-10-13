@@ -12,14 +12,17 @@ import {
   getChannel,
   listChannels,
   saveBufferChannel,
+  saveChannelRules,
   saveFacebookApiChannel,
   setChannelWebsites,
+  PLATFORMS,
   viasOf,
   type Platform,
   type Via,
 } from './channels.js';
 import {
   channelPage,
+  rulesEditorPage,
   channelsPage,
   checkStep,
   connectStep,
@@ -34,7 +37,7 @@ import {
 } from './channels-view.js';
 import { newLayout, type NewFlash } from './layout.js';
 import { listNewWebsites } from './repo.js';
-import { checkPlatformRules, listPlatformRules } from './platform-rules.js';
+import { channelRules, checkPlatformRules, defaultRulesText, listPlatformRules, parseRules } from './platform-rules.js';
 
 /** What the wizards ask Buffer and Facebook; replaceable so tests call neither. */
 export interface ChannelLookups {
@@ -103,9 +106,11 @@ function routeOf(request: FastifyRequest): WizardContext | null {
   const p = request.params as { platform?: string; via?: string };
   const platform = String(p.platform ?? '') as Platform;
   const via = p.via as Via;
-  // A platform can be connected once its rules file is there and valid.
-  const rules = /^[a-z0-9-]+$/.test(platform) ? checkPlatformRules(platform).rules : null;
-  return rules && viasOf(platform).includes(via) ? { platform, via, firstComment: via === 'buffer' && rules.link === 'first_comment' } : null;
+  // Any Buffer platform can be connected; a channel starts with its platform's default rules (or starter rules).
+  if (!/^[a-z0-9-]+$/.test(platform) || !viasOf(platform).includes(via)) return null;
+  if (!PLATFORMS.some((x) => x.key === platform) && !checkPlatformRules(platform).rules) return null;
+  const rules = parseRules(platform, defaultRulesText(platform, platformLabel(platform))).rules;
+  return { platform, via, firstComment: via === 'buffer' && rules?.link === 'first_comment' };
 }
 
 export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDeps): void {
@@ -329,8 +334,35 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
   const showChannel = async (request: FastifyRequest, id: number, withCheck: boolean) => {
     const c = getChannel(id);
     if (!c) return null;
-    return page(c.name, channelPage(c, websiteChoices(channelWebsiteIds(c.id)), withCheck ? await check(c.id) : null), request);
+    return page(c.name, channelPage(c, websiteChoices(channelWebsiteIds(c.id)), withCheck ? await check(c.id) : null, channelRules(c)), request);
   };
+
+  /* -- A channel's own rules: read, edit, save ---------------------------- */
+
+  /** What the editor opens with: the channel's saved rules, or its platform's default until it saves its own. */
+  const rulesTextOf = (c: NonNullable<ReturnType<typeof getChannel>>): string => c.rules_text || defaultRulesText(c.platform, platformLabel(c.platform));
+
+  app.get('/new-website/channels/:id/rules', async (request, reply) => {
+    const c = getChannel(Number((request.params as { id: string }).id) || 0);
+    if (!c) return reply.redirect('/new-website/channels', 303);
+    return send(reply, page(`${c.name} rules`, rulesEditorPage(c, rulesTextOf(c)), request));
+  });
+
+  app.post('/new-website/channels/:id/rules', async (request, reply) => {
+    const c = getChannel(Number((request.params as { id: string }).id) || 0);
+    if (!c) return reply.redirect('/new-website/channels', 303);
+    const text = String(body(request).rules ?? '');
+    const problems = saveChannelRules(c.id, text);
+    if (problems.length) return send(reply, page(`${c.name} rules`, rulesEditorPage(c, text, problems), request));
+    return reply.redirect(`/new-website/channels/${c.id}?ok=${encodeURIComponent('Rules saved. This channel’s next post uses them.')}`, 303);
+  });
+
+  app.post('/new-website/channels/:id/rules/reset', async (request, reply) => {
+    const c = getChannel(Number((request.params as { id: string }).id) || 0);
+    if (!c) return reply.redirect('/new-website/channels', 303);
+    saveChannelRules(c.id, defaultRulesText(c.platform, platformLabel(c.platform)));
+    return reply.redirect(`/new-website/channels/${c.id}/rules?ok=${encodeURIComponent('Back to the default rules. Change them and click Save, or go back to the channel.')}`, 303);
+  });
 
   app.get('/new-website/channels/:id', async (request, reply) => {
     const id = Number((request.params as { id: string }).id) || 0;

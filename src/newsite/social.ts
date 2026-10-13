@@ -6,7 +6,7 @@ import { BufferClient, type BufferChannel } from '../integrations/buffer.js';
 import { FacebookClient } from '../integrations/facebook.js';
 import { createLogger, errorMessage } from '../lib/logger.js';
 import { pictureMediaUrl } from '../core/media-links.js';
-import { checkPlatformRules, type PlatformRules } from './platform-rules.js';
+import { channelRules, type PlatformRules } from './platform-rules.js';
 import { loadTemplate } from '../pipeline/prompts.js';
 import type { Settings } from '../settings.js';
 import { bufferTokenOf, fbTokenOf, getChannel, websiteChannels, type ChannelRow } from './channels.js';
@@ -465,9 +465,9 @@ async function work(item: SocialPostRow, deps: SocialDeps, now: number): Promise
   const site = row ? websiteOf(row.id) : undefined;
   if (!row || !channel || !site) return fail(item.id, 'Its article, website or channel is gone.');
   if (row.post_status !== 'published' || !row.post_url) return fail(item.id, 'The article is not published on the website yet.');
-  // Read fresh every time: an edited rules file counts from the next post on.
-  const check = checkPlatformRules(channel.platform);
-  if (!check.rules) return fail(item.id, `The ${channel.platform} rules file (prompts/${check.file}) has problems: ${check.errors.join(' ')}`);
+  // The channel's own rules, read fresh every time: a saved edit counts from the next post on.
+  const check = channelRules(channel);
+  if (!check.rules) return fail(item.id, `${check.file} have problems (open the channel and click Edit rules): ${check.errors.join(' ')}`);
   const w: Work = { item, row, site, channel, rules: check.rules };
 
   if (!item.text && !(await writeFields(w, deps))) return;

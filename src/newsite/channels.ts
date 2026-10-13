@@ -1,5 +1,6 @@
 import { all, get, run } from '../db/index.js';
 import { decrypt, encrypt } from '../lib/crypto.js';
+import { defaultRulesText, parseRules } from './platform-rules.js';
 
 /**
  * The new dashboard's social channels.
@@ -50,6 +51,8 @@ export interface ChannelRow {
   post_reel: number;
   multi_website: number;
   next_template: number;
+  /** The channel's own rules, edited on its page; empty means its platform's default rules. */
+  rules_text: string;
   created_at: string;
 }
 
@@ -111,9 +114,9 @@ export function saveBufferChannel(input: BufferChannelInput, key: Buffer): numbe
   }
   return Number(
     run(
-      `INSERT INTO newsite_channels (name, buffer_token_enc, paid_buffer, post_image, post_reel, multi_website, platform, via, buffer_channel_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'buffer', ?)`,
-      ...values, input.platform, input.bufferChannelId,
+      `INSERT INTO newsite_channels (name, buffer_token_enc, paid_buffer, post_image, post_reel, multi_website, platform, via, buffer_channel_id, rules_text)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'buffer', ?, ?)`,
+      ...values, input.platform, input.bufferChannelId, defaultRulesText(input.platform, platformName(input.platform)),
     ).lastInsertRowid,
   );
 }
@@ -137,11 +140,28 @@ export function saveFacebookApiChannel(input: FacebookApiChannelInput, key: Buff
   }
   return Number(
     run(
-      `INSERT INTO newsite_channels (name, fb_token_enc, post_image, post_reel, multi_website, platform, via, fb_page_id)
-       VALUES (?, ?, ?, ?, ?, 'facebook', 'api', ?)`,
-      ...values, input.pageId,
+      `INSERT INTO newsite_channels (name, fb_token_enc, post_image, post_reel, multi_website, platform, via, fb_page_id, rules_text)
+       VALUES (?, ?, ?, ?, ?, 'facebook', 'api', ?, ?)`,
+      ...values, input.pageId, defaultRulesText('facebook', 'Facebook'),
     ).lastInsertRowid,
   );
+}
+
+/** A platform's name for people: Buffer's label, or the key with a capital. */
+export const platformName = (key: string): string => PLATFORMS.find((p) => p.key === key)?.label ?? key.charAt(0).toUpperCase() + key.slice(1);
+
+/**
+ * Save a channel's own rules, after checking them. Returns what is wrong
+ * (nothing is saved then), or an empty list once saved.
+ */
+export function saveChannelRules(id: number, text: string): string[] {
+  const c = getChannel(id);
+  if (!c) return ['That channel no longer exists.'];
+  const clean = text.replace(/\r\n/g, '\n');
+  const check = parseRules(c.platform, clean, `the rules of “${c.name}”`);
+  if (!check.rules) return check.errors;
+  run('UPDATE newsite_channels SET rules_text = ? WHERE id = ?', clean, id);
+  return [];
 }
 
 export const deleteChannel = (id: number): void => {

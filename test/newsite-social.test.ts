@@ -13,7 +13,7 @@ import { createNewWebsite, getNewWebsite, listKeywordPlans, saveKeywordPlan } fr
 import { registerSocialRoutes } from '../src/newsite/social-routes.js';
 import { shareStepPage } from '../src/newsite/keywords-view.js';
 import { listPlanSeo, queuePlanSeo } from '../src/newsite/seo.js';
-import { listChannels, saveBufferChannel, saveFacebookApiChannel, setWebsiteChannels, websiteChannels } from '../src/newsite/channels.js';
+import { listChannels, saveBufferChannel, saveChannelRules, saveFacebookApiChannel, setWebsiteChannels, websiteChannels } from '../src/newsite/channels.js';
 import { kickPictureMaker, resetPictureMakerState } from '../src/newsite/pictures.js';
 import { checkPlatformRules, listPlatformRules, loadPlatformRules, parseRules } from '../src/newsite/platform-rules.js';
 import {
@@ -363,6 +363,67 @@ describe('Sharing an article on its channels', () => {
     expect(checkFields({ ...GOOD_PIN, title: `${GOOD_PIN.title}!` }, rules, '').join(' ')).toMatch(/title has 1 exclamation marks; it must have none/);
   });
 
+  describe('each channel’s own rules', () => {
+    it('a channel starts with its platform’s rules as its own copy, and a saved edit is used from its next post', async () => {
+      const pin = pinChannel();
+      const c = listChannels().find((x) => x.id === pin)!;
+      expect(c.rules_text).toContain('# Pinterest rules');
+      const edited = c.rules_text.replace('- title_chars: 40-100', '- title_chars: 40-50').replace('# Pinterest rules', '# Pinterest rules\n\nAlways mention the season.');
+      expect(saveChannelRules(pin, edited)).toEqual([]);
+      setWebsiteChannels(websiteId, [pin]);
+      createSocialPosts(seoId);
+      await kickSocial(deps());
+      const first = asked.find((a) => a.name === 'newsite-social-post')!;
+      expect(String(first.vars.platformRules)).toContain('Always mention the season.');
+      // The saved limit is the one checked: the 59-character title is sent back.
+      const second = asked.filter((a) => a.name === 'newsite-social-post')[1];
+      expect(String(second?.vars.problemsJson)).toMatch(/title has 59 characters; write 40 to 50/);
+    });
+
+    it('one channel’s rules never change another’s', () => {
+      const pin = pinChannel();
+      const fb = fbChannel();
+      const fbBefore = listChannels().find((x) => x.id === fb)!.rules_text;
+      const pinText = listChannels().find((x) => x.id === pin)!.rules_text;
+      expect(saveChannelRules(pin, pinText.replace('# Pinterest rules', '# Pinterest rules\n\nOnly for this pin channel.'))).toEqual([]);
+      expect(listChannels().find((x) => x.id === fb)!.rules_text).toBe(fbBefore);
+      const second = saveBufferChannel(
+        { platform: 'pinterest', name: 'other', bufferToken: 'tok', bufferChannelId: 'ch-pin-2', paidBuffer: false, postImage: true, postReel: false, multiWebsite: false },
+        KEY,
+      );
+      expect(listChannels().find((x) => x.id === second)!.rules_text).not.toContain('Only for this pin channel.');
+    });
+
+    it('refuses to save rules with problems, and says what they are', () => {
+      const pin = pinChannel();
+      const before = listChannels().find((x) => x.id === pin)!.rules_text;
+      const problems = saveChannelRules(pin, before.replace('post_text: description', 'post_text: body'));
+      expect(problems.join(' ')).toMatch(/post_text "body" is not one of the fields/);
+      expect(listChannels().find((x) => x.id === pin)!.rules_text).toBe(before);
+    });
+
+    it('a channel whose saved rules are broken fails its posts with the reason', async () => {
+      const pin = pinChannel();
+      run(`UPDATE newsite_channels SET rules_text = ? WHERE id = ?`, '---\nplatform: pinterest\n---\nRules.\n', pin);
+      setWebsiteChannels(websiteId, [pin]);
+      createSocialPosts(seoId);
+      await kickSocial(deps());
+      expect(listSocialPosts()[0]!.status).toBe('failed');
+      expect(listSocialPosts()[0]!.error).toMatch(/rules of channel “longlivo” have problems \(open the channel and click Edit rules\): .*needs "fields:"/);
+    });
+
+    it('a channel on a platform with no default starts with starter rules it can edit', () => {
+      const ch = saveBufferChannel(
+        { platform: 'bluesky', name: 'longlivo sky', bufferToken: 'tok', bufferChannelId: 'ch-sky', paidBuffer: false, postImage: true, postReel: false, multiWebsite: false },
+        KEY,
+      );
+      const c = listChannels().find((x) => x.id === ch)!;
+      expect(c.rules_text).toContain('platform: bluesky');
+      expect(c.rules_text).toContain('# Bluesky rules');
+      expect(saveChannelRules(ch, c.rules_text)).toEqual([]);
+    });
+  });
+
   describe('with an edited prompts folder', () => {
     let dir: string;
     beforeEach(() => {
@@ -371,22 +432,6 @@ describe('Sharing an article on its channels', () => {
       configurePrompts(dir);
     });
     afterEach(() => rmSync(dir, { recursive: true, force: true }));
-
-    it('a broken rules file fails its posts with the reason, and the next post uses the fixed file', async () => {
-      writeFileSync(join(dir, 'platforms', 'pinterest.md'), '---\nplatform: pinterest\n---\nRules.\n');
-      setWebsiteChannels(websiteId, [pinChannel()]);
-      createSocialPosts(seoId);
-      await kickSocial(deps());
-      const [item] = listSocialPosts();
-      expect(item!.status).toBe('failed');
-      expect(item!.error).toMatch(/pinterest rules file .* has problems: .*needs "fields:"/);
-      expect(checkPlatformRules('pinterest').errors.length).toBeGreaterThan(0);
-
-      cpSync(join(PROMPTS, 'platforms', 'pinterest.md'), join(dir, 'platforms', 'pinterest.md'));
-      run(`UPDATE newsite_social_posts SET status = 'pending', error = ''`);
-      await kickSocial(deps());
-      expect(listSocialPosts()[0]!.status).toBe('picture');
-    });
 
     it('a new rules file connects a new platform to the Sharing phase', async () => {
       writeFileSync(join(dir, 'newsite-threads-1.template.txt'), 'A wide photo of {{scene}} with no words.');

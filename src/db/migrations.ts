@@ -803,6 +803,15 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`UPDATE newsite_social_posts SET status = 'pending', error = '' WHERE status = 'held'`);
     },
   },
+
+  {
+    id: '032-newsite-channel-rules',
+    description: 'Each channel keeps its own rules, edited on its page',
+    up(db) {
+      // Empty means "the platform's default rules" until the owner saves the channel's own.
+      addColumn(db, 'newsite_channels', 'rules_text', "TEXT NOT NULL DEFAULT ''");
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */

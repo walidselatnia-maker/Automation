@@ -65,10 +65,9 @@ describe('New dashboard: channels', () => {
     expect(res.body).toContain('href="/new-website/channels/facebook/api/new"');
     expect(res.body).toContain('Through Buffer');
     expect(res.body).toContain('Through the API');
-    // A platform with no rules file says how to add it.
-    expect(res.body).toMatch(/Instagram<\/h2><span class="ch-soon">No rules file/);
-    expect(res.body).toContain('Add prompts/platforms/instagram.md');
-    expect(res.body).toContain('Rules file OK');
+    // Every Buffer platform can be added; its channel starts with starter rules it can edit.
+    expect(res.body).toContain('href="/new-website/channels/instagram/buffer/new"');
+    expect(res.body).not.toContain('No rules file');
     expect((await (await app()).inject({ url: '/new-website/channels/pinterest/api/new' })).statusCode).toBe(303);
   });
 
@@ -161,6 +160,39 @@ describe('New dashboard: channels', () => {
     expect(c).toMatchObject({ platform: 'facebook', via: 'buffer', buffer_channel_id: 'ch-fb', paid_buffer: 1, post_image: 1, fb_token_enc: '' });
     const checked = await a.inject({ url: saved.headers.location as string });
     expect(checked.body).toContain('Connected. Buffer answers and lists this page.');
+  });
+
+  it('edits a channel’s rules on its own page: Edit rules, change the text, Save', async () => {
+    const a = await app();
+    const pick = await post(a, '/new-website/channels/pinterest/buffer/connect', { token: BUFFER_TOKEN });
+    const draft = draftIn(pick.body);
+    await post(a, '/new-website/channels/pinterest/buffer/pick', { draft, pick: 'ch-pin' });
+    await post(a, '/new-website/channels/pinterest/buffer/save', { draft });
+    const id = listChannels()[0]!.id;
+
+    const channel = await a.inject({ url: `/new-website/channels/${id}` });
+    expect(channel.body).toContain(`href="/new-website/channels/${id}/rules">Edit rules</a>`);
+    expect(channel.body).toContain('Rules OK');
+
+    const editor = await a.inject({ url: `/new-website/channels/${id}/rules` });
+    expect(editor.body).toContain('<textarea id="ch-rules-text" name="rules"');
+    expect(editor.body).toContain('# Pinterest rules');
+
+    const text = getChannel(id)!.rules_text.replace('# Pinterest rules', '# Pinterest rules\n\nWrite for busy parents.');
+    const saved = await post(a, `/new-website/channels/${id}/rules`, { rules: text });
+    expect(saved.statusCode).toBe(303);
+    expect(saved.headers.location).toMatch(/ok=Rules%20saved/);
+    expect(getChannel(id)!.rules_text).toContain('Write for busy parents.');
+
+    const bad = await post(a, `/new-website/channels/${id}/rules`, { rules: text.replace('link: pin_link', 'link: sometimes') });
+    expect(bad.statusCode).toBe(200);
+    expect(bad.body).toContain('Not saved. Fix these and click Save again');
+    expect(bad.body).toContain('link must be one of');
+    expect(bad.body).toContain('link: sometimes'); // the text is kept in the editor
+    expect(getChannel(id)!.rules_text).toContain('link: pin_link');
+
+    await post(a, `/new-website/channels/${id}/rules/reset`, {});
+    expect(getChannel(id)!.rules_text).not.toContain('Write for busy parents.');
   });
 
   it('changes a channel’s websites from the channel page', async () => {
