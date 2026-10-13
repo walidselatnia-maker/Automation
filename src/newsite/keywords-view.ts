@@ -175,6 +175,7 @@ a.kw-step:hover span { text-decoration: underline; }
 .kw-foot-top form { margin: 0; }
 
 /* Saved plans under step 1: a compact list, each opening its steps. */
+.kw-waiting { margin: 14px 0 0; padding: 10px 14px; border-radius: var(--r-ctl); background: var(--idle); color: var(--idle-ink); font-size: 14px; }
 .kw-share-channels { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 20px; font-size: 14px; color: var(--soft); }
 .kw-share-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .kw-share-list { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 0; border-top: 1px solid var(--line); }
@@ -226,6 +227,43 @@ const stepNames = (niche: string): string[] =>
     : ['Keywords', 'SEO', 'Skeleton', 'Article', 'Images', 'Publish', 'Share'];
 
 const CHEVRON = '<svg class="acc-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>';
+
+/* -- Which keywords each step shows ---------------------------------------- */
+
+export type Stage = 'recipe' | 'skeleton' | 'article' | 'images' | 'publish' | 'share';
+
+/**
+ * A keyword shows on a step only once the step before it is done for that
+ * keyword, so each step lists just what is ready for it.
+ */
+export function readyFor(stage: Stage, site: NewWebsiteRow, rows: SeoRow[]): SeoRow[] {
+  const recipeSite = articleTypeFor(site.niche) === 'recipe';
+  const needsRecipe = (r: SeoRow) => recipeSite && r.page !== 'article';
+  const ok: Record<Stage, (r: SeoRow) => boolean> = {
+    recipe: (r) => r.status === 'done' && needsRecipe(r),
+    skeleton: (r) => r.status === 'done' && (!needsRecipe(r) || r.recipe_status === 'done'),
+    article: (r) => r.skeleton_status === 'done',
+    images: (r) => r.article_status === 'done',
+    publish: (r) => r.images_status === 'done',
+    share: (r) => r.post_status === 'published' && Boolean(r.post_url),
+  };
+  return rows.filter(ok[stage]);
+}
+
+const WAITING_FOR: Record<Stage, string> = {
+  recipe: 'once their SEO metadata is done',
+  skeleton: 'once their SEO metadata (and, for recipe pages, their recipe) is done',
+  article: 'once their skeleton is done',
+  images: 'once their article is done',
+  publish: 'once their image prompts are done',
+  share: 'once they are published',
+};
+
+/** One quiet line for the keywords not ready for this step yet; it also keeps the page watching for them. */
+const waitingNote = (stage: Stage, hidden: number, watch: boolean, planId: number): Html =>
+  hidden
+    ? html`<p class="kw-waiting" ${watch ? raw(`data-watch="${planId}"`) : raw('')}>${hidden === 1 ? '1 more keyword appears' : `${hidden} more keywords appear`} here ${WAITING_FOR[stage]}.</p>`
+    : raw('');
 
 /**
  * The wizard card every step shares: header with progress, then the step's
@@ -523,6 +561,8 @@ export function seoStepPage(site: NewWebsiteRow, plan: KeywordPlan, rows: SeoRow
 
 /** Step 3: the article skeleton (AI#2) of every keyword in one plan. */
 export function skeletonStepPage(site: NewWebsiteRow, plan: KeywordPlan, rows: SeoRow[]): Html {
+  const all = rows;
+  rows = readyFor('skeleton', site, all);
   const intentOf = new Map(plan.items.map((i) => [i.keyword, i.intent]));
   const done = rows.filter((r) => r.skeleton_status === 'done').length;
   const body = html`
@@ -532,13 +572,14 @@ export function skeletonStepPage(site: NewWebsiteRow, plan: KeywordPlan, rows: S
       ? html`<ul class="acc-list" ${busyRows(rows) ? raw(`data-watch="${plan.id}"`) : raw('')}>
           ${rows.map((r) => skeletonCard(r, intentOf.get(r.keyword) ?? ''))}
         </ul>`
-      : html`<p class="kw-none">Skeletons follow the SEO metadata. Go back one step to start it.</p>`}`;
+      : all.length ? raw('') : html`<p class="kw-none">Skeletons follow the SEO metadata. Go back one step to start it.</p>`}
+    ${waitingNote('skeleton', all.length - rows.length, busyRows(all), plan.id)}`;
   const foot = html`
     <a class="ns-btn quiet" href="${planHref(plan.id, articleTypeFor(site.niche) === 'recipe' ? 'recipe' : 'seo')}">Previous</a>
     <a class="ns-btn primary" href="${planHref(plan.id, 'article')}">Next: articles</a>`;
   return html`
     <style>${raw(WIZARD_CSS)}${raw(CSS)}</style>
-    ${stepCard(stepNames(site.niche), stepNames(site.niche).indexOf('Skeleton'), plan.pillar, html`${site.name} · <span class="ns-num">${done} of ${rows.length || plan.items.length + 1} done</span>`, body, foot, stepHrefs(stepNames(site.niche), plan.id, site.id))}
+    ${stepCard(stepNames(site.niche), stepNames(site.niche).indexOf('Skeleton'), plan.pillar, html`${site.name} · <span class="ns-num">${done} of ${rows.length} done</span>`, body, foot, stepHrefs(stepNames(site.niche), plan.id, site.id))}
     ${raw(watchScript)}`;
 }
 
@@ -594,6 +635,8 @@ function recipeCard(row: SeoRow, intent: string): Html {
 
 /** Recipe websites only: the fixed recipe of every keyword in one plan. */
 export function recipeStepPage(site: NewWebsiteRow, plan: KeywordPlan, rows: SeoRow[]): Html {
+  const all = rows;
+  rows = readyFor('recipe', site, all);
   const intentOf = new Map(plan.items.map((i) => [i.keyword, i.intent]));
   const done = rows.filter((r) => r.recipe_status === 'done').length;
   const body = html`
@@ -603,13 +646,14 @@ export function recipeStepPage(site: NewWebsiteRow, plan: KeywordPlan, rows: Seo
       ? html`<ul class="acc-list" ${busyRows(rows) ? raw(`data-watch="${plan.id}"`) : raw('')}>
           ${rows.map((r) => recipeCard(r, intentOf.get(r.keyword) ?? ''))}
         </ul>`
-      : html`<p class="kw-none">Recipes follow the SEO metadata. Go back one step to start it.</p>`}`;
+      : all.length ? raw('') : html`<p class="kw-none">Recipes follow the SEO metadata. Go back one step to start it.</p>`}
+    ${waitingNote('recipe', all.length - rows.length, busyRows(all), plan.id)}`;
   const foot = html`
     <a class="ns-btn quiet" href="${planHref(plan.id, 'seo')}">Previous</a>
     <a class="ns-btn primary" href="${planHref(plan.id, 'skeleton')}">Next: skeletons</a>`;
   return html`
     <style>${raw(WIZARD_CSS)}${raw(CSS)}</style>
-    ${stepCard(stepNames(site.niche), 2, plan.pillar, html`${site.name} · <span class="ns-num">${done} of ${rows.length || plan.items.length + 1} done</span>`, body, foot, stepHrefs(stepNames(site.niche), plan.id, site.id))}
+    ${stepCard(stepNames(site.niche), 2, plan.pillar, html`${site.name} · <span class="ns-num">${done} of ${rows.length} done</span>`, body, foot, stepHrefs(stepNames(site.niche), plan.id, site.id))}
     ${raw(watchScript)}`;
 }
 
@@ -645,6 +689,8 @@ function articleCard(row: SeoRow, intent: string): Html {
 
 /** The written article (AI#3) of every keyword in one plan. */
 export function articleStepPage(site: NewWebsiteRow, plan: KeywordPlan, rows: SeoRow[]): Html {
+  const all = rows;
+  rows = readyFor('article', site, all);
   const intentOf = new Map(plan.items.map((i) => [i.keyword, i.intent]));
   const done = rows.filter((r) => r.article_status === 'done').length;
   const names = stepNames(site.niche);
@@ -655,13 +701,14 @@ export function articleStepPage(site: NewWebsiteRow, plan: KeywordPlan, rows: Se
       ? html`<ul class="acc-list" ${busyRows(rows) ? raw(`data-watch="${plan.id}"`) : raw('')}>
           ${rows.map((r) => articleCard(r, intentOf.get(r.keyword) ?? ''))}
         </ul>`
-      : html`<p class="kw-none">Articles follow the skeletons. Go back to start them.</p>`}`;
+      : all.length ? raw('') : html`<p class="kw-none">Articles follow the skeletons. Go back to start them.</p>`}
+    ${waitingNote('article', all.length - rows.length, busyRows(all), plan.id)}`;
   const foot = html`
     <a class="ns-btn quiet" href="${planHref(plan.id, 'skeleton')}">Previous</a>
     <a class="ns-btn primary" href="${planHref(plan.id, 'images')}">Next: images</a>`;
   return html`
     <style>${raw(WIZARD_CSS)}${raw(CSS)}</style>
-    ${stepCard(names, names.indexOf('Article'), plan.pillar, html`${site.name} · <span class="ns-num">${done} of ${rows.length || plan.items.length + 1} done</span>`, body, foot, stepHrefs(names, plan.id, site.id))}
+    ${stepCard(names, names.indexOf('Article'), plan.pillar, html`${site.name} · <span class="ns-num">${done} of ${rows.length} done</span>`, body, foot, stepHrefs(names, plan.id, site.id))}
     ${raw(watchScript)}`;
 }
 
@@ -762,6 +809,8 @@ export function imagesStepPage(
   nextStepAt = 0,
   now = Date.now(),
 ): Html {
+  const all = rows;
+  rows = readyFor('images', site, all);
   const intentOf = new Map(plan.items.map((i) => [i.keyword, i.intent]));
   const names = stepNames(site.niche);
   const recipeSite = articleTypeFor(site.niche) === 'recipe';
@@ -790,7 +839,8 @@ export function imagesStepPage(
       ? html`<ul class="acc-list" ${busy ? raw(`data-watch="${plan.id}"`) : raw('')}>
           ${rows.map((r) => imagesCard(r, intentOf.get(r.keyword) ?? '', picturesOf(r.id)))}
         </ul>`
-      : html`<p class="kw-none">Image prompts follow the articles. Go back to start them.</p>`}`;
+      : all.length ? raw('') : html`<p class="kw-none">Image prompts follow the articles. Go back to start them.</p>`}
+    ${waitingNote('images', all.length - rows.length, busyRows(all), plan.id)}`;
   const foot = html`
     <a class="ns-btn quiet" href="${planHref(plan.id, 'article')}">Previous</a>
     ${mainTotal > mainMade
@@ -836,6 +886,8 @@ function publishCard(row: SeoRow, intent: string, pictures: PictureRow[]): Html 
 
 /** The last step: each keyword's article posted to its website. */
 export function publishStepPage(site: NewWebsiteRow, plan: KeywordPlan, rows: SeoRow[], pictures: PictureRow[] = []): Html {
+  const all = rows;
+  rows = readyFor('publish', site, all);
   const intentOf = new Map(plan.items.map((i) => [i.keyword, i.intent]));
   const names = stepNames(site.niche);
   const picturesOf = (id: number) => pictures.filter((p) => p.seo_id === id);
@@ -853,7 +905,8 @@ export function publishStepPage(site: NewWebsiteRow, plan: KeywordPlan, rows: Se
       ? html`<ul class="acc-list" ${busyRows(rows) ? raw(`data-watch="${plan.id}"`) : raw('')}>
           ${rows.map((r) => publishCard(r, intentOf.get(r.keyword) ?? '', picturesOf(r.id)))}
         </ul>`
-      : html`<p class="kw-none">Nothing to publish yet.</p>`}`;
+      : all.length ? raw('') : html`<p class="kw-none">Nothing to publish yet.</p>`}
+    ${waitingNote('publish', all.length - rows.length, busyRows(all), plan.id)}`;
   const foot = html`
     <a class="ns-btn quiet" href="${planHref(plan.id, 'images')}">Previous</a>
     ${ready
@@ -951,6 +1004,8 @@ export function shareStepPage(
   posts: SocialPostRow[],
   allChannels: ChannelRow[] = channels,
 ): Html {
+  const all = rows;
+  rows = readyFor('share', site, all);
   const intentOf = new Map(plan.items.map((i) => [i.keyword, i.intent]));
   const names = stepNames(site.niche);
   const postsOf = (id: number) => posts.filter((p) => p.seo_id === id);
@@ -971,7 +1026,8 @@ export function shareStepPage(
       ? html`<ul class="acc-list" ${busyRows(rows) || sharingBusy(posts) ? raw(`data-watch="${plan.id}"`) : raw('')}>
           ${rows.map((r) => shareCard(r, intentOf.get(r.keyword) ?? '', postsOf(r.id), channels, allChannels, plan.id))}
         </ul>`
-      : html`<p class="kw-none">Nothing to share yet.</p>`}`;
+      : all.length ? raw('') : html`<p class="kw-none">Nothing to share yet.</p>`}
+    ${waitingNote('share', all.length - rows.length, busyRows(all), plan.id)}`;
   const foot = html`
     <a class="ns-btn quiet" href="${planHref(plan.id, 'publish')}">Previous</a>
     ${toShare

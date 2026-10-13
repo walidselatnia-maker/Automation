@@ -343,7 +343,9 @@ describe('Sharing an article on its channels', () => {
     it('waits for the article to be published', async () => {
       setWebsiteChannels(websiteId, [pinChannel()]);
       run(`UPDATE keyword_seo SET post_status = '', post_url = '' WHERE id = ?`, seoId);
-      expect(page()).toContain('Shared once its article is published');
+      // Not published: hidden from the Share step, with one line saying it comes later.
+      expect(page()).not.toContain('strawberry cake</b>');
+      expect(page()).toContain('1 more keyword appears here once they are published.');
       const res = await (await app()).inject({ method: 'POST', url: `/new-website/keywords/share/${seoId}` });
       expect(res.headers.location).toMatch(/error=/);
       expect(listSocialPosts()).toHaveLength(0);
