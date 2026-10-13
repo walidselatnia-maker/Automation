@@ -2,7 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import { html, raw, type Html } from '../web/views/layout.js';
 import { listChannels, PLATFORMS, type ChannelRow } from './channels.js';
 import { newLayout, type NewFlash } from './layout.js';
-import { kickSocial, listSocialPosts, retrySocialPost, type SocialDeps, type SocialPostRow } from './social.js';
+import { createSocialPosts, getSocialPost, kickSocial, listSocialPosts, retrySocialPost, type SocialDeps, type SocialPostRow } from './social.js';
+import { getSeoRow, listPlanSeo } from './seo.js';
 
 /**
  * The Shared content page: everything that went out, organised as platform,
@@ -100,6 +101,44 @@ export function registerSocialRoutes(app: FastifyInstance, deps: SocialDeps & { 
       }),
     ),
   );
+
+  /* -- The Share step of a keyword plan ------------------------------------ */
+
+  const sharePage = (planId: number, message: string, kind: 'ok' | 'error' = 'ok'): string =>
+    `/new-website/keywords/plan/${planId}/share?${kind}=${encodeURIComponent(message)}`;
+  const isPublished = (r: { post_status: string; post_url: string }) => r.post_status === 'published' && Boolean(r.post_url);
+
+  /** Share one published article on every channel it is not on yet. */
+  app.post('/new-website/keywords/share/:id', async (request, reply) => {
+    const row = getSeoRow(Number((request.params as { id: string }).id) || 0);
+    if (!row) return reply.redirect('/new-website/keywords', 303);
+    if (!isPublished(row)) return reply.redirect(sharePage(row.plan_id, `“${row.keyword}” is not published yet.`, 'error'), 303);
+    const added = createSocialPosts(row.id);
+    void kickSocial(deps);
+    return reply.redirect(
+      sharePage(row.plan_id, added ? `Sharing “${row.keyword}” on ${added} channel${added === 1 ? '' : 's'}.` : `“${row.keyword}” is already on every channel.`),
+      303,
+    );
+  });
+
+  /** Share every published article of a plan on the channels it is not on yet. */
+  app.post('/new-website/keywords/plan/:id/share', async (request, reply) => {
+    const planId = Number((request.params as { id: string }).id) || 0;
+    let added = 0;
+    for (const r of listPlanSeo(planId).filter(isPublished)) added += createSocialPosts(r.id);
+    void kickSocial(deps);
+    return reply.redirect(sharePage(planId, added ? `Sharing ${added} post${added === 1 ? '' : 's'}, one after the other.` : 'Everything published is already shared.'), 303);
+  });
+
+  /** Try a failed post again, from the Share step. */
+  app.post('/new-website/keywords/share/post/:id/retry', async (request, reply) => {
+    const post = getSocialPost(Number((request.params as { id: string }).id) || 0);
+    const row = post ? getSeoRow(post.seo_id) : undefined;
+    if (!post || !row) return reply.redirect('/new-website/keywords', 303);
+    retrySocialPost(post.id);
+    void kickSocial(deps);
+    return reply.redirect(sharePage(row.plan_id, 'Trying it again.'), 303);
+  });
 
   app.post('/new-website/shared/:id/retry', async (request, reply) => {
     retrySocialPost(Number((request.params as { id: string }).id) || 0);

@@ -128,6 +128,13 @@ export const listSocialPosts = (): (SocialPostRow & { keyword: string; title_seo
        JOIN keyword_seo s ON s.id = sp.seo_id ORDER BY sp.id DESC`,
   );
 
+/** Every social post of one keyword plan's articles. */
+export const listPlanSocialPosts = (planId: number): SocialPostRow[] =>
+  all<SocialPostRow>(
+    `SELECT sp.* FROM newsite_social_posts sp JOIN keyword_seo s ON s.id = sp.seo_id WHERE s.plan_id = ? ORDER BY s.position, sp.channel_id, sp.id`,
+    planId,
+  );
+
 export const getSocialPost = (id: number): SocialPostRow | undefined =>
   get<SocialPostRow>('SELECT * FROM newsite_social_posts WHERE id = ?', id);
 

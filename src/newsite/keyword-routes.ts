@@ -20,7 +20,9 @@ import {
   type NewWebsiteRow,
   type PlanItem,
 } from './repo.js';
-import { articleStepPage, imagesStepPage, publishStepPage, keywordsPage, recipeStepPage, seoStepPage, skeletonStepPage } from './keywords-view.js';
+import { listChannels, websiteChannels } from './channels.js';
+import { listPlanSocialPosts } from './social.js';
+import { articleStepPage, imagesStepPage, publishStepPage, shareStepPage, keywordsPage, recipeStepPage, seoStepPage, skeletonStepPage } from './keywords-view.js';
 import { articleTypeFor } from './skeleton.js';
 import { clearPictures, isMainSlot, listPictures, listPlanPictures } from './pictures.js';
 import { sweepRetries } from './retries.js';
@@ -216,7 +218,7 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
   });
 
   /** Steps 2 and 3 of one plan: its SEO metadata, then its skeletons. */
-  for (const step of ['seo', 'recipe', 'skeleton', 'article', 'images', 'publish'] as const) {
+  for (const step of ['seo', 'recipe', 'skeleton', 'article', 'images', 'publish', 'share'] as const) {
     app.get(`/new-website/keywords/plan/:id/${step}`, async (request, reply) => {
       if (!deps.isPlatformReady()) return reply.redirect(`/new-website/platform?error=${encodeURIComponent(NOT_READY)}`, 303);
       const planId = Number((request.params as { id: string }).id) || 0;
@@ -228,7 +230,7 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
       const rows = listPlanSeo(plan.id);
       return reply.type('text/html; charset=utf-8').send(
         newLayout({
-          title: `${plan.pillar} · ${{ seo: 'SEO', recipe: 'Recipes', skeleton: 'Skeletons', article: 'Articles', images: 'Images', publish: 'Publish' }[step]}`,
+          title: `${plan.pillar} · ${{ seo: 'SEO', recipe: 'Recipes', skeleton: 'Skeletons', article: 'Articles', images: 'Images', publish: 'Publish', share: 'Share' }[step]}`,
           active: '/new-website/keywords',
           body:
             step === 'seo'
@@ -241,6 +243,8 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
                     ? articleStepPage(site, plan, rows)
                     : step === 'publish'
                       ? publishStepPage(site, plan, rows, listPlanPictures(plan.id))
+                      : step === 'share'
+                        ? shareStepPage(site, plan, rows, websiteChannels(site.id), listPlanSocialPosts(plan.id), listChannels())
                       : imagesStepPage(site, plan, rows, listPlanPictures(plan.id), deps.flowProject?.(site) ?? '', deps.nextStepAt?.() ?? 0),
           flash: deps.readFlash(request.query),
         }),
@@ -253,6 +257,7 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
     reply.send({
       rows: listPlanSeo(Number((request.params as { id: string }).id) || 0),
       pictures: listPlanPictures(Number((request.params as { id: string }).id) || 0).map((p) => ({ id: p.id, status: p.status })),
+      social: listPlanSocialPosts(Number((request.params as { id: string }).id) || 0).map((p) => ({ id: p.id, status: p.status })),
     }),
   );
 

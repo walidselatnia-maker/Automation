@@ -2,12 +2,16 @@ import { randomBytes } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import Fastify from 'fastify';
+import formbody from '@fastify/formbody';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { closeDatabase, get, openDatabase, run } from '../src/db/index.js';
 import { Settings } from '../src/settings.js';
-import { createNewWebsite, saveKeywordPlan } from '../src/newsite/repo.js';
+import { createNewWebsite, getNewWebsite, listKeywordPlans, saveKeywordPlan } from '../src/newsite/repo.js';
+import { registerSocialRoutes } from '../src/newsite/social-routes.js';
+import { shareStepPage } from '../src/newsite/keywords-view.js';
 import { listPlanSeo, queuePlanSeo } from '../src/newsite/seo.js';
-import { saveBufferChannel, saveFacebookApiChannel, setWebsiteChannels } from '../src/newsite/channels.js';
+import { listChannels, saveBufferChannel, saveFacebookApiChannel, setWebsiteChannels, websiteChannels } from '../src/newsite/channels.js';
 import { kickPictureMaker, pictureDir, resetPictureMakerState } from '../src/newsite/pictures.js';
 import {
   checkFbText,
@@ -15,6 +19,7 @@ import {
   createSocialPosts,
   getSocialPost,
   kickSocial,
+  listPlanSocialPosts,
   listSocialPosts,
   onPinPicture,
   type BufferApi,
@@ -297,5 +302,66 @@ describe('Sharing an article on its channels', () => {
   it('makes no image post for a page set to post reels only', () => {
     setWebsiteChannels(websiteId, [fbChannel(false)]);
     expect(createSocialPosts(seoId)).toBe(0);
+  });
+
+  describe('the Share step of a keyword plan', () => {
+    const page = () => {
+      const plan = listKeywordPlans().find((p) => p.id === listPlanSeo(planIdOf())[0]!.plan_id)!;
+      const site = getNewWebsite(websiteId)!;
+      return shareStepPage(site, plan, listPlanSeo(plan.id), websiteChannels(websiteId), listPlanSocialPosts(plan.id), listChannels()).value;
+    };
+    const planIdOf = () => get<{ plan_id: number }>('SELECT plan_id FROM keyword_seo WHERE id = ?', seoId)!.plan_id;
+    const app = async () => {
+      const a = Fastify();
+      await a.register(formbody);
+      registerSocialRoutes(a, { ...deps(), readFlash: () => null, autoStart: false });
+      return a;
+    };
+
+    it('says when the website shares on no channel, with where to pick or add one', () => {
+      const out = page();
+      expect(out).toContain('Long Livo shares on no channel yet.');
+      expect(out).toContain(`/new-website/${websiteId}/edit?section=4`);
+      expect(out).toContain('href="/new-website/channels"');
+      expect(out).toContain('8. Share');
+    });
+
+    it('offers Share now for a published article not on its channels yet, and shares it', async () => {
+      setWebsiteChannels(websiteId, [pinChannel(), fbChannel()]);
+      expect(page()).toContain('Share now');
+      expect(page()).toContain('Share all published (1)');
+      const a = await app();
+      const res = await a.inject({ method: 'POST', url: `/new-website/keywords/share/${seoId}` });
+      expect(res.headers.location).toMatch(/share\?ok=.*2%20channels/);
+      expect(listPlanSocialPosts(planIdOf())).toHaveLength(2);
+      // Already on every channel: nothing more to share.
+      expect(page()).not.toContain('Share now');
+      const again = await a.inject({ method: 'POST', url: `/new-website/keywords/plan/${planIdOf()}/share` });
+      expect(again.headers.location).toMatch(/already%20shared/);
+    });
+
+    it('waits for the article to be published', async () => {
+      setWebsiteChannels(websiteId, [pinChannel()]);
+      run(`UPDATE keyword_seo SET post_status = '', post_url = '' WHERE id = ?`, seoId);
+      expect(page()).toContain('Shared once its article is published');
+      const res = await (await app()).inject({ method: 'POST', url: `/new-website/keywords/share/${seoId}` });
+      expect(res.headers.location).toMatch(/error=/);
+      expect(listSocialPosts()).toHaveLength(0);
+    });
+
+    it('shows each post with its status, and puts a failed one back to work', async () => {
+      setWebsiteChannels(websiteId, [fbChannel()]);
+      made('feature');
+      createSocialPosts(seoId);
+      const [post] = listSocialPosts();
+      run(`UPDATE newsite_social_posts SET status = 'failed', error = 'Facebook said no.' WHERE id = ?`, post!.id);
+      const out = page();
+      expect(out).toContain('Easy Cakes · Facebook through the API');
+      expect(out).toContain('Facebook said no.');
+      expect(out).toContain(`/new-website/keywords/share/post/${post!.id}/retry`);
+      const res = await (await app()).inject({ method: 'POST', url: `/new-website/keywords/share/post/${post!.id}/retry` });
+      expect(res.headers.location).toMatch(/share\?ok=/);
+      expect(getSocialPost(post!.id)!.status).not.toBe('failed');
+    });
   });
 });

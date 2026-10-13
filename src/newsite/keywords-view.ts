@@ -8,6 +8,8 @@ import { parseImageSet } from './images.js';
 import { isStepSlot, STEP_GAP_MINUTES, type PictureRow } from './pictures.js';
 import { notReadyReason } from './publish.js';
 import { WIZARD_CSS } from './view.js';
+import type { ChannelRow } from './channels.js';
+import type { SocialPostRow } from './social.js';
 
 const INTENT_LABEL: Record<string, string> = {
   diet: 'Diet',
@@ -160,19 +162,26 @@ const CSS = `
 .kw-article ul, .kw-article ol { margin: 0 0 14px; padding-left: 22px; display: grid; gap: 4px; }
 /* Steps: the wizard card, wider for lists. */
 .wz.kw-wz { max-width: 820px; }
-.kw-steps { display: grid; gap: 6px; margin-top: 20px; }
-.kw-step { display: flex; flex-direction: column; gap: 8px; padding: 6px 6px 8px; margin: -6px 0; border-radius: var(--r-ctl);
-  font-size: 13px; font-weight: 500; color: var(--idle-ink); text-decoration: none; min-width: 0; }
+.kw-steps { display: grid; gap: 4px; margin-top: 20px; }
+.kw-step { display: flex; flex-direction: column; gap: 8px; padding: 6px 3px 8px; margin: -6px 0; border-radius: var(--r-ctl);
+  font-size: 12.5px; font-weight: 500; color: var(--idle-ink); text-decoration: none; min-width: 0; }
 .kw-step i { display: block; height: 6px; border-radius: 3px; background: var(--idle-line); }
 .kw-step.done i, .kw-step.on i { background: var(--accent); }
 .kw-step.on { color: var(--accent-text); font-weight: 700; }
-.kw-step span { overflow-wrap: anywhere; }
+.kw-step span { overflow-wrap: normal; word-break: normal; hyphens: none; line-height: 1.35; }
 a.kw-step:hover { background: var(--idle); }
 a.kw-step:hover span { text-decoration: underline; }
 .kw-foot-top { border-top: 0; border-bottom: 1px solid var(--line); background: var(--raised); }
 .kw-foot-top form { margin: 0; }
 
 /* Saved plans under step 1: a compact list, each opening its steps. */
+.kw-share-channels { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 20px; font-size: 14px; color: var(--soft); }
+.kw-share-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.kw-share-list { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 0; border-top: 1px solid var(--line); }
+.kw-share-post { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: start; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.kw-share-post b { font-weight: 600; font-size: 14px; }
+.kw-share-meta { color: var(--faint); font-size: 13px; margin-top: 2px; }
+.kw-share-post .kw-seo-status { margin-left: 0; }
 .kw-saved { max-width: 820px; margin: 40px auto 0; }
 .kw-saved > h2 { font-size: 20px; margin-bottom: 12px; }
 .kw-saved-row { display: grid; grid-template-columns: 1fr auto auto; gap: 16px; align-items: center; padding: 16px 0; border-top: 1px solid var(--line); }
@@ -213,8 +222,8 @@ a.kw-step:hover span { text-decoration: underline; }
 /** The steps of a plan. Recipe websites get the fixed recipe before the skeleton. */
 const stepNames = (niche: string): string[] =>
   articleTypeFor(niche) === 'recipe'
-    ? ['Keywords', 'SEO', 'Recipe', 'Skeleton', 'Article', 'Images', 'Publish']
-    : ['Keywords', 'SEO', 'Skeleton', 'Article', 'Images', 'Publish'];
+    ? ['Keywords', 'SEO', 'Recipe', 'Skeleton', 'Article', 'Images', 'Publish', 'Share']
+    : ['Keywords', 'SEO', 'Skeleton', 'Article', 'Images', 'Publish', 'Share'];
 
 const CHEVRON = '<svg class="acc-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>';
 
@@ -246,12 +255,12 @@ function stepCard(names: string[], step: number, title: string, subtitle: Html |
 
 /** Where each step's name leads, for a saved plan. */
 const STEP_PATH: Record<string, string> = {
-  SEO: 'seo', Recipe: 'recipe', Skeleton: 'skeleton', Article: 'article', Images: 'images', Publish: 'publish',
+  SEO: 'seo', Recipe: 'recipe', Skeleton: 'skeleton', Article: 'article', Images: 'images', Publish: 'publish', Share: 'share',
 };
 const stepHrefs = (names: string[], planId: number, websiteId: number): string[] =>
   names.map((n) => (n === 'Keywords' ? `/new-website/keywords?website=${websiteId}` : `/new-website/keywords/plan/${planId}/${STEP_PATH[n]}`));
 
-const planHref = (planId: number, step: 'seo' | 'recipe' | 'skeleton' | 'article' | 'images' | 'publish'): string => `/new-website/keywords/plan/${planId}/${step}`;
+const planHref = (planId: number, step: 'seo' | 'recipe' | 'skeleton' | 'article' | 'images' | 'publish' | 'share'): string => `/new-website/keywords/plan/${planId}/${step}`;
 
 /** How far a plan has got, in one line. */
 const progress = (rows: SeoRow[]): string => {
@@ -851,10 +860,128 @@ export function publishStepPage(site: NewWebsiteRow, plan: KeywordPlan, rows: Se
       ? html`<form method="post" action="/new-website/keywords/plan/${plan.id}/publish" style="margin:0">
           <button class="ns-btn primary" ${raw(`onclick="return confirm('Publish ${ready} article${ready === 1 ? '' : 's'} to ${site.domain}?')"`)}>Publish all ready (${ready})</button>
         </form>`
-      : html`<span></span>`}`;
+      : html`<a class="ns-btn primary" href="${planHref(plan.id, 'share')}">Next: share</a>`}`;
   return html`
     <style>${raw(WIZARD_CSS)}${raw(CSS)}</style>
     ${stepCard(names, names.indexOf('Publish'), plan.pillar, html`${site.name} · <span class="ns-num">${posted} of ${rows.length} posted</span>`, body, foot, stepHrefs(names, plan.id, site.id))}
+    ${raw(watchScript)}`;
+}
+
+/* -- Step: Share ------------------------------------------------------------ */
+
+const SHARE_STATUS: Record<SocialPostRow['status'], string> = {
+  pending: 'Queued',
+  picture: 'Making its picture',
+  waiting: 'Waiting for room in Buffer',
+  sent: 'Posted',
+  failed: 'Failed',
+};
+const SHARE_CLASS: Record<SocialPostRow['status'], string> = { pending: 'writing', picture: 'writing', waiting: 'writing', sent: 'done', failed: 'failed' };
+const KIND_LABEL: Record<string, string> = { pin: 'Pin', fb_image: 'Image post' };
+const PLATFORM_LABEL: Record<string, string> = { pinterest: 'Pinterest', facebook: 'Facebook' };
+
+/** Posts still being made: the page refreshes itself while there are any. */
+const sharingBusy = (posts: SocialPostRow[]): boolean => posts.some((p) => p.status === 'pending' || p.status === 'picture');
+
+/** One post on one channel: what it is, where it stands, and Try again when it failed. */
+function sharePostRow(p: SocialPostRow, channel: ChannelRow | undefined, planId: number): Html {
+  const where = channel ? `${channel.name} · ${PLATFORM_LABEL[channel.platform] ?? channel.platform} through ${channel.via === 'buffer' ? 'Buffer' : 'the API'}` : 'A removed channel';
+  const facts = [
+    KIND_LABEL[p.kind] ?? p.kind,
+    p.board_name ? `board “${p.board_name}”` : '',
+    p.template ? `template ${p.template}` : '',
+    p.sent_at ? `went out ${p.sent_at} UTC` : '',
+    p.status === 'waiting' && p.retry_at ? `tries again ${new Date(p.retry_at).toISOString().slice(0, 16).replace('T', ' ')} UTC` : '',
+  ].filter(Boolean).join(' · ');
+  return html`<li class="kw-share-post">
+    <div>
+      <b>${where}</b>
+      <div class="kw-share-meta">${facts}</div>
+      ${p.error ? html`<div class="${p.status === 'failed' ? 'kw-seo-problems' : 'kw-kept'}">${p.error}</div>` : raw('')}
+      ${p.status === 'failed'
+        ? html`<form method="post" action="/new-website/keywords/share/post/${p.id}/retry" style="margin:10px 0 0"><input type="hidden" name="planId" value="${String(planId)}" /><button class="ns-btn small">Try again</button></form>`
+        : raw('')}
+    </div>
+    <span class="kw-seo-status ${SHARE_CLASS[p.status]}">${SHARE_STATUS[p.status]}</span>
+  </li>`;
+}
+
+/** Channels this keyword's article should be on but has no post for yet. */
+const missingChannels = (posts: SocialPostRow[], channels: ChannelRow[]): ChannelRow[] =>
+  channels.filter((c) => (c.platform === 'pinterest' || c.post_image) && !posts.some((p) => p.channel_id === c.id));
+
+function shareCard(row: SeoRow, intent: string, posts: SocialPostRow[], channels: ChannelRow[], allChannels: ChannelRow[], planId: number): Html {
+  const published = row.post_status === 'published' && Boolean(row.post_url);
+  const sent = posts.filter((p) => p.status === 'sent').length;
+  const failed = posts.filter((p) => p.status === 'failed').length;
+  const missing = published ? missingChannels(posts, channels) : [];
+  const state = !published
+    ? 'Not published yet'
+    : !posts.length
+      ? channels.length ? 'Not shared yet' : 'No channel'
+      : failed
+        ? `${failed} failed`
+        : sent === posts.length
+          ? `Shared on ${sent}`
+          : `Sharing (${sent} of ${posts.length})`;
+  const cls = !published || !posts.length ? '' : failed ? 'failed' : sent === posts.length ? 'done' : 'writing';
+  const head = html`${roleLabel(row, intent)}<b>${row.keyword}</b><span class="kw-seo-status ${cls}">${state}</span>`;
+  const byId = new Map(allChannels.map((c) => [c.id, c]));
+  const body = html`
+    ${missing.length
+      ? html`<form method="post" action="/new-website/keywords/share/${row.id}" class="kw-seo-retry">
+          <button class="ns-btn ${posts.length ? 'small' : 'primary'}">${posts.length ? `Share on ${missing.length} more channel${missing.length === 1 ? '' : 's'}` : 'Share now'}</button>
+        </form>`
+      : raw('')}
+    ${!published
+      ? html`<p class="kw-none" style="margin:0">Shared once its article is published on the website.</p>`
+      : !channels.length && !posts.length
+        ? html`<p class="kw-none" style="margin:0">This website shares on no channel yet.</p>`
+        : raw('')}
+    ${posts.length ? html`<ul class="kw-share-list">${posts.map((p) => sharePostRow(p, byId.get(p.channel_id), planId))}</ul>` : raw('')}`;
+  return card(head, body, failed > 0);
+}
+
+/** The step after Publish: each published article shared on its website's channels. */
+export function shareStepPage(
+  site: NewWebsiteRow,
+  plan: KeywordPlan,
+  rows: SeoRow[],
+  channels: ChannelRow[],
+  posts: SocialPostRow[],
+  allChannels: ChannelRow[] = channels,
+): Html {
+  const intentOf = new Map(plan.items.map((i) => [i.keyword, i.intent]));
+  const names = stepNames(site.niche);
+  const postsOf = (id: number) => posts.filter((p) => p.seo_id === id);
+  const published = rows.filter((r) => r.post_status === 'published' && r.post_url);
+  const toShare = published.filter((r) => missingChannels(postsOf(r.id), channels).length).length;
+  const shared = published.filter((r) => postsOf(r.id).length && postsOf(r.id).every((p) => p.status === 'sent')).length;
+  const body = html`
+    <h2>Share</h2>
+    <p>Each published article is shared once on every channel this website uses: a pin with its own picture on Pinterest, an image post on Facebook. Sharing starts by itself as soon as an article is published. The article link is never in a post: a pin carries it as its own link, and on Facebook it is the first comment.</p>
+    ${channels.length
+      ? html`<div class="kw-share-channels"><span>Shares on</span>${channels.map(
+          (c) => html`<span class="ns-tag">${c.name} · ${PLATFORM_LABEL[c.platform] ?? c.platform}</span>`,
+        )}<a class="ns-btn small" href="/new-website/${String(site.id)}/edit?section=4">Change</a></div>`
+      : html`<div class="ns-alert info"><b>${site.name} shares on no channel yet.</b>
+          Pick its channels in the website’s settings, or add one first.
+          <div class="kw-share-actions"><a class="ns-btn small" href="/new-website/${String(site.id)}/edit?section=4">Pick channels</a><a class="ns-btn small" href="/new-website/channels">Add a channel</a></div></div>`}
+    ${rows.length
+      ? html`<ul class="acc-list" ${busyRows(rows) || sharingBusy(posts) ? raw(`data-watch="${plan.id}"`) : raw('')}>
+          ${rows.map((r) => shareCard(r, intentOf.get(r.keyword) ?? '', postsOf(r.id), channels, allChannels, plan.id))}
+        </ul>`
+      : html`<p class="kw-none">Nothing to share yet.</p>`}`;
+  const foot = html`
+    <a class="ns-btn quiet" href="${planHref(plan.id, 'publish')}">Previous</a>
+    ${toShare
+      ? html`<form method="post" action="/new-website/keywords/plan/${plan.id}/share" style="margin:0">
+          <button class="ns-btn primary">Share all published (${toShare})</button>
+        </form>`
+      : html`<span></span>`}`;
+  return html`
+    <style>${raw(WIZARD_CSS)}${raw(CSS)}</style>
+    ${stepCard(names, names.indexOf('Share'), plan.pillar, html`${site.name} · <span class="ns-num">${shared} of ${published.length} published shared</span>`, body, foot, stepHrefs(names, plan.id, site.id))}
     ${raw(watchScript)}`;
 }
 
@@ -874,7 +1001,8 @@ const watchScript = `<script>
   setInterval(function () {
     fetch('/new-website/keywords/' + id + '/seo').then(function (r) { return r.json(); }).then(function (r) {
       var key = r.rows.map(function (x) { return [x.status, x.recipe_status, x.skeleton_status, x.article_status, x.images_status, x.post_status].join('/'); }).join(',')
-        + '|' + (r.pictures || []).map(function (x) { return x.id + x.status; }).join(',');
+        + '|' + (r.pictures || []).map(function (x) { return x.id + x.status; }).join(',')
+        + '|' + (r.social || []).map(function (x) { return x.id + x.status; }).join(',');
       if (seen !== undefined && seen !== key) location.reload();
       seen = key;
     }).catch(function () {});
