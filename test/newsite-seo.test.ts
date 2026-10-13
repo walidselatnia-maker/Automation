@@ -210,5 +210,12 @@ describe('saving a plan starts AI#1', () => {
     expect(skeletons.body).toContain('Article skeletons');
     expect(page.body).toContain(GOOD.title);
     expect(page.body).toContain('Pumpkin Chocolate Chip Cookies: Soft, Easy and Spiced');
+
+    // Every step in the bar is a link straight to it; the current one is not.
+    for (const step of ['skeleton', 'article', 'images', 'publish']) {
+      expect(page.body).toContain(`class="kw-step todo" href="/new-website/keywords/plan/${planId}/${step}"`);
+    }
+    expect(page.body).toContain(`class="kw-step done" href="/new-website/keywords?website=${websiteId}"`);
+    expect(page.body).toMatch(/<span class="kw-step on" aria-current="step">/);
   });
 });

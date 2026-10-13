@@ -160,9 +160,15 @@ const CSS = `
 .kw-article ul, .kw-article ol { margin: 0 0 14px; padding-left: 22px; display: grid; gap: 4px; }
 /* Steps: the wizard card, wider for lists. */
 .wz.kw-wz { max-width: 820px; }
-.kw-wz .wz-bar { grid-template-columns: repeat(4, 1fr); }
-.kw-steps-names { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 10px; font-size: 13px; font-weight: 500; color: var(--idle-ink); }
-.kw-steps-names span.on { color: var(--accent-text); font-weight: 700; }
+.kw-steps { display: grid; gap: 6px; margin-top: 20px; }
+.kw-step { display: flex; flex-direction: column; gap: 8px; padding: 6px 6px 8px; margin: -6px 0; border-radius: var(--r-ctl);
+  font-size: 13px; font-weight: 500; color: var(--idle-ink); text-decoration: none; min-width: 0; }
+.kw-step i { display: block; height: 6px; border-radius: 3px; background: var(--idle-line); }
+.kw-step.done i, .kw-step.on i { background: var(--accent); }
+.kw-step.on { color: var(--accent-text); font-weight: 700; }
+.kw-step span { overflow-wrap: anywhere; }
+a.kw-step:hover { background: var(--idle); }
+a.kw-step:hover span { text-decoration: underline; }
 .kw-foot-top { border-top: 0; border-bottom: 1px solid var(--line); background: var(--raised); }
 .kw-foot-top form { margin: 0; }
 
@@ -199,8 +205,7 @@ const CSS = `
   .kw-img-list li { grid-template-columns: 1fr; gap: 10px; }
   .kw-pic { max-width: 320px; }
   .kw-row { grid-template-columns: 1fr; }
-  .kw-steps-names { grid-template-columns: 1fr !important; }
-  .kw-steps-names span:not(.on) { display: none; }
+  .kw-steps { grid-template-columns: repeat(4, 1fr) !important; row-gap: 12px; }
   .kw-dropped li, .kw-plain li, .kw-seo-facts, .kw-seo-facts div { grid-template-columns: 1fr; gap: 2px; }
 }
 `;
@@ -218,21 +223,33 @@ const CHEVRON = '<svg class="acc-chev" viewBox="0 0 24 24" fill="none" stroke="c
  * buttons (Previous / Next / Make all), then the body. The buttons come first
  * so a long list never has to be scrolled to reach them.
  */
-function stepCard(names: string[], step: number, title: string, subtitle: Html | string, body: Html, foot: Html): Html {
+function stepCard(names: string[], step: number, title: string, subtitle: Html | string, body: Html, foot: Html, hrefs: string[] = []): Html {
+  const steps = names.map((n, i) => {
+    const state = i < step ? 'done' : i === step ? 'on' : 'todo';
+    const inner = html`<i></i><span>${i + 1}. ${n}</span>`;
+    // Every step is a link straight to it (once there is a plan to go to).
+    return hrefs[i] && i !== step
+      ? html`<a class="kw-step ${state}" href="${hrefs[i]}">${inner}</a>`
+      : html`<span class="kw-step ${state}" ${raw(i === step ? 'aria-current="step"' : '')}>${inner}</span>`;
+  });
   return html`
     <div class="wz kw-wz">
       <div class="wz-head">
         <h1>${title}</h1>
         <p class="wz-id">${subtitle}</p>
-        <div class="wz-bar" style="grid-template-columns:repeat(${names.length},1fr)">${names.map((_, i) => html`<i class="${i <= step ? 'on' : ''}"></i>`)}</div>
-        <div class="kw-steps-names" style="grid-template-columns:repeat(${names.length},1fr)">${names.map(
-          (n, i) => html`<span class="${i === step ? 'on' : ''}">${i + 1}. ${n}</span>`,
-        )}</div>
+        <nav class="kw-steps" aria-label="Steps" style="grid-template-columns:repeat(${names.length},1fr)">${steps}</nav>
       </div>
       <div class="wz-foot kw-foot-top">${foot}</div>
       <div class="wz-body">${body}</div>
     </div>`;
 }
+
+/** Where each step's name leads, for a saved plan. */
+const STEP_PATH: Record<string, string> = {
+  SEO: 'seo', Recipe: 'recipe', Skeleton: 'skeleton', Article: 'article', Images: 'images', Publish: 'publish',
+};
+const stepHrefs = (names: string[], planId: number, websiteId: number): string[] =>
+  names.map((n) => (n === 'Keywords' ? `/new-website/keywords?website=${websiteId}` : `/new-website/keywords/plan/${planId}/${STEP_PATH[n]}`));
 
 const planHref = (planId: number, step: 'seo' | 'recipe' | 'skeleton' | 'article' | 'images' | 'publish'): string => `/new-website/keywords/plan/${planId}/${step}`;
 
@@ -491,7 +508,7 @@ export function seoStepPage(site: NewWebsiteRow, plan: KeywordPlan, rows: SeoRow
       : html`<a class="ns-btn primary" href="${planHref(plan.id, 'skeleton')}">Next: skeletons</a>`}`;
   return html`
     <style>${raw(WIZARD_CSS)}${raw(CSS)}</style>
-    ${stepCard(stepNames(site.niche), 1, plan.pillar, html`${site.name} · <span class="ns-num">${done} of ${rows.length || plan.items.length + 1} done</span>`, body, foot)}
+    ${stepCard(stepNames(site.niche), 1, plan.pillar, html`${site.name} · <span class="ns-num">${done} of ${rows.length || plan.items.length + 1} done</span>`, body, foot, stepHrefs(stepNames(site.niche), plan.id, site.id))}
     ${raw(watchScript)}`;
 }
 
@@ -512,7 +529,7 @@ export function skeletonStepPage(site: NewWebsiteRow, plan: KeywordPlan, rows: S
     <a class="ns-btn primary" href="${planHref(plan.id, 'article')}">Next: articles</a>`;
   return html`
     <style>${raw(WIZARD_CSS)}${raw(CSS)}</style>
-    ${stepCard(stepNames(site.niche), stepNames(site.niche).indexOf('Skeleton'), plan.pillar, html`${site.name} · <span class="ns-num">${done} of ${rows.length || plan.items.length + 1} done</span>`, body, foot)}
+    ${stepCard(stepNames(site.niche), stepNames(site.niche).indexOf('Skeleton'), plan.pillar, html`${site.name} · <span class="ns-num">${done} of ${rows.length || plan.items.length + 1} done</span>`, body, foot, stepHrefs(stepNames(site.niche), plan.id, site.id))}
     ${raw(watchScript)}`;
 }
 
@@ -583,7 +600,7 @@ export function recipeStepPage(site: NewWebsiteRow, plan: KeywordPlan, rows: Seo
     <a class="ns-btn primary" href="${planHref(plan.id, 'skeleton')}">Next: skeletons</a>`;
   return html`
     <style>${raw(WIZARD_CSS)}${raw(CSS)}</style>
-    ${stepCard(stepNames(site.niche), 2, plan.pillar, html`${site.name} · <span class="ns-num">${done} of ${rows.length || plan.items.length + 1} done</span>`, body, foot)}
+    ${stepCard(stepNames(site.niche), 2, plan.pillar, html`${site.name} · <span class="ns-num">${done} of ${rows.length || plan.items.length + 1} done</span>`, body, foot, stepHrefs(stepNames(site.niche), plan.id, site.id))}
     ${raw(watchScript)}`;
 }
 
@@ -635,7 +652,7 @@ export function articleStepPage(site: NewWebsiteRow, plan: KeywordPlan, rows: Se
     <a class="ns-btn primary" href="${planHref(plan.id, 'images')}">Next: images</a>`;
   return html`
     <style>${raw(WIZARD_CSS)}${raw(CSS)}</style>
-    ${stepCard(names, names.indexOf('Article'), plan.pillar, html`${site.name} · <span class="ns-num">${done} of ${rows.length || plan.items.length + 1} done</span>`, body, foot)}
+    ${stepCard(names, names.indexOf('Article'), plan.pillar, html`${site.name} · <span class="ns-num">${done} of ${rows.length || plan.items.length + 1} done</span>`, body, foot, stepHrefs(names, plan.id, site.id))}
     ${raw(watchScript)}`;
 }
 
@@ -774,7 +791,7 @@ export function imagesStepPage(
       : html`<a class="ns-btn primary" href="${planHref(plan.id, 'publish')}">Next: publish</a>`}`;
   return html`
     <style>${raw(WIZARD_CSS)}${raw(CSS)}</style>
-    ${stepCard(names, names.indexOf('Images'), plan.pillar, html`${site.name} · <span class="ns-num">${made} of ${total} pictures made</span>`, body, foot)}
+    ${stepCard(names, names.indexOf('Images'), plan.pillar, html`${site.name} · <span class="ns-num">${made} of ${total} pictures made</span>`, body, foot, stepHrefs(names, plan.id, site.id))}
     ${raw(watchScript)}`;
 }
 
@@ -837,7 +854,7 @@ export function publishStepPage(site: NewWebsiteRow, plan: KeywordPlan, rows: Se
       : html`<span></span>`}`;
   return html`
     <style>${raw(WIZARD_CSS)}${raw(CSS)}</style>
-    ${stepCard(names, names.indexOf('Publish'), plan.pillar, html`${site.name} · <span class="ns-num">${posted} of ${rows.length} posted</span>`, body, foot)}
+    ${stepCard(names, names.indexOf('Publish'), plan.pillar, html`${site.name} · <span class="ns-num">${posted} of ${rows.length} posted</span>`, body, foot, stepHrefs(names, plan.id, site.id))}
     ${raw(watchScript)}`;
 }
 
