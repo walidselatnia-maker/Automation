@@ -83,14 +83,31 @@ describe('keyword routes', () => {
     expect(page.body).toContain('href="/new-website/keywords/add">Add keywords</a>');
     const add = await app.inject({ method: 'GET', url: '/new-website/keywords/add' });
     expect(add.body).toContain('A CSV file');
-    const one = await post('/new-website/keywords/add', { how: 'one', websiteId: String(websiteId) });
-    expect(one.headers.location).toBe(`/new-website/keywords/new?website=${websiteId}`);
+    expect(add.body).not.toContain('name="websiteId"'); // the website is chosen on the next page
+    const one = await post('/new-website/keywords/add', { how: 'one' });
+    expect(one.headers.location).toBe('/new-website/keywords/new');
     const finder = await app.inject({ method: 'GET', url: one.headers.location as string });
-    expect(finder.body).toContain('Pillar keyword');
+    // Same wizard frame: the website is chosen here, and Previous goes back to the choice.
+    expect(finder.body).toContain('Step 2 of 2: Website and keyword');
+    expect(finder.body).toContain('id="kw-website"');
+    expect(finder.body).toContain('href="/new-website/keywords/add">Previous</a>');
     expect((await post('/new-website/keywords/add', { how: 'csv' })).headers.location).toBe('/new-website/keywords/import');
   });
 
   describe('importing a CSV file', () => {
+    it('offers a template to download, with a row for each website, that imports as it is', async () => {
+      const page = await app.inject({ method: 'GET', url: '/new-website/keywords/import' });
+      expect(page.body).toContain('href="/new-website/keywords/import/template.csv"');
+      const file = await app.inject({ method: 'GET', url: '/new-website/keywords/import/template.csv' });
+      expect(file.headers['content-type']).toMatch(/text\/csv/);
+      expect(file.headers['content-disposition']).toContain('keywords-template.csv');
+      expect(file.body).toContain('Main Keyword,Target Website,Niche,Subkeywords');
+      expect(file.body).toContain('f.longlivo.com');
+      const check = await post('/new-website/keywords/import/check', { csv: file.body });
+      expect(check.body).toContain('ready');
+      expect(check.body).not.toContain('with problems');
+    });
+
     const draftIn = (body: string): string => body.match(/name="draft" value="([0-9a-f]+)"/)![1]!;
     let second: number;
     beforeEach(() => {

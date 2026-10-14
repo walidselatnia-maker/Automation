@@ -132,13 +132,13 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
 
   app.get('/new-website/keywords/add', async (request, reply) => {
     if (!deps.isPlatformReady()) return reply.redirect(`/new-website/platform?error=${encodeURIComponent(NOT_READY)}`, 303);
-    return reply.type('text/html; charset=utf-8').send(wizardPage('Add keywords', addKeywordsStep(listNewWebsites()), request));
+    return reply.type('text/html; charset=utf-8').send(wizardPage('Add keywords', addKeywordsStep(), request));
   });
 
   app.post('/new-website/keywords/add', async (request, reply) => {
     const raw = body(request);
     if (raw.how === 'csv') return reply.redirect('/new-website/keywords/import', 303);
-    return reply.redirect(`/new-website/keywords/new?website=${Number(raw.websiteId) || 0}`, 303);
+    return reply.redirect('/new-website/keywords/new', 303);
   });
 
   /** One main keyword, by hand: the finder and its sub-keyword list. */
@@ -158,6 +158,23 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
   app.get('/new-website/keywords/import', async (request, reply) => {
     if (!deps.isPlatformReady()) return reply.redirect(`/new-website/platform?error=${encodeURIComponent(NOT_READY)}`, 303);
     return reply.type('text/html; charset=utf-8').send(wizardPage('Import keywords', importFileStep(listNewWebsites()), request));
+  });
+
+  /** A CSV template to fill in: the columns, and an example row for each website. */
+  app.get('/new-website/keywords/import/template.csv', async (_request, reply) => {
+    const sites = listNewWebsites();
+    const cell = (v: string) => (/[",;\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+    const lines = [
+      'Main Keyword,Target Website,Niche,Subkeywords',
+      ...(sites.length ? sites : [{ domain: 'example.com', niche: '' }]).flatMap((w, i) => [
+        [i ? 'banana bread' : 'strawberry cake', w.domain, '', ''].map(cell).join(','),
+        [i ? 'lemon tart' : 'chocolate mousse', w.domain, w.niche, i ? 'mini lemon tarts; lemon tart filling' : 'easy chocolate mousse; vegan chocolate mousse'].map(cell).join(','),
+      ]),
+    ];
+    return reply
+      .type('text/csv; charset=utf-8')
+      .header('content-disposition', 'attachment; filename="keywords-template.csv"')
+      .send('﻿' +lines.join('\r\n') + '\r\n');
   });
 
   app.post('/new-website/keywords/import/check', async (request, reply) => {

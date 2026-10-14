@@ -343,19 +343,17 @@ export function keywordsPage(
   }
 
   const body = html`
-    <h2>Pillar and sub-keywords</h2>
-    <p>One pillar keyword and up to six sub-keywords, each answering a different search. Only real Google searches are used, and nothing already on the website is repeated.</p>
-    <div class="kw-site">
-      Website
-      ${websites.length > 1
-        ? html`<select aria-label="Website" onchange="location.href='/new-website/keywords/new?website='+this.value">
-            ${websites.map((w) => html`<option value="${w.id}" ${w.id === current.id ? raw('selected') : raw('')}>${w.name} · ${w.domain}</option>`)}
-          </select>`
-        : html`<strong>${current.name}</strong><span class="ns-mono">${current.domain}</span>`}
+    <h2>Website and keyword</h2>
+    <p>One main keyword and up to six sub-keywords, each answering a different search. Only real Google searches are used, and nothing already on the website is repeated.</p>
+    <div class="wz-field">
+      <label for="kw-website">Website</label>
+      <select id="kw-website" name="websiteId" onchange="location.href='/new-website/keywords/new?website='+this.value">
+        ${websites.map((w) => html`<option value="${w.id}" ${w.id === current.id ? raw('selected') : raw('')}>${w.name} · ${w.domain}</option>`)}
+      </select>
     </div>
     <form id="kw-find" autocomplete="off">
       <input type="hidden" name="websiteId" value="${current.id}" />
-      <label for="kw-pillar">Pillar keyword</label>
+      <label for="kw-pillar">Main keyword</label>
       <div class="kw-row">
         <input id="kw-pillar" name="pillar" maxlength="80" placeholder="pumpkin chocolate chip cookies" />
         <button class="ns-btn primary" id="kw-go">Find sub-keywords</button>
@@ -391,14 +389,14 @@ export function keywordsPage(
     </div>`;
 
   const foot = html`
-    <span></span>
-    <button type="button" class="ns-btn primary" id="kw-save" disabled>Save and continue</button>`;
+    <a class="ns-btn quiet" href="/new-website/keywords/add">Previous</a>
+    <span style="display:flex;gap:10px">
+      <a class="ns-btn quiet" href="/new-website/keywords">Cancel</a>
+      <button type="button" class="ns-btn primary" id="kw-save" disabled>Save and continue</button>
+    </span>`;
 
   return html`
-    <style>${raw(WIZARD_CSS)}${raw(CSS)}</style>
-    ${stepCard(stepNames(current.niche), 0, 'Keyword plan', `${current.name} · ${current.domain}`, body, foot)}
-
-
+    ${addWizard(1, 'Add one main keyword', body, foot, '', ONE_STEPS, true)}
     ${raw(script(current.id, articleTypeFor(current.niche) === 'recipe'))}
   `;
 }
@@ -1369,23 +1367,24 @@ const OVERVIEW_SCRIPT = `<script>
 /* -- Add keywords: one by hand, or a CSV file ---------------------------------- */
 
 const IMPORT_STEPS = ['How', 'The file', 'Check'];
+const ONE_STEPS = ['How', 'Website and keyword'];
 
-function addWizard(step: number, title: string, body: Html, foot: Html, error = ''): Html {
+function addWizard(step: number, title: string, body: Html, foot: Html, error = '', steps = IMPORT_STEPS, wide = step === 2): Html {
   return html`
     <style>${raw(WIZARD_CSS)}${raw(CSS)}${raw(OVERVIEW_CSS)}</style>
-    <div class="wz ${step === 2 ? 'kw-wz' : ''}">
+    <div class="wz ${wide ? 'kw-wz' : ''}">
       <div class="wz-head">
         <h1>${title}</h1>
         <p class="wz-id">Each main keyword is planned for its website and published there.</p>
-        <div class="wz-bar" style="grid-template-columns:repeat(${IMPORT_STEPS.length},1fr)">${IMPORT_STEPS.map((_, i) => html`<i class="${i <= step ? 'on' : ''}"></i>`)}</div>
-        <div class="wz-stepname">Step ${step + 1} of ${IMPORT_STEPS.length}: ${IMPORT_STEPS[step]}</div>
+        <div class="wz-bar" style="grid-template-columns:repeat(${steps.length},1fr)">${steps.map((_, i) => html`<i class="${i <= step ? 'on' : ''}"></i>`)}</div>
+        <div class="wz-stepname">Step ${step + 1} of ${steps.length}: ${steps[step]}</div>
       </div>
       <div class="wz-body">${error ? html`<p class="kw-seo-problems" role="alert" style="margin:0 0 16px">${error}</p>` : raw('')}${body}</div>
       <div class="wz-foot">${foot}</div>
     </div>`;
 }
 
-export function addKeywordsStep(websites: NewWebsiteRow[]): Html {
+export function addKeywordsStep(): Html {
   return addWizard(
     0,
     'Add keywords',
@@ -1397,10 +1396,6 @@ export function addKeywordsStep(websites: NewWebsiteRow[]): Html {
           <div><b>One main keyword</b><span>For one website. The platform finds its sub-keywords from Google and you choose which to keep.</span></div></label>
         <label class="ch-option"><input type="radio" name="how" value="csv" />
           <div><b>A CSV file</b><span>Many main keywords, each with its target website. Niche and sub-keywords are optional: missing sub-keywords are found by the platform.</span></div></label>
-      </div>
-      <div class="wz-field">
-        <label for="ki-website">Website (for one main keyword)</label>
-        <select id="ki-website" name="websiteId">${websites.map((w) => html`<option value="${String(w.id)}">${w.name} · ${w.domain}</option>`)}</select>
       </div>
     </form>`,
     html`<a class="ns-btn quiet" href="/new-website/keywords">Cancel</a><button class="ns-btn primary" form="ki-form">Next</button>`,
@@ -1415,7 +1410,8 @@ export function importFileStep(websites: NewWebsiteRow[], csv = '', error = ''):
     html`<form id="ki-form" method="post" action="/new-website/keywords/import/check">
       <h2>The file</h2>
       <p>A CSV file with a first line naming the columns. <b>Main Keyword</b> and <b>Target Website</b> are needed; <b>Niche</b> and <b>Subkeywords</b> are optional. Put several sub-keywords in one cell, separated by <code>;</code>.</p>
-      <div class="ki-format">For example:<pre>${example}</pre></div>
+      <div class="ki-format">For example:<pre>${example}</pre>
+        <a class="ns-btn small" href="/new-website/keywords/import/template.csv" download="keywords-template.csv">Download the template</a></div>
       <input class="ki-file" type="file" accept=".csv,text/csv,text/plain" id="ki-file" aria-label="CSV file" />
       <label for="ki-csv" class="kw-hint" style="display:block;margin:0 0 6px">Or paste the CSV here:</label>
       <textarea id="ki-csv" name="csv" class="ki-paste" spellcheck="false">${csv}</textarea>
