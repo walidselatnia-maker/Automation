@@ -215,7 +215,7 @@ describe('saving a plan starts AI#1', () => {
     for (const step of ['skeleton', 'article', 'images', 'publish']) {
       expect(page.body).toContain(`class="kw-step todo" href="/new-website/keywords/plan/${planId}/${step}"`);
     }
-    expect(page.body).toContain(`class="kw-step done" href="/new-website/keywords?website=${websiteId}"`);
+    expect(page.body).toContain(`class="kw-step done" href="/new-website/keywords#website-${websiteId}"`);
     expect(page.body).toMatch(/<span class="kw-step on" aria-current="step">/);
   });
 });

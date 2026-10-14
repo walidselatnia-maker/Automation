@@ -812,6 +812,18 @@ export const MIGRATIONS: Migration[] = [
       addColumn(db, 'newsite_channels', 'rules_text', "TEXT NOT NULL DEFAULT ''");
     },
   },
+
+  {
+    id: '033-keyword-plan-import',
+    description: 'Keyword plans keep a niche of their own and whether their sub-keywords are still being found (CSV import)',
+    up(db) {
+      addColumn(db, 'keyword_plans', 'niche', "TEXT NOT NULL DEFAULT ''");
+      addColumn(db, 'keyword_plans', 'source', "TEXT NOT NULL DEFAULT ''");
+      // '' = has its sub-keywords; 'finding' = the platform is finding them; 'failed' = it could not.
+      addColumn(db, 'keyword_plans', 'subs_status', "TEXT NOT NULL DEFAULT ''");
+      addColumn(db, 'keyword_plans', 'subs_error', "TEXT NOT NULL DEFAULT ''");
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */

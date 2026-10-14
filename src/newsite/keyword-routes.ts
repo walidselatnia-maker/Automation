@@ -1,4 +1,6 @@
+import { randomBytes } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { checkImport, importRows, kickSubFinder, planStats, type ImportRow } from './keyword-import.js';
 import type { SitePost } from './client.js';
 import {
   findSubKeywords,
@@ -12,6 +14,7 @@ import {
 import { newLayout, type NewFlash } from './layout.js';
 import {
   deleteKeywordPlan,
+  getKeywordPlan,
   getNewWebsite,
   listKeywordPlans,
   listNewWebsites,
@@ -22,7 +25,7 @@ import {
 } from './repo.js';
 import { listChannels, websiteChannels } from './channels.js';
 import { listPlanSocialPosts } from './social.js';
-import { articleStepPage, imagesStepPage, publishStepPage, shareStepPage, keywordsPage, recipeStepPage, seoStepPage, skeletonStepPage } from './keywords-view.js';
+import { addKeywordsStep, importCheckStep, importFileStep, keywordsOverview, articleStepPage, imagesStepPage, publishStepPage, shareStepPage, keywordsPage, recipeStepPage, seoStepPage, skeletonStepPage } from './keywords-view.js';
 import { articleTypeFor } from './skeleton.js';
 import { clearPictures, isMainSlot, listPictures, listPlanPictures, listPlanSocialPictures } from './pictures.js';
 import { sweepRetries } from './retries.js';
@@ -88,10 +91,17 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
   const startSeo = () => {
     if (deps.autoSeo !== false) void kickSeoWriter(writer);
   };
+  // Imported keywords without sub-keywords: found one plan at a time, then on to the SEO step.
+  const startFinder = () => {
+    if (deps.autoSeo !== false) {
+      void kickSubFinder({ suggest: deps.suggest, ask: deps.ask, listPosts: deps.listPosts, encryptionKey: deps.encryptionKey, startSeo });
+    }
+  };
   // Anything a restart interrupted goes back in the queue and carries on.
   if (deps.autoSeo !== false) {
     resetInterruptedSeo();
     startSeo();
+    startFinder();
     // Failed AI steps are tried again by themselves, as the platform's retry
     // settings say. Checked every minute; a due try restarts the writer.
     const settings = deps.settings;
@@ -102,22 +112,81 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
     }
   }
 
+  /** The Keywords page: a card per website, each with a table of its keyword plans. */
   app.get('/new-website/keywords', async (request, reply) => {
+    if (!deps.isPlatformReady()) return reply.redirect(`/new-website/platform?error=${encodeURIComponent(NOT_READY)}`, 303);
+    // An old address with ?website= opens that website's card.
+    const wanted = Number((request.query as { website?: string }).website) || 0;
+    if (wanted) return reply.redirect(`/new-website/keywords#website-${wanted}`, 303);
+    const plans = listKeywordPlans();
+    const sites = listNewWebsites().map((site) => ({ site, plans: plans.filter((p) => p.website_id === site.id) }));
+    return reply.type('text/html; charset=utf-8').send(
+      newLayout({ title: 'Keywords', active: '/new-website/keywords', body: keywordsOverview(sites, planStats()), flash: deps.readFlash(request.query) }),
+    );
+  });
+
+  /* -- Add keywords: one by hand, or a CSV file ------------------------------ */
+
+  const wizardPage = (title: string, body: ReturnType<typeof addKeywordsStep>, request: FastifyRequest) =>
+    newLayout({ title, active: '/new-website/keywords', body, flash: deps.readFlash(request.query) });
+
+  app.get('/new-website/keywords/add', async (request, reply) => {
+    if (!deps.isPlatformReady()) return reply.redirect(`/new-website/platform?error=${encodeURIComponent(NOT_READY)}`, 303);
+    return reply.type('text/html; charset=utf-8').send(wizardPage('Add keywords', addKeywordsStep(listNewWebsites()), request));
+  });
+
+  app.post('/new-website/keywords/add', async (request, reply) => {
+    const raw = body(request);
+    if (raw.how === 'csv') return reply.redirect('/new-website/keywords/import', 303);
+    return reply.redirect(`/new-website/keywords/new?website=${Number(raw.websiteId) || 0}`, 303);
+  });
+
+  /** One main keyword, by hand: the finder and its sub-keyword list. */
+  app.get('/new-website/keywords/new', async (request, reply) => {
     if (!deps.isPlatformReady()) return reply.redirect(`/new-website/platform?error=${encodeURIComponent(NOT_READY)}`, 303);
     const websites = listNewWebsites();
     const wanted = Number((request.query as { website?: string }).website) || 0;
     const current = websites.find((w) => w.id === wanted) ?? websites[0];
     return reply.type('text/html; charset=utf-8').send(
-      newLayout({
-        title: 'Keywords',
-        active: '/new-website/keywords',
-        body: (() => {
-          const plans = current ? listKeywordPlans(current.id) : [];
-          return keywordsPage(websites, current, plans, new Map(plans.map((p) => [p.id, listPlanSeo(p.id)])));
-        })(),
-        flash: deps.readFlash(request.query),
-      }),
+      newLayout({ title: 'Add a keyword', active: '/new-website/keywords', body: keywordsPage(websites, current, []), flash: deps.readFlash(request.query) }),
     );
+  });
+
+  /** A checked CSV file, kept here between the check and the import (an hour at most). */
+  const imports = new Map<string, { rows: ImportRow[]; expires: number }>();
+
+  app.get('/new-website/keywords/import', async (request, reply) => {
+    if (!deps.isPlatformReady()) return reply.redirect(`/new-website/platform?error=${encodeURIComponent(NOT_READY)}`, 303);
+    return reply.type('text/html; charset=utf-8').send(wizardPage('Import keywords', importFileStep(listNewWebsites()), request));
+  });
+
+  app.post('/new-website/keywords/import/check', async (request, reply) => {
+    const csv = String(body(request).csv ?? '');
+    const websites = listNewWebsites();
+    const page = (b: ReturnType<typeof addKeywordsStep>) => reply.type('text/html; charset=utf-8').send(wizardPage('Import keywords', b, request));
+    if (!csv.trim()) return page(importFileStep(websites, '', 'Choose a CSV file, or paste its text.'));
+    if (csv.length > 5_000_000) return page(importFileStep(websites, '', 'That file is too big (over 5 MB). Split it in parts.'));
+    const check = await checkImport(csv, {
+      websites,
+      listPosts: (site) => deps.listPosts(site.domain, websiteApiKey(site, deps.encryptionKey)),
+    });
+    if (check.fileError) return page(importFileStep(websites, csv.slice(0, 20_000), check.fileError));
+    const now = Date.now();
+    for (const [k, v] of imports) if (v.expires < now) imports.delete(k);
+    const draft = randomBytes(12).toString('hex');
+    imports.set(draft, { rows: check.rows, expires: now + 60 * 60_000 });
+    return page(importCheckStep(check, draft));
+  });
+
+  app.post('/new-website/keywords/import/save', async (request, reply) => {
+    const draft = imports.get(String(body(request).draft ?? ''));
+    if (!draft) return reply.redirect(`/new-website/keywords/import?error=${encodeURIComponent('That check expired. Choose the file again.')}`, 303);
+    imports.delete(String(body(request).draft));
+    const { plans, finding } = importRows(draft.rows);
+    startSeo();
+    startFinder();
+    const msg = `Imported ${plans} keyword${plans === 1 ? '' : 's'}.${finding ? ` The platform is finding sub-keywords for ${finding} of them; each goes on to the SEO step as soon as they are found.` : ''}`;
+    return reply.redirect(`/new-website/keywords?ok=${encodeURIComponent(msg)}`, 303);
   });
 
   /** Search: pillar check, Google, the AI, the filters. */
@@ -327,15 +396,12 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
   });
 
   app.post('/new-website/keywords/:id/delete', async (request, reply) => {
-    const website = Number(body(request).websiteId) || 0;
     const planId = Number((request.params as { id: string }).id) || 0;
+    const website = getKeywordPlan(planId)?.website_id ?? (Number(body(request).websiteId) || 0);
     // The plan's pictures are files in the data folder: they go with it.
     for (const row of listPlanSeo(planId)) clearPictures(row.id, deps.dataDir);
     deleteKeywordPlan(planId);
-    return reply.redirect(
-      `/new-website/keywords?website=${website}&ok=${encodeURIComponent('Keyword plan deleted.')}`,
-      303,
-    );
+    return reply.redirect(`/new-website/keywords?ok=${encodeURIComponent('Keyword plan deleted.')}#website-${website}`, 303);
   });
 }
 

@@ -105,6 +105,13 @@ export interface KeywordPlan {
   pillar: string;
   pillar_page: 'recipe' | 'article';
   created_at: string;
+  /** A niche given for this keyword (CSV import); empty means the website's niche. */
+  niche: string;
+  /** 'csv' when it came from an import. */
+  source: string;
+  /** '' = has its sub-keywords; 'finding' = being found; 'failed' = could not be found. */
+  subs_status: '' | 'finding' | 'failed';
+  subs_error: string;
   items: PlanItem[];
 }
 
@@ -142,6 +149,41 @@ export function saveKeywordPlan(
     );
     return id;
   });
+}
+
+/** A plan's own niche, where it came from, and whether its sub-keywords are still being found. */
+export function setPlanImport(id: number, fields: { niche?: string; source?: string; subsStatus?: KeywordPlan['subs_status']; subsError?: string }): void {
+  const plan = get<{ niche: string; source: string; subs_status: string; subs_error: string }>('SELECT niche, source, subs_status, subs_error FROM keyword_plans WHERE id = ?', id);
+  if (!plan) return;
+  run(
+    'UPDATE keyword_plans SET niche = ?, source = ?, subs_status = ?, subs_error = ? WHERE id = ?',
+    fields.niche ?? plan.niche,
+    fields.source ?? plan.source,
+    fields.subsStatus ?? plan.subs_status,
+    fields.subsError ?? plan.subs_error,
+    id,
+  );
+}
+
+/** Add sub-keywords to a plan (after the platform found them), and set its pillar page. */
+export function addPlanItems(planId: number, items: PlanItem[], pillarPage?: 'recipe' | 'article'): void {
+  transaction(() => {
+    const start = get<{ n: number }>('SELECT COUNT(*) AS n FROM keyword_plan_items WHERE plan_id = ?', planId)?.n ?? 0;
+    items.forEach((item, i) =>
+      run(
+        'INSERT INTO keyword_plan_items (plan_id, keyword, intent, reason, position, page) VALUES (?, ?, ?, ?, ?, ?)',
+        planId, item.keyword, item.intent, item.reason, start + i, item.page ?? 'recipe',
+      ),
+    );
+    if (pillarPage) run('UPDATE keyword_plans SET pillar_page = ? WHERE id = ?', pillarPage, planId);
+  });
+}
+
+export function getKeywordPlan(id: number): KeywordPlan | undefined {
+  const plan = get<Omit<KeywordPlan, 'items'>>('SELECT * FROM keyword_plans WHERE id = ?', id);
+  return plan
+    ? { ...plan, items: all<PlanItem>('SELECT keyword, intent, reason, page FROM keyword_plan_items WHERE plan_id = ? ORDER BY position', id) }
+    : undefined;
 }
 
 export const deleteKeywordPlan = (id: number): void => {

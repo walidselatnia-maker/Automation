@@ -10,6 +10,7 @@ import { notReadyReason } from './publish.js';
 import { WIZARD_CSS } from './view.js';
 import type { ChannelRow } from './channels.js';
 import type { SocialPostRow } from './social.js';
+import type { ImportCheck, PlanStats } from './keyword-import.js';
 
 const INTENT_LABEL: Record<string, string> = {
   diet: 'Diet',
@@ -309,7 +310,7 @@ const STEP_PATH: Record<string, string> = {
   SEO: 'seo', Recipe: 'recipe', Skeleton: 'skeleton', Article: 'article', Images: 'images', Publish: 'publish', Share: 'share',
 };
 const stepHrefs = (names: string[], planId: number, websiteId: number): string[] =>
-  names.map((n) => (n === 'Keywords' ? `/new-website/keywords?website=${websiteId}` : `/new-website/keywords/plan/${planId}/${STEP_PATH[n]}`));
+  names.map((n) => (n === 'Keywords' ? `/new-website/keywords#website-${websiteId}` : `/new-website/keywords/plan/${planId}/${STEP_PATH[n]}`));
 
 const planHref = (planId: number, step: 'seo' | 'recipe' | 'skeleton' | 'article' | 'images' | 'publish' | 'share'): string => `/new-website/keywords/plan/${planId}/${step}`;
 
@@ -347,7 +348,7 @@ export function keywordsPage(
     <div class="kw-site">
       Website
       ${websites.length > 1
-        ? html`<select aria-label="Website" onchange="location.href='/new-website/keywords?website='+this.value">
+        ? html`<select aria-label="Website" onchange="location.href='/new-website/keywords/new?website='+this.value">
             ${websites.map((w) => html`<option value="${w.id}" ${w.id === current.id ? raw('selected') : raw('')}>${w.name} · ${w.domain}</option>`)}
           </select>`
         : html`<strong>${current.name}</strong><span class="ns-mono">${current.domain}</span>`}
@@ -397,26 +398,7 @@ export function keywordsPage(
     <style>${raw(WIZARD_CSS)}${raw(CSS)}</style>
     ${stepCard(stepNames(current.niche), 0, 'Keyword plan', `${current.name} · ${current.domain}`, body, foot)}
 
-    <section class="kw-saved">
-      <h2>Saved plans for ${current.name}</h2>
-      ${plans.length
-        ? plans.map((plan) => {
-            const rows = seo.get(plan.id) ?? [];
-            return html`<div class="kw-saved-row">
-              <a class="kw-open" href="${planHref(plan.id, 'seo')}">
-                <b>${plan.pillar}</b>
-                <div class="kw-saved-meta">${plan.items.length} sub-keyword${plan.items.length === 1 ? '' : 's'} · saved ${day(plan.created_at)} · ${progress(rows)}</div>
-              </a>
-              <a class="ns-btn" href="${planHref(plan.id, 'seo')}">Open</a>
-              <form method="post" action="/new-website/keywords/${plan.id}/delete" data-name="${plan.pillar}"
-                    onsubmit="return confirm('Delete the plan for ' + this.dataset.name + '?')">
-                <input type="hidden" name="websiteId" value="${current.id}" />
-                <button class="ns-btn danger small">Delete</button>
-              </form>
-            </div>`;
-          })
-        : html`<p class="kw-none">No plans yet. Find sub-keywords above and save the ones you want.</p>`}
-    </section>
+
     ${raw(script(current.id, articleTypeFor(current.niche) === 'recipe'))}
   `;
 }
@@ -562,7 +544,7 @@ export function seoStepPage(site: NewWebsiteRow, plan: KeywordPlan, rows: SeoRow
           <button class="ns-btn primary">Write SEO metadata</button>
         </form>`}`;
   const foot = html`
-    <a class="ns-btn quiet" href="/new-website/keywords?website=${site.id}">Previous</a>
+    <a class="ns-btn quiet" href="/new-website/keywords#website-${site.id}">Previous</a>
     ${articleTypeFor(site.niche) === 'recipe'
       ? html`<a class="ns-btn primary" href="${planHref(plan.id, 'recipe')}">Next: recipes</a>`
       : html`<a class="ns-btn primary" href="${planHref(plan.id, 'skeleton')}">Next: skeletons</a>`}`;
@@ -1240,3 +1222,255 @@ const script = (websiteId: number, recipeSite: boolean): string => `<script>
   };
 })();
 </script>`;
+
+/* -- The Keywords page: a card per website ------------------------------------ */
+
+const OVERVIEW_CSS = `
+.ko-cards { display: grid; gap: 16px; }
+.ko-site { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); box-shadow: var(--shadow); }
+.ko-head { width: 100%; display: flex; align-items: center; gap: 16px; padding: 18px 24px; background: none; border: 0; color: var(--ink);
+  font: inherit; text-align: left; cursor: pointer; border-radius: var(--r-card); }
+.ko-head:hover .ko-name { text-decoration: underline; }
+.ko-title { flex: 1; min-width: 0; }
+.ko-name { display: block; font: 700 20px/1.25 var(--display); letter-spacing: -.015em; }
+.ko-domain { display: block; margin-top: 2px; color: var(--soft); font: 13px var(--mono); }
+.ko-stats { display: flex; flex-wrap: wrap; gap: 6px 18px; color: var(--soft); font-size: 14px; }
+.ko-stats b { color: var(--ink); font-variant-numeric: tabular-nums; }
+.ko-chev { width: 20px; height: 20px; flex: none; color: var(--soft); transition: transform .2s ease; }
+.ko-site.open .ko-chev { transform: rotate(180deg); }
+.ko-body { display: none; border-top: 1px solid var(--line); padding: 4px 24px 18px; overflow-x: auto; }
+.ko-site.open .ko-body { display: block; }
+.ko-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.ko-table th { text-align: left; font-weight: 600; color: var(--faint); font-size: 13px; padding: 12px 10px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.ko-table td { padding: 12px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.ko-table tr:last-child td { border-bottom: 0; }
+.ko-table td.ko-kw a { font-weight: 600; color: var(--ink); text-decoration: none; }
+.ko-table td.ko-kw a:hover { color: var(--accent-text); text-decoration: underline; }
+.ko-subs { color: var(--soft); max-width: 46ch; }
+.ko-from { display: block; color: var(--faint); font-size: 12px; margin-top: 2px; }
+.ko-niche { white-space: nowrap; }
+.ko-niche small { color: var(--faint); }
+.ko-progress { white-space: nowrap; color: var(--soft); }
+.ko-progress b { color: var(--ink); font-variant-numeric: tabular-nums; }
+.ko-table form { margin: 0; }
+.ko-none { color: var(--faint); padding: 16px 0 4px; margin: 0; }
+.ko-err { color: var(--bad); font-size: 13px; display: block; margin-top: 2px; }
+.ko-empty { border: 1px dashed var(--line-strong); border-radius: var(--r-card); padding: 56px 32px; text-align: center; }
+.ko-empty h2 { font-size: 22px; margin-bottom: 8px; }
+.ko-empty p { color: var(--soft); margin: 0 auto 24px; max-width: 46ch; }
+.ch-option { display: flex; align-items: flex-start; gap: 12px; padding: 14px 16px; border: 1px solid var(--idle-line); border-radius: var(--r-ctl); cursor: pointer; background: var(--idle); color: var(--idle-ink); }
+.ch-option:hover { background: var(--idle-hover); }
+.ch-option input { margin-top: 3px; width: 16px; height: 16px; }
+.ch-option b { display: block; font-weight: 600; }
+.ch-option span { color: var(--idle-ink); font-size: 13px; }
+.ch-option:has(input:checked) { background: var(--accent-tint); border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); color: var(--ink); }
+.ch-option:has(input:checked) span { color: var(--soft); }
+.ki-format { margin: 0 0 20px; padding: 14px 16px; background: var(--raised); border: 1px solid var(--line); border-radius: var(--r-ctl); font-size: 14px; }
+.ki-format pre { margin: 8px 0 0; font: 13px/1.6 var(--mono); white-space: pre-wrap; color: var(--ink); }
+.ki-file { display: block; margin: 0 0 12px; font: 14px var(--body); }
+.ki-paste { width: 100%; min-height: 180px; padding: 12px 14px; border: 1px solid var(--line-strong); border-radius: var(--r-ctl); background: var(--surface);
+  color: var(--ink); font: 13px/1.6 var(--mono); resize: vertical; }
+.ki-sum { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 16px; }
+.ki-table td.ki-line { color: var(--faint); font-variant-numeric: tabular-nums; }
+.ki-table tr.bad td { background: var(--bad-tint); }
+.ki-problem { display: block; color: var(--bad); font-weight: 600; font-size: 13px; }
+.ki-note { display: block; color: var(--faint); font-size: 13px; }
+@media (max-width: 720px) { .ko-head { flex-wrap: wrap; } .ko-stats { width: 100%; } }
+`;
+
+export interface OverviewSite {
+  site: NewWebsiteRow;
+  plans: KeywordPlan[];
+}
+
+const CHEV = '<svg class="ko-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>';
+
+/** One plan's progress, from its keywords. */
+const planProgress = (s: PlanStats | undefined): Html =>
+  s
+    ? html`SEO <b>${String(s.seoDone)}/${String(s.total)}</b> · articles <b>${String(s.articles)}/${String(s.total)}</b> · published <b>${String(s.published)}/${String(s.total)}</b>`
+    : html`Waiting to start`;
+
+/** The Keywords page: one card per website, each opening on a table of its keyword plans. */
+export function keywordsOverview(sites: OverviewSite[], stats: Map<number, PlanStats>): Html {
+  const ready = sites.length > 0;
+  return html`
+    <style>${raw(CSS)}${raw(OVERVIEW_CSS)}</style>
+    <div class="ns-head">
+      <div>
+        <h1 class="ns-title">Keywords</h1>
+        <p class="ns-lede">Every main keyword and its sub-keywords, by website. Open a website to see its keywords; open a keyword to follow it through the pipeline.</p>
+      </div>
+      ${ready ? html`<a class="ns-btn primary" href="/new-website/keywords/add">Add keywords</a>` : raw('')}
+    </div>
+    ${!ready
+      ? html`<div class="ko-empty"><h2>Add a website first</h2><p>Keywords are planned for a website, and published there.</p><a class="ns-btn primary" href="/new-website/add">Add website</a></div>`
+      : html`<div class="ko-cards">${sites.map(({ site, plans }) => {
+          const subs = plans.reduce((n, p) => n + p.items.length, 0);
+          const published = plans.reduce((n, p) => n + (stats.get(p.id)?.published ?? 0), 0);
+          const findingCount = plans.filter((p) => p.subs_status === 'finding').length;
+          return html`<article class="ko-site ${sites.length === 1 ? 'open' : ''}" id="website-${String(site.id)}" data-id="${String(site.id)}">
+            <button type="button" class="ko-head" aria-expanded="${sites.length === 1 ? 'true' : 'false'}">
+              <span class="ko-title"><span class="ko-name">${site.name}</span><span class="ko-domain">${site.domain}</span></span>
+              <span class="ko-stats">
+                <span><b>${String(plans.length)}</b> main keyword${plans.length === 1 ? '' : 's'}</span>
+                <span><b>${String(subs)}</b> sub-keyword${subs === 1 ? '' : 's'}</span>
+                <span><b>${String(published)}</b> published</span>
+                ${findingCount ? html`<span class="ns-badge busy">Finding sub-keywords for ${String(findingCount)}</span>` : raw('')}
+              </span>
+              ${raw(CHEV)}
+            </button>
+            <div class="ko-body">
+              ${plans.length
+                ? html`<table class="ko-table">
+                    <thead><tr><th>Main keyword</th><th>Sub-keywords</th><th>Niche</th><th>Progress</th><th></th></tr></thead>
+                    <tbody>${plans.map(
+                      (p) => html`<tr>
+                        <td class="ko-kw"><a href="${planHref(p.id, 'seo')}">${p.pillar}</a>${p.source === 'csv' ? html`<span class="ko-from">From a CSV file</span>` : raw('')}</td>
+                        <td class="ko-subs">${p.subs_status === 'finding'
+                          ? html`<span class="ns-badge busy">Being found</span>`
+                          : p.items.length
+                            ? p.items.map((i) => i.keyword).join(', ')
+                            : html`None${p.subs_status === 'failed' ? html`<span class="ko-err">Not found: ${p.subs_error.replace(/[.\s]+$/, '')}. The main keyword goes on alone.</span>` : raw('')}`}</td>
+                        <td class="ko-niche">${p.niche ? p.niche : html`${site.niche} <small>(website)</small>`}</td>
+                        <td class="ko-progress">${planProgress(stats.get(p.id))}</td>
+                        <td><form method="post" action="/new-website/keywords/${String(p.id)}/delete" data-name="${p.pillar}"
+                              onsubmit="return confirm('Delete the plan for ' + this.dataset.name + '?')"><button class="ns-btn danger small">Delete</button></form></td>
+                      </tr>`,
+                    )}</tbody>
+                  </table>`
+                : html`<p class="ko-none">No keywords for this website yet.</p>`}
+            </div>
+          </article>`;
+        })}</div>`}
+    ${raw(OVERVIEW_SCRIPT)}`;
+}
+
+/** Opens and closes the website cards; each remembers being open, in this browser. */
+const OVERVIEW_SCRIPT = `<script>
+(function () {
+  document.querySelectorAll('.ko-site').forEach(function (card) {
+    var key = 'kw-site-open-' + card.getAttribute('data-id');
+    var head = card.querySelector('.ko-head');
+    function set(open) { card.classList.toggle('open', open); head.setAttribute('aria-expanded', open ? 'true' : 'false'); }
+    var saved = null;
+    try { saved = localStorage.getItem(key); } catch (e) {}
+    if (saved !== null) set(saved === '1');
+    if (location.hash === '#' + card.id) set(true);
+    head.addEventListener('click', function () {
+      var open = !card.classList.contains('open');
+      set(open);
+      try { localStorage.setItem(key, open ? '1' : '0'); } catch (e) {}
+    });
+  });
+})();
+</script>`;
+
+/* -- Add keywords: one by hand, or a CSV file ---------------------------------- */
+
+const IMPORT_STEPS = ['How', 'The file', 'Check'];
+
+function addWizard(step: number, title: string, body: Html, foot: Html, error = ''): Html {
+  return html`
+    <style>${raw(WIZARD_CSS)}${raw(CSS)}${raw(OVERVIEW_CSS)}</style>
+    <div class="wz ${step === 2 ? 'kw-wz' : ''}">
+      <div class="wz-head">
+        <h1>${title}</h1>
+        <p class="wz-id">Each main keyword is planned for its website and published there.</p>
+        <div class="wz-bar" style="grid-template-columns:repeat(${IMPORT_STEPS.length},1fr)">${IMPORT_STEPS.map((_, i) => html`<i class="${i <= step ? 'on' : ''}"></i>`)}</div>
+        <div class="wz-stepname">Step ${step + 1} of ${IMPORT_STEPS.length}: ${IMPORT_STEPS[step]}</div>
+      </div>
+      <div class="wz-body">${error ? html`<p class="kw-seo-problems" role="alert" style="margin:0 0 16px">${error}</p>` : raw('')}${body}</div>
+      <div class="wz-foot">${foot}</div>
+    </div>`;
+}
+
+export function addKeywordsStep(websites: NewWebsiteRow[]): Html {
+  return addWizard(
+    0,
+    'Add keywords',
+    html`<form id="ki-form" method="post" action="/new-website/keywords/add">
+      <h2>How</h2>
+      <p>Add one main keyword and pick its sub-keywords yourself, or bring many main keywords at once in a CSV file.</p>
+      <div class="ch-pick" style="display:grid;gap:10px;margin-bottom:20px">
+        <label class="ch-option"><input type="radio" name="how" value="one" checked />
+          <div><b>One main keyword</b><span>For one website. The platform finds its sub-keywords from Google and you choose which to keep.</span></div></label>
+        <label class="ch-option"><input type="radio" name="how" value="csv" />
+          <div><b>A CSV file</b><span>Many main keywords, each with its target website. Niche and sub-keywords are optional: missing sub-keywords are found by the platform.</span></div></label>
+      </div>
+      <div class="wz-field">
+        <label for="ki-website">Website (for one main keyword)</label>
+        <select id="ki-website" name="websiteId">${websites.map((w) => html`<option value="${String(w.id)}">${w.name} · ${w.domain}</option>`)}</select>
+      </div>
+    </form>`,
+    html`<a class="ns-btn quiet" href="/new-website/keywords">Cancel</a><button class="ns-btn primary" form="ki-form">Next</button>`,
+  );
+}
+
+export function importFileStep(websites: NewWebsiteRow[], csv = '', error = ''): Html {
+  const example = ['Main Keyword,Target Website,Niche,Subkeywords', ...websites.slice(0, 2).map((w, i) => (i === 0 ? `strawberry cake,${w.domain},,` : `banana bread,${w.domain},Baking,banana bread muffins; vegan banana bread`))].join('\n');
+  return addWizard(
+    1,
+    'Import keywords',
+    html`<form id="ki-form" method="post" action="/new-website/keywords/import/check">
+      <h2>The file</h2>
+      <p>A CSV file with a first line naming the columns. <b>Main Keyword</b> and <b>Target Website</b> are needed; <b>Niche</b> and <b>Subkeywords</b> are optional. Put several sub-keywords in one cell, separated by <code>;</code>.</p>
+      <div class="ki-format">For example:<pre>${example}</pre></div>
+      <input class="ki-file" type="file" accept=".csv,text/csv,text/plain" id="ki-file" aria-label="CSV file" />
+      <label for="ki-csv" class="kw-hint" style="display:block;margin:0 0 6px">Or paste the CSV here:</label>
+      <textarea id="ki-csv" name="csv" class="ki-paste" spellcheck="false">${csv}</textarea>
+      <script>
+        (function () {
+          var file = document.getElementById('ki-file'), box = document.getElementById('ki-csv');
+          file.addEventListener('change', function () {
+            var f = file.files && file.files[0];
+            if (!f) return;
+            var reader = new FileReader();
+            reader.onload = function () { box.value = String(reader.result || ''); };
+            reader.readAsText(f);
+          });
+        })();
+      </script>
+    </form>`,
+    html`<a class="ns-btn quiet" href="/new-website/keywords/add">Previous</a><button class="ns-btn primary" form="ki-form">Next: check</button>`,
+    error,
+  );
+}
+
+/** Every row of the file, checked, before anything is saved. */
+export function importCheckStep(check: ImportCheck, draft: string): Html {
+  const good = check.rows.filter((r) => !r.errors.length);
+  const bad = check.rows.length - good.length;
+  const finding = good.filter((r) => !r.subs.length).length;
+  return addWizard(
+    2,
+    'Import keywords',
+    html`<h2>Check</h2>
+      <p>Every row was checked: the two needed columns, the website is one of yours, no repeats in the file, and nothing the website already has. Nothing is saved yet.</p>
+      <div class="ki-sum">
+        <span class="ns-badge ok">${String(good.length)} ready</span>
+        ${bad ? html`<span class="ns-badge bad">${String(bad)} with problems: not imported</span>` : raw('')}
+        ${finding ? html`<span class="ns-badge busy">${String(finding)} without sub-keywords: the platform finds them</span>` : raw('')}
+      </div>
+      ${bad ? html`<p class="kw-hint" style="margin:0 0 12px">Fix the rows in red in your file and check it again, or import the ready rows now.</p>` : raw('')}
+      <div style="overflow-x:auto"><table class="ko-table ki-table">
+        <thead><tr><th>Line</th><th>Main keyword</th><th>Website</th><th>Niche</th><th>Sub-keywords</th><th>Check</th></tr></thead>
+        <tbody>${check.rows.map(
+          (r) => html`<tr class="${r.errors.length ? 'bad' : ''}">
+            <td class="ki-line">${String(r.line)}</td>
+            <td><b>${r.keyword || '—'}</b></td>
+            <td>${r.websiteName ? html`${r.websiteName}<span class="ko-from">${r.domain}</span>` : r.domain || '—'}</td>
+            <td>${r.niche || html`<small style="color:var(--faint)">the website’s</small>`}</td>
+            <td class="ko-subs">${r.subs.length ? r.subs.join(', ') : html`<small style="color:var(--faint)">found by the platform</small>`}</td>
+            <td>${r.errors.length ? r.errors.map((e) => html`<span class="ki-problem">${e}</span>`) : html`<span class="ns-badge ok">Ready</span>`}
+              ${r.notes.map((n) => html`<span class="ki-note">${n}</span>`)}</td>
+          </tr>`,
+        )}</tbody>
+      </table></div>
+      <form id="ki-form" method="post" action="/new-website/keywords/import/save"><input type="hidden" name="draft" value="${draft}" /></form>`,
+    html`<a class="ns-btn quiet" href="/new-website/keywords/import">Previous</a>
+      ${good.length
+        ? html`<button class="ns-btn primary" form="ki-form">Import ${String(good.length)} keyword${good.length === 1 ? '' : 's'}</button>`
+        : html`<button class="ns-btn primary" disabled>Nothing to import</button>`}`,
+  );
+}
