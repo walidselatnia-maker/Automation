@@ -276,18 +276,45 @@ async function make(reel: ReelRow, deps: ReelDeps): Promise<void> {
 let running: Promise<void> | null = null;
 
 /** Make every waiting reel, one at a time. Calling it while it runs does nothing extra. */
+/** After Google answers UNUSUAL_ACTIVITY, how long reels wait before the next one goes to Flow. */
+export const FLOW_PAUSE_KEY = 'newsite_reels_paused_until';
+export const FLOW_PAUSE_MS = 30 * 60_000;
+
 export function kickReels(deps: ReelDeps): Promise<void> {
   if (running) return running;
   running = (async () => {
+    // Let `running` be set before anything below can finish and clear it.
+    await Promise.resolve();
     try {
       for (;;) {
+        // Google flagged the account: nothing goes to Flow until the pause is over.
+        const pausedUntil = Number(deps.settings.get(FLOW_PAUSE_KEY)) || 0;
+        const now = (deps.now ?? Date.now)();
+        if (pausedUntil > now) {
+          log.warn(`reels paused until ${new Date(pausedUntil).toISOString()} after Google flagged unusual activity`);
+          const wake = setTimeout(() => void kickReels(deps), pausedUntil - now + 1000);
+          wake.unref?.();
+          return;
+        }
         const next = get<ReelRow>(`SELECT * FROM newsite_reels WHERE status = 'pending' ORDER BY id LIMIT 1`);
         if (!next) return;
         try {
           await make(next, deps);
         } catch (err) {
-          run(`UPDATE newsite_reels SET status = 'failed', error = ? WHERE id = ?`, errorMessage(err), next.id);
-          log.warn(`reel ${next.id} (${next.platform}) failed: ${errorMessage(err)}`);
+          const message = errorMessage(err);
+          if (/UNUSUAL_ACTIVITY|unusual activity/i.test(message)) {
+            // Never retried at once: retries are what makes Google's flag worse.
+            // Kept in the settings, so a restart does not end the pause.
+            deps.settings.set(FLOW_PAUSE_KEY, String(now + FLOW_PAUSE_MS));
+            run(
+              `UPDATE newsite_reels SET status = 'failed', error = ? WHERE id = ?`,
+              `${message} Google flagged unusual activity on the account, so reels are paused for ${FLOW_PAUSE_MS / 60_000} minutes. Try again after that, one reel at a time.`,
+              next.id,
+            );
+          } else {
+            run(`UPDATE newsite_reels SET status = 'failed', error = ? WHERE id = ?`, message, next.id);
+          }
+          log.warn(`reel ${next.id} (${next.platform}) failed: ${message}`);
         }
       }
     } finally {

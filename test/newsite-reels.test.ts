@@ -174,6 +174,24 @@ describe('reels: one Flow video per article and platform, from one prompt', () =
     expect(reelRules('facebook', settings)).toContain('Full recipe in the comments.');
   });
 
+  it('pauses every reel for 30 minutes when Google flags unusual activity, and keeps the pause', async () => {
+    setWebsiteChannels(websiteId, [channel('facebook', 'f1'), channel('instagram', 'i1')]);
+    createReels(seoId);
+    let now = 1_000_000;
+    const flagged = { ...deps(), now: () => now };
+    flagged.flow = { ...flagged.flow!, poll: async () => ({ status: 'FAILED', error: "RpcError: MZZa6b failed: ['PUBLIC_ERROR_UNUSUAL_ACTIVITY']" }) };
+    await kickReels(flagged);
+    const [first, second] = listPlanReels(planId);
+    expect(first!.error).toMatch(/paused for 30 minutes/);
+    expect(second!.status).toBe('pending'); // not sent: the pause holds it
+    expect(submitted).toHaveLength(1);
+    await kickReels(flagged); // still paused, even on a new start
+    expect(submitted).toHaveLength(1);
+    now += 31 * 60_000;
+    await kickReels({ ...deps(), now: () => now });
+    expect(submitted).toHaveLength(2);
+  });
+
   it('needs the public address so Flow can fetch the pictures', async () => {
     settings.set('public_base_url', ' ');
     setWebsiteChannels(websiteId, [channel('facebook', 'f1')]);
