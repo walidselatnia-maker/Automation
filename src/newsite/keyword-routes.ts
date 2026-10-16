@@ -25,7 +25,7 @@ import {
 } from './repo.js';
 import { listChannels, websiteChannels } from './channels.js';
 import { listPlanSocialPosts } from './social.js';
-import { addKeywordsStep, importCheckStep, importFileStep, keywordsOverview, articleStepPage, imagesStepPage, publishStepPage, shareStepPage, keywordsPage, recipeStepPage, seoStepPage, skeletonStepPage } from './keywords-view.js';
+import { addKeywordsStep, importCheckStep, importFileStep, keywordsOverview, articleStepPage, imagesStepPage, publishStepPage, keywordsPage, recipeStepPage, seoStepPage, skeletonStepPage } from './keywords-view.js';
 import { articleTypeFor } from './skeleton.js';
 import { clearPictures, isMainSlot, listPictures, listPlanPictures, listPlanSocialPictures } from './pictures.js';
 import { sweepRetries } from './retries.js';
@@ -304,7 +304,16 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
   });
 
   /** Steps 2 and 3 of one plan: its SEO metadata, then its skeletons. */
-  for (const step of ['seo', 'recipe', 'skeleton', 'article', 'images', 'publish', 'share'] as const) {
+  /** A plan's last step is the Sharing page, showing that plan's articles. */
+  app.get('/new-website/keywords/plan/:id/share', async (request, reply) => {
+    const plan = getKeywordPlan(Number((request.params as { id: string }).id) || 0);
+    if (!plan) return reply.redirect('/new-website/sharing', 303);
+    const q = new URLSearchParams(request.query as Record<string, string>);
+    q.set('plan', String(plan.id));
+    return reply.redirect(`/new-website/sharing?${q.toString()}#website-${plan.website_id}`, 303);
+  });
+
+  for (const step of ['seo', 'recipe', 'skeleton', 'article', 'images', 'publish'] as const) {
     app.get(`/new-website/keywords/plan/:id/${step}`, async (request, reply) => {
       if (!deps.isPlatformReady()) return reply.redirect(`/new-website/platform?error=${encodeURIComponent(NOT_READY)}`, 303);
       const planId = Number((request.params as { id: string }).id) || 0;
@@ -329,8 +338,6 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
                     ? articleStepPage(site, plan, rows)
                     : step === 'publish'
                       ? publishStepPage(site, plan, rows, listPlanPictures(plan.id))
-                      : step === 'share'
-                        ? shareStepPage(site, plan, rows, websiteChannels(site.id), listPlanSocialPosts(plan.id), listChannels(), listPlanSocialPictures(plan.id))
                       : imagesStepPage(site, plan, rows, listPlanPictures(plan.id), deps.flowProject?.(site) ?? '', deps.nextStepAt?.() ?? 0),
           flash: deps.readFlash(request.query),
         }),

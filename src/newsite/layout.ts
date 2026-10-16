@@ -37,14 +37,14 @@ const NAV: NavItem[] = [
     icon: ICON('<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>'),
   },
   {
+    href: '/new-website/sharing',
+    label: 'Sharing',
+    icon: ICON('<path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7"/><path d="M12 3v12M7 8l5-5 5 5"/>'),
+  },
+  {
     href: '/new-website/channels',
     label: 'Channels',
     icon: ICON('<circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M8.2 10.9l7.6-3.8M8.2 13.1l7.6 3.8"/>'),
-  },
-  {
-    href: '/new-website/shared',
-    label: 'Shared content',
-    icon: ICON('<path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7"/><path d="M12 3v12M7 8l5-5 5 5"/>'),
   },
 ];
 

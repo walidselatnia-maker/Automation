@@ -29,7 +29,7 @@ const day = (createdAt: string): string => {
   return y && m && d ? `${d} ${MONTHS[m - 1]} ${y}` : createdAt;
 };
 
-const CSS = `
+export const CSS = `
 .kw-site { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; color: var(--soft); font-size: 14px; }
 .kw-site select { height: 38px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: var(--r-ctl); }
 .kw-site strong { color: var(--ink); }
@@ -310,7 +310,13 @@ const STEP_PATH: Record<string, string> = {
   SEO: 'seo', Recipe: 'recipe', Skeleton: 'skeleton', Article: 'article', Images: 'images', Publish: 'publish', Share: 'share',
 };
 const stepHrefs = (names: string[], planId: number, websiteId: number): string[] =>
-  names.map((n) => (n === 'Keywords' ? `/new-website/keywords#website-${websiteId}` : `/new-website/keywords/plan/${planId}/${STEP_PATH[n]}`));
+  names.map((n) =>
+    n === 'Keywords'
+      ? `/new-website/keywords#website-${websiteId}`
+      : n === 'Share'
+        ? `/new-website/sharing?plan=${planId}#website-${websiteId}`
+        : `/new-website/keywords/plan/${planId}/${STEP_PATH[n]}`,
+  );
 
 const planHref = (planId: number, step: 'seo' | 'recipe' | 'skeleton' | 'article' | 'images' | 'publish' | 'share'): string => `/new-website/keywords/plan/${planId}/${step}`;
 
@@ -924,12 +930,12 @@ const SHARE_STATUS: Record<SocialPostRow['status'], string> = {
 };
 const SHARE_CLASS: Record<SocialPostRow['status'], string> = { pending: 'writing', picture: 'writing', waiting: 'writing', sent: 'done', failed: 'failed' };
 const PLATFORM_LABEL: Record<string, string> = { pinterest: 'Pinterest', facebook: 'Facebook' };
-const labelOf = (platform: string): string => PLATFORM_LABEL[platform] ?? platform.charAt(0).toUpperCase() + platform.slice(1);
+export const labelOf = (platform: string): string => PLATFORM_LABEL[platform] ?? platform.charAt(0).toUpperCase() + platform.slice(1);
 /** A field name as a label: "description" -> "Description", "cta" -> "Cta". */
 const fieldLabel = (f: string): string => ({ cta: 'Call to action', alt: 'Alt text', text: 'Post' } as Record<string, string>)[f] ?? (f.charAt(0).toUpperCase() + f.slice(1)).replace(/_/g, ' ');
 
 /** Posts still being made: the page refreshes itself while there are any. */
-const sharingBusy = (posts: SocialPostRow[]): boolean => posts.some((p) => p.status === 'pending' || p.status === 'picture');
+export const sharingBusy = (posts: SocialPostRow[]): boolean => posts.some((p) => p.status === 'pending' || p.status === 'picture');
 
 /** One post on one channel: the words and picture it was made with, where it stands, and what you can do. */
 function sharePostRow(p: SocialPostRow, channel: ChannelRow | undefined, planId: number, picture: PictureRow | undefined): Html {
@@ -987,10 +993,10 @@ function sharePostRow(p: SocialPostRow, channel: ChannelRow | undefined, planId:
 }
 
 /** Channels this keyword's article should be on but has no post for yet. */
-const missingChannels = (posts: SocialPostRow[], channels: ChannelRow[]): ChannelRow[] =>
+export const missingChannels = (posts: SocialPostRow[], channels: ChannelRow[]): ChannelRow[] =>
   channels.filter((c) => (c.platform !== 'facebook' || c.post_image) && !posts.some((p) => p.channel_id === c.id));
 
-function shareCard(row: SeoRow, intent: string, posts: SocialPostRow[], channels: ChannelRow[], allChannels: ChannelRow[], planId: number, pictures: PictureRow[]): Html {
+export function shareCard(row: SeoRow, intent: string, posts: SocialPostRow[], channels: ChannelRow[], allChannels: ChannelRow[], planId: number, pictures: PictureRow[]): Html {
   const published = row.post_status === 'published' && Boolean(row.post_url);
   const sent = posts.filter((p) => p.status === 'sent').length;
   const failed = posts.filter((p) => p.status === 'failed').length;
@@ -1020,53 +1026,6 @@ function shareCard(row: SeoRow, intent: string, posts: SocialPostRow[], channels
         : raw('')}
     ${posts.length ? html`<ul class="kw-share-list">${posts.map((p) => sharePostRow(p, byId.get(p.channel_id), planId, pictures.find((x) => x.id === p.picture_id)))}</ul>` : raw('')}`;
   return card(head, body, failed > 0);
-}
-
-/** The step after Publish: each published article shared on its website's channels. */
-export function shareStepPage(
-  site: NewWebsiteRow,
-  plan: KeywordPlan,
-  rows: SeoRow[],
-  channels: ChannelRow[],
-  posts: SocialPostRow[],
-  allChannels: ChannelRow[] = channels,
-  socialPictures: PictureRow[] = [],
-): Html {
-  const all = rows;
-  rows = readyFor('share', site, all);
-  const intentOf = new Map(plan.items.map((i) => [i.keyword, i.intent]));
-  const names = stepNames(site.niche);
-  const postsOf = (id: number) => posts.filter((p) => p.seo_id === id);
-  const published = rows.filter((r) => r.post_status === 'published' && r.post_url);
-  const toShare = published.filter((r) => missingChannels(postsOf(r.id), channels).length).length;
-  const shared = published.filter((r) => postsOf(r.id).length && postsOf(r.id).every((p) => p.status === 'sent')).length;
-  const body = html`
-    <h2>Share</h2>
-    <p>The sharing phase. Once an article is published, each channel makes its own post from that article, by its platform’s rules file: it writes the words, makes its own picture, then posts. It all starts by itself after publishing, and each channel’s progress and errors are shown here. The article link is never in a post’s words.</p>
-    ${channels.length
-      ? html`<div class="kw-share-channels"><span>Shares on</span>${channels.map(
-          (c) => html`<span class="ns-tag">${c.name} · ${labelOf(c.platform)}</span>`,
-        )}<a class="ns-btn small" href="/new-website/${String(site.id)}/edit?section=4">Change</a></div>`
-      : html`<div class="ns-alert info"><b>${site.name} shares on no channel yet.</b>
-          Pick its channels in the website’s settings, or add one first.
-          <div class="kw-share-actions"><a class="ns-btn small" href="/new-website/${String(site.id)}/edit?section=4">Pick channels</a><a class="ns-btn small" href="/new-website/channels">Add a channel</a></div></div>`}
-    ${rows.length
-      ? html`<ul class="acc-list" ${busyRows(rows) || sharingBusy(posts) ? raw(`data-watch="${plan.id}"`) : raw('')}>
-          ${rows.map((r) => shareCard(r, intentOf.get(r.keyword) ?? '', postsOf(r.id), channels, allChannels, plan.id, socialPictures))}
-        </ul>`
-      : all.length ? raw('') : html`<p class="kw-none">Nothing to share yet.</p>`}
-    ${waitingNote('share', all.length - rows.length, busyRows(all), plan.id)}`;
-  const foot = html`
-    <a class="ns-btn quiet" href="${planHref(plan.id, 'publish')}">Previous</a>
-    ${toShare
-      ? html`<form method="post" action="/new-website/keywords/plan/${plan.id}/share" style="margin:0">
-          <button class="ns-btn primary">Share all published (${toShare})</button>
-        </form>`
-      : html`<span></span>`}`;
-  return html`
-    <style>${raw(WIZARD_CSS)}${raw(CSS)}</style>
-    ${stepCard(names, names.indexOf('Share'), plan.pillar, html`${site.name} · <span class="ns-num">${shared} of ${published.length} published shared</span>`, body, foot, stepHrefs(names, plan.id, site.id))}
-    ${raw(watchScript)}`;
 }
 
 /** Opens and closes the cards, and refreshes the page while the AI is still working. */
@@ -1223,7 +1182,7 @@ const script = (websiteId: number, recipeSite: boolean): string => `<script>
 
 /* -- The Keywords page: a card per website ------------------------------------ */
 
-const OVERVIEW_CSS = `
+export const OVERVIEW_CSS = `
 .ko-cards { display: grid; gap: 16px; }
 .ko-site { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); box-shadow: var(--shadow); }
 .ko-head { width: 100%; display: flex; align-items: center; gap: 16px; padding: 18px 24px; background: none; border: 0; color: var(--ink);
@@ -1281,7 +1240,7 @@ export interface OverviewSite {
   plans: KeywordPlan[];
 }
 
-const CHEV = '<svg class="ko-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>';
+export const CHEV = '<svg class="ko-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>';
 
 /** One plan's progress, from its keywords. */
 const planProgress = (s: PlanStats | undefined): Html =>

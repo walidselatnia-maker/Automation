@@ -1,114 +1,95 @@
 import type { FastifyInstance } from 'fastify';
 import { html, raw, type Html } from '../web/views/layout.js';
-import { listChannels, PLATFORMS, type ChannelRow } from './channels.js';
+import { listChannels, websiteChannels } from './channels.js';
 import { newLayout, type NewFlash } from './layout.js';
-import { createSocialPosts, getSocialPost, kickSocial, listSocialPosts, remakeSocialPost, retrySocialPost, type SocialDeps, type SocialPostRow } from './social.js';
+import { createSocialPosts, getSocialPost, kickSocial, listPlanSocialPosts, remakeSocialPost, retrySocialPost, type SocialDeps } from './social.js';
 import { getSeoRow, listPlanSeo } from './seo.js';
+import { getKeywordPlan, listKeywordPlans, listNewWebsites } from './repo.js';
+import { listPlanSocialPictures } from './pictures.js';
+import { readyFor } from './keywords-view.js';
+import { shareArticlesStep, sharingPage, shareWebsiteStep, type SharingSite } from './sharing-view.js';
 import { checkPlatformRules, listPlatformRules } from './platform-rules.js';
 import { markdownToHtml } from './markdown.js';
-
-/**
- * The Shared content page: everything that went out, organised as platform,
- * then page or board, then item. Named "Shared content" because "Content"
- * already means writing the articles.
- */
-
-const CSS = `
-.sc-platform { margin: 0 0 32px; }
-.sc-platform > h2 { font-size: 20px; margin: 0 0 12px; }
-.sc-channel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); margin: 0 0 16px; overflow: hidden; box-shadow: var(--shadow); }
-.sc-channel > h3 { font-size: 15px; padding: 14px 18px; margin: 0; border-bottom: 1px solid var(--line); background: var(--raised); }
-.sc-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 16px; padding: 14px 18px; border-bottom: 1px solid var(--line); }
-.sc-item:last-child { border-bottom: 0; }
-.sc-item a { color: var(--ink); font-weight: 600; text-decoration: none; }
-.sc-item a:hover { color: var(--accent-text); }
-.sc-meta { color: var(--faint); font-size: 13px; }
-.sc-text { color: var(--soft); font-size: 13px; margin-top: 4px; max-width: 70ch; }
-.sc-err { margin-top: 8px; font-size: 13px; padding: 8px 12px; border-left: 4px solid var(--bad); background: var(--bad-tint); color: var(--ink); border-radius: var(--r-ctl); }
-.sc-status { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: 999px; font: 600 13px/1 var(--body); white-space: nowrap; background: var(--raised); color: var(--soft); border: 1px solid var(--line); }
-.sc-status.sent { background: var(--good-tint); color: var(--good); border-color: transparent; }
-.sc-status.failed { background: var(--bad-tint); color: var(--bad); border-color: transparent; }
-.sc-status.waiting, .sc-status.picture, .sc-status.pending { background: var(--idle); color: var(--idle-ink); border-color: transparent; }
-.sc-item form { margin: 6px 0 0; }
-.sc-none { color: var(--soft); }
-`;
-
-const STATUS: Record<SocialPostRow['status'], string> = {
-  pending: 'Being made',
-  picture: 'Making its picture',
-  waiting: 'Waiting for room',
-  sent: 'Sent',
-  failed: 'Failed',
-};
-
-/** What a post is called, from its platform's rules file. */
-const kindLabel = (platform: string): string => checkPlatformRules(platform).rules?.postLabel ?? 'Post';
-
-type Item = ReturnType<typeof listSocialPosts>[number];
-
-function itemRow(i: Item): Html {
-  return html`<div class="sc-item">
-    <div>
-      ${i.post_url ? html`<a href="${i.post_url}" target="_blank" rel="noopener">${i.title_seo || i.keyword}</a>` : html`<b>${i.title_seo || i.keyword}</b>`}
-      <div class="sc-meta">${kindLabel(i.kind)}${i.board_name ? ` · board “${i.board_name}”` : ''}${i.template ? ` · template ${i.template}` : ''} · queued ${i.created_at} UTC${i.due_at ? ` · queued in Buffer, goes out ${i.due_at.replace('T', ' ').slice(0, 16)} UTC` : i.sent_at ? ` · posted ${i.sent_at} UTC` : ''}</div>
-      ${i.text ? html`<div class="sc-text">${i.text}</div>` : raw('')}
-      ${i.error ? html`<div class="sc-err">${i.error}</div>` : raw('')}
-      ${i.status === 'failed'
-        ? html`<form method="post" action="/new-website/shared/${i.id}/retry"><button class="ns-btn small">Try again</button></form>`
-        : raw('')}
-    </div>
-    <span class="sc-status ${i.status}">${STATUS[i.status]}</span>
-  </div>`;
-}
-
-export function sharedContentPage(channels: ChannelRow[], items: Item[]): Html {
-  const byChannel = new Map<number, Item[]>();
-  for (const i of items) byChannel.set(i.channel_id, [...(byChannel.get(i.channel_id) ?? []), i]);
-  const platforms = PLATFORMS.filter((p) => channels.some((c) => c.platform === p.key));
-  return html`
-    <style>${raw(CSS)}</style>
-    <div class="ns-head">
-      <div>
-        <h1 class="ns-title">Shared content</h1>
-        <p class="ns-lede">Everything your articles were shared as, by platform and channel. The link to the article is never in the post: a pin carries it as its own link, and on Facebook it is the first comment.</p>
-      </div>
-    </div>
-    ${platforms.length
-      ? platforms.map(
-          (p) => html`<section class="sc-platform"><h2>${p.label}</h2>
-            ${channels
-              .filter((c) => c.platform === p.key)
-              .map(
-                (c) => html`<div class="sc-channel"><h3>${c.name}</h3>
-                  ${(byChannel.get(c.id) ?? []).length
-                    ? (byChannel.get(c.id) ?? []).map(itemRow)
-                    : html`<div class="sc-item"><span class="sc-none">Nothing shared on this channel yet.</span></div>`}
-                </div>`,
-              )}
-          </section>`,
-        )
-      : html`<p class="sc-none">No channel yet. Add one on the <a href="/new-website/channels">Channels</a> page, then pick it in a website’s setup.</p>`}`;
-}
 
 export function registerSocialRoutes(app: FastifyInstance, deps: SocialDeps & { readFlash: (q: unknown) => NewFlash; autoStart?: boolean }): void {
   // Posts left ready or waiting by a restart carry on.
   if (deps.autoStart !== false) void kickSocial(deps);
 
-  app.get('/new-website/shared', async (request, reply) =>
-    reply.type('text/html; charset=utf-8').send(
-      newLayout({
-        title: 'Shared content',
-        active: '/new-website/shared',
-        body: sharedContentPage(listChannels(), listSocialPosts()),
-        flash: deps.readFlash(request.query),
-      }),
-    ),
-  );
+  /* -- The Sharing page ---------------------------------------------------- */
 
-  /* -- The Share step of a keyword plan ------------------------------------ */
+  /** Every website, with its published articles and the posts made from them. */
+  const sharingSites = (): SharingSite[] => {
+    const plans = listKeywordPlans();
+    return listNewWebsites().map((site) => {
+      const own = plans.filter((p) => p.website_id === site.id).sort((x, y) => x.id - y.id);
+      const out: SharingSite = { site, channels: websiteChannels(site.id), articles: [], posts: [], pictures: [], unpublished: 0 };
+      for (const plan of own) {
+        const rows = listPlanSeo(plan.id);
+        const published = readyFor('share', site, rows);
+        const intentOf = new Map(plan.items.map((i) => [i.keyword, i.intent]));
+        out.articles.push(...published.map((row) => ({ row, intent: intentOf.get(row.keyword) ?? '', planId: plan.id, pillar: plan.pillar })));
+        out.unpublished += rows.length - published.length;
+        out.posts.push(...listPlanSocialPosts(plan.id));
+        out.pictures.push(...listPlanSocialPictures(plan.id));
+      }
+      return out;
+    });
+  };
+  const page = (title: string, body: ReturnType<typeof sharingPage>, query: unknown): string =>
+    newLayout({ title, active: '/new-website/sharing', body, flash: deps.readFlash(query) });
 
+  /** Back to a website's card on the Sharing page, with a message. */
+  const sharingAt = (websiteId: number, message: string, kind: 'ok' | 'error' = 'ok'): string =>
+    `/new-website/sharing?${kind}=${encodeURIComponent(message)}#website-${websiteId}`;
   const sharePage = (planId: number, message: string, kind: 'ok' | 'error' = 'ok'): string =>
-    `/new-website/keywords/plan/${planId}/share?${kind}=${encodeURIComponent(message)}`;
+    sharingAt(getKeywordPlan(planId)?.website_id ?? 0, message, kind);
+
+  app.get('/new-website/sharing', async (request, reply) => {
+    const planId = Number((request.query as { plan?: string }).plan) || 0;
+    const plan = planId ? getKeywordPlan(planId) : undefined;
+    const filter = plan ? { id: plan.id, pillar: plan.pillar, websiteId: plan.website_id } : null;
+    return reply.type('text/html; charset=utf-8').send(page('Sharing', sharingPage(sharingSites(), listChannels(), filter), request.query));
+  });
+
+  /** What changed, for the page to reload itself while posts are being made. */
+  app.get('/new-website/sharing/state', async () => ({
+    key: sharingSites()
+      .flatMap((s) => [...s.posts.map((p) => `${p.id}${p.status}`), ...s.pictures.map((x) => `p${x.id}${x.status}`), ...s.articles.map((a) => `a${a.row.id}`)])
+      .join(','),
+  }));
+
+  /** The Share articles wizard: the website, then its articles. */
+  app.get('/new-website/sharing/new', async (request, reply) => {
+    const chosen = Number((request.query as { website?: string }).website) || 0;
+    return reply.type('text/html; charset=utf-8').send(page('Share articles', shareWebsiteStep(sharingSites(), chosen), request.query));
+  });
+
+  app.get('/new-website/sharing/new/articles', async (request, reply) => {
+    const id = Number((request.query as { website?: string }).website) || 0;
+    const site = sharingSites().find((s) => s.site.id === id);
+    if (!site) return reply.redirect('/new-website/sharing/new', 303);
+    return reply.type('text/html; charset=utf-8').send(page('Share articles', shareArticlesStep(site), request.query));
+  });
+
+  app.post('/new-website/sharing/share', async (request, reply) => {
+    const b = (request.body ?? {}) as Record<string, string | string[] | undefined>;
+    const websiteId = Number(b.websiteId) || 0;
+    const ids = (Array.isArray(b.seo) ? b.seo : b.seo ? [b.seo] : []).map(Number).filter(Boolean);
+    const site = sharingSites().find((s) => s.site.id === websiteId);
+    if (!site) return reply.redirect('/new-website/sharing', 303);
+    if (!ids.length) {
+      return reply.redirect(`/new-website/sharing/new/articles?website=${websiteId}&error=${encodeURIComponent('Tick at least one article.')}`, 303);
+    }
+    // Only this website's published articles.
+    const allowed = new Set(site.articles.map((a) => a.row.id));
+    let added = 0;
+    for (const id of ids.filter((i) => allowed.has(i))) added += createSocialPosts(id);
+    void kickSocial(deps);
+    return reply.redirect(sharingAt(websiteId, added ? `Sharing ${added} post${added === 1 ? '' : 's'}, one after the other.` : 'Those articles are already on every channel.'), 303);
+  });
+
+  /** The old Shared content page is now part of Sharing. */
+  app.get('/new-website/shared', async (_request, reply) => reply.redirect('/new-website/sharing', 303));
   const isPublished = (r: { post_status: string; post_url: string }) => r.post_status === 'published' && Boolean(r.post_url);
 
   /** Share one published article on every channel it is not on yet. */
@@ -159,7 +140,7 @@ export function registerSocialRoutes(app: FastifyInstance, deps: SocialDeps & { 
         active: '/new-website/channels',
         flash: deps.readFlash(request.query),
         body: html`
-          <style>${raw(CSS)}.rl-body { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); padding: 24px 28px; box-shadow: var(--shadow); max-width: 72ch; }
+          <style>.sc-meta { color: var(--faint); font-size: 13px; } .rl-body { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); padding: 24px 28px; box-shadow: var(--shadow); max-width: 72ch; }
             .rl-body h2 { font-size: 18px; margin: 24px 0 8px; } .rl-body ul { padding-left: 20px; display: grid; gap: 4px; }
             .rl-state { display: grid; gap: 8px; margin: 0 0 20px; } .rl-facts { display: grid; grid-template-columns: 170px 1fr; gap: 6px 16px; margin: 0 0 20px; font-size: 14px; }
             .rl-facts dt { color: var(--faint); } .rl-facts dd { margin: 0; font-weight: 500; }</style>
@@ -205,6 +186,6 @@ export function registerSocialRoutes(app: FastifyInstance, deps: SocialDeps & { 
   app.post('/new-website/shared/:id/retry', async (request, reply) => {
     retrySocialPost(Number((request.params as { id: string }).id) || 0);
     void kickSocial(deps);
-    return reply.redirect(`/new-website/shared?ok=${encodeURIComponent('Trying it again.')}`, 303);
+    return reply.redirect(`/new-website/sharing?ok=${encodeURIComponent('Trying it again.')}`, 303);
   });
 }

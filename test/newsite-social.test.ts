@@ -459,10 +459,7 @@ describe('Sharing an article on its channels', () => {
 
   describe('the Share step of a keyword plan', () => {
     const planIdOf = () => get<{ plan_id: number }>('SELECT plan_id FROM keyword_seo WHERE id = ?', seoId)!.plan_id;
-    const page = () => {
-      const plan = listKeywordPlans().find((p) => p.id === planIdOf())!;
-      return shareStepPage(getNewWebsite(websiteId)!, plan, listPlanSeo(plan.id), websiteChannels(websiteId), listPlanSocialPosts(plan.id), listChannels()).value;
-    };
+    const page = async () => (await (await app()).inject({ url: `/new-website/sharing?plan=${planIdOf()}` })).body;
     const app = async () => {
       const a = Fastify();
       await a.register(formbody);
@@ -470,26 +467,26 @@ describe('Sharing an article on its channels', () => {
       return a;
     };
 
-    it('says when the website shares on no channel, with where to pick or add one', () => {
-      const out = page();
+    it('says when the website shares on no channel, with where to pick or add one', async () => {
+      const out = await page();
       expect(out).toContain('Long Livo shares on no channel yet.');
       expect(out).toContain(`/new-website/${websiteId}/edit?section=4`);
-      expect(out).toContain('8. Share');
+      expect(out).toContain('<h1 class="ns-title">Sharing</h1>');
     });
 
     it('offers Share now for a published article not on its channels yet, and shares it', async () => {
       setWebsiteChannels(websiteId, [pinChannel(), fbChannel()]);
-      expect(page()).toContain('Share now');
+      expect(await page()).toContain('Share now');
       const res = await (await app()).inject({ method: 'POST', url: `/new-website/keywords/share/${seoId}` });
-      expect(res.headers.location).toMatch(/share\?ok=.*2%20channels/);
+      expect(res.headers.location).toMatch(/sharing\?ok=.*2%20channels/);
       expect(listPlanSocialPosts(planIdOf())).toHaveLength(2);
-      expect(page()).not.toContain('Share now');
+      expect(await page()).not.toContain('Share now');
     });
 
     it('shows what each channel made, and Queued in Buffer with Buffer’s time once Buffer took it', async () => {
       setWebsiteChannels(websiteId, [pinChannel()]);
       await share();
-      const out = page();
+      const out = await page();
       expect(out).toContain('Queued in Buffer');
       expect(out).toContain('Buffer posts it 2026-10-14 09:30 UTC');
       expect(out).toContain(GOOD_PIN.title);
@@ -507,12 +504,12 @@ describe('Sharing an article on its channels', () => {
         `UPDATE newsite_social_posts SET status = 'failed', error = 'no address', title = ?, text = ?, alt = ?, overlay = ?, picture_id = ? WHERE id = ?`,
         GOOD_PIN.title, GOOD_PIN.description, GOOD_PIN.alt, JSON.stringify({ headline: GOOD_PIN.headline, cta: GOOD_PIN.cta }), pictureId, post!.id,
       );
-      const out = page();
+      const out = await page();
       expect(out).toContain(GOOD_PIN.title);
       expect(out).toContain(GOOD_PIN.headline);
       expect(out).not.toContain('Its words are being written');
       const res = await (await app()).inject({ method: 'POST', url: `/new-website/keywords/share/post/${post!.id}/retry` });
-      expect(res.headers.location).toMatch(/share\?ok=/);
+      expect(res.headers.location).toMatch(/sharing\?ok=/);
       await kickSocial(deps());
       expect(asked.filter((x) => x.name === 'newsite-social-post')).toHaveLength(0); // its words are kept
       expect(bufferPosts[0]).toMatchObject({ text: GOOD_PIN.description, altText: GOOD_PIN.alt });
@@ -520,14 +517,33 @@ describe('Sharing an article on its channels', () => {
       expect(getSocialPost(post!.id)!.status).toBe('sent');
     });
 
+    it('is the Sharing page under Keywords, with a Share articles wizard', async () => {
+      setWebsiteChannels(websiteId, [pinChannel()]);
+      const a = await app();
+      const out = (await a.inject({ url: '/new-website/sharing' })).body;
+      expect(out).toMatch(/Keywords<\/span>[\s\S]*Sharing<\/span>[\s\S]*Channels<\/span>/);
+      expect(out).not.toContain('Shared content');
+      expect(out).toContain('href="/new-website/sharing/new"');
+      expect((await a.inject({ url: '/new-website/shared' })).headers.location).toBe('/new-website/sharing');
+      const step2 = (await a.inject({ url: `/new-website/sharing/new/articles?website=${websiteId}` })).body;
+      expect(step2).toContain('Step 2 of 2: Articles');
+      expect(step2).toContain(`name="seo" value="${seoId}"`);
+      const res = await a.inject({
+        method: 'POST', url: '/new-website/sharing/share',
+        payload: `websiteId=${websiteId}&seo=${seoId}`, headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      });
+      expect(res.headers.location).toMatch(new RegExp(`sharing\\?ok=Sharing%201%20post.*#website-${websiteId}`));
+      expect(listPlanSocialPosts(planIdOf())).toHaveLength(1);
+    });
+
     it('puts a failed post back to work', async () => {
       setWebsiteChannels(websiteId, [fbChannel()]);
       createSocialPosts(seoId);
       const [post] = listSocialPosts();
       run(`UPDATE newsite_social_posts SET status = 'failed', error = 'Facebook said no.' WHERE id = ?`, post!.id);
-      expect(page()).toContain('Facebook said no.');
+      expect(await page()).toContain('Facebook said no.');
       const res = await (await app()).inject({ method: 'POST', url: `/new-website/keywords/share/post/${post!.id}/retry` });
-      expect(res.headers.location).toMatch(/share\?ok=/);
+      expect(res.headers.location).toMatch(/sharing\?ok=/);
       expect(getSocialPost(post!.id)!.status).not.toBe('failed');
     });
 
