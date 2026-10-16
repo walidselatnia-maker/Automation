@@ -6,6 +6,9 @@ import { createSocialPosts, getSocialPost, kickSocial, listPlanSocialPosts, rema
 import { getSeoRow, listPlanSeo } from './seo.js';
 import { getKeywordPlan, listKeywordPlans, listNewWebsites } from './repo.js';
 import { listPlanSocialPictures } from './pictures.js';
+import { createReels, getReel, kickReels, listPlanReels, reelDir, remakeReel, resetInterruptedReels, type ReelDeps } from './reels.js';
+import { createReadStream, existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { readyFor } from './keywords-view.js';
 import { shareArticlesStep, sharingPage, shareWebsiteStep, type SharingSite } from './sharing-view.js';
 import { checkPlatformRules, listPlatformRules } from './platform-rules.js';
@@ -13,7 +16,12 @@ import { markdownToHtml } from './markdown.js';
 
 export function registerSocialRoutes(app: FastifyInstance, deps: SocialDeps & { readFlash: (q: unknown) => NewFlash; autoStart?: boolean }): void {
   // Posts left ready or waiting by a restart carry on.
-  if (deps.autoStart !== false) void kickSocial(deps);
+  const reels: ReelDeps = { settings: deps.settings, encryptionKey: deps.encryptionKey, dataDir: deps.dataDir };
+  if (deps.autoStart !== false) {
+    void kickSocial(deps);
+    resetInterruptedReels();
+    void kickReels(reels);
+  }
 
   /* -- The Sharing page ---------------------------------------------------- */
 
@@ -22,7 +30,7 @@ export function registerSocialRoutes(app: FastifyInstance, deps: SocialDeps & { 
     const plans = listKeywordPlans();
     return listNewWebsites().map((site) => {
       const own = plans.filter((p) => p.website_id === site.id).sort((x, y) => x.id - y.id);
-      const out: SharingSite = { site, channels: websiteChannels(site.id), articles: [], posts: [], pictures: [], unpublished: 0 };
+      const out: SharingSite = { site, channels: websiteChannels(site.id), articles: [], posts: [], pictures: [], reels: [], unpublished: 0 };
       for (const plan of own) {
         const rows = listPlanSeo(plan.id);
         const published = readyFor('share', site, rows);
@@ -31,6 +39,7 @@ export function registerSocialRoutes(app: FastifyInstance, deps: SocialDeps & { 
         out.unpublished += rows.length - published.length;
         out.posts.push(...listPlanSocialPosts(plan.id));
         out.pictures.push(...listPlanSocialPictures(plan.id));
+        out.reels.push(...listPlanReels(plan.id));
       }
       return out;
     });
@@ -54,7 +63,7 @@ export function registerSocialRoutes(app: FastifyInstance, deps: SocialDeps & { 
   /** What changed, for the page to reload itself while posts are being made. */
   app.get('/new-website/sharing/state', async () => ({
     key: sharingSites()
-      .flatMap((s) => [...s.posts.map((p) => `${p.id}${p.status}`), ...s.pictures.map((x) => `p${x.id}${x.status}`), ...s.articles.map((a) => `a${a.row.id}`)])
+      .flatMap((s) => [...s.posts.map((p) => `${p.id}${p.status}`), ...s.pictures.map((x) => `p${x.id}${x.status}`), ...s.articles.map((a) => `a${a.row.id}`), ...s.reels.map((r) => `r${r.id}${r.status}`)])
       .join(','),
   }));
 
@@ -83,13 +92,38 @@ export function registerSocialRoutes(app: FastifyInstance, deps: SocialDeps & { 
     // Only this website's published articles.
     const allowed = new Set(site.articles.map((a) => a.row.id));
     let added = 0;
-    for (const id of ids.filter((i) => allowed.has(i))) added += createSocialPosts(id);
+    let madeReels = 0;
+    for (const id of ids.filter((i) => allowed.has(i))) {
+      added += createSocialPosts(id);
+      madeReels += createReels(id);
+    }
+    void kickReels(reels);
     void kickSocial(deps);
-    return reply.redirect(sharingAt(websiteId, added ? `Sharing ${added} post${added === 1 ? '' : 's'}, one after the other.` : 'Those articles are already on every channel.'), 303);
+    const parts = [added ? `${added} post${added === 1 ? '' : 's'}` : '', madeReels ? `${madeReels} reel${madeReels === 1 ? '' : 's'}` : ''].filter(Boolean);
+    return reply.redirect(sharingAt(websiteId, parts.length ? `Sharing ${parts.join(' and ')}, one after the other.` : 'Those articles are already on every channel.'), 303);
   });
 
   /** The old Shared content page is now part of Sharing. */
   app.get('/new-website/shared', async (_request, reply) => reply.redirect('/new-website/sharing', 303));
+
+  /* -- Reels ---------------------------------------------------------------- */
+
+  app.get('/new-website/reels/:id/file', async (request, reply) => {
+    const reel = getReel(Number((request.params as { id: string }).id) || 0);
+    // The file name is the platform's own (reel-<id>.mp4), never a request's.
+    const path = reel?.file ? join(reelDir(deps.dataDir), reel.file) : '';
+    if (!path || !existsSync(path)) return reply.code(404).send('Not found');
+    return reply.type('video/mp4').header('Cache-Control', 'private, max-age=86400').send(createReadStream(path));
+  });
+
+  app.post('/new-website/reels/:id/remake', async (request, reply) => {
+    const reel = getReel(Number((request.params as { id: string }).id) || 0);
+    const row = reel ? getSeoRow(reel.seo_id) : undefined;
+    if (!reel || !row) return reply.redirect('/new-website/sharing', 303);
+    const ok = remakeReel(reel.id);
+    void kickReels(reels);
+    return reply.redirect(sharePage(row.plan_id, ok ? 'Making the reel again.' : 'That reel is being made right now.', ok ? 'ok' : 'error'), 303);
+  });
   const isPublished = (r: { post_status: string; post_url: string }) => r.post_status === 'published' && Boolean(r.post_url);
 
   /** Share one published article on every channel it is not on yet. */

@@ -1,9 +1,10 @@
 import { html, raw, type Html } from '../web/views/layout.js';
 import type { NewWebsiteRow } from './repo.js';
 import type { SeoRow } from './seo.js';
-import type { ChannelRow } from './channels.js';
+import { PLATFORMS, channelColor, type ChannelRow } from './channels.js';
 import type { SocialPostRow } from './social.js';
 import type { PictureRow } from './pictures.js';
+import type { ReelRow } from './reels.js';
 import { WIZARD_CSS } from './view.js';
 import { CHEV, CSS, OVERVIEW_CSS, labelOf, missingChannels, shareCard, sharingBusy } from './keywords-view.js';
 
@@ -31,9 +32,23 @@ export interface SharingSite {
   pictures: PictureRow[];
   /** Articles of this website not published yet. */
   unpublished: number;
+  reels: ReelRow[];
 }
 
 const SHARING_CSS = `
+.sh-reels { margin: 18px 0 8px; }
+.sh-reels > h3 { font-size: 15px; margin: 0 0 10px; }
+.sh-reel-group { background: color-mix(in srgb, var(--ch-color) 7%, var(--surface)); border: 1px solid color-mix(in srgb, var(--ch-color) 22%, var(--line)); border-left: 4px solid var(--ch-color); border-radius: var(--r-card); padding: 14px 16px; margin: 0 0 12px; }
+.sh-reel-group > h4 { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; font-size: 15px; }
+.sh-dot { width: 12px; height: 12px; border-radius: 50%; background: var(--ch-color); }
+.sh-reel-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; }
+.sh-reel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-ctl); padding: 10px; display: grid; gap: 8px; align-content: start; }
+.sh-reel video, .sh-reel .sh-reel-empty { width: 100%; aspect-ratio: 9 / 16; border-radius: 6px; background: var(--raised); object-fit: cover; }
+.sh-reel .sh-reel-empty { display: grid; place-items: center; color: var(--soft); font-size: 13px; text-align: center; padding: 8px; }
+.sh-reel b { font-size: 13px; line-height: 1.35; }
+.sh-reel details { font-size: 12px; color: var(--soft); }
+.sh-reel details pre { white-space: pre-wrap; font-size: 12px; max-height: 220px; overflow: auto; }
+.sh-reel form { margin: 0; }
 .sh-sum { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 20px; }
 .sh-channels { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 16px 0; font-size: 14px; color: var(--soft); }
 .sh-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0 0 16px; }
@@ -80,6 +95,7 @@ function siteCard(s: SharingSite, allChannels: ChannelRow[], open: boolean, plan
         : html`<div class="ns-alert info" style="margin-top:16px"><b>${s.site.name} shares on no channel yet.</b> Pick its channels in the website’s settings, or add a channel first.
             <div class="kw-share-actions"><a class="ns-btn small" href="/new-website/${String(s.site.id)}/edit?section=4">Pick channels</a><a class="ns-btn small" href="/new-website/channels">Add a channel</a></div></div>`}
       ${plan ? html`<div class="sh-filter"><span class="ns-tag">Keyword plan: ${plan.pillar}</span><a class="ns-btn small" href="/new-website/sharing#website-${String(s.site.id)}">Show every article</a></div>` : raw('')}
+      ${reelsBlock(s, plan)}
       ${plans.length
         ? plans.map(([planId, pillar]) => html`
             <p class="sh-plan">From the keyword plan <a href="/new-website/keywords/plan/${String(planId)}/publish">${pillar}</a></p>
@@ -100,7 +116,7 @@ export function sharingPage(sites: SharingSite[], allChannels: ChannelRow[], pla
     },
     { published: 0, making: 0, failed: 0, toShare: 0 },
   );
-  const busy = sites.some((s) => sharingBusy(s.posts));
+  const busy = sites.some((s) => sharingBusy(s.posts) || s.reels.some((r) => r.status === 'pending' || r.status === 'making'));
   return html`
     <style>${raw(CSS)}${raw(OVERVIEW_CSS)}${raw(SHARING_CSS)}</style>
     <div class="ns-head">
@@ -217,4 +233,43 @@ export function shareArticlesStep(s: SharingSite): Html {
         : html`<button class="ns-btn primary" disabled>Nothing to share</button>`}`,
     error,
   );
+}
+
+/* -- Reels: one video per article and platform, each platform in its colour -- */
+
+const REEL_STATUS: Record<ReelRow['status'], [string, string]> = {
+  pending: ['Waiting its turn', 'busy'],
+  making: ['Being made in Flow', 'busy'],
+  done: ['Made', 'ok'],
+  failed: ['Failed', 'bad'],
+};
+
+function reelsBlock(s: SharingSite, plan: { id: number } | null): Html {
+  const articles = new Map(s.articles.map((a) => [a.row.id, a]));
+  const reels = s.reels.filter((r) => articles.has(r.seo_id) && (!plan || articles.get(r.seo_id)!.planId === plan.id));
+  if (!reels.length) return raw('');
+  const platforms = [...new Set(reels.map((r) => r.platform))];
+  return html`<div class="sh-reels"><h3>Reels</h3>${platforms.map((platform) => {
+    const mine = reels.filter((r) => r.platform === platform);
+    const label = PLATFORMS.find((p) => p.key === platform)?.label ?? labelOf(platform);
+    return html`<section class="sh-reel-group" style="--ch-color:${channelColor({ platform })}">
+      <h4><span class="sh-dot"></span>${label} reels <span class="ns-tag">${String(mine.length)}</span></h4>
+      <div class="sh-reel-list">${mine.map((r) => {
+        const a = articles.get(r.seo_id)!;
+        const [status, cls] = REEL_STATUS[r.status];
+        return html`<div class="sh-reel">
+          ${r.status === 'done'
+            ? html`<video src="/new-website/reels/${String(r.id)}/file" controls preload="metadata" playsinline></video>`
+            : html`<div class="sh-reel-empty">${r.status === 'failed' ? 'No video' : 'The video is being made. It takes a few minutes.'}</div>`}
+          <b>${a.row.title || a.row.keyword}</b>
+          <span class="ns-badge ${cls}">${status}</span>
+          ${r.error ? html`<div class="kw-seo-problems">${r.error}</div>` : raw('')}
+          ${r.prompt ? html`<details><summary>The prompt</summary><pre>${r.prompt}</pre></details>` : raw('')}
+          ${r.status === 'done' || r.status === 'failed'
+            ? html`<form method="post" action="/new-website/reels/${String(r.id)}/remake"><button class="ns-btn small ${r.status === 'failed' ? 'primary' : ''}">${r.status === 'failed' ? 'Try again' : 'Make again'}</button></form>`
+            : raw('')}
+        </div>`;
+      })}</div>
+    </section>`;
+  })}</div>`;
 }

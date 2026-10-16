@@ -28,6 +28,7 @@ import { decrypt } from '../lib/crypto.js';
 import { newLayout, type NewFlash } from './layout.js';
 import { newWebsiteListPage, newWebsiteWizardPage, type WizardChannel } from './view.js';
 import { channelsFor, setWebsiteChannels, websiteChannelIds } from './channels.js';
+import { createReels, kickReels } from './reels.js';
 
 /** The channels a website's wizard offers, ticked when the website already posts to them. */
 const wizardChannels = (websiteId: number): WizardChannel[] => {
@@ -111,6 +112,7 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
     const social: SocialDeps = { settings: deps.settings, encryptionKey: deps.encryptionKey, ask, dataDir: deps.dataDir, fetchImpl: deps.fetchImpl };
     publish.afterPublish = (seoId) => {
       if (createSocialPosts(seoId)) void kickSocial(social);
+      if (createReels(seoId)) void kickReels(social);
     };
     publish.startPictures = registerPictureRoutes(app, {
       settings: deps.settings,

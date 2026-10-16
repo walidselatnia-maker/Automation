@@ -938,7 +938,7 @@ const fieldLabel = (f: string): string => ({ cta: 'Call to action', alt: 'Alt te
 export const sharingBusy = (posts: SocialPostRow[]): boolean => posts.some((p) => p.status === 'pending' || p.status === 'picture');
 
 /** One post on one channel: the words and picture it was made with, where it stands, and what you can do. */
-function sharePostRow(p: SocialPostRow, channel: ChannelRow | undefined, planId: number, picture: PictureRow | undefined): Html {
+export function sharePostRow(p: SocialPostRow, channel: ChannelRow | undefined, planId: number, picture: PictureRow | undefined, heading = ''): Html {
   const where = channel ? `${channel.name} · ${labelOf(channel.platform)} through ${channel.via === 'buffer' ? 'Buffer' : 'the API'}` : 'A removed channel';
   const viaBuffer = channel?.via === 'buffer';
   const status = p.status === 'sent' && viaBuffer ? 'Queued in Buffer' : SHARE_STATUS[p.status];
@@ -974,7 +974,7 @@ function sharePostRow(p: SocialPostRow, channel: ChannelRow | undefined, planId:
   return html`<li class="kw-share-post">
     ${pictureBox}
     <div class="kw-share-main">
-      <div class="kw-share-top"><b>${where}</b><span class="kw-seo-status ${SHARE_CLASS[p.status]}">${status}</span></div>
+      <div class="kw-share-top"><b>${heading || where}</b><span class="kw-seo-status ${SHARE_CLASS[p.status]}">${status}</span></div>
       ${facts ? html`<div class="kw-share-meta">${facts}</div>` : raw('')}
       ${shown.length
         ? html`<dl class="kw-share-words">${shown.map(([k, v]) => html`<div><dt>${fieldLabel(k)}</dt><dd>${v}</dd></div>`)}</dl>`

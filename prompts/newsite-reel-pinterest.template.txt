@@ -1,0 +1,17 @@
+Create a 10-second vertical (9:16) Pinterest video pin about: {{title}}. The attached reference photos are the visual source of truth: same food, same plate, same colours, same portion, same toppings. Nothing may be added, swapped or invented.
+
+SUBJECT: {{title}}, exactly as in the reference photos, styled like a beautiful saved idea. Name the textures the camera will see: the glossy sauce, the crisp golden edges, the soft crumb, whatever the photos show.
+
+ENVIRONMENT: a bright, tidy, aesthetic kitchen table. Light wood or white marble, a linen napkin, one or two small props in soft neutral colours. Nothing that is not in the photos unless a hand brings it in.
+
+CAMERA: overhead, then a smooth move to 45 degrees, phone camera on a steady hand. One movement across the ten seconds: a gentle arc or a slow push toward the dish. No cuts.
+
+LIGHTING: soft, bright daylight from a large window, airy and clean, light shadows.
+
+ACTION, in order, at natural real-time speed: the finished dish in full view, a hand adds one final touch (a sprinkle, a drizzle, a garnish), then the camera settles on the most beautiful part of the dish.
+
+VOICE: a calm adult female voice speaks in ENGLISH, soft and inviting. In the first second she says a short hook of at most eight words about why this is worth saving. In the last 2 seconds she says, word for word: "Save this for later."
+
+SOUND: quiet natural kitchen sound under the voice. No music.
+
+MOOD and STYLE: calm, bright, inspiring, the kind of video people save to a board. Natural colours, clean composition. No logos, no watermarks, no on-screen text.

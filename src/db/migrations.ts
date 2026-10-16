@@ -824,6 +824,28 @@ export const MIGRATIONS: Migration[] = [
       addColumn(db, 'keyword_plans', 'subs_error', "TEXT NOT NULL DEFAULT ''");
     },
   },
+  {
+    id: '034-newsite-reels',
+    description: 'New websites: one reel video per published article and platform, made in Google Flow from one prompt',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS newsite_reels (
+          id         INTEGER PRIMARY KEY AUTOINCREMENT,
+          seo_id     INTEGER NOT NULL REFERENCES keyword_seo(id) ON DELETE CASCADE,
+          platform   TEXT NOT NULL,
+          prompt     TEXT NOT NULL DEFAULT '',
+          -- pending -> making -> done | failed
+          status     TEXT NOT NULL DEFAULT 'pending',
+          job_id     TEXT NOT NULL DEFAULT '',
+          file       TEXT NOT NULL DEFAULT '',
+          error      TEXT NOT NULL DEFAULT '',
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          done_at    TEXT,
+          UNIQUE (seo_id, platform)
+        );
+      `);
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */
