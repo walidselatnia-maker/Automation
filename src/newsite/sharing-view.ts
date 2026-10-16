@@ -75,6 +75,8 @@ const SHARING_CSS = `
 .sh-tab .n { font-variant-numeric: tabular-nums; opacity: .85; }
 .sh-panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); box-shadow: var(--shadow); padding: 6px 22px 18px; }
 .sh-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 14px 0 6px; font-size: 13px; color: var(--soft); }
+.sh-legend-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; margin: 14px 0 0; font-size: 14px; color: var(--soft); line-height: 1.5; }
+.sh-legend-row p { margin: 0; flex: 1 1 320px; }
 .sh-articles { list-style: none; margin: 0; padding: 0; }
 .sh-article { padding: 14px 0; border-bottom: 1px solid var(--line); }
 .sh-article:last-child { border-bottom: 0; }
@@ -89,15 +91,24 @@ const SHARING_CSS = `
 .sh-none-row form { margin: 0; }
 .sh-empty { color: var(--soft); padding: 18px 0 6px; margin: 0; }
 .sh-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0 0 16px; }
-.sh-reel-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 14px; padding-top: 16px; }
-.sh-reel { background: var(--raised); border: 1px solid var(--line); border-radius: var(--r-ctl); padding: 10px; display: grid; gap: 8px; align-content: start; }
-.sh-reel video, .sh-reel .sh-reel-empty { width: 100%; aspect-ratio: 9 / 16; border-radius: 6px; background: var(--surface); object-fit: cover; }
-.sh-reel .sh-reel-empty { display: grid; place-items: center; color: var(--soft); font-size: 13px; text-align: center; padding: 8px; }
-.sh-reel b { font-size: 13px; line-height: 1.35; }
-.sh-reel details { font-size: 12px; color: var(--soft); }
-.sh-reel details pre { white-space: pre-wrap; font-size: 12px; max-height: 220px; overflow: auto; }
-.sh-reel form { margin: 0; }
-.sh-hook { font-size: 13px; color: var(--ink); background: var(--surface); border-left: 3px solid var(--accent); padding: 4px 8px; border-radius: 4px; }
+/* A reel: its 9:16 video on the left, what it is and what to do on the right. */
+.sh-reel-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr)); gap: 14px; padding-top: 16px; }
+.sh-reel { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 16px; align-items: start; min-width: 0;
+  background: var(--raised); border: 1px solid var(--line); border-radius: var(--r-card); padding: 14px; }
+.sh-reel-media video, .sh-reel-media .sh-reel-empty { display: block; width: 150px; aspect-ratio: 9 / 16; border-radius: 8px; background: var(--surface); object-fit: cover; border: 1px solid var(--line); }
+.sh-reel-media .sh-reel-empty { display: grid; place-items: center; padding: 10px; text-align: center; color: var(--soft); font-size: 13px; line-height: 1.4; }
+.sh-reel-media .sh-reel-empty.bad { color: var(--bad); background: var(--bad-tint); border-color: transparent; }
+.sh-reel-body { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; min-width: 0; }
+.sh-reel-body > * { max-width: 100%; }
+.sh-reel-title { font-size: 15px; font-weight: 600; line-height: 1.35; color: var(--ink); overflow-wrap: anywhere; }
+.sh-reel-body .kw-seo-problems { margin: 0; width: 100%; font-size: 13px; overflow-wrap: anywhere; }
+.sh-reel-body details { width: 100%; font-size: 13px; color: var(--soft); }
+.sh-reel-body details summary { cursor: pointer; }
+.sh-reel-body details pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; max-height: 240px; overflow: auto; margin: 8px 0 0; padding: 10px; background: var(--surface); border-radius: 6px; }
+.sh-reel-body form { margin: 0; }
+@media (max-width: 520px) { .sh-reel { grid-template-columns: 1fr; } .sh-reel-media video, .sh-reel-media .sh-reel-empty { width: 100%; max-width: 220px; } }
+.sh-hook { width: 100%; font-size: 14px; line-height: 1.45; color: var(--ink); background: var(--surface); border-left: 3px solid var(--accent); padding: 8px 10px; border-radius: 6px; overflow-wrap: anywhere; }
+.sh-hook small { display: block; font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--soft); margin-bottom: 2px; }
 .sh-pick { display: grid; gap: 10px; }
 .sh-pick .ch-option span.sh-missing { display: block; margin-top: 2px; }
 `;
@@ -262,9 +273,9 @@ export function sharingChannelPage(s: SharingSite, ch: ChannelRow, tab: ChannelT
   const problems = postRows(d.articles, true);
   const body =
     tab === 'reels'
-      ? html`<div class="sh-legend">Each reel is one video made in Google Flow from one prompt, written by the AI from the article by the
-            <a href="/new-website/sharing/reel-rules/${ch.platform}?back=${encodeURIComponent(channelHref(s.site.id, ch.id, 'reels', plan))}">${label} reel rules</a>: the finished result and the hook in the first 2 seconds, then the stages of making it.
-            <a class="ns-btn small" href="/new-website/sharing/reel-rules/${ch.platform}?back=${encodeURIComponent(channelHref(s.site.id, ch.id, 'reels', plan))}">Edit reel rules</a></div>
+      ? html`<div class="sh-legend-row">
+            <p>Each reel is one Google Flow video from one prompt, written by the AI from the article: the finished result and the hook in the first 2 seconds, then the stages of making it.</p>
+            <a class="ns-btn small" href="/new-website/sharing/reel-rules/${ch.platform}?back=${encodeURIComponent(channelHref(s.site.id, ch.id, 'reels', plan))}">Edit ${label} reel rules</a></div>
           ${d.reels!.length ? reelCards(d.reels!) : html`<p class="sh-empty">No reel yet. A reel is made for each article once it is published.</p>`}`
       : tab === 'problems'
         ? problems.length || failedReels.length
@@ -380,17 +391,21 @@ const REEL_STATUS: Record<ReelRow['status'], [string, string]> = {
 function reelCard(r: ReelRow, a: SharingArticle | undefined): Html {
   const [status, cls] = REEL_STATUS[r.status];
   return html`<div class="sh-reel">
-    ${r.status === 'done'
-      ? html`<video src="/new-website/reels/${String(r.id)}/file" controls preload="metadata" playsinline></video>`
-      : html`<div class="sh-reel-empty">${r.status === 'failed' ? 'No video' : 'The video is being made. It takes a few minutes.'}</div>`}
-    <b>${a ? a.row.title || a.row.keyword : 'An article'}</b>
-    ${r.hook ? html`<span class="sh-hook">Hook: “${r.hook}”</span>` : raw('')}
-    <span class="ns-badge ${cls}">${status}</span>
-    ${r.error ? html`<div class="kw-seo-problems">${r.error}</div>` : raw('')}
-    ${r.prompt ? html`<details><summary>The prompt</summary><pre>${r.prompt}</pre></details>` : raw('')}
-    ${r.status === 'done' || r.status === 'failed'
-      ? html`<form method="post" action="/new-website/reels/${String(r.id)}/remake"><button class="ns-btn small ${r.status === 'failed' ? 'primary' : ''}">${r.status === 'failed' ? 'Try again' : 'Make again'}</button></form>`
-      : raw('')}
+    <div class="sh-reel-media">
+      ${r.status === 'done'
+        ? html`<video src="/new-website/reels/${String(r.id)}/file" controls preload="metadata" playsinline></video>`
+        : html`<div class="sh-reel-empty ${r.status === 'failed' ? 'bad' : ''}">${r.status === 'failed' ? 'No video' : 'Being made in Flow. A few minutes.'}</div>`}
+    </div>
+    <div class="sh-reel-body">
+      <span class="sh-reel-title">${a ? a.row.title || a.row.keyword : 'An article'}</span>
+      <span class="ns-badge ${cls}">${status}</span>
+      ${r.hook ? html`<div class="sh-hook"><small>Hook</small>“${r.hook}”</div>` : raw('')}
+      ${r.error ? html`<div class="kw-seo-problems">${r.error}</div>` : raw('')}
+      ${r.prompt ? html`<details><summary>The prompt</summary><pre>${r.prompt}</pre></details>` : raw('')}
+      ${r.status === 'done' || r.status === 'failed'
+        ? html`<form method="post" action="/new-website/reels/${String(r.id)}/remake"><button class="ns-btn small ${r.status === 'failed' ? 'primary' : ''}">${r.status === 'failed' ? 'Try again' : 'Make again'}</button></form>`
+        : raw('')}
+    </div>
   </div>`;
 }
 
