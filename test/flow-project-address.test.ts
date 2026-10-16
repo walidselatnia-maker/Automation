@@ -12,5 +12,6 @@ describe('a Flow project as its whole address', () => {
   it('says how to copy it when it is something else', () => {
     expect(flowProjectProblem('https://flow.google.com/')).toMatch(/whole address of the project/);
     expect(flowProjectProblem('my project')).toMatch(/whole address of the project/);
+    expect(flowProjectProblem('https://evil.example/project/dafc82d0-a6e2-4c2d-a6cd-8f495a1343b8')).toMatch(/whole address of the project/);
   });
 });

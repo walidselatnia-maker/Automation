@@ -34,7 +34,11 @@ RECAPTCHA_SITE_KEY = os.environ.get("RECAPTCHA_SITE_KEY", "6LdsFiUsAAAAAIjVDZcuL
 _flow_project = os.environ.get("FLOW_PROJECT_ID", "").strip()
 _flow_project_match = re.search(r"/project/([0-9a-fA-F-]{36})", _flow_project)
 FLOW_PROJECT_ID = _flow_project_match.group(1).lower() if _flow_project_match else _flow_project
-FLOW_PROJECT_URL = _flow_project if _flow_project_match and _flow_project.startswith("https://") else ""
+FLOW_PROJECT_URL = (
+    _flow_project
+    if _flow_project_match and re.match(r"^https://(flow\.google\.com|labs\.google)/", _flow_project)
+    else ""
+)
 
 # --- Worker -------------------------------------------------
 POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "5"))

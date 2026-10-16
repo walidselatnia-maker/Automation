@@ -12,12 +12,16 @@ address itself is kept, by id, and the extension opens it as it is.
 """
 import logging
 import re
+from urllib.parse import urlparse
 
 from agent.db.schema import get_db
 
 logger = logging.getLogger(__name__)
 
 _ID = re.compile(r"/project/([0-9a-fA-F-]{36})")
+# The only places a Flow project lives. The address is opened in the tab that
+# is signed in to Google, so anything else is dropped and only the id is kept.
+FLOW_HOSTS = {"flow.google.com", "labs.google"}
 _BARE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 
 # id -> address, read once from the database and kept current.
@@ -29,8 +33,12 @@ def split(value: str) -> tuple[str, str]:
     """(project id, project address or '') from a bare id or a whole address."""
     value = (value or "").strip()
     match = _ID.search(value)
-    if match and value.startswith("https://"):
-        return match.group(1).lower(), value.split("#")[0]
+    if match:
+        parsed = urlparse(value)
+        host = (parsed.hostname or "").rstrip(".").lower()
+        if parsed.scheme == "https" and host in FLOW_HOSTS:
+            return match.group(1).lower(), value.split("#")[0]
+        return match.group(1).lower(), ""
     if _BARE.match(value):
         return value.lower(), ""
     return value, ""

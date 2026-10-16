@@ -82,7 +82,7 @@ export function describeProjectId(resolved: ResolvedProjectId, domain: string): 
 export function flowProjectProblem(value: string): string | null {
   const v = value.trim();
   if (!v) return null;
-  if (/^https:\/\/\S+\/project\/[0-9a-fA-F-]{36}(?:[/?#]\S*)?$/.test(v)) return null;
+  if (/^https:\/\/(?:flow\.google\.com|labs\.google)\/\S*project\/[0-9a-fA-F-]{36}(?:[/?#]\S*)?$/i.test(v)) return null;
   if (/^[A-Za-z0-9-]{8,64}$/.test(v)) return null;
   return 'Paste the whole address of the project from the browser, like https://flow.google.com/project/… (open the project in Flow and copy the address bar).';
 }

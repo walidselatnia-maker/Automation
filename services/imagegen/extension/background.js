@@ -922,7 +922,16 @@ const projectLinks = new Map();
 function learnProjectLink(params) {
   const id = params && params.projectId;
   const url = params && params.projectUrl;
-  if (!id || !url || !/^https:\/\/[^/]+\//.test(url) || !url.includes(`/project/${id}`)) return;
+  if (!id || !url || !url.includes(`/project/${id}`)) return;
+  // Only Flow's own addresses: this tab is signed in to Google.
+  let host = '';
+  try {
+    const u = new URL(url);
+    host = u.protocol === 'https:' ? u.hostname.replace(/\.$/, '').toLowerCase() : '';
+  } catch (_) {
+    return;
+  }
+  if (host !== 'flow.google.com' && host !== 'labs.google') return;
   if (projectLinks.get(id) !== url) console.log(`[FlowAgent] Project ${id} opens at ${url}`);
   projectLinks.set(id, url);
 }

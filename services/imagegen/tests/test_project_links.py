@@ -31,6 +31,11 @@ def test_the_id_is_read_from_the_address_and_the_address_kept():
     assert asyncio.run(project_links.url_for(ID)) == URL
 
 
+def test_an_address_off_flow_is_not_kept():
+    assert project_links.split(f"https://evil.example/project/{ID}") == (ID, "")
+    assert project_links.split(f"http://flow.google.com/project/{ID}") == (ID, "")
+
+
 def test_a_bare_id_keeps_the_address_given_before():
     asyncio.run(project_links.resolve(URL))
     assert asyncio.run(project_links.resolve(ID)) == ID
