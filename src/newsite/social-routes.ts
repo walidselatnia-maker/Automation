@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { html, raw, type Html } from '../web/views/layout.js';
 import { listChannels, websiteChannels } from './channels.js';
 import { newLayout, type NewFlash } from './layout.js';
@@ -10,7 +10,7 @@ import { createReels, getReel, kickReels, listPlanReels, reelDir, remakeReel, re
 import { createReadStream, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { readyFor } from './keywords-view.js';
-import { shareArticlesStep, sharingPage, shareWebsiteStep, type SharingSite } from './sharing-view.js';
+import { shareArticlesStep, sharingChannelPage, sharingSitePage, sharingSitesPage, shareWebsiteStep, type ChannelTab, type SharingSite } from './sharing-view.js';
 import { checkPlatformRules, listPlatformRules } from './platform-rules.js';
 import { markdownToHtml } from './markdown.js';
 
@@ -44,20 +44,63 @@ export function registerSocialRoutes(app: FastifyInstance, deps: SocialDeps & { 
       return out;
     });
   };
-  const page = (title: string, body: ReturnType<typeof sharingPage>, query: unknown): string =>
+  const page = (title: string, body: ReturnType<typeof sharingSitesPage>, query: unknown): string =>
     newLayout({ title, active: '/new-website/sharing', body, flash: deps.readFlash(query) });
 
-  /** Back to a website's card on the Sharing page, with a message. */
+  /** A website's page on Sharing, with a message. */
   const sharingAt = (websiteId: number, message: string, kind: 'ok' | 'error' = 'ok'): string =>
-    `/new-website/sharing?${kind}=${encodeURIComponent(message)}#website-${websiteId}`;
-  const sharePage = (planId: number, message: string, kind: 'ok' | 'error' = 'ok'): string =>
-    sharingAt(getKeywordPlan(planId)?.website_id ?? 0, message, kind);
+    `/new-website/sharing/site/${websiteId}?${kind}=${encodeURIComponent(message)}`;
+  /**
+   * After an action, back to the Sharing page it was clicked on (a channel's
+   * tab, say), with the message; otherwise the article's website page.
+   */
+  const sharePage = (request: FastifyRequest, planId: number, message: string, kind: 'ok' | 'error' = 'ok'): string => {
+    try {
+      const from = new URL(String(request.headers.referer ?? ''));
+      if (from.pathname.startsWith('/new-website/sharing/site/')) {
+        from.searchParams.delete('ok');
+        from.searchParams.delete('error');
+        from.searchParams.set(kind, message);
+        return `${from.pathname}?${from.searchParams.toString()}`;
+      }
+    } catch {
+      /* no usable referer */
+    }
+    return sharingAt(getKeywordPlan(planId)?.website_id ?? 0, message, kind);
+  };
 
+  const planFilter = (query: unknown) => {
+    const plan = getKeywordPlan(Number((query as { plan?: string }).plan) || 0);
+    return plan ? { id: plan.id, pillar: plan.pillar, websiteId: plan.website_id } : null;
+  };
+
+  /** Level 1: the websites. A keyword plan's link goes straight to its website. */
   app.get('/new-website/sharing', async (request, reply) => {
-    const planId = Number((request.query as { plan?: string }).plan) || 0;
-    const plan = planId ? getKeywordPlan(planId) : undefined;
-    const filter = plan ? { id: plan.id, pillar: plan.pillar, websiteId: plan.website_id } : null;
-    return reply.type('text/html; charset=utf-8').send(page('Sharing', sharingPage(sharingSites(), listChannels(), filter), request.query));
+    const plan = planFilter(request.query);
+    if (plan) return reply.redirect(`/new-website/sharing/site/${plan.websiteId}?plan=${plan.id}`, 303);
+    return reply.type('text/html; charset=utf-8').send(page('Sharing', sharingSitesPage(sharingSites()), request.query));
+  });
+
+  /** Level 2: one website's channels. */
+  app.get('/new-website/sharing/site/:id', async (request, reply) => {
+    const s = sharingSites().find((x) => x.site.id === Number((request.params as { id: string }).id));
+    if (!s) return reply.redirect('/new-website/sharing', 303);
+    const plan = planFilter(request.query);
+    return reply.type('text/html; charset=utf-8').send(page(`Sharing · ${s.site.name}`, sharingSitePage(s, plan?.websiteId === s.site.id ? plan : null), request.query));
+  });
+
+  /** Level 3: one channel of that website: its posts, reels and problems. */
+  app.get('/new-website/sharing/site/:id/channel/:channel', async (request, reply) => {
+    const params = request.params as { id: string; channel: string };
+    const s = sharingSites().find((x) => x.site.id === Number(params.id));
+    const ch = s?.channels.find((c) => c.id === Number(params.channel));
+    if (!s || !ch) return reply.redirect(s ? `/new-website/sharing/site/${s.site.id}` : '/new-website/sharing', 303);
+    const q = request.query as { tab?: string };
+    const tab: ChannelTab = q.tab === 'reels' || q.tab === 'problems' ? q.tab : 'posts';
+    const plan = planFilter(request.query);
+    return reply.type('text/html; charset=utf-8').send(
+      page(`${ch.name} · ${s.site.name}`, sharingChannelPage(s, ch, tab, plan?.websiteId === s.site.id ? plan : null), request.query),
+    );
   });
 
   /** What changed, for the page to reload itself while posts are being made. */
@@ -122,7 +165,7 @@ export function registerSocialRoutes(app: FastifyInstance, deps: SocialDeps & { 
     if (!reel || !row) return reply.redirect('/new-website/sharing', 303);
     const ok = remakeReel(reel.id);
     void kickReels(reels);
-    return reply.redirect(sharePage(row.plan_id, ok ? 'Making the reel again.' : 'That reel is being made right now.', ok ? 'ok' : 'error'), 303);
+    return reply.redirect(sharePage(request, row.plan_id, ok ? 'Making the reel again.' : 'That reel is being made right now.', ok ? 'ok' : 'error'), 303);
   });
   const isPublished = (r: { post_status: string; post_url: string }) => r.post_status === 'published' && Boolean(r.post_url);
 
@@ -130,11 +173,11 @@ export function registerSocialRoutes(app: FastifyInstance, deps: SocialDeps & { 
   app.post('/new-website/keywords/share/:id', async (request, reply) => {
     const row = getSeoRow(Number((request.params as { id: string }).id) || 0);
     if (!row) return reply.redirect('/new-website/keywords', 303);
-    if (!isPublished(row)) return reply.redirect(sharePage(row.plan_id, `“${row.keyword}” is not published yet.`, 'error'), 303);
+    if (!isPublished(row)) return reply.redirect(sharePage(request, row.plan_id, `“${row.keyword}” is not published yet.`, 'error'), 303);
     const added = createSocialPosts(row.id);
     void kickSocial(deps);
     return reply.redirect(
-      sharePage(row.plan_id, added ? `Sharing “${row.keyword}” on ${added} channel${added === 1 ? '' : 's'}.` : `“${row.keyword}” is already on every channel.`),
+      sharePage(request, row.plan_id, added ? `Sharing “${row.keyword}” on ${added} channel${added === 1 ? '' : 's'}.` : `“${row.keyword}” is already on every channel.`),
       303,
     );
   });
@@ -145,7 +188,7 @@ export function registerSocialRoutes(app: FastifyInstance, deps: SocialDeps & { 
     let added = 0;
     for (const r of listPlanSeo(planId).filter(isPublished)) added += createSocialPosts(r.id);
     void kickSocial(deps);
-    return reply.redirect(sharePage(planId, added ? `Sharing ${added} post${added === 1 ? '' : 's'}, one after the other.` : 'Everything published is already shared.'), 303);
+    return reply.redirect(sharePage(request, planId, added ? `Sharing ${added} post${added === 1 ? '' : 's'}, one after the other.` : 'Everything published is already shared.'), 303);
   });
 
   /** Make a post's words and picture again from the article. */
@@ -155,7 +198,7 @@ export function registerSocialRoutes(app: FastifyInstance, deps: SocialDeps & { 
     if (!post || !row) return reply.redirect('/new-website/keywords', 303);
     const ok = remakeSocialPost(post.id);
     void kickSocial(deps);
-    return reply.redirect(sharePage(row.plan_id, ok ? 'Making it again from the article.' : 'It already went out, or its picture is being made.', ok ? 'ok' : 'error'), 303);
+    return reply.redirect(sharePage(request, row.plan_id, ok ? 'Making it again from the article.' : 'It already went out, or its picture is being made.', ok ? 'ok' : 'error'), 303);
   });
 
   /* -- Each platform's rules file ------------------------------------------ */
@@ -214,7 +257,7 @@ export function registerSocialRoutes(app: FastifyInstance, deps: SocialDeps & { 
     if (!post || !row) return reply.redirect('/new-website/keywords', 303);
     retrySocialPost(post.id);
     void kickSocial(deps);
-    return reply.redirect(sharePage(row.plan_id, 'Trying it again.'), 303);
+    return reply.redirect(sharePage(request, row.plan_id, 'Trying it again.'), 303);
   });
 
   app.post('/new-website/shared/:id/retry', async (request, reply) => {

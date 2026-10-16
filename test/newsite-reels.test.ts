@@ -105,8 +105,9 @@ describe('reels: one Flow video per article and platform, from one prompt', () =
     const app = Fastify();
     await app.register(formbody);
     registerSocialRoutes(app, { settings, encryptionKey: KEY, dataDir, ask: async () => '{}', readFlash: () => null, autoStart: false });
-    const page = await app.inject({ url: '/new-website/sharing' });
-    expect(page.body).toContain('Instagram reels');
+    const ch = (await import('../src/newsite/channels.js')).websiteChannels(websiteId)[0]!;
+    const page = await app.inject({ url: `/new-website/sharing/site/${websiteId}/channel/${ch.id}?tab=reels` });
+    expect(page.body).toContain('Reels <span class="n">1</span>');
     expect(page.body).toContain('Try again');
     expect((await app.inject({ method: 'POST', url: `/new-website/reels/${reel!.id}/remake` })).headers.location).toMatch(/Making%20the%20reel%20again/);
     expect(getReel(reel!.id)!.status).not.toBe('failed');

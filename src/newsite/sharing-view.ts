@@ -6,7 +6,8 @@ import type { SocialPostRow } from './social.js';
 import type { PictureRow } from './pictures.js';
 import type { ReelRow } from './reels.js';
 import { WIZARD_CSS } from './view.js';
-import { CHEV, CSS, OVERVIEW_CSS, labelOf, missingChannels, shareCard, sharingBusy } from './keywords-view.js';
+import { CSS, OVERVIEW_CSS, labelOf, missingChannels, sharePostRow, sharingBusy } from './keywords-view.js';
+import { REEL_PLATFORMS } from './reels.js';
 
 /**
  * The Sharing page: the last step of the platform. Every published article,
@@ -36,27 +37,79 @@ export interface SharingSite {
 }
 
 const SHARING_CSS = `
-.sh-reels { margin: 18px 0 8px; }
-.sh-reels > h3 { font-size: 15px; margin: 0 0 10px; }
-.sh-reel-group { background: color-mix(in srgb, var(--ch-color) 7%, var(--surface)); border: 1px solid color-mix(in srgb, var(--ch-color) 22%, var(--line)); border-left: 4px solid var(--ch-color); border-radius: var(--r-card); padding: 14px 16px; margin: 0 0 12px; }
-.sh-reel-group > h4 { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; font-size: 15px; }
-.sh-dot { width: 12px; height: 12px; border-radius: 50%; background: var(--ch-color); }
-.sh-reel-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; }
-.sh-reel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-ctl); padding: 10px; display: grid; gap: 8px; align-content: start; }
-.sh-reel video, .sh-reel .sh-reel-empty { width: 100%; aspect-ratio: 9 / 16; border-radius: 6px; background: var(--raised); object-fit: cover; }
+.sh-crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 14px; font-size: 14px; color: var(--soft); }
+.sh-crumbs a { color: var(--soft); text-decoration: none; font-weight: 500; }
+.sh-crumbs a:hover { color: var(--accent-text); text-decoration: underline; }
+.sh-crumbs .sep { color: var(--faint); }
+.sh-crumbs b { color: var(--ink); font-weight: 600; }
+.sh-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
+.sh-card { display: flex; flex-direction: column; gap: 14px; min-height: 150px; padding: 20px 22px; background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r-card); box-shadow: var(--shadow); color: var(--ink); text-decoration: none; transition: border-color .15s ease, transform .15s ease; }
+.sh-card:hover { border-color: var(--accent); transform: translateY(-1px); }
+.sh-card:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.sh-card-title { font: 700 19px/1.25 var(--display); letter-spacing: -.01em; }
+.sh-card-sub { display: block; margin-top: 3px; color: var(--soft); font: 13px var(--mono); }
+.sh-nums { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: auto; }
+.sh-num { padding: 8px 10px; border-radius: var(--r-ctl); background: var(--raised); }
+.sh-num b { display: block; font-size: 20px; font-variant-numeric: tabular-nums; color: var(--ink); }
+.sh-num span { font-size: 12px; color: var(--soft); }
+.sh-num.bad { background: var(--bad-tint); } .sh-num.bad b { color: var(--bad); }
+.sh-num.busy { background: var(--idle); } .sh-num.busy b, .sh-num.busy span { color: var(--idle-ink); }
+.sh-open { font-size: 13px; font-weight: 600; color: var(--accent-text); }
+.sh-ch { background: color-mix(in srgb, var(--ch-color) 7%, var(--surface)); border-color: color-mix(in srgb, var(--ch-color) 25%, var(--line)); border-top: 4px solid var(--ch-color); }
+.sh-ch:hover { border-color: var(--ch-color); }
+.sh-ch-head { display: flex; align-items: center; gap: 10px; }
+.sh-dot { width: 12px; height: 12px; border-radius: 50%; background: var(--ch-color); flex: none; }
+.sh-platform { font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--soft); }
+.sh-reels-line { font-size: 13px; color: var(--soft); }
+.sh-band { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 20px; padding: 18px 22px; margin: 0 0 18px;
+  background: color-mix(in srgb, var(--ch-color) 8%, var(--surface)); border: 1px solid color-mix(in srgb, var(--ch-color) 25%, var(--line));
+  border-left: 5px solid var(--ch-color); border-radius: var(--r-card); }
+.sh-band h1 { margin: 0; font: 700 24px/1.2 var(--display); }
+.sh-band p { margin: 4px 0 0; color: var(--soft); font-size: 14px; }
+.sh-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 18px; }
+.sh-tab { display: inline-flex; align-items: center; gap: 8px; height: 38px; padding: 0 16px; border-radius: 999px; text-decoration: none; font-weight: 600; font-size: 14px;
+  background: var(--idle); color: var(--idle-ink); border: 1px solid var(--idle-line); }
+.sh-tab:hover { background: var(--idle-hover); }
+.sh-tab.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+.sh-tab .n { font-variant-numeric: tabular-nums; opacity: .85; }
+.sh-panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); box-shadow: var(--shadow); padding: 6px 22px 18px; }
+.sh-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 14px 0 6px; font-size: 13px; color: var(--soft); }
+.sh-articles { list-style: none; margin: 0; padding: 0; }
+.sh-article { padding: 14px 0; border-bottom: 1px solid var(--line); }
+.sh-article:last-child { border-bottom: 0; }
+.sh-article > .kw-share-list { border-top: 0; margin: 0; }
+.sh-steps { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 8px; }
+.sh-step { font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 999px; background: var(--idle); color: var(--idle-ink); }
+.sh-step.done { background: var(--good-tint); color: var(--good); }
+.sh-step.now { background: var(--accent); color: #fff; }
+.sh-step.bad { background: var(--bad-tint); color: var(--bad); }
+.sh-none-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+.sh-none-row b { font-size: 15px; }
+.sh-none-row form { margin: 0; }
+.sh-empty { color: var(--soft); padding: 18px 0 6px; margin: 0; }
+.sh-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0 0 16px; }
+.sh-reel-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 14px; padding-top: 16px; }
+.sh-reel { background: var(--raised); border: 1px solid var(--line); border-radius: var(--r-ctl); padding: 10px; display: grid; gap: 8px; align-content: start; }
+.sh-reel video, .sh-reel .sh-reel-empty { width: 100%; aspect-ratio: 9 / 16; border-radius: 6px; background: var(--surface); object-fit: cover; }
 .sh-reel .sh-reel-empty { display: grid; place-items: center; color: var(--soft); font-size: 13px; text-align: center; padding: 8px; }
 .sh-reel b { font-size: 13px; line-height: 1.35; }
 .sh-reel details { font-size: 12px; color: var(--soft); }
 .sh-reel details pre { white-space: pre-wrap; font-size: 12px; max-height: 220px; overflow: auto; }
 .sh-reel form { margin: 0; }
-.sh-sum { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 20px; }
-.sh-channels { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 16px 0; font-size: 14px; color: var(--soft); }
-.sh-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0 0 16px; }
-.sh-plan { color: var(--faint); font-size: 13px; margin: 18px 0 8px; }
-.sh-plan a { color: var(--soft); }
 .sh-pick { display: grid; gap: 10px; }
 .sh-pick .ch-option span.sh-missing { display: block; margin-top: 2px; }
 `;
+
+const siteHref = (id: number, plan?: { id: number } | null): string => `/new-website/sharing/site/${id}${plan ? `?plan=${plan.id}` : ''}`;
+const channelHref = (siteId: number, channelId: number, tab = 'posts', plan?: { id: number } | null): string =>
+  `/new-website/sharing/site/${siteId}/channel/${channelId}?tab=${tab}${plan ? `&plan=${plan.id}` : ''}`;
+
+function crumbs(items: [string, string?][]): Html {
+  return html`<nav class="sh-crumbs" aria-label="Where you are">${items.map(([label, href], i) => html`${i ? html`<span class="sep">›</span>` : raw('')}${href ? html`<a href="${href}">${label}</a>` : html`<b>${label}</b>`}`)}</nav>`;
+}
+
+const num = (n: number, label: string, cls = ''): Html => html`<div class="sh-num ${n && cls ? cls : ''}"><b>${String(n)}</b><span>${label}</span></div>`;
 
 /** Where each website stands, in counts. */
 function countsOf(s: SharingSite) {
@@ -65,104 +118,180 @@ function countsOf(s: SharingSite) {
   return {
     published: s.articles.length,
     shared: s.articles.filter((a) => postsOf(a.row.id).length > 0 && postsOf(a.row.id).every((p) => p.status === 'sent')).length,
-    making: s.posts.filter((p) => p.status === 'pending' || p.status === 'picture' || p.status === 'waiting').length,
-    failed: s.posts.filter((p) => p.status === 'failed').length,
+    making: s.posts.filter((p) => p.status === 'pending' || p.status === 'picture' || p.status === 'waiting').length
+      + s.reels.filter((r) => r.status === 'pending' || r.status === 'making').length,
+    failed: s.posts.filter((p) => p.status === 'failed').length + s.reels.filter((r) => r.status === 'failed').length,
     toShare,
   };
 }
 
-function siteCard(s: SharingSite, allChannels: ChannelRow[], open: boolean, plan: { id: number; pillar: string } | null): Html {
-  const c = countsOf(s);
+/** One channel of one website: its posts, its reels, and what is not shared on it yet. */
+function channelData(s: SharingSite, c: ChannelRow, plan: { id: number } | null = null) {
   const articles = plan ? s.articles.filter((a) => a.planId === plan.id) : s.articles;
-  // Grouped by keyword plan, in the order the plans were made.
-  const plans = [...new Map(articles.map((a) => [a.planId, a.pillar])).entries()];
-  const postsOf = (id: number) => s.posts.filter((p) => p.seo_id === id);
-  return html`<article class="ko-site ${open ? 'open' : ''}" id="website-${String(s.site.id)}" data-id="${String(s.site.id)}">
-    <button type="button" class="ko-head" aria-expanded="${open ? 'true' : 'false'}">
-      <span class="ko-title"><span class="ko-name">${s.site.name}</span><span class="ko-domain">${s.site.domain}</span></span>
-      <span class="ko-stats">
-        <span><b>${String(c.published)}</b> published</span>
-        <span><b>${String(c.shared)}</b> shared</span>
-        ${c.making ? html`<span class="ns-badge busy">${String(c.making)} being made</span>` : raw('')}
-        ${c.failed ? html`<span class="ns-badge bad">${String(c.failed)} failed</span>` : raw('')}
-        ${c.toShare ? html`<span class="ns-badge">${String(c.toShare)} not on every channel</span>` : raw('')}
-      </span>
-      ${raw(CHEV)}
-    </button>
-    <div class="ko-body">
-      ${s.channels.length
-        ? html`<div class="sh-channels"><span>Shares on</span>${s.channels.map((ch) => html`<span class="ns-tag">${ch.name} · ${labelOf(ch.platform)}</span>`)}<a class="ns-btn small" href="/new-website/${String(s.site.id)}/edit?section=4">Change</a></div>`
-        : html`<div class="ns-alert info" style="margin-top:16px"><b>${s.site.name} shares on no channel yet.</b> Pick its channels in the website’s settings, or add a channel first.
-            <div class="kw-share-actions"><a class="ns-btn small" href="/new-website/${String(s.site.id)}/edit?section=4">Pick channels</a><a class="ns-btn small" href="/new-website/channels">Add a channel</a></div></div>`}
-      ${plan ? html`<div class="sh-filter"><span class="ns-tag">Keyword plan: ${plan.pillar}</span><a class="ns-btn small" href="/new-website/sharing#website-${String(s.site.id)}">Show every article</a></div>` : raw('')}
-      ${reelsBlock(s, plan)}
-      ${plans.length
-        ? plans.map(([planId, pillar]) => html`
-            <p class="sh-plan">From the keyword plan <a href="/new-website/keywords/plan/${String(planId)}/publish">${pillar}</a></p>
-            <ul class="acc-list">${articles
-              .filter((a) => a.planId === planId)
-              .map((a) => shareCard(a.row, a.intent, postsOf(a.row.id), s.channels, allChannels, a.planId, s.pictures))}</ul>`)
-        : html`<p class="ko-none">No published article${plan ? ' in this keyword plan' : ''} yet.</p>`}
-      ${s.unpublished && !plan ? html`<p class="ko-none">${String(s.unpublished)} more article${s.unpublished === 1 ? '' : 's'} show here once published.</p>` : raw('')}
-    </div>
-  </article>`;
+  const ids = new Set(articles.map((a) => a.row.id));
+  const posts = s.posts.filter((p) => p.channel_id === c.id && ids.has(p.seo_id));
+  const reels = REEL_PLATFORMS.includes(c.platform as (typeof REEL_PLATFORMS)[number]) ? s.reels.filter((r) => r.platform === c.platform && ids.has(r.seo_id)) : null;
+  const notYet = articles.filter((a) => missingChannels(posts.filter((p) => p.seo_id === a.row.id), [c]).length);
+  return {
+    articles,
+    posts,
+    reels,
+    notYet,
+    sent: posts.filter((p) => p.status === 'sent').length,
+    making: posts.filter((p) => p.status !== 'sent' && p.status !== 'failed').length,
+    failed: posts.filter((p) => p.status === 'failed').length + (reels ?? []).filter((r) => r.status === 'failed').length,
+  };
 }
 
-export function sharingPage(sites: SharingSite[], allChannels: ChannelRow[], plan: { id: number; pillar: string; websiteId: number } | null = null): Html {
-  const total = sites.reduce(
-    (t, s) => {
-      const c = countsOf(s);
-      return { published: t.published + c.published, making: t.making + c.making, failed: t.failed + c.failed, toShare: t.toShare + c.toShare };
-    },
-    { published: 0, making: 0, failed: 0, toShare: 0 },
-  );
-  const busy = sites.some((s) => sharingBusy(s.posts) || s.reels.some((r) => r.status === 'pending' || r.status === 'making'));
+const isBusy = (s: SharingSite): boolean => sharingBusy(s.posts) || s.reels.some((r) => r.status === 'pending' || r.status === 'making');
+const watch = (busy: boolean): Html => (busy ? raw('<span data-watch="1" hidden></span>') : raw(''));
+
+/* -- Level 1: the websites -------------------------------------------------- */
+
+export function sharingSitesPage(sites: SharingSite[]): Html {
   return html`
-    <style>${raw(CSS)}${raw(OVERVIEW_CSS)}${raw(SHARING_CSS)}</style>
+    <style>${raw(CSS)}${raw(SHARING_CSS)}</style>
     <div class="ns-head">
       <div>
         <h1 class="ns-title">Sharing</h1>
-        <p class="ns-lede">The last step. Once an article is published, each of its website’s channels makes its own post from it, by that channel’s rules: the words, then the picture, then it is sent. Everything is here, by website. The article link is never in a post’s words.</p>
+        <p class="ns-lede">Once an article is published, each channel of its website makes its own post and reel from it. Choose a website to see its channels.</p>
       </div>
       ${sites.length ? html`<a class="ns-btn primary" href="/new-website/sharing/new">Share articles</a>` : raw('')}
     </div>
     ${sites.length
-      ? html`<div class="sh-sum">
-          <span class="ns-badge ok">${String(total.published)} published article${total.published === 1 ? '' : 's'}</span>
-          ${total.making ? html`<span class="ns-badge busy">${String(total.making)} post${total.making === 1 ? '' : 's'} being made</span>` : raw('')}
-          ${total.failed ? html`<span class="ns-badge bad">${String(total.failed)} failed</span>` : raw('')}
-          ${total.toShare ? html`<span class="ns-badge">${String(total.toShare)} not on every channel</span>` : raw('')}
-        </div>
-        <div class="ko-cards" ${busy ? raw('data-watch="1"') : raw('')}>${sites.map((s) =>
-          siteCard(s, allChannels, sites.length === 1 || plan?.websiteId === s.site.id, plan?.websiteId === s.site.id ? plan : null))}</div>`
+      ? html`<div class="sh-grid">${sites.map((s) => {
+          const c = countsOf(s);
+          return html`<a class="sh-card" href="${siteHref(s.site.id)}">
+            <div><span class="sh-card-title">${s.site.name}</span><span class="sh-card-sub">${s.site.domain}</span></div>
+            <div class="sh-nums">
+              ${num(c.published, 'published')}
+              ${num(s.channels.length, s.channels.length === 1 ? 'channel' : 'channels')}
+              ${c.failed ? num(c.failed, 'failed', 'bad') : num(c.making, 'being made', 'busy')}
+            </div>
+            <span class="sh-open">Open its channels →</span>
+          </a>`;
+        })}</div>`
       : html`<div class="ko-empty"><h2>Add a website first</h2><p>Articles are shared once they are published on a website.</p><a class="ns-btn primary" href="/new-website/add">Add website</a></div>`}
+    ${watch(sites.some(isBusy))}
     ${raw(SHARING_SCRIPT)}`;
 }
 
-/** Opens and closes the cards (each remembers, in this browser), and reloads while posts are being made. */
+/* -- Level 2: one website's channels ---------------------------------------- */
+
+export function sharingSitePage(s: SharingSite, plan: { id: number; pillar: string } | null = null): Html {
+  const c = countsOf(s);
+  return html`
+    <style>${raw(CSS)}${raw(SHARING_CSS)}</style>
+    ${crumbs([['Sharing', '/new-website/sharing'], [s.site.name]])}
+    <div class="ns-head">
+      <div>
+        <h1 class="ns-title">${s.site.name}</h1>
+        <p class="ns-lede">${String(c.published)} published article${c.published === 1 ? '' : 's'} · ${s.site.domain}. Choose a channel to see its posts, reels and problems.</p>
+      </div>
+      <a class="ns-btn primary" href="/new-website/sharing/new?website=${String(s.site.id)}">Share articles</a>
+    </div>
+    ${plan ? html`<div class="sh-filter"><span class="ns-tag">Keyword plan: ${plan.pillar}</span><a class="ns-btn small" href="${siteHref(s.site.id)}">Show every article</a></div>` : raw('')}
+    ${s.channels.length
+      ? html`<div class="sh-grid">${s.channels.map((ch) => {
+          const d = channelData(s, ch, plan);
+          const label = PLATFORMS.find((p) => p.key === ch.platform)?.label ?? labelOf(ch.platform);
+          return html`<a class="sh-card sh-ch" style="--ch-color:${channelColor(ch)}" href="${channelHref(s.site.id, ch.id, 'posts', plan)}">
+            <div>
+              <div class="sh-ch-head"><span class="sh-dot"></span><span class="sh-platform">${label}</span></div>
+              <span class="sh-card-title">${ch.name}</span><span class="sh-card-sub">through ${ch.via === 'buffer' ? 'Buffer' : 'the API'}</span>
+            </div>
+            <div class="sh-nums">
+              ${num(d.sent, 'sent')}
+              ${d.failed ? num(d.failed, 'failed', 'bad') : num(d.making, 'being made', 'busy')}
+              ${num(d.notYet.length, 'not shared yet')}
+            </div>
+            ${d.reels ? html`<span class="sh-reels-line">Reels: ${String(d.reels.filter((r) => r.status === 'done').length)} made${d.reels.some((r) => r.status === 'pending' || r.status === 'making') ? ', more being made' : ''}</span>` : raw('')}
+            <span class="sh-open">Open ${label} →</span>
+          </a>`;
+        })}</div>`
+      : html`<div class="ns-alert info"><b>${s.site.name} shares on no channel yet.</b> Pick its channels in the website’s settings, or add a channel first.
+          <div class="kw-share-actions"><a class="ns-btn small" href="/new-website/${String(s.site.id)}/edit?section=4">Pick channels</a><a class="ns-btn small" href="/new-website/channels">Add a channel</a></div></div>`}
+    ${watch(isBusy(s))}
+    ${raw(SHARING_SCRIPT)}`;
+}
+
+/* -- Level 3: one channel: its pipeline, its reels, its problems ------------- */
+
+export type ChannelTab = 'posts' | 'reels' | 'problems';
+
+/** The three steps a post goes through, and where this one is. */
+function stepStrip(p: SocialPostRow): Html {
+  const names = ['Words', 'Picture', 'Sent'];
+  const at = p.status === 'pending' ? 0 : p.status === 'picture' ? 1 : p.status === 'waiting' ? 2 : p.status === 'sent' ? 3 : -1;
+  const failedAt = p.status === 'failed' ? (!p.fields_json && !p.text ? 0 : !p.picture_id ? 1 : 2) : -1;
+  return html`<div class="sh-steps" aria-label="Steps">${names.map((n, i) => {
+    const cls = failedAt === i ? 'bad' : (failedAt > i || at > i) ? 'done' : at === i ? 'now' : '';
+    return html`<span class="sh-step ${cls}">${String(i + 1)}. ${n}</span>`;
+  })}</div>`;
+}
+
+export function sharingChannelPage(s: SharingSite, ch: ChannelRow, tab: ChannelTab, plan: { id: number; pillar: string } | null = null): Html {
+  const d = channelData(s, ch, plan);
+  const label = PLATFORMS.find((p) => p.key === ch.platform)?.label ?? labelOf(ch.platform);
+  if (tab === 'reels' && !d.reels) tab = 'posts';
+  const pictureOf = (p: SocialPostRow) => s.pictures.find((x) => x.id === p.picture_id);
+  const titleOf = (a: SharingArticle) => a.row.title || a.row.keyword;
+  const tabs: [ChannelTab, string, number][] = [
+    ['posts', 'Posts', d.articles.length],
+    ...(d.reels ? [['reels', 'Reels', d.reels.length] as [ChannelTab, string, number]] : []),
+    ['problems', 'Problems', d.failed],
+  ];
+
+  const postRows = (articles: SharingArticle[], onlyFailed: boolean): Html[] =>
+    articles.flatMap((a) => {
+      const post = d.posts.find((p) => p.seo_id === a.row.id);
+      if (onlyFailed && post?.status !== 'failed') return [];
+      if (!post) {
+        const canShare = missingChannels([], [ch]).length > 0;
+        return [html`<li class="sh-article"><div class="sh-none-row"><div><b>${titleOf(a)}</b><div class="kw-share-meta">Not shared on this channel yet.</div></div>
+          ${canShare ? html`<form method="post" action="/new-website/keywords/share/${String(a.row.id)}"><button class="ns-btn small primary">Share now</button></form>` : raw('')}</div></li>`];
+      }
+      return [html`<li class="sh-article">${stepStrip(post)}<ul class="kw-share-list">${sharePostRow(post, ch, a.planId, pictureOf(post), titleOf(a))}</ul></li>`];
+    });
+
+  const reelCards = (reels: ReelRow[]): Html =>
+    html`<div class="sh-reel-list">${reels.map((r) => reelCard(r, s.articles.find((a) => a.row.id === r.seo_id)))}</div>`;
+
+  const failedReels = (d.reels ?? []).filter((r) => r.status === 'failed');
+  const problems = postRows(d.articles, true);
+  const body =
+    tab === 'reels'
+      ? d.reels!.length ? reelCards(d.reels!) : html`<p class="sh-empty">No reel yet. A reel is made for each article once it is published.</p>`
+      : tab === 'problems'
+        ? problems.length || failedReels.length
+          ? html`${problems.length ? html`<ul class="sh-articles">${problems}</ul>` : raw('')}${failedReels.length ? reelCards(failedReels) : raw('')}`
+          : html`<p class="sh-empty">No problems on this channel.</p>`
+        : d.articles.length
+          ? html`<div class="sh-legend">Each post goes through <span class="sh-step">1. Words</span><span class="sh-step">2. Picture</span><span class="sh-step">3. Sent</span> by itself, by this channel’s <a href="/new-website/channels/${String(ch.id)}">rules</a>.</div>
+              <ul class="sh-articles">${postRows(d.articles, false)}</ul>`
+          : html`<p class="sh-empty">No published article${plan ? ' in this keyword plan' : ''} yet.</p>`;
+
+  return html`
+    <style>${raw(CSS)}${raw(SHARING_CSS)}</style>
+    ${crumbs([['Sharing', '/new-website/sharing'], [s.site.name, siteHref(s.site.id, plan)], [`${label} · ${ch.name}`]])}
+    <div class="sh-band" style="--ch-color:${channelColor(ch)}">
+      <div>
+        <div class="sh-ch-head"><span class="sh-dot"></span><span class="sh-platform">${label} through ${ch.via === 'buffer' ? 'Buffer' : 'the API'}</span></div>
+        <h1>${ch.name}</h1>
+        <p>${String(d.sent)} sent · ${String(d.making)} being made · ${String(d.notYet.length)} not shared yet${d.failed ? ` · ${d.failed} failed` : ''}</p>
+      </div>
+      <a class="ns-btn" href="/new-website/channels/${String(ch.id)}">Channel settings</a>
+    </div>
+    ${plan ? html`<div class="sh-filter"><span class="ns-tag">Keyword plan: ${plan.pillar}</span><a class="ns-btn small" href="${channelHref(s.site.id, ch.id, tab)}">Show every article</a></div>` : raw('')}
+    <nav class="sh-tabs" aria-label="Sections">${tabs.map(([key, name, n]) => html`<a class="sh-tab ${key === tab ? 'on' : ''}" href="${channelHref(s.site.id, ch.id, key, plan)}" ${key === tab ? raw('aria-current="page"') : raw('')}>${name} <span class="n">${String(n)}</span></a>`)}</nav>
+    <div class="sh-panel">${body}</div>
+    ${watch(isBusy(s))}
+    ${raw(SHARING_SCRIPT)}`;
+}
+
+/** Reloads the page while posts or reels are being made. */
 const SHARING_SCRIPT = `<script>
 (function () {
-  document.querySelectorAll('.ko-site').forEach(function (card) {
-    var key = 'sh-site-open-' + card.getAttribute('data-id');
-    var head = card.querySelector('.ko-head');
-    function set(open) { card.classList.toggle('open', open); head.setAttribute('aria-expanded', open ? 'true' : 'false'); }
-    var saved = null;
-    try { saved = localStorage.getItem(key); } catch (e) {}
-    if (saved !== null && !card.classList.contains('open')) set(saved === '1');
-    if (location.hash === '#' + card.id) set(true);
-    head.addEventListener('click', function () {
-      var open = !card.classList.contains('open');
-      set(open);
-      try { localStorage.setItem(key, open ? '1' : '0'); } catch (e) {}
-    });
-  });
-  document.querySelectorAll('.acc-head').forEach(function (b) {
-    b.addEventListener('click', function () {
-      var li = b.closest('.acc');
-      var open = li.classList.toggle('open');
-      b.setAttribute('aria-expanded', open ? 'true' : 'false');
-    });
-  });
   if (!document.querySelector('[data-watch]')) return;
   var seen;
   setInterval(function () {
@@ -235,7 +364,7 @@ export function shareArticlesStep(s: SharingSite): Html {
   );
 }
 
-/* -- Reels: one video per article and platform, each platform in its colour -- */
+/* -- Reels: one video per article and platform ------------------------------ */
 
 const REEL_STATUS: Record<ReelRow['status'], [string, string]> = {
   pending: ['Waiting its turn', 'busy'],
@@ -244,32 +373,18 @@ const REEL_STATUS: Record<ReelRow['status'], [string, string]> = {
   failed: ['Failed', 'bad'],
 };
 
-function reelsBlock(s: SharingSite, plan: { id: number } | null): Html {
-  const articles = new Map(s.articles.map((a) => [a.row.id, a]));
-  const reels = s.reels.filter((r) => articles.has(r.seo_id) && (!plan || articles.get(r.seo_id)!.planId === plan.id));
-  if (!reels.length) return raw('');
-  const platforms = [...new Set(reels.map((r) => r.platform))];
-  return html`<div class="sh-reels"><h3>Reels</h3>${platforms.map((platform) => {
-    const mine = reels.filter((r) => r.platform === platform);
-    const label = PLATFORMS.find((p) => p.key === platform)?.label ?? labelOf(platform);
-    return html`<section class="sh-reel-group" style="--ch-color:${channelColor({ platform })}">
-      <h4><span class="sh-dot"></span>${label} reels <span class="ns-tag">${String(mine.length)}</span></h4>
-      <div class="sh-reel-list">${mine.map((r) => {
-        const a = articles.get(r.seo_id)!;
-        const [status, cls] = REEL_STATUS[r.status];
-        return html`<div class="sh-reel">
-          ${r.status === 'done'
-            ? html`<video src="/new-website/reels/${String(r.id)}/file" controls preload="metadata" playsinline></video>`
-            : html`<div class="sh-reel-empty">${r.status === 'failed' ? 'No video' : 'The video is being made. It takes a few minutes.'}</div>`}
-          <b>${a.row.title || a.row.keyword}</b>
-          <span class="ns-badge ${cls}">${status}</span>
-          ${r.error ? html`<div class="kw-seo-problems">${r.error}</div>` : raw('')}
-          ${r.prompt ? html`<details><summary>The prompt</summary><pre>${r.prompt}</pre></details>` : raw('')}
-          ${r.status === 'done' || r.status === 'failed'
-            ? html`<form method="post" action="/new-website/reels/${String(r.id)}/remake"><button class="ns-btn small ${r.status === 'failed' ? 'primary' : ''}">${r.status === 'failed' ? 'Try again' : 'Make again'}</button></form>`
-            : raw('')}
-        </div>`;
-      })}</div>
-    </section>`;
-  })}</div>`;
+function reelCard(r: ReelRow, a: SharingArticle | undefined): Html {
+  const [status, cls] = REEL_STATUS[r.status];
+  return html`<div class="sh-reel">
+    ${r.status === 'done'
+      ? html`<video src="/new-website/reels/${String(r.id)}/file" controls preload="metadata" playsinline></video>`
+      : html`<div class="sh-reel-empty">${r.status === 'failed' ? 'No video' : 'The video is being made. It takes a few minutes.'}</div>`}
+    <b>${a ? a.row.title || a.row.keyword : 'An article'}</b>
+    <span class="ns-badge ${cls}">${status}</span>
+    ${r.error ? html`<div class="kw-seo-problems">${r.error}</div>` : raw('')}
+    ${r.prompt ? html`<details><summary>The prompt</summary><pre>${r.prompt}</pre></details>` : raw('')}
+    ${r.status === 'done' || r.status === 'failed'
+      ? html`<form method="post" action="/new-website/reels/${String(r.id)}/remake"><button class="ns-btn small ${r.status === 'failed' ? 'primary' : ''}">${r.status === 'failed' ? 'Try again' : 'Make again'}</button></form>`
+      : raw('')}
+  </div>`;
 }
