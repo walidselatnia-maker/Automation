@@ -1,6 +1,7 @@
 """Configuration constants."""
 import json
 import os
+import re
 from pathlib import Path
 
 # ─── Paths ───────────────────────────────────────────────────
@@ -28,7 +29,12 @@ RECAPTCHA_SITE_KEY = os.environ.get("RECAPTCHA_SITE_KEY", "6LdsFiUsAAAAAIjVDZcuL
 # clientContext.projectId, so it has to be a real project id from the Flow
 # UI -- the previous code sent a local database row id, which matched no
 # project on their side.
-FLOW_PROJECT_ID = os.environ.get("FLOW_PROJECT_ID", "").strip()
+# It may be given as the project's whole address (copied from the browser):
+# the id is read from it, and the address is kept so the tab opens exactly it.
+_flow_project = os.environ.get("FLOW_PROJECT_ID", "").strip()
+_flow_project_match = re.search(r"/project/([0-9a-fA-F-]{36})", _flow_project)
+FLOW_PROJECT_ID = _flow_project_match.group(1).lower() if _flow_project_match else _flow_project
+FLOW_PROJECT_URL = _flow_project if _flow_project_match and _flow_project.startswith("https://") else ""
 
 # --- Worker -------------------------------------------------
 POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "5"))

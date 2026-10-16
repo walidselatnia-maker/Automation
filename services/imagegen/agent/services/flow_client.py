@@ -296,6 +296,12 @@ class FlowClient:
         if not self._extension_ws:
             return {"error": "Extension not connected"}
 
+        # A command that names a project carries its whole address when the
+        # platform gave one: the tab opens that, not an address it has to guess.
+        if params.get("projectId") and "projectUrl" not in params:
+            from agent import project_links
+            params = {**params, "projectUrl": await project_links.url_for(params["projectId"]) or None}
+
         req_id = str(uuid.uuid4())
         future = asyncio.get_running_loop().create_future()
         self._pending[req_id] = future

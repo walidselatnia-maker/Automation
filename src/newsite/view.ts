@@ -350,9 +350,9 @@ export function newWebsiteWizardPage(existing?: NewWebsiteRow, channels: WizardC
                 : html`<div class="wz-hint">No channel to share on yet. Add Pinterest or Facebook on the <a href="/new-website/channels">Channels</a> page, then come back.</div>`}
               <div class="wz-hint">One post per channel for each article, with the link in the first comment.</div>
             </div>
-            ${field('projectId', 'Google Flow project', html`<input id="wz-projectId" name="projectId" spellcheck="false" placeholder="The code after /project/ in the address bar" value="${e?.project_id ?? ''}" />`, {
+            ${field('projectId', 'Google Flow project', html`<input id="wz-projectId" name="projectId" spellcheck="false" placeholder="https://flow.google.com/project/…" value="${e?.project_id ?? ''}" />`, {
               optional: 'optional',
-              hint: 'Where this website’s images are made. Empty uses the shared project from Platform settings.',
+              hint: 'Where this website’s images and reels are made: the whole address of the project, copied from the browser while it is open in Flow. Empty uses the shared project from Platform settings.',
             })}
           </div>
 

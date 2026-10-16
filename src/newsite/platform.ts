@@ -1,6 +1,7 @@
 import { SETTING_SPECS } from '../settings.js';
 import { KNOWN_MODELS } from '../pipeline/prompts.js';
 import { publicBaseUrlProblem } from '../core/media-links.js';
+import { flowProjectProblem } from '../core/project-id.js';
 
 /**
  * Platform setup for the new dashboard.
@@ -197,9 +198,9 @@ export function validatePlatform(
 
   if (want('flow_project_id')) {
     const v = str(raw, 'flow_project_id');
-    if (v && !/^[A-Za-z0-9-]{8,64}$/.test(v)) {
-      errors.flow_project_id = 'That does not look like a Flow project code: letters, numbers and dashes only.';
-    } else clean.settings.flow_project_id = v;
+    const problem = flowProjectProblem(v);
+    if (problem) errors.flow_project_id = problem;
+    else clean.settings.flow_project_id = v;
   }
   if (want('image_model')) {
     const v = str(raw, 'image_model');

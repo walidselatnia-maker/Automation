@@ -568,6 +568,7 @@ function connectToAgent() {
   ws.onmessage = async ({ data }) => {
     try {
       const msg = JSON.parse(data);
+      learnProjectLink(msg.params);
 
       if (msg.method === 'batch_rpc') {
         await handleBatchRpc(msg);
@@ -913,7 +914,19 @@ async function findProjectUrl(tabId) {
   return null;
 }
 
-const projectUrl = (projectId) => `${FLOW_HOME}${flowPathPrefix}project/${projectId}`;
+// A project's whole address, as the platform was given it (copied from the
+// browser, with its account segment). Opened exactly, instead of an address
+// built from the id and a guessed account -- the guess sent the tab to another
+// account's Flow, where the project does not exist and nothing is saved.
+const projectLinks = new Map();
+function learnProjectLink(params) {
+  const id = params && params.projectId;
+  const url = params && params.projectUrl;
+  if (!id || !url || !/^https:\/\/[^/]+\//.test(url) || !url.includes(`/project/${id}`)) return;
+  if (projectLinks.get(id) !== url) console.log(`[FlowAgent] Project ${id} opens at ${url}`);
+  projectLinks.set(id, url);
+}
+const projectUrl = (projectId) => projectLinks.get(projectId) || `${FLOW_HOME}${flowPathPrefix}project/${projectId}`;
 const isOnProject = (url, projectId) => (url || '').includes(`/project/${projectId}`);
 
 /**

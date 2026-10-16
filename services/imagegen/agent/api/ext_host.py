@@ -18,8 +18,9 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, PlainTextResponse
 
-from agent.config import FLOW_PROJECT_ID
+from agent.config import FLOW_PROJECT_ID, FLOW_PROJECT_URL
 from agent.db.jobs import next_project_id
+from agent import project_links
 
 logger = logging.getLogger(__name__)
 
@@ -71,5 +72,8 @@ async def landing() -> dict:
     Unauthenticated for the same reason as the CRX route: the caller is the
     Chrome beside us, which cannot carry the key.
     """
-    project = await next_project_id() or FLOW_PROJECT_ID
-    return {"url": f"{FLOW_HOME}project/{project}" if project else FLOW_HOME}
+    project = await next_project_id() or await project_links.resolve(FLOW_PROJECT_URL or FLOW_PROJECT_ID)
+    if not project:
+        return {"url": FLOW_HOME}
+    # The address the project was given with, exactly; otherwise built from its id.
+    return {"url": await project_links.url_for(project) or f"{FLOW_HOME}project/{project}"}

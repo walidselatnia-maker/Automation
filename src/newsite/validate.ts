@@ -6,6 +6,8 @@
  * the browser's check ran or not.
  */
 
+import { flowProjectProblem } from '../core/project-id.js';
+
 export const PERSONAS = [
   'Expert / Professional',
   'Passionate Enthusiast',
@@ -217,9 +219,8 @@ function fieldCheck(field: FieldName, raw: Raw, clean: Partial<CleanWebsite>): s
     }
     case 'projectId': {
       const value = text(raw, field);
-      if (value && !/^[A-Za-z0-9-]{8,64}$/.test(value)) {
-        return 'That does not look like a Flow project code: letters, numbers and dashes only.';
-      }
+      const problem = flowProjectProblem(value);
+      if (problem) return problem;
       clean.projectId = value;
       return null;
     }

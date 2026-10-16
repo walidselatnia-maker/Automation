@@ -13,9 +13,9 @@ from urllib.parse import parse_qs, urlparse
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from agent import chrome, image_models
+from agent import chrome, image_models, project_links
 from agent.auth import require_api_key
-from agent.config import FLOW_PROJECT_ID
+from agent.config import FLOW_PROJECT_ID, FLOW_PROJECT_URL
 from agent.db import jobs
 from agent.services.flow_client import get_flow_client
 
@@ -48,7 +48,7 @@ class GenerateRequest(BaseModel):
     # serves every site and each site has its own project, so a value fixed on
     # this container could only ever be right for one of them. FLOW_PROJECT_ID
     # here is the fallback for a caller that sends none.
-    project_id: Optional[str] = Field(default=None, max_length=200)
+    project_id: Optional[str] = Field(default=None, max_length=500)
 
     # Which image model, as chosen on the platform's Settings page. 'auto' is
     # Pro first and the others as fallbacks; a model key is that model alone.
@@ -79,7 +79,7 @@ class GenerateVideoRequest(BaseModel):
     character_media_id: Optional[str] = Field(default=None, max_length=200)
     voice_media_id: Optional[str] = Field(default=None, max_length=200)
     orientation: Literal["VERTICAL", "HORIZONTAL"] = "VERTICAL"
-    project_id: Optional[str] = Field(default=None, max_length=200)
+    project_id: Optional[str] = Field(default=None, max_length=500)
 
 
 class GenerateResponse(BaseModel):
@@ -148,7 +148,8 @@ def _reject_if_unavailable(project_id: str) -> None:
 @router.post("/generate", response_model=GenerateResponse, status_code=202)
 async def generate(body: GenerateRequest) -> GenerateResponse:
     """Queue an image generation. Returns immediately with a job_id to poll."""
-    project_id = (body.project_id or FLOW_PROJECT_ID or "").strip()
+    # A bare id or the project's whole address: the address is kept and opened as it is.
+    project_id = await project_links.resolve(body.project_id or FLOW_PROJECT_URL or FLOW_PROJECT_ID or "")
     _reject_if_unavailable(project_id)
 
     choice = (body.image_model or "").strip()
@@ -168,7 +169,8 @@ async def generate_video(body: GenerateVideoRequest) -> GenerateResponse:
     Same job table and the same polling endpoint as an image -- only slower.
     Expect minutes rather than the 30-90 seconds an image takes.
     """
-    project_id = (body.project_id or FLOW_PROJECT_ID or "").strip()
+    # A bare id or the project's whole address: the address is kept and opened as it is.
+    project_id = await project_links.resolve(body.project_id or FLOW_PROJECT_URL or FLOW_PROJECT_ID or "")
     _reject_if_unavailable(project_id)
 
     job = await jobs.create_video(

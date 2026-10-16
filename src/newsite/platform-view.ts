@@ -237,9 +237,9 @@ export function platformWizardPage(v: PlatformView, section = -1): Html {
             <h2>Images</h2>
             <p>Where and how article images are made.</p>
             <div class="pf-status ${v.imageProblem ? 'bad' : ''}">${v.imageProblem ? `Image service: ${v.imageProblem}` : 'Image service: connected.'}</div>
-            ${field('flow_project_id', 'Shared Google Flow project', html`<input id="wz-flow_project_id" name="flow_project_id" spellcheck="false" value="${v.value('flow_project_id')}" placeholder="The code after /project/ in the address bar" />`, {
+            ${field('flow_project_id', 'Shared Google Flow project', html`<input id="wz-flow_project_id" name="flow_project_id" spellcheck="false" value="${v.value('flow_project_id')}" placeholder="https://flow.google.com/project/…" />`, {
               optional: 'optional',
-              hint: 'Used by every website that has no project of its own.',
+              hint: 'The whole address of the project, copied from the browser while it is open in Flow. The image service opens exactly this address, with the right Google account. Used by every website that has no project of its own.',
             })}
             ${field('public_base_url', 'Public address of this platform', html`<input id="wz-public_base_url" name="public_base_url" spellcheck="false" value="${v.value('public_base_url')}" placeholder="https://dashboard.example.com" />`, {
               optional: 'needed for sharing',
