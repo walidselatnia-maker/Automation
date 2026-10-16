@@ -6,17 +6,18 @@ import { createSocialPosts, getSocialPost, kickSocial, listPlanSocialPosts, rema
 import { getSeoRow, listPlanSeo } from './seo.js';
 import { getKeywordPlan, listKeywordPlans, listNewWebsites } from './repo.js';
 import { listPlanSocialPictures } from './pictures.js';
-import { createReels, getReel, kickReels, listPlanReels, reelDir, remakeReel, resetInterruptedReels, type ReelDeps } from './reels.js';
+import { createReels, getReel, kickReels, listPlanReels, REEL_PLATFORMS, reelDir, reelRules, remakeReel, resetInterruptedReels, type ReelDeps } from './reels.js';
+import { PLATFORMS } from './channels.js';
 import { createReadStream, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { readyFor } from './keywords-view.js';
-import { shareArticlesStep, sharingChannelPage, sharingSitePage, sharingSitesPage, shareWebsiteStep, type ChannelTab, type SharingSite } from './sharing-view.js';
+import { shareArticlesStep, sharingChannelPage, sharingSitePage, sharingSitesPage, shareWebsiteStep, reelRulesPage, type ChannelTab, type SharingSite } from './sharing-view.js';
 import { checkPlatformRules, listPlatformRules } from './platform-rules.js';
 import { markdownToHtml } from './markdown.js';
 
 export function registerSocialRoutes(app: FastifyInstance, deps: SocialDeps & { readFlash: (q: unknown) => NewFlash; autoStart?: boolean }): void {
   // Posts left ready or waiting by a restart carry on.
-  const reels: ReelDeps = { settings: deps.settings, encryptionKey: deps.encryptionKey, dataDir: deps.dataDir };
+  const reels: ReelDeps = { settings: deps.settings, encryptionKey: deps.encryptionKey, dataDir: deps.dataDir, ask: deps.ask };
   if (deps.autoStart !== false) {
     void kickSocial(deps);
     resetInterruptedReels();
@@ -157,6 +158,49 @@ export function registerSocialRoutes(app: FastifyInstance, deps: SocialDeps & { 
     const path = reel?.file ? join(reelDir(deps.dataDir), reel.file) : '';
     if (!path || !existsSync(path)) return reply.code(404).send('Not found');
     return reply.type('video/mp4').header('Cache-Control', 'private, max-age=86400').send(createReadStream(path));
+  });
+
+  /** A platform's reel rules: edited in place, saved for the next reel. */
+  const backOf = (v: unknown): string => {
+    const s = String(v ?? '');
+    return s.startsWith('/new-website/sharing') ? s : '/new-website/sharing';
+  };
+  const reelPlatform = (request: FastifyRequest): string | null => {
+    const p = String((request.params as { platform: string }).platform ?? '');
+    return (REEL_PLATFORMS as readonly string[]).includes(p) ? p : null;
+  };
+  const labelOfPlatform = (p: string) => PLATFORMS.find((x) => x.key === p)?.label ?? p;
+
+  app.get('/new-website/sharing/reel-rules/:platform', async (request, reply) => {
+    const platform = reelPlatform(request);
+    if (!platform) return reply.redirect('/new-website/sharing', 303);
+    const own = deps.settings.get(`newsite_reel_rules_${platform}`).trim();
+    const body = reelRulesPage(platform, labelOfPlatform(platform), reelRules(platform, deps.settings), !own, backOf((request.query as { back?: string }).back));
+    return reply.type('text/html; charset=utf-8').send(page(`${labelOfPlatform(platform)} reel rules`, body, request.query));
+  });
+
+  app.post('/new-website/sharing/reel-rules/:platform', async (request, reply) => {
+    const platform = reelPlatform(request);
+    if (!platform) return reply.redirect('/new-website/sharing', 303);
+    const b = (request.body ?? {}) as { text?: string; reset?: string; back?: string };
+    const back = backOf(b.back);
+    const join = (msg: string) => `${back}${back.includes('?') ? '&' : '?'}ok=${encodeURIComponent(msg)}`;
+    if (b.reset) {
+      deps.settings.set(`newsite_reel_rules_${platform}`, '');
+      return reply.redirect(join(`${labelOfPlatform(platform)} reel rules are back to the defaults.`), 303);
+    }
+    const text = String(b.text ?? '').replace(/\r\n/g, '\n').trim();
+    const problems = [
+      !/^- \d+-\d+s:/m.test(text) ? 'Keep at least one time mark line, like “- 0-2s: …”.' : '',
+      !/hook line[^\n]*at most \d+ words/i.test(text) ? 'Keep the hook line limit, like “The hook line: at most 9 words.”' : '',
+    ].filter(Boolean);
+    if (problems.length) {
+      return reply.type('text/html; charset=utf-8').send(
+        page(`${labelOfPlatform(platform)} reel rules`, reelRulesPage(platform, labelOfPlatform(platform), text, false, back, problems.join(' ')), request.query),
+      );
+    }
+    deps.settings.set(`newsite_reel_rules_${platform}`, text);
+    return reply.redirect(join(`${labelOfPlatform(platform)} reel rules saved. The next reel uses them.`), 303);
   });
 
   app.post('/new-website/reels/:id/remake', async (request, reply) => {

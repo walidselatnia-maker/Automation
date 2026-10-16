@@ -159,6 +159,7 @@ export const PROMPT_MODELS: Record<string, { model: string; format: 'json' | nul
   'pick-category': { model: 'gpt-oss:120b', format: 'json' },
   // Social sharing: one pin's words, the board it goes to, one Facebook post.
   'newsite-social-post': { model: 'gpt-oss:120b', format: 'json' },
+  'newsite-reel-prompt': { model: 'gpt-oss:120b', format: 'json' },
   'newsite-pick-board': { model: 'gpt-oss:120b', format: 'json' },
 };
 

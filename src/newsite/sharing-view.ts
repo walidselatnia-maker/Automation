@@ -97,6 +97,7 @@ const SHARING_CSS = `
 .sh-reel details { font-size: 12px; color: var(--soft); }
 .sh-reel details pre { white-space: pre-wrap; font-size: 12px; max-height: 220px; overflow: auto; }
 .sh-reel form { margin: 0; }
+.sh-hook { font-size: 13px; color: var(--ink); background: var(--surface); border-left: 3px solid var(--accent); padding: 4px 8px; border-radius: 4px; }
 .sh-pick { display: grid; gap: 10px; }
 .sh-pick .ch-option span.sh-missing { display: block; margin-top: 2px; }
 `;
@@ -261,7 +262,10 @@ export function sharingChannelPage(s: SharingSite, ch: ChannelRow, tab: ChannelT
   const problems = postRows(d.articles, true);
   const body =
     tab === 'reels'
-      ? d.reels!.length ? reelCards(d.reels!) : html`<p class="sh-empty">No reel yet. A reel is made for each article once it is published.</p>`
+      ? html`<div class="sh-legend">Each reel is one video made in Google Flow from one prompt, written by the AI from the article by the
+            <a href="/new-website/sharing/reel-rules/${ch.platform}?back=${encodeURIComponent(channelHref(s.site.id, ch.id, 'reels', plan))}">${label} reel rules</a>: the finished result and the hook in the first 2 seconds, then the stages of making it.
+            <a class="ns-btn small" href="/new-website/sharing/reel-rules/${ch.platform}?back=${encodeURIComponent(channelHref(s.site.id, ch.id, 'reels', plan))}">Edit reel rules</a></div>
+          ${d.reels!.length ? reelCards(d.reels!) : html`<p class="sh-empty">No reel yet. A reel is made for each article once it is published.</p>`}`
       : tab === 'problems'
         ? problems.length || failedReels.length
           ? html`${problems.length ? html`<ul class="sh-articles">${problems}</ul>` : raw('')}${failedReels.length ? reelCards(failedReels) : raw('')}`
@@ -380,6 +384,7 @@ function reelCard(r: ReelRow, a: SharingArticle | undefined): Html {
       ? html`<video src="/new-website/reels/${String(r.id)}/file" controls preload="metadata" playsinline></video>`
       : html`<div class="sh-reel-empty">${r.status === 'failed' ? 'No video' : 'The video is being made. It takes a few minutes.'}</div>`}
     <b>${a ? a.row.title || a.row.keyword : 'An article'}</b>
+    ${r.hook ? html`<span class="sh-hook">Hook: “${r.hook}”</span>` : raw('')}
     <span class="ns-badge ${cls}">${status}</span>
     ${r.error ? html`<div class="kw-seo-problems">${r.error}</div>` : raw('')}
     ${r.prompt ? html`<details><summary>The prompt</summary><pre>${r.prompt}</pre></details>` : raw('')}
@@ -387,4 +392,28 @@ function reelCard(r: ReelRow, a: SharingArticle | undefined): Html {
       ? html`<form method="post" action="/new-website/reels/${String(r.id)}/remake"><button class="ns-btn small ${r.status === 'failed' ? 'primary' : ''}">${r.status === 'failed' ? 'Try again' : 'Make again'}</button></form>`
       : raw('')}
   </div>`;
+}
+
+/* -- A platform's reel rules, edited in place ------------------------------- */
+
+export function reelRulesPage(platform: string, label: string, text: string, isDefault: boolean, back: string, error = ''): Html {
+  return html`
+    <style>${raw(WIZARD_CSS)}${raw(CSS)}${raw(SHARING_CSS)}
+      .rr-text { width: 100%; min-height: 460px; font: 14px/1.55 var(--mono); padding: 14px; border: 1px solid var(--line-strong); border-radius: var(--r-ctl); background: var(--surface); color: var(--ink); }</style>
+    <div class="wz kw-wz">
+      <div class="wz-head">
+        <h1>${label} reel rules</h1>
+        <p class="wz-id">How the AI writes the one video prompt for every ${label} reel. ${isDefault ? 'These are the default rules.' : 'Changed on the dashboard.'}</p>
+      </div>
+      <div class="wz-body">
+        ${error ? html`<p class="kw-seo-problems" role="alert" style="margin:0 0 16px">${error}</p>` : raw('')}
+        <form id="rr-form" method="post" action="/new-website/sharing/reel-rules/${platform}">
+          <input type="hidden" name="back" value="${back}" />
+          <p>Keep the time marks as lines starting with “- 0-2s:”, the hook line limit (“at most N words”) and the closing line (“closing line, word for word: "…"”): the prompt is checked against them. Change the rest for another niche or another style.</p>
+          <textarea class="rr-text" name="text" spellcheck="false" aria-label="${label} reel rules">${text}</textarea>
+          <label style="display:flex;gap:8px;align-items:center;margin-top:12px"><input type="checkbox" name="reset" value="1" /> Replace them with the default rules</label>
+        </form>
+      </div>
+      <div class="wz-foot"><a class="ns-btn quiet" href="${back}">Cancel</a><button class="ns-btn primary" form="rr-form">Save</button></div>
+    </div>`;
 }

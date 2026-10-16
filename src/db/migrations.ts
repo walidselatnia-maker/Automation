@@ -846,6 +846,14 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    id: '035-newsite-reel-hook',
+    description: 'New websites: a reel keeps the hook and closing lines its prompt was written with',
+    up(db) {
+      addColumn(db, 'newsite_reels', 'hook', "TEXT NOT NULL DEFAULT ''");
+      addColumn(db, 'newsite_reels', 'closing', "TEXT NOT NULL DEFAULT ''");
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */

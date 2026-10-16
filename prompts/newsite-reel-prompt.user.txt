@@ -1,0 +1,25 @@
+The {{label}} reel rules:
+{{reelRules}}
+
+The article
+Title: {{title}}
+Keyword: {{keyword}}
+Website niche: {{niche}}
+About the website: {{nicheContext}}
+
+Its steps, in order (for a recipe: the method):
+{{steps}}
+
+Its main things (for a recipe: the ingredients):
+{{things}}
+
+Its headings:
+{{articleOutline}}
+
+The reference photos sent with your prompt, in order:
+{{references}}
+
+Corrections to make to your previous answer (none on your first try):
+{{problemsJson}}
+
+Answer with the JSON only: {"hook_line": "...", "closing_line": "...", "prompt": "..."}
