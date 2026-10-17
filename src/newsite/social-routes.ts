@@ -39,7 +39,10 @@ export function registerSocialRoutes(
   };
   if (deps.autoStart !== false) {
     void refreshPostLinks(links).catch(() => {});
-    setInterval(() => void refreshPostLinks(links).catch(() => {}), 15 * 60_000).unref();
+    setInterval(() => {
+      void refreshPostLinks(links).catch(() => {});
+      void kickReelShares(shares); // also catches channels up on recent reels they missed
+    }, 15 * 60_000).unref();
     void kickSocial(deps);
     resetInterruptedReels();
     void kickReels(reels);

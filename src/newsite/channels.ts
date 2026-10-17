@@ -24,7 +24,7 @@ export type Platform = string;
 export const PLATFORMS: { key: string; label: string; built: boolean; color: string }[] = [
   { key: 'pinterest', label: 'Pinterest', built: true, color: '#e60023' },
   { key: 'facebook', label: 'Facebook', built: true, color: '#1877f2' },
-  { key: 'instagram', label: 'Instagram', built: true, color: '#e1306c' },
+  { key: 'instagram', label: 'Instagram', built: true, color: '#f77737' },
   { key: 'threads', label: 'Threads', built: false, color: '#6b6b6b' },
   { key: 'linkedin', label: 'LinkedIn', built: false, color: '#0a66c2' },
   { key: 'bluesky', label: 'Bluesky', built: false, color: '#1185fe' },

@@ -378,6 +378,32 @@ describe('sharing reels on the website channels', () => {
     expect(listPlanReelShares(planId)[0]!.post_link).toBe('https://www.facebook.com/reel/vid_1');
   });
 
+  it('a channel set to post reels later still gets the recent reels it missed, but not old ones or failed ones', async () => {
+    const page1 = fbApiPage(true);
+    setWebsiteChannels(websiteId, [page1]);
+    const reelId = madeReel();
+    createReelShares(reelId);
+    await kickReelShares(deps());
+    expect(reelsPosted).toHaveLength(1); // only the page there when it was made
+
+    const pin = pinChannel(true);
+    const ig = igChannel();
+    setWebsiteChannels(websiteId, [page1, pin, ig]);
+    run(`UPDATE newsite_reels SET done_at = datetime('now', '-30 days') WHERE id = ?`, reelId);
+    await kickReelShares(deps());
+    expect(listPlanReelShares(planId)).toHaveLength(1); // too old to catch up on
+
+    run(`UPDATE newsite_reels SET done_at = datetime('now', '-2 days') WHERE id = ?`, reelId);
+    await kickReelShares(deps());
+    expect(listPlanReelShares(planId).map((x) => x.channel_id).sort()).toEqual([page1, pin, ig].sort());
+    expect(videoPosts).toHaveLength(2);
+    expect(reelsPosted).toHaveLength(1); // never twice on the page
+
+    run(`UPDATE newsite_reel_shares SET status = 'failed' WHERE channel_id = ?`, pin);
+    await kickReelShares(deps());
+    expect(listPlanReelShares(planId).find((x) => x.channel_id === pin)!.status).toBe('failed');
+  });
+
   it('marks a share failed when Buffer says it could not post it', async () => {
     setWebsiteChannels(websiteId, [pinChannel()]);
     createReelShares(madeReel());
