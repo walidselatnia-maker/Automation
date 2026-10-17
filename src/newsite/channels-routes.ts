@@ -15,6 +15,7 @@ import {
   saveChannelRules,
   saveFacebookApiChannel,
   setChannelWebsites,
+  takesReels,
   PLATFORMS,
   viasOf,
   type Platform,
@@ -266,7 +267,7 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
       return send(reply, page(title(w), checkStep(ctx, results), request));
     }
     if (w.firstComment) return send(reply, page(title(w), planStep(ctx, d.paidBuffer), request));
-    if (w.platform === 'facebook') return send(reply, page(title(w), postStep(ctx, { image: d.postImage, reel: d.postReel }), request));
+    if (takesReels(w.platform)) return send(reply, page(title(w), postStep(ctx, { image: d.postImage, reel: d.postReel }), request));
     return send(reply, page(title(w), websitesStep(ctx, websiteChoices([]), false), request));
   });
 
@@ -287,7 +288,7 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
     if (!w || !d?.picked.length) return reply.redirect(lost, 303);
     d.paidBuffer = on(b.paidBuffer);
     const ctx = { ...w, draft: String(b.draft) };
-    if (w.platform === 'facebook') return send(reply, page(title(w), postStep(ctx, { image: d.postImage, reel: d.postReel }), request));
+    if (takesReels(w.platform)) return send(reply, page(title(w), postStep(ctx, { image: d.postImage, reel: d.postReel }), request));
     return send(reply, page(title(w), websitesStep(ctx, websiteChoices([]), false), request));
   });
 
@@ -331,8 +332,8 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
               bufferToken: d.token,
               bufferChannelId: p.id,
               paidBuffer: Boolean(w.firstComment) && d.paidBuffer,
-              postImage: w.platform !== 'facebook' || d.postImage,
-              postReel: w.platform === 'facebook' && d.postReel,
+              postImage: !takesReels(w.platform) || d.postImage,
+              postReel: takesReels(w.platform) && d.postReel,
               multiWebsite: multi,
             },
             deps.encryptionKey,
@@ -399,7 +400,7 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
       case 'websites':
         return send(reply, page(title, websitesPart(c, websiteChoices(channelWebsiteIds(c.id))), request));
       case 'posts':
-        return c.platform === 'facebook' ? send(reply, page(title, postsPart(c), request)) : reply.redirect(`/new-website/channels/${c.id}`, 303);
+        return takesReels(c.platform) ? send(reply, page(title, postsPart(c), request)) : reply.redirect(`/new-website/channels/${c.id}`, 303);
       case 'plan':
         return c.via === 'buffer' ? send(reply, page(title, planPart(c), request)) : reply.redirect(`/new-website/channels/${c.id}`, 303);
       case 'rules':

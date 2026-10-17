@@ -11,13 +11,13 @@ import { configurePrompts } from '../src/pipeline/prompts.js';
 import { createNewWebsite, saveKeywordPlan } from '../src/newsite/repo.js';
 import { listPlanSeo, queuePlanSeo } from '../src/newsite/seo.js';
 import { saveBufferChannel, setWebsiteChannels } from '../src/newsite/channels.js';
-import { createReels, getReel, kickReels, listPlanReels, reelDir, reelRules, type ReelDeps } from '../src/newsite/reels.js';
+import { createReels, getReel, kickReels, listPlanReels, onReelMade, reelDir, reelRules, type ReelDeps } from '../src/newsite/reels.js';
 import { registerSocialRoutes } from '../src/newsite/social-routes.js';
 
 const KEY = randomBytes(32);
 const PROMPTS = resolve('./prompts');
 
-describe('reels: one Flow video per article and platform, from one prompt', () => {
+describe('reels: one Flow video per article, from one prompt', () => {
   let settings: Settings;
   let dataDir: string;
   let seoId: number;
@@ -87,47 +87,52 @@ describe('reels: one Flow video per article and platform, from one prompt', () =
   });
 
   afterEach(() => {
+    onReelMade(null);
     closeDatabase();
     rmSync(dataDir, { recursive: true, force: true });
   });
 
-  it('makes one reel per platform the website shares on, each from its own prompt and the article pictures', async () => {
+  it('makes ONE reel per article, whatever platforms it goes to, from one prompt and the article pictures', async () => {
     setWebsiteChannels(websiteId, [channel('pinterest', 'p1'), channel('facebook', 'f1'), channel('threads', 't1')]);
-    expect(createReels(seoId)).toBe(2); // threads gets no reel
+    expect(createReels(seoId)).toBe(1);
     expect(createReels(seoId)).toBe(0); // never twice
     await kickReels(deps());
     const reels = listPlanReels(planId);
-    expect(reels.map((r) => [r.platform, r.status])).toEqual([['facebook', 'done'], ['pinterest', 'done']]);
-    expect(submitted).toHaveLength(2);
-    // The AI wrote each prompt from the article, by that platform's reel rules.
+    expect(reels.map((r) => [r.platform, r.status])).toEqual([['all', 'done']]);
+    expect(submitted).toHaveLength(1);
+    // The AI wrote the prompt from the article, by the one set of reel rules, knowing where it goes.
     const writes = asked.filter((a) => a.name === 'newsite-reel-prompt');
-    expect(writes.map((w) => w.vars.label).sort()).toEqual(['Facebook', 'Pinterest']);
+    expect(writes.map((w) => w.vars.label)).toEqual(['Facebook and Pinterest']);
     expect(String(writes[0]!.vars.reelRules)).toContain('0-2s: THE HOOK');
     expect(String(writes[0]!.vars.references)).toMatch(/^1\. The finished result/);
-    const prompts = submitted.map((x) => x.prompt).join(' | ');
-    expect(prompts).toContain('"Full recipe in the comments."');
-    expect(prompts).toContain('"Save this for later."');
-    expect(reels.find((r) => r.platform === 'facebook')!.hook).toBe('This cake needs no oven, watch this');
+    expect(submitted[0]!.prompt).toContain('"Full recipe linked below."');
+    expect(reels[0]!.hook).toBe('This cake needs no oven, watch this');
     expect(submitted[0]!.referenceUrls).toHaveLength(2);
     expect(submitted[0]!.referenceUrls[0]).toMatch(/^https:\/\/dash\.example\.com\/media\/picture\//);
     expect(existsSync(join(reelDir(dataDir), reels[0]!.file))).toBe(true);
   });
 
-  it('says why when Flow refuses, and Make again starts it over', async () => {
-    setWebsiteChannels(websiteId, [channel('instagram', 'i1')]);
+  it('makes no reel by itself for a website with no channel that takes reels, but the Reels page can', () => {
+    setWebsiteChannels(websiteId, [channel('threads', 't1')]);
+    expect(createReels(seoId)).toBe(0);
+    expect(createReels(seoId, true)).toBe(1);
+  });
+
+  it('says why when Flow refuses, and Make again starts it over, on the Reels page', async () => {
+    setWebsiteChannels(websiteId, [channel('facebook', 'f1')]);
     createReels(seoId);
     jobStatus = 'FAILED';
     await kickReels(deps());
     const [reel] = listPlanReels(planId);
-    expect(reel).toMatchObject({ platform: 'instagram', status: 'failed' });
+    expect(reel).toMatchObject({ status: 'failed' });
     expect(reel!.error).toMatch(/Flow could not make the video: policy/);
 
     const app = Fastify();
     await app.register(formbody);
     registerSocialRoutes(app, { settings, encryptionKey: KEY, dataDir, ask: async () => '{}', readFlash: () => null, autoStart: false });
-    const ch = (await import('../src/newsite/channels.js')).websiteChannels(websiteId)[0]!;
-    const page = await app.inject({ url: `/new-website/sharing/site/${websiteId}/channel/${ch.id}?tab=reels` });
-    expect(page.body).toContain('Reels <span class="n">1</span>');
+    const page = await app.inject({ url: '/new-website/sharing/reels' });
+    expect(page.body).toContain(`id="reel-${reel!.id}"`);
+    expect(page.body).toContain('Flow could not make the video');
     expect(page.body).toContain('Try again');
     expect((await app.inject({ method: 'POST', url: `/new-website/reels/${reel!.id}/remake` })).headers.location).toMatch(/Making%20the%20reel%20again/);
     expect(getReel(reel!.id)!.status).not.toBe('failed');
@@ -135,7 +140,7 @@ describe('reels: one Flow video per article and platform, from one prompt', () =
   });
 
   it('sends a weak script back with what to fix, before anything is spent on Flow', async () => {
-    setWebsiteChannels(websiteId, [channel('instagram', 'i1')]);
+    setWebsiteChannels(websiteId, [channel('facebook', 'f1')]);
     createReels(seoId);
     let round = 0;
     await kickReels({
@@ -150,33 +155,36 @@ describe('reels: one Flow video per article and platform, from one prompt', () =
       },
     });
     const problems = String(asked[1]!.vars.problemsJson);
-    expect(problems).toMatch(/hook_line has 13 words; at most 7/);
-    expect(problems).toMatch(/closing_line must be exactly: "Save this and follow for more."/);
+    expect(problems).toMatch(/hook_line has 13 words; at most 9/);
+    expect(problems).toMatch(/closing_line must be exactly: "Full recipe linked below."/);
     expect(problems).toMatch(/missing: 0-2s, 2-4s, 4-6s, 6-8s, 8-10s/);
     expect(submitted).toHaveLength(1);
     expect(listPlanReels(planId)[0]).toMatchObject({ status: 'done', hook: 'No oven. Three ingredients. Watch.' });
   });
 
-  it('lets the reel rules be changed on the dashboard, checked, and put back to the defaults', async () => {
+  it('lets the one set of reel rules be changed on the dashboard, checked, and put back to the defaults', async () => {
     const app = Fastify();
     await app.register(formbody);
     registerSocialRoutes(app, { settings, encryptionKey: KEY, dataDir, ask: async () => '{}', readFlash: () => null, autoStart: false });
     const form = (body: Record<string, string>) =>
-      app.inject({ method: 'POST', url: '/new-website/sharing/reel-rules/facebook', payload: new URLSearchParams(body).toString(), headers: { 'content-type': 'application/x-www-form-urlencoded' } });
-    const page = await app.inject({ url: '/new-website/sharing/reel-rules/facebook' });
-    expect(page.body).toContain('Facebook reel rules');
+      app.inject({ method: 'POST', url: '/new-website/sharing/reel-rules', payload: new URLSearchParams(body).toString(), headers: { 'content-type': 'application/x-www-form-urlencoded' } });
+    expect((await app.inject({ url: '/new-website/sharing/reel-rules/facebook' })).headers.location).toBe('/new-website/sharing/reel-rules');
+    const page = await app.inject({ url: '/new-website/sharing/reel-rules' });
+    expect(page.body).toContain('Reel rules');
     expect(page.body).toContain('0-2s: THE HOOK');
     expect((await form({ text: 'Just make it nice.' })).body).toContain('Keep at least one time mark line');
     const own = '- 0-2s: the finished craft project in full.\n- 2-10s: the steps.\nThe hook line: at most 6 words. The closing line, word for word: "Save it."';
-    expect((await form({ text: own, back: '/new-website/sharing/site/1' })).headers.location).toMatch(/^\/new-website\/sharing\/site\/1\?ok=Facebook%20reel%20rules%20saved/);
-    expect(reelRules('facebook', settings)).toBe(own);
+    expect((await form({ text: own, back: '/new-website/sharing/reels' })).headers.location).toMatch(/^\/new-website\/sharing\/reels\?ok=Reel%20rules%20saved/);
+    expect(reelRules(settings)).toBe(own);
     await form({ text: own, reset: '1' });
-    expect(reelRules('facebook', settings)).toContain('Full recipe in the comments.');
+    expect(reelRules(settings)).toContain('Full recipe linked below.');
   });
 
   it('pauses every reel for 30 minutes when Google flags unusual activity, and keeps the pause', async () => {
-    setWebsiteChannels(websiteId, [channel('facebook', 'f1'), channel('instagram', 'i1')]);
+    setWebsiteChannels(websiteId, [channel('facebook', 'f1')]);
     createReels(seoId);
+    // A reel from before (one per platform) waits behind it.
+    run(`INSERT INTO newsite_reels (seo_id, platform) VALUES (?, 'pinterest')`, seoId);
     let now = 1_000_000;
     const flagged = { ...deps(), now: () => now };
     flagged.flow = { ...flagged.flow!, poll: async () => ({ status: 'FAILED', error: "RpcError: MZZa6b failed: ['PUBLIC_ERROR_UNUSUAL_ACTIVITY']" }) };

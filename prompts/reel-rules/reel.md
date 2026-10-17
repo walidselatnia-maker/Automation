@@ -1,6 +1,6 @@
-# Facebook reel rules
+# Reel rules
 
-A 10-second vertical (9:16) Facebook Reel made from the article. Facebook viewers scroll fast and watch with the sound on: the first two seconds decide everything.
+A 10-second vertical (9:16) reel made from the article. It is made once and the same video is shared on every channel that takes reels: Facebook, Instagram and Pinterest. Viewers there scroll fast: the first two seconds decide everything, and the video must work with the sound on or off.
 
 ## Structure, with these exact time marks
 
@@ -20,7 +20,7 @@ Each stage is its own quick cut. The stages come from the article's own steps, i
 ## Voice
 
 - One warm, confident adult voice in English, the same voice the whole time, speaking at a natural, lively pace.
-- The hook line: at most 9 words. Then, over the stages, at most one short line that keeps the viewer watching (what makes this work). The closing line, word for word: "Full recipe in the comments."
+- The hook line: at most 9 words. Then, over the stages, at most one short line that keeps the viewer watching (what makes this work). The closing line, word for word: "Full recipe linked below." (It fits every platform: the link is the first comment on Facebook and the pin's own link on Pinterest.)
 - Real cooking sound under the voice. No music.
 
 ## Never

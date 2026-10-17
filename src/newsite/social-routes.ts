@@ -6,12 +6,11 @@ import { createSocialPosts, getSocialPost, kickSocial, listPlanSocialPosts, rema
 import { getSeoRow, listPlanSeo } from './seo.js';
 import { getKeywordPlan, listKeywordPlans, listNewWebsites } from './repo.js';
 import { listPlanSocialPictures } from './pictures.js';
-import { createReels, getReel, kickReels, listPlanReels, REEL_PLATFORMS, reelDir, reelRules, remakeReel, resetInterruptedReels, type ReelDeps } from './reels.js';
-import { PLATFORMS } from './channels.js';
+import { createReels, getReel, kickReels, listPlanReels, onReelMade, REEL_RULES_KEY, reelDir, reelRules, remakeReel, resetInterruptedReels, type ReelDeps } from './reels.js';
 import { createReadStream, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { readyFor } from './keywords-view.js';
-import { shareArticlesStep, sharingChannelPage, sharingSitePage, sharingSitesPage, shareWebsiteStep, reelRulesPage, type ChannelTab, type SharingSite } from './sharing-view.js';
+import { reelsPage, shareArticlesStep, sharingChannelPage, sharingSitePage, sharingSitesPage, shareWebsiteStep, reelRulesPage, type ChannelTab, type SharingSite } from './sharing-view.js';
 import { checkPlatformRules, listPlatformRules } from './platform-rules.js';
 import { createReelShares, getReelShare, kickReelShares, listPlanReelShares, retryReelShare, shareReelOn, type ReelShareDeps } from './reel-shares.js';
 import { markdownToHtml } from './markdown.js';
@@ -27,11 +26,11 @@ export function registerSocialRoutes(
     encryptionKey: deps.encryptionKey,
     dataDir: deps.dataDir,
     ask: deps.ask,
-    // A reel made is shared on its channels by itself.
-    onDone: (id) => {
-      if (createReelShares(id)) void kickReelShares(shares);
-    },
   };
+  // A reel made, however it was started, goes to its channels set to post reels.
+  onReelMade((id) => {
+    if (createReelShares(id)) void kickReelShares(shares);
+  });
   if (deps.autoStart !== false) {
     void kickSocial(deps);
     resetInterruptedReels();
@@ -74,7 +73,7 @@ export function registerSocialRoutes(
   const sharePage = (request: FastifyRequest, planId: number, message: string, kind: 'ok' | 'error' = 'ok'): string => {
     try {
       const from = new URL(String(request.headers.referer ?? ''));
-      if (from.pathname.startsWith('/new-website/sharing/site/')) {
+      if (from.pathname.startsWith('/new-website/sharing/site/') || from.pathname === '/new-website/sharing/reels') {
         from.searchParams.delete('ok');
         from.searchParams.delete('error');
         from.searchParams.set(kind, message);
@@ -168,6 +167,8 @@ export function registerSocialRoutes(
 
   /* -- Reels ---------------------------------------------------------------- */
 
+  const isPublished = (r: { post_status: string; post_url: string }) => r.post_status === 'published' && Boolean(r.post_url);
+
   app.get('/new-website/reels/:id/file', async (request, reply) => {
     const reel = getReel(Number((request.params as { id: string }).id) || 0);
     // The file name is the platform's own (reel-<id>.mp4), never a request's.
@@ -176,34 +177,33 @@ export function registerSocialRoutes(
     return reply.type('video/mp4').header('Cache-Control', 'private, max-age=86400').send(createReadStream(path));
   });
 
-  /** A platform's reel rules: edited in place, saved for the next reel. */
-  const backOf = (v: unknown): string => {
-    const s = String(v ?? '');
-    return s.startsWith('/new-website/sharing') ? s : '/new-website/sharing';
-  };
-  const reelPlatform = (request: FastifyRequest): string | null => {
-    const p = String((request.params as { platform: string }).platform ?? '');
-    return (REEL_PLATFORMS as readonly string[]).includes(p) ? p : null;
-  };
-  const labelOfPlatform = (p: string) => PLATFORMS.find((x) => x.key === p)?.label ?? p;
-
-  app.get('/new-website/sharing/reel-rules/:platform', async (request, reply) => {
-    const platform = reelPlatform(request);
-    if (!platform) return reply.redirect('/new-website/sharing', 303);
-    const own = deps.settings.get(`newsite_reel_rules_${platform}`).trim();
-    const body = reelRulesPage(platform, labelOfPlatform(platform), reelRules(platform, deps.settings), !own, backOf((request.query as { back?: string }).back));
-    return reply.type('text/html; charset=utf-8').send(page(`${labelOfPlatform(platform)} reel rules`, body, request.query));
+  /** The Reels page: each article's one reel, made and managed here, then sent to channels. */
+  app.get('/new-website/sharing/reels', async (request, reply) => {
+    const websiteId = Number((request.query as { website?: string }).website) || 0;
+    return reply.type('text/html; charset=utf-8').send(page('Reels', reelsPage(sharingSites(), websiteId), request.query));
   });
 
-  app.post('/new-website/sharing/reel-rules/:platform', async (request, reply) => {
-    const platform = reelPlatform(request);
-    if (!platform) return reply.redirect('/new-website/sharing', 303);
+  /** The reel rules: edited in place, saved for the next reel. */
+  const backOf = (v: unknown): string => {
+    const s = String(v ?? '');
+    return s.startsWith('/new-website/sharing') ? s : '/new-website/sharing/reels';
+  };
+  // Old per-platform links land on the one set of rules.
+  app.get('/new-website/sharing/reel-rules/:platform', async (request, reply) => reply.redirect('/new-website/sharing/reel-rules', 303));
+
+  app.get('/new-website/sharing/reel-rules', async (request, reply) => {
+    const own = deps.settings.get(REEL_RULES_KEY).trim();
+    const body = reelRulesPage(reelRules(deps.settings), !own, backOf((request.query as { back?: string }).back));
+    return reply.type('text/html; charset=utf-8').send(page('Reel rules', body, request.query));
+  });
+
+  app.post('/new-website/sharing/reel-rules', async (request, reply) => {
     const b = (request.body ?? {}) as { text?: string; reset?: string; back?: string };
     const back = backOf(b.back);
     const join = (msg: string) => `${back}${back.includes('?') ? '&' : '?'}ok=${encodeURIComponent(msg)}`;
     if (b.reset) {
-      deps.settings.set(`newsite_reel_rules_${platform}`, '');
-      return reply.redirect(join(`${labelOfPlatform(platform)} reel rules are back to the defaults.`), 303);
+      deps.settings.set(REEL_RULES_KEY, '');
+      return reply.redirect(join('The reel rules are back to the defaults.'), 303);
     }
     const text = String(b.text ?? '').replace(/\r\n/g, '\n').trim();
     const problems = [
@@ -211,34 +211,45 @@ export function registerSocialRoutes(
       !/hook line[^\n]*at most \d+ words/i.test(text) ? 'Keep the hook line limit, like “The hook line: at most 9 words.”' : '',
     ].filter(Boolean);
     if (problems.length) {
-      return reply.type('text/html; charset=utf-8').send(
-        page(`${labelOfPlatform(platform)} reel rules`, reelRulesPage(platform, labelOfPlatform(platform), text, false, back, problems.join(' ')), request.query),
-      );
+      return reply.type('text/html; charset=utf-8').send(page('Reel rules', reelRulesPage(text, false, back, problems.join(' ')), request.query));
     }
-    deps.settings.set(`newsite_reel_rules_${platform}`, text);
-    return reply.redirect(join(`${labelOfPlatform(platform)} reel rules saved. The next reel uses them.`), 303);
+    deps.settings.set(REEL_RULES_KEY, text);
+    return reply.redirect(join('Reel rules saved. The next reel uses them.'), 303);
+  });
+
+  /** Make the reel of a published article that has none (the Reels page). */
+  app.post('/new-website/reels/make/:seoId', async (request, reply) => {
+    const row = getSeoRow(Number((request.params as { seoId: string }).seoId) || 0);
+    if (!row) return reply.redirect('/new-website/sharing/reels', 303);
+    const ok = isPublished(row) && createReels(row.id, true) > 0;
+    void kickReels(reels);
+    return reply.redirect(sharePage(request, row.plan_id, ok ? `Making the reel of “${row.keyword}”.` : `“${row.keyword}” is not published, or has its reel already.`, ok ? 'ok' : 'error'), 303);
   });
 
   app.post('/new-website/reels/:id/remake', async (request, reply) => {
     const reel = getReel(Number((request.params as { id: string }).id) || 0);
     const row = reel ? getSeoRow(reel.seo_id) : undefined;
-    if (!reel || !row) return reply.redirect('/new-website/sharing', 303);
+    if (!reel || !row) return reply.redirect('/new-website/sharing/reels', 303);
     const ok = remakeReel(reel.id);
     void kickReels(reels);
     return reply.redirect(sharePage(request, row.plan_id, ok ? 'Making the reel again.' : 'That reel is being made right now.', ok ? 'ok' : 'error'), 303);
   });
 
-  /** Share a made reel on one channel of its website (the reel card's button), or put a failed share back to work. */
+  /** Send a made reel to the channels ticked on its card (or put failed ones back to work). */
   app.post('/new-website/reels/:id/share', async (request, reply) => {
     const reel = getReel(Number((request.params as { id: string }).id) || 0);
     const row = reel ? getSeoRow(reel.seo_id) : undefined;
-    if (!reel || !row) return reply.redirect('/new-website/sharing', 303);
-    const channelId = Number((request.body as { channel?: string } | undefined)?.channel) || 0;
-    const plan = getKeywordPlan(row.plan_id);
-    const own = plan ? websiteChannels(plan.website_id).some((c) => c.id === channelId) : false;
-    const ok = own && shareReelOn(reel.id, channelId) > 0;
+    if (!reel || !row) return reply.redirect('/new-website/sharing/reels', 303);
+    const raw = (request.body as { channel?: string | string[] } | undefined)?.channel;
+    const ids = (Array.isArray(raw) ? raw : raw ? [raw] : []).map(Number).filter(Boolean);
+    if (!ids.length) return reply.redirect(sharePage(request, row.plan_id, 'Tick at least one channel.', 'error'), 303);
+    let sent = 0;
+    for (const id of ids) sent += shareReelOn(reel.id, id);
     void kickReelShares(shares);
-    return reply.redirect(sharePage(request, row.plan_id, ok ? 'Sharing the reel.' : 'That reel is not made yet, or is already shared on this channel.', ok ? 'ok' : 'error'), 303);
+    return reply.redirect(
+      sharePage(request, row.plan_id, sent ? `Sending the reel to ${sent} channel${sent === 1 ? '' : 's'}.` : 'That reel is not made yet, or is already on those channels.', sent ? 'ok' : 'error'),
+      303,
+    );
   });
 
   app.post('/new-website/reels/shares/:id/retry', async (request, reply) => {
@@ -250,7 +261,6 @@ export function registerSocialRoutes(
     void kickReelShares(shares);
     return reply.redirect(sharePage(request, row.plan_id, 'Trying it again.'), 303);
   });
-  const isPublished = (r: { post_status: string; post_url: string }) => r.post_status === 'published' && Boolean(r.post_url);
 
   /** Share one published article on every channel it is not on yet. */
   app.post('/new-website/keywords/share/:id', async (request, reply) => {

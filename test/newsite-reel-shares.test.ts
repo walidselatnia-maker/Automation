@@ -5,13 +5,13 @@ import { join, resolve } from 'node:path';
 import Fastify from 'fastify';
 import formbody from '@fastify/formbody';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { closeDatabase, openDatabase, run } from '../src/db/index.js';
+import { closeDatabase, get, openDatabase, run } from '../src/db/index.js';
 import { Settings } from '../src/settings.js';
 import { configurePrompts } from '../src/pipeline/prompts.js';
 import { createNewWebsite, saveKeywordPlan } from '../src/newsite/repo.js';
 import { listPlanSeo, queuePlanSeo } from '../src/newsite/seo.js';
 import { saveBufferChannel, saveFacebookApiChannel, setWebsiteChannels } from '../src/newsite/channels.js';
-import { createReels, kickReels, reelDir, type ReelDeps } from '../src/newsite/reels.js';
+import { createReels, kickReels, onReelMade, reelDir, type ReelDeps } from '../src/newsite/reels.js';
 import {
   createReelShares,
   getReelShare,
@@ -43,6 +43,11 @@ const GOOD_FB = {
   alt: 'A tall slice of strawberry cake with whipped cream on a white plate',
 };
 
+const GOOD_IG = {
+  text: 'Real berries go right into the batter, and that first pink slice says it all. Save this for your next bake. #strawberrycake #baking #summerdessert',
+  alt: 'A tall slice of strawberry cake with whipped cream on a white plate',
+};
+
 describe('sharing reels on the website channels', () => {
   let settings: Settings;
   let dataDir: string;
@@ -60,6 +65,7 @@ describe('sharing reels on the website channels', () => {
     channels: async () => [
       { id: 'ch-pin', name: 'longlivo', service: 'pinterest', boards: [{ serviceId: 'b1', name: 'Recipes' }, { serviceId: 'b2', name: 'Strawberry Desserts' }] },
       { id: 'ch-fb', name: 'Easy Cakes', service: 'facebook', boards: [] },
+      { id: 'ch-ig', name: 'longlivo.ig', service: 'instagram', boards: [] },
     ],
     createVideoPost: async (input) => {
       if (bufferFull) throw new Error('Buffer rejected the reel: You have reached the limit of 10 posts in your queue');
@@ -80,13 +86,13 @@ describe('sharing reels on the website channels', () => {
   const ask = async (name: string, vars: Record<string, unknown>): Promise<string> => {
     asked.push({ name, vars });
     if (name === 'newsite-pick-board') return '{"board": "Strawberry Desserts"}';
-    return JSON.stringify(vars.label === 'Pinterest' ? GOOD_PIN : GOOD_FB);
+    return JSON.stringify(vars.label === 'Pinterest' ? GOOD_PIN : vars.label === 'Instagram' ? GOOD_IG : GOOD_FB);
   };
   const deps = (): ReelShareDeps => ({ settings, encryptionKey: KEY, dataDir, ask, buffer, facebook, now: () => clock, wakeIn: () => {} });
 
-  /** A made reel for the article on this platform, its video on disk. */
-  const madeReel = (platform: string): number => {
-    const id = Number(run(`INSERT INTO newsite_reels (seo_id, platform, status, file) VALUES (?, ?, 'done', '')`, seoId, platform).lastInsertRowid);
+  /** The article's one made reel, its video on disk. */
+  const madeReel = (): number => {
+    const id = Number(run(`INSERT INTO newsite_reels (seo_id, platform, status, file) VALUES (?, 'all', 'done', '')`, seoId).lastInsertRowid);
     run('UPDATE newsite_reels SET file = ? WHERE id = ?', `reel-${id}.mp4`, id);
     mkdirSync(reelDir(dataDir), { recursive: true });
     writeFileSync(join(reelDir(dataDir), `reel-${id}.mp4`), Buffer.from('mp4-video-bytes'));
@@ -94,8 +100,10 @@ describe('sharing reels on the website channels', () => {
   };
   const fbApiPage = (postReel: boolean) =>
     saveFacebookApiChannel({ name: 'Easy Cakes', fbToken: 'fb-tok', pageId: 'page-1', postImage: true, postReel, multiWebsite: false }, KEY);
-  const pinChannel = () =>
-    saveBufferChannel({ platform: 'pinterest', name: 'longlivo', bufferToken: 'tok', bufferChannelId: 'ch-pin', paidBuffer: false, postImage: true, postReel: false, multiWebsite: false }, KEY);
+  const pinChannel = (postReel = true) =>
+    saveBufferChannel({ platform: 'pinterest', name: 'longlivo', bufferToken: 'tok', bufferChannelId: 'ch-pin', paidBuffer: false, postImage: true, postReel, multiWebsite: false }, KEY);
+  const igChannel = () =>
+    saveBufferChannel({ platform: 'instagram', name: 'longlivo.ig', bufferToken: 'tok', bufferChannelId: 'ch-ig', paidBuffer: false, postImage: true, postReel: true, multiWebsite: false }, KEY);
   const fbBufferPage = (paid: boolean) =>
     saveBufferChannel({ platform: 'facebook', name: 'Easy Cakes', bufferToken: 'tok', bufferChannelId: 'ch-fb', paidBuffer: paid, postImage: true, postReel: true, multiWebsite: false }, KEY);
 
@@ -133,13 +141,14 @@ describe('sharing reels on the website channels', () => {
   });
 
   afterEach(() => {
+    onReelMade(null);
     closeDatabase();
     rmSync(dataDir, { recursive: true, force: true });
   });
 
   it('posts a Facebook reel through the API with its own words, and the article link as the first comment', async () => {
     setWebsiteChannels(websiteId, [fbApiPage(true)]);
-    const reelId = madeReel('facebook');
+    const reelId = madeReel();
     expect(createReelShares(reelId)).toBe(1);
     expect(createReelShares(reelId)).toBe(0); // never twice
     await kickReelShares(deps());
@@ -154,10 +163,28 @@ describe('sharing reels on the website channels', () => {
     expect(share!.text).not.toContain('http');
   });
 
-  it('leaves a Facebook page that is not set to post reels alone, unless its Share button is pressed', async () => {
+  it('sends the SAME video to Facebook, Instagram and Pinterest, each with its own words and status, never making it again', async () => {
+    setWebsiteChannels(websiteId, [fbApiPage(true), igChannel(), pinChannel()]);
+    const reelId = madeReel();
+    expect(createReelShares(reelId)).toBe(3);
+    await kickReelShares(deps());
+
+    expect(reelsPosted).toHaveLength(1); // Facebook, through its API
+    expect(videoPosts.map((p) => p.channelId).sort()).toEqual(['ch-ig', 'ch-pin']);
+    // One video: both Buffer posts fetch the same reel.
+    expect(new Set(videoPosts.map((p) => new URL(p.videoUrl).pathname.split('/')[3]))).toEqual(new Set([String(reelId)]));
+    expect(videoPosts.find((p) => p.channelId === 'ch-ig')!.metadata).toBe('instagram: { type: reel shouldShareToFeed: true }');
+    const shares = listPlanReelShares(planId);
+    expect(shares.map((x) => x.status)).toEqual(['sent', 'sent', 'sent']);
+    // Words written once per channel, by its own platform's rules.
+    expect(asked.filter((a) => a.name === 'newsite-social-post').map((a) => a.vars.label).sort()).toEqual(['Facebook', 'Instagram', 'Pinterest']);
+    expect(get('SELECT COUNT(*) AS n FROM newsite_reels')).toEqual({ n: 1 });
+  });
+
+  it('leaves a channel that is not set to post reels alone, unless it is picked for the reel', async () => {
     const page = fbApiPage(false);
     setWebsiteChannels(websiteId, [page]);
-    const reelId = madeReel('facebook');
+    const reelId = madeReel();
     expect(createReelShares(reelId)).toBe(0);
     expect(shareReelOn(reelId, page)).toBe(1);
     await kickReelShares(deps());
@@ -166,7 +193,7 @@ describe('sharing reels on the website channels', () => {
 
   it('queues a Pinterest video pin in Buffer: the video from this platform, its board and the article as the pin link', async () => {
     setWebsiteChannels(websiteId, [pinChannel()]);
-    const reelId = madeReel('pinterest');
+    const reelId = madeReel();
     expect(createReelShares(reelId)).toBe(1);
     await kickReelShares(deps());
 
@@ -185,7 +212,7 @@ describe('sharing reels on the website channels', () => {
   it('sends a Facebook reel through Buffer as a reel, with the link as the first comment only on a paid plan', async () => {
     setWebsiteChannels(websiteId, [fbBufferPage(true)]);
     await kickReelShares(deps());
-    const reelId = madeReel('facebook');
+    const reelId = madeReel();
     createReelShares(reelId);
     await kickReelShares(deps());
     expect(videoPosts[0]!.metadata).toBe(`facebook: { type: reel firstComment: ${JSON.stringify(POST_URL)} }`);
@@ -200,7 +227,7 @@ describe('sharing reels on the website channels', () => {
 
   it('waits for room when the Buffer queue is full, and tries again later', async () => {
     setWebsiteChannels(websiteId, [pinChannel()]);
-    const reelId = madeReel('pinterest');
+    const reelId = madeReel();
     createReelShares(reelId);
     bufferFull = true;
     await kickReelShares(deps());
@@ -216,7 +243,7 @@ describe('sharing reels on the website channels', () => {
   it('a failed share says why, and the card button puts it back to work', async () => {
     const page = fbApiPage(true);
     setWebsiteChannels(websiteId, [page]);
-    const reelId = madeReel('facebook');
+    const reelId = madeReel();
     createReelShares(reelId);
     await kickReelShares({ ...deps(), facebook: () => ({ ...facebook(), publishReel: async () => { throw new Error('(#200) pages_manage_posts is needed'); } }) });
     expect(listPlanReelShares(planId)[0]).toMatchObject({ status: 'failed', error: '(#200) pages_manage_posts is needed' });
@@ -257,7 +284,7 @@ describe('sharing reels on the website channels', () => {
 
   it('the media door serves a made reel by its signed link, and nothing without one', async () => {
     setWebsiteChannels(websiteId, [pinChannel()]);
-    const reelId = madeReel('pinterest');
+    const reelId = madeReel();
     createReelShares(reelId);
     await kickReelShares({ ...deps(), now: () => Date.now() });
     const app = Fastify();
@@ -275,27 +302,59 @@ describe('sharing reels on the website channels', () => {
     await app.close();
   });
 
-  it('the reel card on a channel page offers Share, then shows where it stands', async () => {
-    setWebsiteChannels(websiteId, [fbApiPage(false)]);
-    const reelId = madeReel('facebook');
+  it('the Reels page shows each reel once, with the channels to tick; a channel page shows only where it stands', async () => {
+    const page1 = fbApiPage(false);
+    const pin = pinChannel(false);
+    setWebsiteChannels(websiteId, [page1, pin]);
+    const reelId = madeReel();
     const app = Fastify();
     await app.register(formbody);
     registerSocialRoutes(app, {
       settings, encryptionKey: KEY, dataDir, ask, autoStart: false, readFlash: () => null,
       reelShares: { buffer, facebook, now: () => clock, wakeIn: () => {} },
     });
-    const channelId = Number((await app.inject({ method: 'GET', url: `/new-website/sharing/site/${websiteId}` })).body.match(/\/channel\/(\d+)/)![1]);
-    const page = (await app.inject({ method: 'GET', url: `/new-website/sharing/site/${websiteId}/channel/${channelId}?tab=reels` })).body;
-    expect(page).toContain(`action="/new-website/reels/${reelId}/share"`);
-    expect(page).toContain('Share on Facebook');
+    const sharing = (await app.inject({ url: '/new-website/sharing' })).body;
+    expect(sharing).toContain('href="/new-website/sharing/reels"'); // its own card beside the websites
 
-    const res = await app.inject({ method: 'POST', url: `/new-website/reels/${reelId}/share`, payload: `channel=${channelId}`, headers: { 'content-type': 'application/x-www-form-urlencoded' } });
-    expect(res.statusCode).toBe(303);
+    const reels = (await app.inject({ url: '/new-website/sharing/reels' })).body;
+    expect(reels.match(/id="reel-\d+"/g)).toHaveLength(1);
+    expect(reels).toContain(`action="/new-website/reels/${reelId}/share"`);
+    expect(reels).toContain(`name="channel" value="${page1}"`);
+    expect(reels).toContain(`name="channel" value="${pin}"`);
+    expect(reels).toContain('Send to the ticked channels');
+
+    const res = await app.inject({
+      method: 'POST', url: `/new-website/reels/${reelId}/share`,
+      payload: `channel=${page1}&channel=${pin}`, headers: { 'content-type': 'application/x-www-form-urlencoded', referer: 'https://dash.example.com/new-website/sharing/reels' },
+    });
+    expect(res.headers.location).toMatch(/^\/new-website\/sharing\/reels\?ok=Sending\+the\+reel\+to\+2\+channels/);
     await kickReelShares(deps());
     expect(reelsPosted).toHaveLength(1);
-    const after = (await app.inject({ method: 'GET', url: `/new-website/sharing/site/${websiteId}/channel/${channelId}?tab=reels` })).body;
-    expect(after).toContain('Shared on Facebook');
+    expect(videoPosts).toHaveLength(1);
+
+    const after = (await app.inject({ url: '/new-website/sharing/reels' })).body;
     expect(after).toContain('https://www.facebook.com/reel/vid_1');
+    expect(after).toContain('Queued in Buffer');
+    expect(after).not.toContain('Send to the ticked channels'); // nothing left to send
+
+    const channel = (await app.inject({ url: `/new-website/sharing/site/${websiteId}/channel/${page1}?tab=reels` })).body;
+    expect(channel).toContain('Posted');
+    expect(channel).toContain('href="/new-website/sharing/reels?website=');
+    expect(channel).not.toContain('/remake'); // no making here
+    await app.close();
+  });
+
+  it('the Reels page makes a reel for a published article that has none', async () => {
+    const app = Fastify();
+    await app.register(formbody);
+    registerSocialRoutes(app, { settings, encryptionKey: KEY, dataDir, ask, autoStart: false, readFlash: () => null });
+    const page = (await app.inject({ url: '/new-website/sharing/reels' })).body;
+    expect(page).toContain(`action="/new-website/reels/make/${seoId}"`);
+    const res = await app.inject({ method: 'POST', url: `/new-website/reels/make/${seoId}` });
+    expect(res.statusCode).toBe(303);
+    expect(get('SELECT platform, status FROM newsite_reels WHERE seo_id = ?', seoId)).toMatchObject({ platform: 'all' });
+    onReelMade(null);
+    await kickReels({ settings, encryptionKey: KEY, dataDir }); // the route started the maker: let it stop before the database closes
     await app.close();
   });
 });

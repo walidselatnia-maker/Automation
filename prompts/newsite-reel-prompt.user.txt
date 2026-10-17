@@ -1,4 +1,4 @@
-The {{label}} reel rules:
+The reel rules (the same video is shared on {{label}}):
 {{reelRules}}
 
 The article

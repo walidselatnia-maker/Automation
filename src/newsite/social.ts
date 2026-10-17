@@ -155,15 +155,15 @@ export function websiteOf(seoId: number): NewWebsiteRow | undefined {
 /**
  * Once an article is posted: one social post per channel its website shares
  * on, run by that channel's platform rules. Publishing it again adds nothing
- * new (one post per channel and platform). A Facebook page set to reels only
- * gets no image post.
+ * new (one post per channel and platform). A channel set to reels only gets
+ * no image post.
  */
 export function createSocialPosts(seoId: number): number {
   const site = websiteOf(seoId);
   if (!site) return 0;
   let added = 0;
   for (const c of websiteChannels(site.id)) {
-    if (c.platform === 'facebook' && !c.post_image) continue;
+    if (!c.post_image) continue;
     added += Number(run('INSERT OR IGNORE INTO newsite_social_posts (seo_id, channel_id, kind) VALUES (?, ?, ?)', seoId, c.id, c.platform).changes);
   }
   return added;
@@ -420,7 +420,7 @@ export function bufferMetadata(
     case 'facebook':
       return `facebook: { type: ${type}${comment} }`;
     case 'instagram':
-      return `instagram: { type: ${type}${comment} }`;
+      return `instagram: { type: ${type}${type === 'reel' ? ' shouldShareToFeed: true' : ''}${comment} }`;
     case 'linkedin':
       return comment ? `linkedin: {${comment} }` : '';
     default:

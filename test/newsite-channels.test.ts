@@ -78,7 +78,7 @@ describe('New dashboard: channels', () => {
     expect((await a.inject({ url: '/new-website/channels/pinterest/api/new' })).statusCode).toBe(303);
   });
 
-  it('adds a Pinterest channel through Buffer: token, channel, websites, then the check', async () => {
+  it('adds a Pinterest channel through Buffer: token, channel, what to post, websites, then the check', async () => {
     const a = await app();
     const one = site('One', 'one.example.com');
     const two = site('Two', 'two.example.com');
@@ -92,8 +92,10 @@ describe('New dashboard: channels', () => {
     expect(pick.body).not.toContain(BUFFER_TOKEN); // the token never goes back into a page
     const draft = draftIn(pick.body);
 
-    const websites = await post(a, '/new-website/channels/pinterest/buffer/pick', { draft, pick: 'ch-pin' });
-    expect(websites.body).toContain('Step 3 of 4: Websites');
+    const what = await post(a, '/new-website/channels/pinterest/buffer/pick', { draft, pick: 'ch-pin' });
+    expect(what.body).toContain('Step 3 of 5: What to post'); // Pinterest takes reels as video pins
+    const websites = await post(a, '/new-website/channels/pinterest/buffer/what', { draft, postImage: '1', postReel: '1' });
+    expect(websites.body).toContain('Step 4 of 5: Websites');
     expect(websites.body).toContain('one.example.com');
     expect(websites.body).toContain('Connect this channel to multiple websites');
 
@@ -104,7 +106,7 @@ describe('New dashboard: channels', () => {
     const saved = await post(a, '/new-website/channels/pinterest/buffer/save', { draft, websiteId: String(one) });
     expect(saved.statusCode).toBe(303);
     const [c] = listChannels();
-    expect(c).toMatchObject({ platform: 'pinterest', via: 'buffer', name: 'longlivo', buffer_channel_id: 'ch-pin', multi_website: 0 });
+    expect(c).toMatchObject({ platform: 'pinterest', via: 'buffer', name: 'longlivo', buffer_channel_id: 'ch-pin', multi_website: 0, post_image: 1, post_reel: 1 });
     expect(c!.buffer_token_enc).not.toContain(BUFFER_TOKEN);
     expect(bufferTokenOf(c!, KEY)).toBe(BUFFER_TOKEN);
     expect(websiteChannels(one).map((x) => x.id)).toEqual([c!.id]);
@@ -174,6 +176,7 @@ describe('New dashboard: channels', () => {
     const pick = await post(a, '/new-website/channels/pinterest/buffer/connect', { token: BUFFER_TOKEN });
     const draft = draftIn(pick.body);
     await post(a, '/new-website/channels/pinterest/buffer/pick', { draft, pick: 'ch-pin' });
+    await post(a, '/new-website/channels/pinterest/buffer/what', { draft, postImage: '1' });
     await post(a, '/new-website/channels/pinterest/buffer/save', { draft });
     return listChannels()[0]!.id;
   };
@@ -182,8 +185,8 @@ describe('New dashboard: channels', () => {
     const a = await app();
     const id = await addPin(a);
     const list = await a.inject({ url: '/new-website/channels' });
-    for (const part of ['connection', 'websites', 'rules']) expect(list.body).toContain(`href="/new-website/channels/${id}/edit/${part}"`);
-    expect(list.body).not.toContain(`/edit/posts`); // not a Facebook page
+    // Pinterest takes reels, so it has a What to post part too.
+    for (const part of ['connection', 'websites', 'posts', 'rules']) expect(list.body).toContain(`href="/new-website/channels/${id}/edit/${part}"`);
     expect(list.body).toContain('Rules OK');
     expect(list.body).toContain('href="/new-website/channels/add">Add channel</a>');
   });
@@ -236,6 +239,7 @@ describe('New dashboard: channels', () => {
     const pick = await post(a, '/new-website/channels/pinterest/buffer/connect', { token: BUFFER_TOKEN });
     const draft = draftIn(pick.body);
     await post(a, '/new-website/channels/pinterest/buffer/pick', { draft, pick: 'ch-pin' });
+    await post(a, '/new-website/channels/pinterest/buffer/what', { draft, postImage: '1' });
     await post(a, '/new-website/channels/pinterest/buffer/save', { draft });
     const channelId = listChannels()[0]!.id;
     const one = site('One', 'one.example.com');

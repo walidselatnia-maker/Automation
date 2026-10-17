@@ -1,5 +1,5 @@
 import { html, raw, type Html } from '../web/views/layout.js';
-import { channelColor, PLATFORMS, viasOf, viaLabel, type ChannelRow, type Platform, type Via } from './channels.js';
+import { channelColor, PLATFORMS, takesReels, viasOf, viaLabel, type ChannelRow, type Platform, type Via } from './channels.js';
 import type { RulesCheck } from './platform-rules.js';
 import { WIZARD_CSS, field } from './view.js';
 
@@ -106,12 +106,12 @@ const sites = (n: number): string => (n === 1 ? '1 website' : `${n} websites`);
 /** The steps of each wizard, by platform and how it posts. */
 export function stepsOf(platform: Platform, via: Via, firstComment = platform === 'facebook'): string[] {
   if (via === 'api') return ['Connect', 'Pick pages', 'Check', 'What to post', 'Websites'];
-  if (platform === 'pinterest') return ['Connect', 'Pick the channel', 'Websites', 'Check'];
+  if (platform === 'pinterest') return ['Connect', 'Pick the channel', 'What to post', 'Websites', 'Check'];
   return [
     'Connect',
     platform === 'facebook' ? 'Pick pages' : 'Pick channels',
     ...(firstComment ? ['Buffer plan'] : []),
-    ...(platform === 'facebook' ? ['What to post'] : []),
+    ...(takesReels(platform) ? ['What to post'] : []),
     'Websites',
     'Check',
   ];
@@ -253,7 +253,7 @@ export function planStep(w: WizardContext, paid: boolean): Html {
   );
 }
 
-/** Facebook: an image post, a reel, or both. */
+/** A channel that takes reels (Facebook, Instagram, Pinterest): an image post, a reel, or both. */
 export function postStep(w: WizardContext, picks: { image: boolean; reel: boolean }, error = ''): Html {
   return wizard(
     w,
@@ -264,9 +264,9 @@ export function postStep(w: WizardContext, picks: { image: boolean; reel: boolea
       <p>For each article, these go to every page you picked. One of them or both.</p>
       <div class="ch-pick">
         <label class="ch-option"><input type="checkbox" name="postImage" value="1" ${checked(picks.image)} />
-          <div><b>Image post</b><span>The article's feature picture with a short post written for Facebook. The link goes in the first comment.</span></div></label>
+          <div><b>Image post</b><span>Its own picture with a short post written from the article, by the channel's rules.</span></div></label>
         <label class="ch-option"><input type="checkbox" name="postReel" value="1" ${checked(picks.reel)} />
-          <div><b>Reel</b><span>A short video made from the article's pictures (uses Google Flow video credits), shared as soon as it is made. The link goes in the first comment.</span></div></label>
+          <div><b>Reel</b><span>The article's reel, made once on the Reels page (uses Google Flow video credits), shared here by itself as soon as it is made.</span></div></label>
       </div>
     </form>`,
     html`${cancel}${next()}`,
@@ -381,7 +381,7 @@ const part = (c: ChannelRow, key: string, title: string, rows: [string, string |
 
 /** A channel's card: its name, then its settings in parts. */
 export function channelCard(c: ChannelRow, websites: string[], rules: RulesCheck, alwaysOpen = false): Html {
-  const isFb = c.platform === 'facebook';
+  const reels = takesReels(c.platform);
   const firstComment = rules.rules?.link === 'first_comment';
   return html`<article class="ch-site ${alwaysOpen ? 'open' : ''}" id="channel-${String(c.id)}" data-id="${String(c.id)}" ${raw(alwaysOpen ? '' : 'data-toggle')}
       style="--ch-color:${channelColor(c)}">
@@ -408,7 +408,7 @@ export function channelCard(c: ChannelRow, websites: string[], rules: RulesCheck
         ['Shares articles of', websites.length ? websites.join(', ') : 'No website yet'],
         ['Several websites', c.multi_website ? 'Yes' : 'No, one only'],
       ])}
-      ${isFb
+      ${reels
         ? part(c, 'posts', 'What to post', [['Each article gets', [c.post_image ? 'An image post' : '', c.post_reel ? 'A reel' : ''].filter(Boolean).join(' and ') || 'Nothing']])
         : raw('')}
       ${c.via === 'buffer' && firstComment ? part(c, 'plan', 'Buffer plan', [['Plan', c.paid_buffer ? 'Paid (first comment with the link)' : 'Free (posts go out with no link)']]) : raw('')}
@@ -547,7 +547,7 @@ export const postsPart = (c: ChannelRow, error = ''): Html =>
         <label class="ch-option"><input type="checkbox" name="postImage" value="1" ${checked(Boolean(c.post_image))} />
           <div><b>Image post</b><span>Its own picture and words, made from the article.</span></div></label>
         <label class="ch-option"><input type="checkbox" name="postReel" value="1" ${checked(Boolean(c.post_reel))} />
-          <div><b>Reel</b><span>A 10-second video made from the article, shared as soon as it is made. The link goes in the first comment.</span></div></label>
+          <div><b>Reel</b><span>The article's reel, made once on the Reels page, shared here by itself as soon as it is made. Without it, reels can still be sent here from the Reels page.</span></div></label>
       </div>`,
     { error },
   );

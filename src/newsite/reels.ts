@@ -7,7 +7,7 @@ import { createLogger, errorMessage } from '../lib/logger.js';
 import { pictureMediaUrl } from '../core/media-links.js';
 import { promptsDirectory } from '../pipeline/prompts.js';
 import type { Settings } from '../settings.js';
-import { PLATFORMS, websiteChannels } from './channels.js';
+import { PLATFORMS, REEL_PLATFORMS, takesReels, websiteChannels } from './channels.js';
 import { flowProjectFor, isMainSlot, isStepSlot, listPictures } from './pictures.js';
 import { getKeywordPlan, getNewWebsite, type NewWebsiteRow } from './repo.js';
 import { getSeoRow, type SeoRow } from './seo.js';
@@ -15,19 +15,25 @@ import { parseRecipe } from './recipe.js';
 import { correctUntilRight } from './rounds.js';
 
 /**
- * Reels for a published article: one 10-second vertical video per platform
- * (Pinterest, Facebook, Instagram), made in Google Flow from ONE prompt and
- * the article's own pictures. The AI writes that prompt from the article by
- * the platform's reel rules (prompts/reel-rules/<platform>.md, or as changed
- * on the dashboard): the finished result and the hook line in the first two
- * seconds, then the stages of making it, then the closing line. One prompt,
- * one video: no storyboard, no editing.
+ * The reel of a published article: ONE 10-second vertical video, made once in
+ * Google Flow from one prompt and the article's own pictures, then shared on
+ * every channel that takes reels (reel-shares.ts). It is never made again
+ * just because another platform wants it. The AI writes the prompt from the
+ * article by the reel rules (prompts/reel-rules/reel.md, or as changed on the
+ * dashboard): the finished result and the hook line in the first two seconds,
+ * then the stages of making it, then the closing line. One prompt, one video:
+ * no storyboard, no editing.
+ *
+ * Reels made before this were made one per platform; they stay as they are,
+ * each one reel item that can be shared anywhere.
  */
 
 const log = createLogger('newsite-reels');
 
-/** The platforms that get a reel, each with its own prompt file. */
-export const REEL_PLATFORMS = ['pinterest', 'facebook', 'instagram'] as const;
+export { REEL_PLATFORMS };
+
+/** A reel made for every platform (older reels carry the one platform they were made for). */
+export const ALL_PLATFORMS = 'all';
 
 /** Flow takes at most this many photos in one request. */
 const MAX_REFERENCES = 3;
@@ -52,27 +58,30 @@ export const reelDir = (dataDir = resolveDataDir()): string => join(dataDir, 'ne
 export const getReel = (id: number): ReelRow | undefined => get<ReelRow>('SELECT * FROM newsite_reels WHERE id = ?', id);
 export const listPlanReels = (planId: number): ReelRow[] =>
   all<ReelRow>(
-    `SELECT r.* FROM newsite_reels r JOIN keyword_seo s ON s.id = r.seo_id WHERE s.plan_id = ? ORDER BY s.position, r.platform`,
+    `SELECT r.* FROM newsite_reels r JOIN keyword_seo s ON s.id = r.seo_id WHERE s.plan_id = ? ORDER BY s.position, r.id`,
     planId,
   );
 
-/** The platforms an article's website shares on that get a reel. */
-function reelPlatformsFor(websiteId: number): string[] {
+/** The platforms an article's website shares on that take reels, for people ("Facebook and Pinterest"). */
+function reelPlatformsLabel(websiteId: number): string {
   const own = new Set(websiteChannels(websiteId).map((c) => c.platform));
-  return REEL_PLATFORMS.filter((p) => own.has(p));
+  const names = REEL_PLATFORMS.filter((p) => own.has(p)).map((p) => PLATFORMS.find((x) => x.key === p)?.label ?? p);
+  if (!names.length) return 'short-video platforms';
+  return names.length === 1 ? names[0]! : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
 }
 
-/** Queue a reel for each of the website's reel platforms the article has none for yet. Returns how many. */
-export function createReels(seoId: number): number {
+/**
+ * Queue the article's one reel, unless it has one already. By itself (once
+ * published) only when its website has a channel that takes reels; `always`
+ * is the Reels page's Make reel button. Returns 1 when one was queued.
+ */
+export function createReels(seoId: number, always = false): number {
   const row = getSeoRow(seoId);
   const plan = row ? getKeywordPlan(row.plan_id) : undefined;
   if (!row || !plan || row.post_status !== 'published') return 0;
-  let added = 0;
-  for (const platform of reelPlatformsFor(plan.website_id)) {
-    const res = run(`INSERT OR IGNORE INTO newsite_reels (seo_id, platform) VALUES (?, ?)`, seoId, platform);
-    added += Number(res.changes ?? 0);
-  }
-  return added;
+  if (!always && !websiteChannels(plan.website_id).some((c) => takesReels(c.platform))) return 0;
+  if (get('SELECT id FROM newsite_reels WHERE seo_id = ? LIMIT 1', seoId)) return 0;
+  return Number(run(`INSERT OR IGNORE INTO newsite_reels (seo_id, platform) VALUES (?, ?)`, seoId, ALL_PLATFORMS).changes ?? 0);
 }
 
 /** Make a reel again from its prompt file (a failed one, or one you want redone). */
@@ -97,7 +106,7 @@ export interface ReelDeps {
   now?: () => number;
   /** The AI that writes the video prompt. */
   ask?: (name: string, vars: Record<string, unknown>) => Promise<string>;
-  /** A reel's video is made: it is shared on its channels. */
+  /** A reel's video is made: it is shared on its channels. Unset, the listener set by onReelMade runs. */
   onDone?: (reelId: number) => void;
 }
 
@@ -141,16 +150,24 @@ function references(seoId: number, deps: ReelDeps): { urls: string[]; described:
   };
 }
 
-/** A platform's reel rules: as changed on the dashboard, or its file. */
-export const defaultReelRules = (platform: string): string => {
+/** Whoever shares a reel once it is made (the Sharing routes set it). */
+let madeListener: ((reelId: number) => void) | null = null;
+export const onReelMade = (listener: ((reelId: number) => void) | null): void => {
+  madeListener = listener;
+};
+
+/** The one set of reel rules: its file. */
+export const defaultReelRules = (): string => {
   try {
-    return readFileSync(join(promptsDirectory(), 'reel-rules', `${platform}.md`), 'utf8');
+    return readFileSync(join(promptsDirectory(), 'reel-rules', 'reel.md'), 'utf8');
   } catch {
     return '';
   }
 };
-export const reelRules = (platform: string, settings: Settings): string =>
-  settings.get(`newsite_reel_rules_${platform}`).trim() ? settings.get(`newsite_reel_rules_${platform}`) : defaultReelRules(platform);
+/** Where rules changed on the dashboard are kept. */
+export const REEL_RULES_KEY = 'newsite_reel_rules';
+/** The reel rules: as changed on the dashboard, or its file. */
+export const reelRules = (settings: Settings): string => (settings.get(REEL_RULES_KEY).trim() ? settings.get(REEL_RULES_KEY) : defaultReelRules());
 
 export interface ReelScript {
   hook_line: string;
@@ -198,13 +215,13 @@ function articleParts(row: SeoRow): { steps: string; things: string } {
   return { steps: headings.join('\n') || '- (no steps)', things: '- (see the steps)' };
 }
 
-/** The AI writes the one video prompt from the article, by the platform's reel rules. */
+/** The AI writes the one video prompt from the article, by the reel rules. */
 async function writeScript(reel: ReelRow, row: SeoRow, site: NewWebsiteRow, described: string, deps: ReelDeps): Promise<ReelScript> {
-  const rules = reelRules(reel.platform, deps.settings);
-  if (!rules.trim()) throw new Error(`There are no reel rules for ${reel.platform}.`);
+  const rules = reelRules(deps.settings);
+  if (!rules.trim()) throw new Error('There are no reel rules (prompts/reel-rules/reel.md).');
   if (!deps.ask) throw new Error('No AI to write the reel prompt.');
   const ask = deps.ask;
-  const label = PLATFORMS.find((p) => p.key === reel.platform)?.label ?? reel.platform;
+  const label = reelPlatformsLabel(site.id);
   const parts = articleParts(row);
   const out = await correctUntilRight<ReelScript>({
     ask: (corrections) =>
@@ -252,7 +269,7 @@ async function make(reel: ReelRow, deps: ReelDeps): Promise<void> {
   const project = flowProjectFor(site.project_id, site.domain, deps.settings);
   const jobId = await flow.submitVideo({ prompt, referenceUrls: refs.urls, projectId: project.projectId });
   run(`UPDATE newsite_reels SET status = 'making', job_id = ?, error = '' WHERE id = ?`, jobId, reel.id);
-  log.info(`reel ${reel.id} (${reel.platform}): video job ${jobId} from ${refs.urls.length} picture(s)`);
+  log.info(`reel ${reel.id}: video job ${jobId} from ${refs.urls.length} picture(s)`);
 
   // A video takes minutes: ask every 15 seconds, for up to 20 minutes.
   const sleep = deps.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
@@ -267,8 +284,8 @@ async function make(reel: ReelRow, deps: ReelDeps): Promise<void> {
       const file = `reel-${reel.id}.mp4`;
       writeFileSync(join(dir, file), data);
       run(`UPDATE newsite_reels SET status = 'done', file = ?, error = '', done_at = datetime('now') WHERE id = ?`, file, reel.id);
-      log.info(`reel ${reel.id} (${reel.platform}): video made`);
-      deps.onDone?.(reel.id);
+      log.info(`reel ${reel.id}: video made`);
+      (deps.onDone ?? madeListener)?.(reel.id);
       return;
     }
     if (FAILED.has(status)) throw new Error(`Flow could not make the video: ${job.error ?? status}`);
@@ -317,7 +334,7 @@ export function kickReels(deps: ReelDeps): Promise<void> {
           } else {
             run(`UPDATE newsite_reels SET status = 'failed', error = ? WHERE id = ?`, message, next.id);
           }
-          log.warn(`reel ${next.id} (${next.platform}) failed: ${message}`);
+          log.warn(`reel ${next.id} failed: ${message}`);
         }
       }
     } finally {

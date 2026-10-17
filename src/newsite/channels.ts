@@ -24,7 +24,7 @@ export type Platform = string;
 export const PLATFORMS: { key: string; label: string; built: boolean; color: string }[] = [
   { key: 'pinterest', label: 'Pinterest', built: true, color: '#e60023' },
   { key: 'facebook', label: 'Facebook', built: true, color: '#1877f2' },
-  { key: 'instagram', label: 'Instagram', built: false, color: '#e1306c' },
+  { key: 'instagram', label: 'Instagram', built: true, color: '#e1306c' },
   { key: 'threads', label: 'Threads', built: false, color: '#6b6b6b' },
   { key: 'linkedin', label: 'LinkedIn', built: false, color: '#0a66c2' },
   { key: 'bluesky', label: 'Bluesky', built: false, color: '#1185fe' },
@@ -77,6 +77,10 @@ const secret = (enc: string, key: Buffer): string => {
 
 export const bufferTokenOf = (c: ChannelRow, key: Buffer): string => secret(c.buffer_token_enc, key);
 export const fbTokenOf = (c: ChannelRow, key: Buffer): string => secret(c.fb_token_enc, key);
+
+/** The platforms a reel (a vertical video) can be shared on. */
+export const REEL_PLATFORMS = ['facebook', 'instagram', 'pinterest'] as const;
+export const takesReels = (platform: string): boolean => (REEL_PLATFORMS as readonly string[]).includes(platform);
 
 /** How a channel posts. Buffer and the platform's own API are kept apart. */
 export type Via = 'buffer' | 'api';

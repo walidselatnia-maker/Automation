@@ -1,20 +1,23 @@
 import { html, raw, type Html } from '../web/views/layout.js';
 import type { NewWebsiteRow } from './repo.js';
 import type { SeoRow } from './seo.js';
-import { PLATFORMS, channelColor, type ChannelRow } from './channels.js';
+import { PLATFORMS, channelColor, takesReels, type ChannelRow } from './channels.js';
 import type { SocialPostRow } from './social.js';
 import type { PictureRow } from './pictures.js';
 import type { ReelRow } from './reels.js';
 import type { ReelShareRow } from './reel-shares.js';
 import { WIZARD_CSS } from './view.js';
 import { CSS, OVERVIEW_CSS, labelOf, missingChannels, sharePostRow, sharingBusy } from './keywords-view.js';
-import { REEL_PLATFORMS } from './reels.js';
 
 /**
  * The Sharing page: the last step of the platform. Every published article,
  * by website, with the post each channel made from it: its words, its
  * picture, where it stands, and what you can do. Posts start by themselves
  * once an article is published; the Share articles wizard is for the rest.
+ *
+ * Reels have their own card: each article's one reel is made and managed
+ * there, then sent to the channels that take reels. A channel's page only
+ * shows where each reel stands on that channel.
  */
 
 /** One published article, with the keyword plan it came from. */
@@ -113,6 +116,20 @@ const SHARING_CSS = `
 .sh-hook { width: 100%; font-size: 14px; line-height: 1.45; color: var(--ink); background: var(--surface); border-left: 3px solid var(--accent); padding: 8px 10px; border-radius: 6px; overflow-wrap: anywhere; }
 .sh-hook small { display: block; font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--soft); margin-bottom: 2px; }
 .sh-pick { display: grid; gap: 10px; }
+.sh-reels-card { background: color-mix(in srgb, var(--accent) 6%, var(--surface)); border-top: 4px solid var(--accent); }
+.sh-dest { width: 100%; display: grid; gap: 6px; margin: 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+.sh-dest legend { font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--soft); padding: 0 4px; }
+.sh-dest-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 14px; min-height: 30px; }
+.sh-dest-row label { display: flex; align-items: center; gap: 8px; flex: 1 1 180px; min-width: 0; }
+.sh-dest-row .sh-dot { width: 10px; height: 10px; }
+.sh-dest-row .kw-seo-problems { flex-basis: 100%; }
+.sh-dest-row a { font-size: 13px; font-weight: 600; color: var(--accent-text); }
+.sh-shares { list-style: none; margin: 0; padding: 0; }
+.sh-share { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.sh-share:last-child { border-bottom: 0; }
+.sh-share b { flex: 1 1 260px; font-size: 15px; overflow-wrap: anywhere; }
+.sh-share form { margin: 0; }
+.sh-share .kw-seo-problems { flex-basis: 100%; margin: 0; font-size: 13px; }
 .sh-pick .ch-option span.sh-missing { display: block; margin-top: 2px; }
 `;
 
@@ -147,20 +164,18 @@ function channelData(s: SharingSite, c: ChannelRow, plan: { id: number } | null 
   const articles = plan ? s.articles.filter((a) => a.planId === plan.id) : s.articles;
   const ids = new Set(articles.map((a) => a.row.id));
   const posts = s.posts.filter((p) => p.channel_id === c.id && ids.has(p.seo_id));
-  const reels = REEL_PLATFORMS.includes(c.platform as (typeof REEL_PLATFORMS)[number]) ? s.reels.filter((r) => r.platform === c.platform && ids.has(r.seo_id)) : null;
   const notYet = articles.filter((a) => missingChannels(posts.filter((p) => p.seo_id === a.row.id), [c]).length);
-  const reelIds = new Set((reels ?? []).map((r) => r.id));
-  const shares = s.reelShares.filter((x) => x.channel_id === c.id && reelIds.has(x.reel_id));
+  // Reels on this channel: only where each one stands here (they are made on the Reels page).
+  const reelIds = new Set(s.reels.filter((r) => ids.has(r.seo_id)).map((r) => r.id));
+  const shares = takesReels(c.platform) ? s.reelShares.filter((x) => x.channel_id === c.id && reelIds.has(x.reel_id)) : null;
   return {
     articles,
     posts,
-    reels,
     shares,
     notYet,
     sent: posts.filter((p) => p.status === 'sent').length,
     making: posts.filter((p) => p.status !== 'sent' && p.status !== 'failed').length,
-    failed: posts.filter((p) => p.status === 'failed').length + (reels ?? []).filter((r) => r.status === 'failed').length
-      + shares.filter((x) => x.status === 'failed').length,
+    failed: posts.filter((p) => p.status === 'failed').length + (shares ?? []).filter((x) => x.status === 'failed').length,
   };
 }
 
@@ -176,12 +191,12 @@ export function sharingSitesPage(sites: SharingSite[]): Html {
     <div class="ns-head">
       <div>
         <h1 class="ns-title">Sharing</h1>
-        <p class="ns-lede">Once an article is published, each channel of its website makes its own post and reel from it. Choose a website to see its channels.</p>
+        <p class="ns-lede">Once an article is published, each channel of its website makes its own post from it. Its one reel is made on the Reels card and sent to the channels that take reels. Choose a website to see its channels.</p>
       </div>
       ${sites.length ? html`<a class="ns-btn primary" href="/new-website/sharing/new">Share articles</a>` : raw('')}
     </div>
     ${sites.length
-      ? html`<div class="sh-grid">${sites.map((s) => {
+      ? html`<div class="sh-grid">${reelsCard(sites)}${sites.map((s) => {
           const c = countsOf(s);
           return html`<a class="sh-card" href="${siteHref(s.site.id)}">
             <div><span class="sh-card-title">${s.site.name}</span><span class="sh-card-sub">${s.site.domain}</span></div>
@@ -227,7 +242,7 @@ export function sharingSitePage(s: SharingSite, plan: { id: number; pillar: stri
               ${d.failed ? num(d.failed, 'failed', 'bad') : num(d.making, 'being made', 'busy')}
               ${num(d.notYet.length, 'not shared yet')}
             </div>
-            ${d.reels ? html`<span class="sh-reels-line">Reels: ${String(d.reels.filter((r) => r.status === 'done').length)} made${d.reels.some((r) => r.status === 'pending' || r.status === 'making') ? ', more being made' : ''}</span>` : raw('')}
+            ${d.shares ? html`<span class="sh-reels-line">Reels: ${String(d.shares.filter((x) => x.status === 'sent').length)} shared here${d.shares.some((x) => x.status === 'pending' || x.status === 'waiting') ? ', more on the way' : ''}</span>` : raw('')}
             <span class="sh-open">Open ${label} →</span>
           </a>`;
         })}</div>`
@@ -255,12 +270,12 @@ function stepStrip(p: SocialPostRow): Html {
 export function sharingChannelPage(s: SharingSite, ch: ChannelRow, tab: ChannelTab, plan: { id: number; pillar: string } | null = null): Html {
   const d = channelData(s, ch, plan);
   const label = PLATFORMS.find((p) => p.key === ch.platform)?.label ?? labelOf(ch.platform);
-  if (tab === 'reels' && !d.reels) tab = 'posts';
+  if (tab === 'reels' && !d.shares) tab = 'posts';
   const pictureOf = (p: SocialPostRow) => s.pictures.find((x) => x.id === p.picture_id);
   const titleOf = (a: SharingArticle) => a.row.title || a.row.keyword;
   const tabs: [ChannelTab, string, number][] = [
     ['posts', 'Posts', d.articles.length],
-    ...(d.reels ? [['reels', 'Reels', d.reels.length] as [ChannelTab, string, number]] : []),
+    ...(d.shares ? [['reels', 'Reels', d.shares.length] as [ChannelTab, string, number]] : []),
     ['problems', 'Problems', d.failed],
   ];
 
@@ -276,21 +291,24 @@ export function sharingChannelPage(s: SharingSite, ch: ChannelRow, tab: ChannelT
       return [html`<li class="sh-article">${stepStrip(post)}<ul class="kw-share-list">${sharePostRow(post, ch, a.planId, pictureOf(post), titleOf(a))}</ul></li>`];
     });
 
-  const reelCards = (reels: ReelRow[]): Html =>
-    html`<div class="sh-reel-list">${reels.map((r) => reelCard(r, s.articles.find((a) => a.row.id === r.seo_id), ch, d.shares.find((x) => x.reel_id === r.id)))}</div>`;
+  const shareRows = (shares: ReelShareRow[]): Html =>
+    html`<ul class="sh-shares">${shares.map((x) => {
+      const r = s.reels.find((y) => y.id === x.reel_id);
+      const a = r ? s.articles.find((y) => y.row.id === r.seo_id) : undefined;
+      return html`<li class="sh-share"><b>${a ? titleOf(a) : 'A reel'}</b>${shareState(x, ch)}</li>`;
+    })}</ul>`;
 
-  const failedShare = new Set(d.shares.filter((x) => x.status === 'failed').map((x) => x.reel_id));
-  const failedReels = (d.reels ?? []).filter((r) => r.status === 'failed' || failedShare.has(r.id));
+  const failedShares = (d.shares ?? []).filter((x) => x.status === 'failed');
   const problems = postRows(d.articles, true);
   const body =
     tab === 'reels'
       ? html`<div class="sh-legend-row">
-            <p>Each reel is one Google Flow video from one prompt, written by the AI from the article: the finished result and the hook in the first 2 seconds, then the stages of making it.</p>
-            <a class="ns-btn small" href="/new-website/sharing/reel-rules/${ch.platform}?back=${encodeURIComponent(channelHref(s.site.id, ch.id, 'reels', plan))}">Edit ${label} reel rules</a></div>
-          ${d.reels!.length ? reelCards(d.reels!) : html`<p class="sh-empty">No reel yet. A reel is made for each article once it is published.</p>`}`
+            <p>Each article’s reel is made once on the Reels page and the same video is sent to every channel that takes reels. Here is where each one stands on this channel.</p>
+            <a class="ns-btn small" href="${reelsHref(s.site.id)}">Open Reels</a></div>
+          ${d.shares!.length ? shareRows(d.shares!) : html`<p class="sh-empty">No reel sent here yet. ${ch.post_reel ? 'Reels come here by themselves once they are made.' : 'Pick this channel for a reel on the Reels page, or set it to post reels in its settings.'}</p>`}`
       : tab === 'problems'
-        ? problems.length || failedReels.length
-          ? html`${problems.length ? html`<ul class="sh-articles">${problems}</ul>` : raw('')}${failedReels.length ? reelCards(failedReels) : raw('')}`
+        ? problems.length || failedShares.length
+          ? html`${problems.length ? html`<ul class="sh-articles">${problems}</ul>` : raw('')}${failedShares.length ? shareRows(failedShares) : raw('')}`
           : html`<p class="sh-empty">No problems on this channel.</p>`
         : d.articles.length
           ? html`<div class="sh-legend">Each post goes through <span class="sh-step">1. Words</span><span class="sh-step">2. Picture</span><span class="sh-step">3. Sent</span> by itself, by this channel’s <a href="/new-website/channels/${String(ch.id)}">rules</a>.</div>
@@ -399,35 +417,56 @@ const REEL_STATUS: Record<ReelRow['status'], [string, string]> = {
   failed: ['Failed', 'bad'],
 };
 
-/** Where a made reel stands on one channel, and what to do. */
-function reelShareLine(r: ReelRow, ch: ChannelRow, share: ReelShareRow | undefined): Html {
-  if (r.status !== 'done') return raw('');
-  const label = PLATFORMS.find((p) => p.key === ch.platform)?.label ?? labelOf(ch.platform);
-  const shareButton = (text: string, primary: boolean) =>
-    html`<form method="post" action="/new-website/reels/${String(r.id)}/share"><input type="hidden" name="channel" value="${String(ch.id)}" /><button class="ns-btn small ${primary ? 'primary' : ''}">${text}</button></form>`;
-  if (!share) return html`<span class="ns-badge">Not shared on ${label} yet</span>${shareButton(`Share on ${label}`, true)}`;
-  switch (share.status) {
+const reelsHref = (websiteId = 0): string => `/new-website/sharing/reels${websiteId ? `?website=${websiteId}` : ''}`;
+const platformLabelOf = (platform: string): string => PLATFORMS.find((p) => p.key === platform)?.label ?? labelOf(platform);
+
+/** Where one reel stands on one channel, and what to do about it. */
+function shareState(x: ReelShareRow, ch: ChannelRow): Html {
+  switch (x.status) {
     case 'pending':
-      return html`<span class="ns-badge busy">Being shared on ${label}</span>`;
+      return html`<span class="ns-badge busy">Being sent</span>`;
     case 'waiting':
-      return html`<span class="ns-badge busy">Waiting for room in Buffer</span>${share.error ? html`<div class="kw-seo-problems">${share.error}</div>` : raw('')}`;
+      return html`<span class="ns-badge busy">Waiting for room in Buffer</span>${x.error ? html`<div class="kw-seo-problems">${x.error}</div>` : raw('')}`;
     case 'failed':
-      return html`<span class="ns-badge bad">Sharing failed</span><div class="kw-seo-problems">${share.error}</div>
-        <form method="post" action="/new-website/reels/shares/${String(share.id)}/retry"><button class="ns-btn small primary">Try sharing again</button></form>`;
+      return html`<span class="ns-badge bad">Failed</span>
+        <form method="post" action="/new-website/reels/shares/${String(x.id)}/retry"><button class="ns-btn small primary">Try again</button></form>
+        <div class="kw-seo-problems">${x.error}</div>`;
     default: {
-      const link = ch.via === 'api' && ch.platform === 'facebook' && share.external_id ? `https://www.facebook.com/reel/${share.external_id}` : '';
-      return html`<span class="ns-badge ok">${ch.via === 'buffer' ? 'Queued in Buffer' : `Shared on ${label}`}</span>
-        ${link ? html`<a class="sh-open" href="${link}" target="_blank" rel="noopener">See it on Facebook</a>` : raw('')}
-        ${share.board_name ? html`<span class="sh-reels-line">Board: ${share.board_name}</span>` : raw('')}
-        ${share.error ? html`<div class="kw-seo-problems">${share.error}</div>` : raw('')}
-        ${share.text ? html`<details><summary>Its words</summary><pre>${share.title ? `${share.title}\n\n` : ''}${share.text}</pre></details>` : raw('')}`;
+      const link = ch.via === 'api' && ch.platform === 'facebook' && x.external_id ? `https://www.facebook.com/reel/${x.external_id}` : '';
+      return html`<span class="ns-badge ok">${ch.via === 'buffer' ? 'Queued in Buffer' : 'Posted'}</span>
+        ${link ? html`<a href="${link}" target="_blank" rel="noopener">See it</a>` : raw('')}
+        ${x.board_name ? html`<span class="sh-reels-line">Board: ${x.board_name}</span>` : raw('')}
+        ${x.error ? html`<div class="kw-seo-problems">${x.error}</div>` : raw('')}`;
     }
   }
 }
 
-function reelCard(r: ReelRow, a: SharingArticle | undefined, ch: ChannelRow, share: ReelShareRow | undefined): Html {
+/** The Reels card on the Sharing page, beside the websites. */
+function reelsCard(sites: SharingSite[]): Html {
+  const reels = sites.flatMap((s) => s.reels);
+  const shares = sites.flatMap((s) => s.reelShares);
+  const failed = reels.filter((r) => r.status === 'failed').length + shares.filter((x) => x.status === 'failed').length;
+  const making = reels.filter((r) => r.status === 'pending' || r.status === 'making').length;
+  return html`<a class="sh-card sh-reels-card" href="${reelsHref()}">
+    <div><span class="sh-card-title">Reels</span><span class="sh-card-sub">One video per article, sent to every channel that takes reels</span></div>
+    <div class="sh-nums">
+      ${num(reels.filter((r) => r.status === 'done').length, 'made')}
+      ${num(shares.filter((x) => x.status === 'sent').length, 'sent')}
+      ${failed ? num(failed, 'failed', 'bad') : num(making, 'being made', 'busy')}
+    </div>
+    <span class="sh-open">Open Reels →</span>
+  </a>`;
+}
+
+/** One reel, made once: its video, where it stands, and the channels it goes to. */
+function reelItem(r: ReelRow, s: SharingSite): Html {
+  const a = s.articles.find((x) => x.row.id === r.seo_id);
   const [status, cls] = REEL_STATUS[r.status];
-  return html`<div class="sh-reel">
+  const destinations = s.channels.filter((c) => takesReels(c.platform));
+  const shareOf = (c: ChannelRow) => s.reelShares.find((x) => x.reel_id === r.id && x.channel_id === c.id);
+  const canPick = (c: ChannelRow) => r.status === 'done' && (!shareOf(c) || shareOf(c)!.status === 'failed');
+  const formId = `reel-share-${String(r.id)}`;
+  return html`<div class="sh-reel" id="reel-${String(r.id)}">
     <div class="sh-reel-media">
       ${r.status === 'done'
         ? html`<video src="/new-website/reels/${String(r.id)}/file" controls preload="metadata" playsinline></video>`
@@ -438,32 +477,86 @@ function reelCard(r: ReelRow, a: SharingArticle | undefined, ch: ChannelRow, sha
       <span class="ns-badge ${cls}">${status}</span>
       ${r.hook ? html`<div class="sh-hook"><small>Hook</small>“${r.hook}”</div>` : raw('')}
       ${r.error ? html`<div class="kw-seo-problems">${r.error}</div>` : raw('')}
-      ${reelShareLine(r, ch, share)}
+      ${destinations.length
+        ? html`<form id="${formId}" method="post" action="/new-website/reels/${String(r.id)}/share" style="width:100%"><fieldset class="sh-dest">
+            <legend>Where it goes</legend>
+            ${destinations.map((c) => {
+              const x = shareOf(c);
+              return html`<div class="sh-dest-row" style="--ch-color:${channelColor(c)}">
+                <label>${canPick(c) ? html`<input type="checkbox" name="channel" value="${String(c.id)}" ${!x && c.post_reel ? raw('checked') : raw('')} />` : raw('')}
+                  <span class="sh-dot"></span><span>${platformLabelOf(c.platform)} · ${c.name}</span></label>
+                ${x ? shareState(x, c) : html`<span class="ns-badge">${r.status === 'done' ? 'Not sent' : 'After the video is made'}</span>`}
+              </div>`;
+            })}
+          </fieldset></form>`
+        : html`<p class="sh-reels-line">${s.site.name} has no channel that takes reels (Facebook, Instagram or Pinterest).</p>`}
+      <div class="ns-actions" style="display:flex;flex-wrap:wrap;gap:8px">
+        ${r.status === 'done' && destinations.some(canPick) ? html`<button class="ns-btn small primary" form="${formId}">Send to the ticked channels</button>` : raw('')}
+        ${r.status === 'done' || r.status === 'failed'
+          ? html`<form method="post" action="/new-website/reels/${String(r.id)}/remake"><button class="ns-btn small ${r.status === 'failed' ? 'primary' : ''}">${r.status === 'failed' ? 'Try again' : 'Make again'}</button></form>`
+          : raw('')}
+      </div>
       ${r.prompt ? html`<details><summary>The prompt</summary><pre>${r.prompt}</pre></details>` : raw('')}
-      ${r.status === 'done' || r.status === 'failed'
-        ? html`<form method="post" action="/new-website/reels/${String(r.id)}/remake"><button class="ns-btn small ${r.status === 'failed' ? 'primary' : ''}">${r.status === 'failed' ? 'Try again' : 'Make again'}</button></form>`
-        : raw('')}
     </div>
   </div>`;
 }
 
-/* -- A platform's reel rules, edited in place ------------------------------- */
+/**
+ * The Reels page: every article's one reel, made once and managed here, then
+ * sent to the channels that take reels. Published articles with no reel yet
+ * can get one.
+ */
+export function reelsPage(sites: SharingSite[], websiteId = 0): Html {
+  const shown = websiteId ? sites.filter((s) => s.site.id === websiteId) : sites;
+  const withReel = (s: SharingSite) => new Set(s.reels.map((r) => r.seo_id));
+  const noReel = shown.flatMap((s) => s.articles.filter((a) => !withReel(s).has(a.row.id)).map((a) => ({ s, a })));
+  return html`
+    <style>${raw(CSS)}${raw(SHARING_CSS)}</style>
+    ${crumbs([['Sharing', '/new-website/sharing'], ['Reels']])}
+    <div class="ns-head">
+      <div>
+        <h1 class="ns-title">Reels</h1>
+        <p class="ns-lede">Each published article gets one reel: a 10-second Google Flow video, made once. The same video is then sent to every channel you tick, and each channel keeps its own status. Channels set to post reels get it by themselves.</p>
+      </div>
+      <a class="ns-btn" href="/new-website/sharing/reel-rules?back=${encodeURIComponent(reelsHref(websiteId))}">Edit reel rules</a>
+    </div>
+    ${sites.length > 1
+      ? html`<nav class="sh-tabs" aria-label="Websites">
+          <a class="sh-tab ${websiteId ? '' : 'on'}" href="${reelsHref()}">Every website <span class="n">${String(sites.reduce((n, s) => n + s.reels.length, 0))}</span></a>
+          ${sites.map((s) => html`<a class="sh-tab ${s.site.id === websiteId ? 'on' : ''}" href="${reelsHref(s.site.id)}">${s.site.name} <span class="n">${String(s.reels.length)}</span></a>`)}
+        </nav>`
+      : raw('')}
+    <div class="sh-panel">
+      ${shown.some((s) => s.reels.length)
+        ? shown.filter((s) => s.reels.length).map((s) => html`${shown.length > 1 ? html`<h2 style="margin:18px 0 0">${s.site.name}</h2>` : raw('')}<div class="sh-reel-list">${s.reels.map((r) => reelItem(r, s))}</div>`)
+        : html`<p class="sh-empty">No reel yet. A reel is made for each article once it is published, when its website has a channel that takes reels.</p>`}
+      ${noReel.length
+        ? html`<h2 style="margin:22px 0 4px;font-size:16px">Published articles with no reel</h2>
+          <ul class="sh-articles">${noReel.map(({ s, a }) => html`<li class="sh-article"><div class="sh-none-row"><div><b>${a.row.title || a.row.keyword}</b><div class="kw-share-meta">${s.site.name}</div></div>
+            <form method="post" action="/new-website/reels/make/${String(a.row.id)}"><button class="ns-btn small primary">Make its reel</button></form></div></li>`)}</ul>`
+        : raw('')}
+    </div>
+    ${watch(shown.some(isBusy))}
+    ${raw(SHARING_SCRIPT)}`;
+}
 
-export function reelRulesPage(platform: string, label: string, text: string, isDefault: boolean, back: string, error = ''): Html {
+/* -- The reel rules, edited in place ---------------------------------------- */
+
+export function reelRulesPage(text: string, isDefault: boolean, back: string, error = ''): Html {
   return html`
     <style>${raw(WIZARD_CSS)}${raw(CSS)}${raw(SHARING_CSS)}
       .rr-text { width: 100%; min-height: 460px; font: 14px/1.55 var(--mono); padding: 14px; border: 1px solid var(--line-strong); border-radius: var(--r-ctl); background: var(--surface); color: var(--ink); }</style>
     <div class="wz kw-wz">
       <div class="wz-head">
-        <h1>${label} reel rules</h1>
-        <p class="wz-id">How the AI writes the one video prompt for every ${label} reel. ${isDefault ? 'These are the default rules.' : 'Changed on the dashboard.'}</p>
+        <h1>Reel rules</h1>
+        <p class="wz-id">How the AI writes the one video prompt for every reel. The same video goes to Facebook, Instagram and Pinterest. ${isDefault ? 'These are the default rules.' : 'Changed on the dashboard.'}</p>
       </div>
       <div class="wz-body">
         ${error ? html`<p class="kw-seo-problems" role="alert" style="margin:0 0 16px">${error}</p>` : raw('')}
-        <form id="rr-form" method="post" action="/new-website/sharing/reel-rules/${platform}">
+        <form id="rr-form" method="post" action="/new-website/sharing/reel-rules">
           <input type="hidden" name="back" value="${back}" />
           <p>Keep the time marks as lines starting with “- 0-2s:”, the hook line limit (“at most N words”) and the closing line (“closing line, word for word: "…"”): the prompt is checked against them. Change the rest for another niche or another style.</p>
-          <textarea class="rr-text" name="text" spellcheck="false" aria-label="${label} reel rules">${text}</textarea>
+          <textarea class="rr-text" name="text" spellcheck="false" aria-label="Reel rules">${text}</textarea>
           <label style="display:flex;gap:8px;align-items:center;margin-top:12px"><input type="checkbox" name="reset" value="1" /> Replace them with the default rules</label>
         </form>
       </div>

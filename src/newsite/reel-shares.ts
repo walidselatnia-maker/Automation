@@ -6,24 +6,26 @@ import { FacebookClient } from '../integrations/facebook.js';
 import { createLogger, errorMessage } from '../lib/logger.js';
 import { newsiteReelMediaUrl } from '../core/media-links.js';
 import type { Settings } from '../settings.js';
-import { bufferTokenOf, fbTokenOf, getChannel, websiteChannels, type ChannelRow } from './channels.js';
+import { bufferTokenOf, fbTokenOf, getChannel, takesReels, websiteChannels, type ChannelRow } from './channels.js';
 import { channelRules } from './platform-rules.js';
 import { getReel, reelDir, type ReelRow } from './reels.js';
 import { getSeoRow } from './seo.js';
 import { bufferMetadata, isQueueFull, pickBoard, websiteOf, writePostWords } from './social.js';
 
 /**
- * Sharing a made reel on its website's channels of the reel's platform: a
- * Facebook reel on each Facebook page set to post reels, a video pin on each
- * Pinterest channel.
+ * Sharing a made reel: the one video of an article (reels.ts), sent to each
+ * of its website's channels that takes reels (Facebook, Instagram,
+ * Pinterest), with its own status, error and retry per channel. The video is
+ * the same everywhere and never made again for another channel: a Facebook
+ * reel, an Instagram reel, a Pinterest video pin.
  *
  * Its words are written fresh from the article by the channel's rules (never
  * the image post's words again, so a page never shows the same text twice).
  * The link rule is the image posts' rule: never in the words; a pin carries
  * it as its own link, a Facebook reel as the first comment.
  *
- * A reel made after this exists is shared by itself; one made before is
- * shared from its card on the Sharing page.
+ * A made reel goes by itself to the channels set to post reels; any other
+ * channel is picked on the Reels page.
  */
 
 const log = createLogger('newsite-reel-shares');
@@ -93,11 +95,10 @@ export const listPlanReelShares = (planId: number): ReelShareRow[] =>
     planId,
   );
 
-/** The channels a reel goes to by itself: its website's channels of its platform (a Facebook page only when set to post reels). */
-function reelChannels(reel: ReelRow): ChannelRow[] {
+/** Every channel of the reel's website that takes reels: where it can be shared. */
+export function reelDestinations(reel: Pick<ReelRow, 'seo_id'>): ChannelRow[] {
   const site = websiteOf(reel.seo_id);
-  if (!site) return [];
-  return websiteChannels(site.id).filter((c) => c.platform === reel.platform && (c.platform !== 'facebook' || c.post_reel));
+  return site ? websiteChannels(site.id).filter((c) => takesReels(c.platform)) : [];
 }
 
 /**
@@ -109,15 +110,17 @@ export function createReelShares(reelId: number): number {
   const reel = getReel(reelId);
   if (!reel || reel.status !== 'done') return 0;
   let added = 0;
-  for (const c of reelChannels(reel)) added += shareReelOn(reel.id, c.id);
+  for (const c of reelDestinations(reel).filter((c) => c.post_reel)) added += shareReelOn(reel.id, c.id);
   return added;
 }
 
-/** Share a made reel on one channel (a card's Share button). Returns 1 when it was added or put back to work. */
+/**
+ * Share a made reel on one channel of its website that takes reels (picked on
+ * the Reels page). Returns 1 when it was added or put back to work.
+ */
 export function shareReelOn(reelId: number, channelId: number): number {
   const reel = getReel(reelId);
-  const channel = getChannel(channelId);
-  if (!reel || reel.status !== 'done' || !channel || channel.platform !== reel.platform) return 0;
+  if (!reel || reel.status !== 'done' || !reelDestinations(reel).some((c) => c.id === channelId)) return 0;
   const added = Number(run('INSERT OR IGNORE INTO newsite_reel_shares (reel_id, channel_id) VALUES (?, ?)', reelId, channelId).changes);
   if (added) return 1;
   return Number(run(`UPDATE newsite_reel_shares SET status = 'pending', error = '', retry_at = NULL WHERE reel_id = ? AND channel_id = ? AND status = 'failed'`, reelId, channelId).changes);

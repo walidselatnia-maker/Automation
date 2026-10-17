@@ -16,7 +16,7 @@ These rules decide what the sharing phase makes for a Pinterest channel, after t
 ## What goes out per article
 
 - One pin per article, on each Pinterest channel the website shares on.
-- One video pin per article too, on each Pinterest channel, as soon as the article's Pinterest reel is made. Its words follow these same rules, written for the video, and it links to the article the same way.
+- One video pin per article too, on each Pinterest channel set to post reels, as soon as the article's reel is made (the same video goes to every channel that takes reels). Its words follow these same rules, written for the video, and it links to the article the same way.
 - Sent through the channel's Buffer account.
 - The pin's link is the published article. The link is never written in the pin's words: the pin carries it as its own link.
 
