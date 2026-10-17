@@ -1248,6 +1248,19 @@ export const OVERVIEW_CSS = `
 .ch-option:has(input:checked) span { color: var(--soft); }
 .ki-format { margin: 0 0 20px; padding: 14px 16px; background: var(--raised); border: 1px solid var(--line); border-radius: var(--r-ctl); font-size: 14px; }
 .ki-format pre { margin: 8px 0 0; font: 13px/1.6 var(--mono); white-space: pre-wrap; color: var(--ink); }
+.ki-format > b { display: block; margin-bottom: 10px; font-size: 15px; }
+.ki-table { overflow-x: auto; border: 1px solid var(--line-strong); border-radius: var(--r-ctl); background: var(--surface); }
+.ki-table table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.ki-table th, .ki-table td { padding: 9px 12px; text-align: left; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); vertical-align: top; }
+.ki-table th:last-child, .ki-table td:last-child { border-right: 0; }
+.ki-table tbody tr:last-child td { border-bottom: 0; }
+.ki-table th { background: var(--raised); font-weight: 600; white-space: nowrap; }
+.ki-table th small { display: block; font-weight: 500; font-size: 12px; color: var(--faint); }
+.ki-table em { color: var(--faint); font-style: normal; }
+.ki-notes { margin: 12px 0; padding-left: 18px; color: var(--soft); }
+.ki-notes li { margin: 4px 0; }
+.ki-raw { margin: 0 0 12px; }
+.ki-raw summary { cursor: pointer; font-weight: 600; color: var(--idle-ink); }
 .ki-file { display: block; margin: 0 0 12px; font: 14px var(--body); }
 .ki-paste { width: 100%; min-height: 180px; padding: 12px 14px; border: 1px solid var(--line-strong); border-radius: var(--r-ctl); background: var(--surface);
   color: var(--ink); font: 13px/1.6 var(--mono); resize: vertical; }
@@ -1386,14 +1399,31 @@ export function addKeywordsStep(): Html {
 }
 
 export function importFileStep(websites: NewWebsiteRow[], csv = '', error = ''): Html {
-  const example = ['Main Keyword,Target Website,Niche,Subkeywords', ...websites.slice(0, 2).map((w, i) => (i === 0 ? `strawberry cake,${w.domain},,` : `banana bread,${w.domain},Baking,banana bread muffins; vegan banana bread`))].join('\n');
+  const domains = websites.length ? websites.slice(0, 2).map((w) => w.domain) : ['example.com'];
+  const rows: [string, string, string, string][] = [
+    ['strawberry cake', domains[0]!, '', ''],
+    ['banana bread', domains[1] ?? domains[0]!, 'Baking', 'banana bread muffins; vegan banana bread'],
+  ];
+  const cell = (v: string) => (/[",;\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+  const example = ['Main Keyword,Target Website,Niche,Subkeywords', ...rows.map((r) => r.map(cell).join(','))].join('\n');
   return addWizard(
     1,
     'Import keywords',
     html`<form id="ki-form" method="post" action="/new-website/keywords/import/check">
       <h2>The file</h2>
       <p>A CSV file with a first line naming the columns. <b>Main Keyword</b> and <b>Target Website</b> are needed; <b>Niche</b> and <b>Subkeywords</b> are optional. Put several sub-keywords in one cell, separated by <code>;</code>.</p>
-      <div class="ki-format">For example:<pre>${example}</pre>
+      <div class="ki-format">
+        <b>How the file looks in a spreadsheet</b>
+        <div class="ki-table"><table>
+          <thead><tr><th>Main Keyword<small>needed</small></th><th>Target Website<small>needed</small></th><th>Niche<small>optional</small></th><th>Subkeywords<small>optional</small></th></tr></thead>
+          <tbody>${rows.map((r) => html`<tr>${r.map((v) => html`<td>${v ? v : html`<em>empty</em>`}</td>`)}</tr>`)}</tbody>
+        </table></div>
+        <ul class="ki-notes">
+          <li><b>Row 1</b> has only what is needed. The platform finds the sub-keywords itself and uses the website’s own niche.</li>
+          <li><b>Row 2</b> gives a niche and two sub-keywords, separated by <code>;</code> in one cell.</li>
+          <li><b>Target Website</b> is the address of one of your websites, as shown on the Websites page.</li>
+        </ul>
+        <details class="ki-raw"><summary>The same, as text in the CSV file</summary><pre>${example}</pre></details>
         <a class="ns-btn small" href="/new-website/keywords/import/template.csv" download="keywords-template.csv">Download the template</a></div>
       <input class="ki-file" type="file" accept=".csv,text/csv,text/plain" id="ki-file" aria-label="CSV file" />
       <label for="ki-csv" class="kw-hint" style="display:block;margin:0 0 6px">Or paste the CSV here:</label>
