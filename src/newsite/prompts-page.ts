@@ -125,9 +125,16 @@ const unknownWords = (text: string, allowed: string[]): string[] => {
 
 const CSS = `
 .pr-stage { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); box-shadow: var(--shadow); margin-bottom: 12px; overflow: hidden; }
-.pr-stage > header { display: flex; align-items: baseline; gap: 12px; padding: 8px 20px; border-bottom: 1px solid var(--idle-line); background: var(--idle-hover); }
+.pr-stage > summary { list-style: none; display: flex; align-items: baseline; gap: 12px; padding: 8px 20px; background: var(--idle-hover); cursor: pointer; }
+.pr-stage > summary::-webkit-details-marker { display: none; }
+.pr-stage[open] > summary { border-bottom: 1px solid var(--idle-line); }
+.pr-stage > summary:hover { background: var(--idle-line); }
+.pr-stage > summary small { margin-left: auto; font-size: 13px; font-weight: 600; color: var(--idle-ink); white-space: nowrap; }
+.pr-stage > summary small b { color: var(--accent); }
+.pr-stage > summary::after { content: ''; align-self: center; flex: none; width: 7px; height: 7px; border-right: 2px solid var(--idle-ink); border-bottom: 2px solid var(--idle-ink); transform: rotate(-45deg); transition: transform .15s ease; }
+.pr-stage[open] > summary::after { transform: rotate(45deg); }
 .pr-stage h2 { font-size: 15px; margin: 0; color: var(--idle-ink); }
-.pr-stage header p { margin: 0; font-size: 13px; color: var(--idle-ink); opacity: .75; }
+.pr-stage summary p { margin: 0; font-size: 13px; color: var(--idle-ink); opacity: .75; }
 .pr-row { display: flex; align-items: center; gap: 16px; padding: 8px 20px; border-top: 1px solid var(--line); }
 .pr-row:first-of-type { border-top: 0; }
 .pr-row div { flex: 1; min-width: 0; }
@@ -160,7 +167,7 @@ const CSS = `
 .pr-crumb a { color: var(--idle-ink); text-decoration: none; font-weight: 600; }
 .pr-problem { margin: 0 0 20px; padding: 12px 16px; border: 1px solid var(--bad); border-left-width: 4px; border-radius: var(--r-ctl); background: var(--bad-tint); color: var(--ink); }
 @media (max-width: 980px) { .pr-edit { grid-template-columns: 1fr; } .pr-side { position: static; } }
-@media (max-width: 640px) { .pr-row { flex-wrap: wrap; padding: 8px 14px; } .pr-stage > header { flex-wrap: wrap; padding: 8px 14px; gap: 2px 10px; } }
+@media (max-width: 640px) { .pr-row { flex-wrap: wrap; padding: 8px 14px; } .pr-stage > summary { flex-wrap: wrap; padding: 8px 14px; gap: 2px 10px; } }
 `;
 
 export function promptsListPage(): Html {
@@ -181,13 +188,30 @@ export function promptsListPage(): Html {
       </div>
     </div>
     ${PROMPT_STAGES.map(
-      (s) => html`<section class="pr-stage"><header><h2>${s.title}</h2><p>${s.about}</p></header>
+      (s) => {
+        const count = s.prompts.length + (s.link ? 1 : 0);
+        const changed = s.prompts.filter((p) => !p.href && isChanged(p)).length;
+        return html`<details class="pr-stage" data-stage="${s.title}"><summary><h2>${s.title}</h2><p>${s.about}</p>
+          <small>${String(count)} ${count === 1 ? 'prompt' : 'prompts'}${changed ? html` · <b>${String(changed)} changed</b>` : raw('')}</small></summary>
         ${s.prompts.map(row)}
         ${s.link
           ? html`<div class="pr-row"><div><b>${s.link.name}</b><span>${s.link.about}</span></div><a class="ns-btn quiet" href="${s.link.href}">Edit</a></div>`
-          : raw('')}</section>`,
+          : raw('')}</details>`;
+      },
     )}
-    </div>`;
+    </div>
+    <script>
+    (function () {
+      // Each category opens and closes; the page remembers which ones were left open.
+      document.querySelectorAll('details.pr-stage').forEach(function (d) {
+        var key = 'pr-stage:' + d.dataset.stage;
+        try { if (localStorage.getItem(key) === '1') d.open = true; } catch (e) {}
+        d.addEventListener('toggle', function () {
+          try { localStorage.setItem(key, d.open ? '1' : '0'); } catch (e) {}
+        });
+      });
+    })();
+    </script>`;
 }
 
 const when = (sqlite: string): string => {
