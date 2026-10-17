@@ -13,7 +13,8 @@ import {
   type PlatformContext,
 } from './platform.js';
 import { imageCatalogue } from './image-model.js';
-import { platformPage, platformWizardPage, type PlatformView } from './platform-view.js';
+import { passwordPage, platformPage, platformWizardPage, type PlatformView } from './platform-view.js';
+import { rejectionReason, storePassword, storedPasswordHash } from '../web/password.js';
 
 export interface PlatformRouteDeps {
   settings: Settings;
@@ -21,6 +22,15 @@ export interface PlatformRouteDeps {
   readFlash: (query: unknown) => NewFlash;
   /** Replaceable so tests call no real AI provider, Telegram or image service. */
   fetchImpl?: Fetch;
+  /** The sign-in password, when this server has one to change. */
+  account?: PasswordAccount;
+}
+
+export interface PasswordAccount {
+  /** Whether the fallback password was generated on first start. */
+  generated: boolean;
+  /** Whether a submitted password is the one in force now. */
+  accepts: (password: string) => boolean;
 }
 
 /** Ready for websites: the setup was saved and at least one AI key is on. */
@@ -56,6 +66,7 @@ export function registerPlatformRoutes(app: FastifyInstance, deps: PlatformRoute
     hasTelegramToken: settings.has('telegram_bot_token'),
     imageProblem: await checkImageService(settings.get('image_base_url'), settings.get('image_api_key'), fetchImpl),
     catalogue: await imageCatalogue(settings, fetchImpl),
+    password: deps.account ? (storedPasswordHash(deps.encryptionKey) ? 'own' : deps.account.generated ? 'generated' : 'server') : undefined,
   });
 
   /** The AI step's live part: a new key must answer before it is accepted. */
@@ -76,6 +87,27 @@ export function registerPlatformRoutes(app: FastifyInstance, deps: PlatformRoute
       }),
     ),
   );
+
+  /** The sign-in password, changed here instead of on the old dashboard. */
+  const account = deps.account;
+  if (account) {
+    const showPassword = (error = '') =>
+      newLayout({ title: 'Change the password', active: '/new-website/platform', body: passwordPage(account.generated && !storedPasswordHash(deps.encryptionKey), error), flash: null });
+    app.get('/new-website/platform/password', async (_request, reply) => reply.type('text/html; charset=utf-8').send(showPassword()));
+    app.post('/new-website/platform/password', async (request, reply) => {
+      const b = body(request);
+      const send = (error: string) => reply.type('text/html; charset=utf-8').send(showPassword(error));
+      // Asked even inside a session: a session left open on a shared machine must not lock the owner out.
+      if (!account.accepts(String(b.current ?? ''))) {
+        await new Promise((r) => setTimeout(r, 400));
+        return send('That is not the current password.');
+      }
+      const reason = rejectionReason(String(b.next ?? ''), String(b.confirm ?? ''));
+      if (reason) return send(reason);
+      storePassword(String(b.next), deps.encryptionKey);
+      return reply.redirect('/new-website/platform?ok=' + encodeURIComponent('Password changed. Use it from the next sign-in; this session stays open.'), 303);
+    });
+  }
 
   app.get('/new-website/platform/setup', async (request, reply) => {
     const v = await view();

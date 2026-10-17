@@ -14,6 +14,8 @@ export interface PlatformView {
   imageProblem: string | null;
   /** What Google last said to each image model; null when the service does not say. */
   catalogue: ImageModelCatalogue | null;
+  /** The sign-in password: chosen here, the generated one, or the one set for the server (AUTH_PASSWORD). Absent when not offered. */
+  password?: 'own' | 'generated' | 'server';
 }
 
 const modelLabel = (v: string): string => IMAGE_MODELS.find((m) => m.value === v)?.label ?? v;
@@ -110,6 +112,17 @@ export function platformPage(v: PlatformView): Html {
           <dt>Chat ID</dt>${codeOr(v.value('telegram_chat_id'))}
         </dl>
       </section>
+      ${v.password
+        ? html`<section class="pf-group" id="password">
+            <div><h2>Password</h2>${state(v.password === 'own', 'Your own', v.password === 'generated' ? 'Generated one' : 'Server default')}
+              <a class="ns-btn small pf-change" href="/new-website/platform/password">Change</a></div>
+            <dl><dt>Sign-in password</dt><dd>${v.password === 'own'
+              ? 'The password you chose.'
+              : v.password === 'generated'
+                ? html`Still the one generated on first start (in the server log).<small>Change it to a password of your own.</small>`
+                : 'The one set for the server. You can choose your own.'}</dd></dl>
+          </section>`
+        : raw('')}
     </div>
     <details class="pf-card pf-advanced">
       <summary><span><b>Advanced</b> How often the platform checks for work, retries, time limits and logs. The defaults suit most people.</span></summary>
@@ -455,3 +468,31 @@ const script = (v: PlatformView, section: number): string => `<script>
   draw();
 })();
 </script>`;
+
+/** Change the sign-in password: the current one, then the new one twice. */
+export function passwordPage(generated: boolean, error = ''): Html {
+  return html`
+    <style>${raw(WIZARD_CSS)}${raw(PAGE_CSS)}
+      .pw-form { display: grid; gap: 16px; max-width: 460px; }
+      .pw-form label { display: grid; gap: 6px; font-weight: 600; }
+      .pw-form input { height: 42px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: var(--r-ctl); background: var(--page); color: var(--ink); font: inherit; }
+      .pw-form small { font-weight: 400; color: var(--soft); }</style>
+    <div class="wz">
+      <div class="wz-head">
+        <h1>Change the password</h1>
+        <p class="wz-id">The password you sign in with. ${generated ? 'You are still on the one generated on first start, from the server log.' : ''} The new one applies from the next sign-in; this session stays open.</p>
+      </div>
+      <div class="wz-body">
+        ${error ? html`<p class="kw-seo-problems" role="alert" style="margin:0 0 16px">${error}</p>` : raw('')}
+        <form id="pw-form" class="pw-form" method="post" action="/new-website/platform/password">
+          <label>Current password${generated ? html`<small>The generated one, from the server log.</small>` : raw('')}
+            <input type="password" name="current" autocomplete="current-password" required /></label>
+          <label>New password<small>At least 10 characters.</small>
+            <input type="password" name="next" autocomplete="new-password" minlength="10" required /></label>
+          <label>New password again
+            <input type="password" name="confirm" autocomplete="new-password" minlength="10" required /></label>
+        </form>
+      </div>
+      <div class="wz-foot"><a class="ns-btn quiet" href="/new-website/platform">Cancel</a><button class="ns-btn primary" form="pw-form">Change the password</button></div>
+    </div>`;
+}

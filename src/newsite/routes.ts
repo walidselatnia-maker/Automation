@@ -14,7 +14,7 @@ import { registerSocialRoutes } from './social-routes.js';
 import { registerPromptRoutes } from './prompts-page.js';
 import { registerPinDesignRoutes } from './pin-designs.js';
 import { describeProjectId, flowProjectFor, NEXT_STEP_KEY } from './pictures.js';
-import { platformReady, registerPlatformRoutes } from './platform-routes.js';
+import { platformReady, registerPlatformRoutes, type PasswordAccount } from './platform-routes.js';
 import { publicBaseUrlProblem } from '../core/media-links.js';
 import {
   createNewWebsite,
@@ -71,6 +71,8 @@ export interface NewWebsiteDeps {
   autoPictures?: boolean;
   /** Buffer and Facebook lookups for the channel wizards; tests pass their own. */
   channelLookups?: ChannelLookups;
+  /** The sign-in password, changed on Platform settings. */
+  account?: PasswordAccount;
 }
 
 const readFlash = (query: unknown): NewFlash => {
@@ -114,7 +116,7 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
       const origin = `${proto}://${host}`;
       if (host && !publicBaseUrlProblem(origin)) settings.set('public_base_url', origin);
     });
-    registerPlatformRoutes(app, { settings: deps.settings, encryptionKey: deps.encryptionKey, readFlash, fetchImpl: deps.fetchImpl });
+    registerPlatformRoutes(app, { settings: deps.settings, encryptionKey: deps.encryptionKey, readFlash, fetchImpl: deps.fetchImpl, account: deps.account });
     registerImageModelRoutes(app, deps.settings);
     registerChannelRoutes(app, { encryptionKey: deps.encryptionKey, readFlash, lookups: deps.channelLookups });
     const publish: PublishDeps = { settings: deps.settings, encryptionKey: deps.encryptionKey, fetchImpl: deps.fetchImpl, dataDir: deps.dataDir, ask };
