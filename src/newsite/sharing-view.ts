@@ -48,17 +48,17 @@ const SHARING_CSS = `
 .sh-crumbs a:hover { color: var(--accent-text); text-decoration: underline; }
 .sh-crumbs .sep { color: var(--faint); }
 .sh-crumbs b { color: var(--ink); font-weight: 600; }
-.sh-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
-.sh-card { display: flex; flex-direction: column; gap: 14px; min-height: 150px; padding: 20px 22px; background: var(--surface); border: 1px solid var(--line);
+.sh-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 360px), 1fr)); gap: 20px; }
+.sh-card { display: flex; flex-direction: column; gap: 16px; min-height: 150px; padding: 22px 24px; background: var(--surface); border: 1px solid var(--line);
   border-radius: var(--r-card); box-shadow: var(--shadow); color: var(--ink); text-decoration: none; transition: border-color .15s ease, transform .15s ease; }
 .sh-card:hover { border-color: var(--accent); transform: translateY(-1px); }
 .sh-card:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 .sh-card-title { font: 700 19px/1.25 var(--display); letter-spacing: -.01em; }
 .sh-card-sub { display: block; margin-top: 3px; color: var(--soft); font: 13px var(--mono); }
 .sh-nums { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: auto; }
-.sh-num { padding: 8px 10px; border-radius: var(--r-ctl); background: var(--raised); }
+.sh-num { padding: 10px 12px; border-radius: var(--r-ctl); background: var(--raised); min-width: 0; }
 .sh-num b { display: block; font-size: 20px; font-variant-numeric: tabular-nums; color: var(--ink); }
-.sh-num span { font-size: 12px; color: var(--soft); }
+.sh-num span { display: block; font-size: 13px; line-height: 1.35; color: var(--soft); }
 .sh-num.bad { background: var(--bad-tint); } .sh-num.bad b { color: var(--bad); }
 .sh-num.busy { background: var(--idle); } .sh-num.busy b, .sh-num.busy span { color: var(--idle-ink); }
 .sh-open { font-size: 13px; font-weight: 600; color: var(--accent-text); }
@@ -218,13 +218,13 @@ export function sharingSitesPage(sites: SharingSite[]): Html {
     <style>${raw(CSS)}${raw(SHARING_CSS)}</style>
     <div class="ns-head">
       <div>
-        <h1 class="ns-title">Sharing</h1>
-        <p class="ns-lede">Once an article is published, each channel of its website makes its own post from it. Its one reel is made on the Reels card and sent to the channels that take reels. Choose a website to see its channels.</p>
+        <h1 class="ns-title">Social posts</h1>
+        <p class="ns-lede">What happened after your articles were published. Each website shares on the social channels picked in its settings, and every channel gets its own post. Open a website to see each post, its link, and anything that needs fixing.</p>
       </div>
       ${sites.length ? html`<a class="ns-btn primary" href="/new-website/sharing/new">Share articles</a>` : raw('')}
     </div>
     ${sites.length
-      ? html`<div class="sh-grid">${reelsCard(sites)}${sites.map((s) => {
+      ? html`<div class="sh-grid">${sites.map((s) => {
           const c = countsOf(s);
           return html`<a class="sh-card" href="${siteHref(s.site.id)}">
             <div><span class="sh-card-title">${s.site.name}</span><span class="sh-card-sub">${s.site.domain}</span></div>
@@ -247,7 +247,7 @@ export function sharingSitePage(s: SharingSite, plan: { id: number; pillar: stri
   const c = countsOf(s);
   return html`
     <style>${raw(CSS)}${raw(SHARING_CSS)}</style>
-    ${crumbs([['Sharing', '/new-website/sharing'], [s.site.name]])}
+    ${crumbs([['Social posts', '/new-website/sharing'], [s.site.name]])}
     <div class="ns-head">
       <div>
         <h1 class="ns-title">${s.site.name}</h1>
@@ -345,7 +345,7 @@ export function sharingChannelPage(s: SharingSite, ch: ChannelRow, tab: ChannelT
 
   return html`
     <style>${raw(CSS)}${raw(SHARING_CSS)}</style>
-    ${crumbs([['Sharing', '/new-website/sharing'], [s.site.name, siteHref(s.site.id, plan)], [`${label} · ${ch.name}`]])}
+    ${crumbs([['Social posts', '/new-website/sharing'], [s.site.name, siteHref(s.site.id, plan)], [`${label} · ${ch.name}`]])}
     <div class="sh-band" style="--ch-color:${channelColor(ch)}">
       <div>
         <div class="sh-ch-head"><span class="sh-dot"></span><span class="sh-platform">${label} through ${ch.via === 'buffer' ? 'Buffer' : 'the API'}</span></div>
@@ -477,23 +477,6 @@ function shareState(x: ReelShareRow, ch: ChannelRow): Html {
   }
 }
 
-/** The Reels card on the Sharing page, beside the websites. */
-function reelsCard(sites: SharingSite[]): Html {
-  const reels = sites.flatMap((s) => s.reels);
-  const shares = sites.flatMap((s) => s.reelShares);
-  const failed = reels.filter((r) => r.status === 'failed').length + shares.filter((x) => x.status === 'failed').length;
-  const making = reels.filter((r) => r.status === 'pending' || r.status === 'making').length;
-  return html`<a class="sh-card sh-reels-card" href="${reelsHref()}">
-    <div><span class="sh-card-title">Reels</span><span class="sh-card-sub">One video per article, sent to every channel that takes reels</span></div>
-    <div class="sh-nums">
-      ${num(reels.filter((r) => r.status === 'done').length, 'made')}
-      ${num(shares.filter((x) => x.status === 'sent').length, 'sent')}
-      ${failed ? num(failed, 'failed', 'bad') : num(making, 'being made', 'busy')}
-    </div>
-    <span class="sh-open">Open Reels →</span>
-  </a>`;
-}
-
 const CHEVRON = '<svg class="acc-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>';
 
 /** A short word for where a reel stands on a channel, for the closed card's head. */
@@ -598,11 +581,10 @@ export function reelsPage(sites: SharingSite[], websiteId = 0): Html {
   const noReel = shown.flatMap((s) => s.articles.filter((a) => !withReel(s).has(a.row.id)).map((a) => ({ s, a })));
   return html`
     <style>${raw(CSS)}${raw(SHARING_CSS)}</style>
-    ${crumbs([['Sharing', '/new-website/sharing'], ['Reels']])}
     <div class="ns-head">
       <div>
         <h1 class="ns-title">Reels</h1>
-        <p class="ns-lede">Each published article gets one reel: a 10-second Google Flow video, made once. The same video is then sent to every channel you tick, and each channel keeps its own status. Channels set to post reels get it by themselves.</p>
+        <p class="ns-lede">Each published article gets one reel: a short Google Flow video, made once, here. The same video then goes by itself to every social channel its website posts reels to (chosen in the website’s settings), and each channel shows its own status.</p>
       </div>
       <a class="ns-btn" href="/new-website/sharing/reel-rules?back=${encodeURIComponent(reelsHref(websiteId))}">Edit reel rules</a>
     </div>

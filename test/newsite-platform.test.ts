@@ -221,12 +221,13 @@ describe('platform routes', () => {
     expect(wizard.body).not.toContain(TG_TOKEN);
   });
 
-  it('once set up: each part has its own Change, the AI connection comes last, and a part opens alone', async () => {
+  it('once set up: each part has its own Change, the AI connection comes first, and a part opens alone', async () => {
     expect((await post('/new-website/platform/save', FORM)).json().saved).toBe(true);
     const page = await app.inject({ method: 'GET', url: '/new-website/platform' });
     expect(page.body).toContain('Platform settings');
     for (const n of [0, 1, 2, 3, 4]) expect(page.body).toContain(`/new-website/platform/setup?section=${n}`);
-    expect(page.body.indexOf('<h2>AI connection</h2>')).toBeGreaterThan(page.body.indexOf('<h2>Notifications</h2>'));
+    expect(page.body.indexOf('<h2>AI connection</h2>')).toBeLessThan(page.body.indexOf('<h2>Notifications</h2>'));
+    expect(page.body.indexOf('<h2>Automation</h2>')).toBeGreaterThan(page.body.indexOf('<b>Advanced</b>')); // tucked away
     expect(page.body).toContain('class="im-grid"'); // the image model cards live here now
 
     const one = await app.inject({ method: 'GET', url: '/new-website/platform/setup?section=3' });

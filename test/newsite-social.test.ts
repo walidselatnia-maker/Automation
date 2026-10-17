@@ -602,7 +602,7 @@ describe('Sharing an article on its channels', () => {
       const out = await page();
       expect(out).toContain('Long Livo shares on no channel yet.');
       expect(out).toContain(`/new-website/${websiteId}/edit?section=4`);
-      expect(out).toContain('<a href="/new-website/sharing">Sharing</a>');
+      expect(out).toContain('<a href="/new-website/sharing">Social posts</a>');
     });
 
     it('offers Share now for a published article not on its channels yet, and shares it', async () => {
@@ -648,11 +648,11 @@ describe('Sharing an article on its channels', () => {
       expect(getSocialPost(post!.id)!.status).toBe('sent');
     });
 
-    it('is the Sharing page under Keywords, with a Share articles wizard', async () => {
+    it('is the Social posts page, after set up and create in the menu, with a Share articles wizard', async () => {
       setWebsiteChannels(websiteId, [pinChannel()]);
       const a = await app();
       const out = (await a.inject({ url: '/new-website/sharing' })).body;
-      expect(out).toMatch(/Keywords<\/span>[\s\S]*Sharing<\/span>[\s\S]*Channels<\/span>/);
+      expect(out).toMatch(/Social channels<\/span>[\s\S]*Keywords &amp; articles<\/span>[\s\S]*Reels<\/span>[\s\S]*Social posts<\/span>/);
       expect(out).not.toContain('Shared content');
       expect(out).toContain('href="/new-website/sharing/new"');
       expect((await a.inject({ url: '/new-website/shared' })).headers.location).toBe('/new-website/sharing');

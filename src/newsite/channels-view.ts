@@ -49,7 +49,7 @@ const CSS = `
 .ch-empty h2 { font-size: 22px; margin-bottom: 8px; }
 .ch-empty p { color: var(--soft); margin: 0 auto 24px; max-width: 46ch; }
 .ch-pick-grid { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
-.wz.ch-wz-wide { max-width: 900px; }
+.wz.ch-wz-wide { max-width: 1160px; }
 .ch-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
 .ch-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); padding: 20px; display: flex; flex-direction: column; gap: 14px; box-shadow: var(--shadow); }
 .ch-card.soon { background: transparent; box-shadow: none; border-style: dashed; }
@@ -343,7 +343,7 @@ export function channelsPage(channels: ChannelRow[], websitesOf: Map<number, str
     <div class="ns-head">
       <div>
         <h1 class="ns-title">Channels</h1>
-        <p class="ns-lede">Where your articles are shared after they are published. Each channel makes and posts its own content, by its own rules.</p>
+        <p class="ns-lede">The social media accounts your articles are shared on. Add each account here once, then choose in each website’s settings which accounts it shares on. Every channel writes its own posts, by its own rules.</p>
       </div>
       ${channels.length ? html`<a class="ns-btn primary" href="/new-website/channels/add">Add channel</a>` : raw('')}
     </div>

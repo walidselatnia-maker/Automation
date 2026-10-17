@@ -162,7 +162,12 @@ export const CSS = `
 .kw-article p { margin: 0 0 14px; }
 .kw-article ul, .kw-article ol { margin: 0 0 14px; padding-left: 22px; display: grid; gap: 4px; }
 /* Steps: the wizard card, wider for lists. */
-.wz.kw-wz { max-width: 820px; }
+.wz.kw-wz { max-width: none; }
+.kw-crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 14px; font-size: 14px; color: var(--soft); }
+.kw-crumbs a { color: var(--soft); text-decoration: none; font-weight: 500; }
+.kw-crumbs a:hover { color: var(--accent-text); text-decoration: underline; }
+.kw-crumbs span { color: var(--faint); }
+.kw-crumbs b { color: var(--ink); font-weight: 600; }
 .kw-steps { display: grid; gap: 4px; margin-top: 20px; }
 .kw-step { display: flex; flex-direction: column; gap: 8px; padding: 6px 3px 8px; margin: -6px 0; border-radius: var(--r-ctl);
   font-size: 12.5px; font-weight: 500; color: var(--idle-ink); text-decoration: none; min-width: 0; }
@@ -196,7 +201,7 @@ a.kw-step:hover span { text-decoration: underline; }
 .kw-share-post b { font-weight: 600; font-size: 14px; }
 .kw-share-meta { color: var(--faint); font-size: 13px; margin-top: 2px; }
 .kw-share-post .kw-seo-status { margin-left: 0; }
-.kw-saved { max-width: 820px; margin: 40px auto 0; }
+.kw-saved { max-width: 980px; margin: 40px auto 0; }
 .kw-saved > h2 { font-size: 20px; margin-bottom: 12px; }
 .kw-saved-row { display: grid; grid-template-columns: 1fr auto auto; gap: 16px; align-items: center; padding: 16px 0; border-top: 1px solid var(--line); }
 .kw-saved-row a.kw-open { text-decoration: none; }
@@ -295,6 +300,7 @@ function stepCard(names: string[], step: number, title: string, subtitle: Html |
       : html`<span class="kw-step ${state}" ${raw(i === step ? 'aria-current="step"' : '')}>${inner}</span>`;
   });
   return html`
+    ${hrefs.length ? html`<nav class="kw-crumbs" aria-label="Where you are"><a href="/new-website/keywords">Keywords &amp; articles</a><span aria-hidden="true">›</span><b>${title}</b></nav>` : raw('')}
     <div class="wz kw-wz">
       <div class="wz-head">
         <h1>${title}</h1>
@@ -1274,7 +1280,7 @@ export function keywordsOverview(sites: OverviewSite[], stats: Map<number, PlanS
     <div class="ns-head">
       <div>
         <h1 class="ns-title">Keywords</h1>
-        <p class="ns-lede">Every main keyword and its sub-keywords, by website. Open a website to see its keywords; open a keyword to follow it through the pipeline.</p>
+        <p class="ns-lede">Your keywords, grouped by website. Each main keyword becomes a set of articles. Open one to follow every article step by step, from writing to publishing, and to fix anything that stopped.</p>
       </div>
       ${ready ? html`<a class="ns-btn primary" href="/new-website/keywords/add">Add keywords</a>` : raw('')}
     </div>

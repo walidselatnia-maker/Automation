@@ -41,7 +41,13 @@ const LIST_CSS = `
 .nl-state.active { color: var(--good); }
 .nl-actions { display: flex; gap: 4px; flex: none; }
 .nl-top form { margin: 0; }
-.nl-parts { display: grid; grid-template-columns: 1fr 1fr; gap: 0 40px; margin-top: 20px; border-top: 1px solid var(--line); }
+.nl-sum { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px 32px; margin: 20px 0 0; padding: 18px 0 0; border-top: 1px solid var(--line); }
+.nl-sum dt { color: var(--faint); font-size: 13px; margin-bottom: 2px; }
+.nl-sum dd { margin: 0; font-weight: 500; overflow-wrap: anywhere; }
+.nl-links { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+.nl-more { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 14px; }
+.nl-more summary { cursor: pointer; font-weight: 600; color: var(--idle-ink); width: fit-content; }
+.nl-parts { display: grid; grid-template-columns: 1fr 1fr; gap: 0 40px; margin-top: 12px; }
 .nl-part { padding: 16px 0 10px; border-bottom: 1px solid var(--line); }
 .nl-part-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 6px; }
 .nl-part h3 { font-size: 15px; }
@@ -54,8 +60,10 @@ const LIST_CSS = `
 .nl-facts div { display: grid; grid-template-columns: 128px 1fr; gap: 16px; padding: 8px 0; align-items: baseline; }
 .nl-facts dt { color: var(--soft); font-size: 14px; }
 .nl-facts dd { margin: 0; font-weight: 500; overflow-wrap: anywhere; }
+@media (max-width: 980px) { .nl-sum { grid-template-columns: 1fr 1fr; } }
 @media (max-width: 680px) {
   .nl-site { padding: 22px 20px; }
+  .nl-sum { grid-template-columns: 1fr; }
   .nl-meta { flex-direction: column; align-items: flex-start; gap: 2px; }
   .nl-meta > * + *::before { content: none; }
   .nl-facts, .nl-parts { grid-template-columns: 1fr; }
@@ -76,7 +84,7 @@ export function newWebsiteListPage(rows: NewWebsiteRow[], platformReady = true):
     <div class="ns-head">
       <div>
         <h1 class="ns-title">Websites</h1>
-        <p class="ns-lede">The websites this dashboard writes for. Each one keeps its own niche, voice and schedule.</p>
+        <p class="ns-lede">The websites your articles are published on. Each one has its own topic, writing voice, publishing schedule, and the social channels it shares on.</p>
       </div>
       ${rows.length && platformReady ? html`<a class="ns-btn primary" href="/new-website/add">Add website</a>` : raw('')}
     </div>
@@ -101,6 +109,19 @@ export function newWebsiteListPage(rows: NewWebsiteRow[], platformReady = true):
                   </form>
                   </div>
                 </div>
+                <dl class="nl-sum">
+                  <div><dt>Topic</dt><dd>${r.niche}</dd></div>
+                  <div><dt>Voice</dt><dd>${r.persona}</dd></div>
+                  <div><dt>Publishing</dt><dd>${r.status === 'active' ? (r.auto_publish ? 'By itself' : 'After your approval') : 'Paused'}${r.daily_target ? `, up to ${r.daily_target} a day` : ''}</dd></div>
+                  <div><dt>Shares on</dt><dd>${channelNames(r.id) || 'No social channel yet'}</dd></div>
+                </dl>
+                <div class="nl-links">
+                  <a class="ns-btn small" href="/new-website/keywords#website-${String(r.id)}">Keywords &amp; articles</a>
+                  <a class="ns-btn small" href="/new-website/sharing/site/${String(r.id)}">Social posts</a>
+                  <a class="ns-btn small" href="/new-website/sharing/reels?website=${String(r.id)}">Reels</a>
+                </div>
+                <details class="nl-more">
+                <summary>All settings of ${r.name}</summary>
                 <div class="nl-parts">
                   ${part(r.id, 0, 'Website', [
                     ['Name', r.name],
@@ -123,6 +144,7 @@ export function newWebsiteListPage(rows: NewWebsiteRow[], platformReady = true):
                     ['Google Flow project', r.project_id || 'Shared project from Platform settings'],
                   ])}
                 </div>
+                </details>
               </article>
             `,
           )}
@@ -144,7 +166,7 @@ export function newWebsiteListPage(rows: NewWebsiteRow[], platformReady = true):
 const STEP_NAMES = ['Website', 'Niche', 'Persona', 'Publishing', 'Channels and images', 'Review'];
 
 export const WIZARD_CSS = `
-.wz { max-width: 700px; margin: 0 auto; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); overflow: hidden; box-shadow: var(--shadow); }
+.wz { max-width: 980px; margin: 0 auto; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); overflow: hidden; box-shadow: var(--shadow); }
 .wz-head { background: var(--surface); color: var(--ink); padding: 28px 32px 22px; border-bottom: 1px solid var(--line); }
 .wz-head h1 { font-size: 26px; font-weight: 700; line-height: 1.2; }
 .wz-id { margin: 6px 0 0; font-size: 15px; color: var(--soft); min-height: 24px; overflow-wrap: anywhere; }

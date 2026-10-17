@@ -81,7 +81,7 @@ export function registerSocialRoutes(
     });
   };
   const page = (title: string, body: ReturnType<typeof sharingSitesPage>, query: unknown): string =>
-    newLayout({ title, active: '/new-website/sharing', body, flash: deps.readFlash(query) });
+    newLayout({ title, active: /^Reel/.test(title) ? '/new-website/sharing/reels' : '/new-website/sharing', body, flash: deps.readFlash(query) });
 
   /** A website's page on Sharing, with a message. */
   const sharingAt = (websiteId: number, message: string, kind: 'ok' | 'error' = 'ok'): string =>
@@ -115,7 +115,7 @@ export function registerSocialRoutes(
     linksOnView();
     const plan = planFilter(request.query);
     if (plan) return reply.redirect(`/new-website/sharing/site/${plan.websiteId}?plan=${plan.id}`, 303);
-    return reply.type('text/html; charset=utf-8').send(page('Sharing', sharingSitesPage(sharingSites()), request.query));
+    return reply.type('text/html; charset=utf-8').send(page('Social posts', sharingSitesPage(sharingSites()), request.query));
   });
 
   /** Level 2: one website's channels. */
@@ -124,7 +124,7 @@ export function registerSocialRoutes(
     const s = sharingSites().find((x) => x.site.id === Number((request.params as { id: string }).id));
     if (!s) return reply.redirect('/new-website/sharing', 303);
     const plan = planFilter(request.query);
-    return reply.type('text/html; charset=utf-8').send(page(`Sharing · ${s.site.name}`, sharingSitePage(s, plan?.websiteId === s.site.id ? plan : null), request.query));
+    return reply.type('text/html; charset=utf-8').send(page(`Social posts · ${s.site.name}`, sharingSitePage(s, plan?.websiteId === s.site.id ? plan : null), request.query));
   });
 
   /** Level 3: one channel of that website: its posts, reels and problems. */

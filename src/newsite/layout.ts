@@ -82,36 +82,79 @@ interface NavItem {
   icon: string;
 }
 
+interface NavGroup {
+  /** The stage of the work these pages belong to; empty for Home. */
+  title: string;
+  items: NavItem[];
+}
+
 const ICON = (paths: string): string =>
   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
 
-const NAV: NavItem[] = [
+/**
+ * The whole platform, in the order the work is done: set it up once, create
+ * the content, then see where it was shared. Every page has one home here.
+ */
+export const NAV: NavGroup[] = [
   {
-    href: '/new-website/platform',
-    label: 'Platform settings',
-    icon: ICON('<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/>'),
+    title: '',
+    items: [{ href: '/new-website/home', label: 'Start here', icon: ICON('<path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/>') }],
   },
   {
-    href: '/new-website',
-    label: 'Websites',
-    icon: ICON('<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>'),
+    title: '1 · Set up',
+    items: [
+      {
+        href: '/new-website/platform',
+        label: 'Platform settings',
+        icon: ICON('<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/>'),
+      },
+      {
+        href: '/new-website',
+        label: 'Websites',
+        icon: ICON('<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>'),
+      },
+      {
+        href: '/new-website/channels',
+        label: 'Social channels',
+        icon: ICON('<circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M8.2 10.9l7.6-3.8M8.2 13.1l7.6 3.8"/>'),
+      },
+    ],
   },
   {
-    href: '/new-website/keywords',
-    label: 'Keywords',
-    icon: ICON('<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>'),
+    title: '2 · Create',
+    items: [
+      {
+        href: '/new-website/keywords',
+        label: 'Keywords & articles',
+        icon: ICON('<path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z"/><path d="M14 3v5h5M8 13h8M8 17h5"/>'),
+      },
+      {
+        href: '/new-website/sharing/reels',
+        label: 'Reels',
+        icon: ICON('<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M10 9l5 3-5 3z"/>'),
+      },
+    ],
   },
   {
-    href: '/new-website/sharing',
-    label: 'Sharing',
-    icon: ICON('<path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7"/><path d="M12 3v12M7 8l5-5 5 5"/>'),
-  },
-  {
-    href: '/new-website/channels',
-    label: 'Channels',
-    icon: ICON('<circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M8.2 10.9l7.6-3.8M8.2 13.1l7.6 3.8"/>'),
+    title: '3 · Share',
+    items: [
+      {
+        href: '/new-website/sharing',
+        label: 'Social posts',
+        icon: ICON('<path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7"/><path d="M12 3v12M7 8l5-5 5 5"/>'),
+      },
+    ],
   },
 ];
+
+/** The nav item a page belongs to: the one whose address is the longest start of the page's. */
+export function activeHref(active: string): string {
+  let best = '';
+  for (const item of NAV.flatMap((g) => g.items)) {
+    if ((active === item.href || active.startsWith(item.href + '/')) && item.href.length > best.length) best = item.href;
+  }
+  return best;
+}
 
 const CSS = `
 .pf { color: var(--pf); font-weight: 600; }
@@ -163,29 +206,32 @@ input[type=checkbox], input[type=radio] { accent-color: var(--accent); }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } }
 
 /* -- shell */
-.ns-side { position: fixed; inset: 0 auto 0 0; width: 240px; display: flex; flex-direction: column;
-  background: var(--surface); border-right: 1px solid var(--line); padding: 28px 14px 20px; }
-.ns-brand { display: block; padding: 0 12px 28px; text-decoration: none; color: var(--ink); }
+.ns-side { position: fixed; inset: 0 auto 0 0; width: 248px; display: flex; flex-direction: column; overflow-y: auto;
+  background: var(--surface); border-right: 1px solid var(--line); padding: 24px 14px 18px; }
+.ns-brand { display: block; padding: 0 12px 22px; text-decoration: none; color: var(--ink); }
 .ns-brand b { display: block; font: 700 18px/1.2 var(--display); letter-spacing: -.02em; }
 .ns-brand b::after { content: '.'; color: var(--brand); }
 .ns-brand small { display: block; margin-top: 2px; font-size: 13px; color: var(--faint); }
-.ns-nav { display: flex; flex-direction: column; gap: 6px; }
-.ns-nav a { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: var(--r-ctl);
-  border: 1px solid var(--idle-line); background: var(--idle); color: var(--idle-ink); text-decoration: none; font-weight: 500; }
-.ns-nav a:hover { background: var(--idle-hover); }
+.ns-nav { display: flex; flex-direction: column; gap: 18px; }
+.ns-group { display: flex; flex-direction: column; gap: 4px; }
+.ns-group h2 { font: 600 12px/1 var(--body); letter-spacing: .06em; text-transform: uppercase; color: var(--faint); margin: 0 0 6px 12px; }
+.ns-nav a { display: flex; align-items: center; gap: 12px; padding: 9px 12px; border-radius: var(--r-ctl);
+  border: 1px solid transparent; color: var(--soft); text-decoration: none; font-weight: 500; }
+.ns-nav a:hover { background: var(--idle); color: var(--idle-ink); }
 .ns-nav a.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
 .ns-nav svg, .ns-foot svg { width: 18px; height: 18px; flex: none; }
 .ns-foot { margin-top: auto; border-top: 1px solid var(--line); padding-top: 12px; display: flex; flex-direction: column; gap: 2px; }
 .ns-foot a, .ns-foot button { display: flex; align-items: center; gap: 12px; padding: 9px 12px; border-radius: var(--r-ctl);
   color: var(--soft); text-decoration: none; font: 500 14px/1.4 var(--body); background: none; border: 0; cursor: pointer; text-align: left; }
 .ns-foot a:hover, .ns-foot button:hover { background: var(--raised); color: var(--ink); }
-.ns-main { margin-left: 240px; padding: 44px 56px 80px; }
-.ns-wrap { max-width: 900px; margin: 0 auto; }
+/* The page uses the width it has: content up to 1360px, with even gutters. */
+.ns-main { margin-left: 248px; padding: 36px clamp(20px, 3.2vw, 48px) 80px; }
+.ns-wrap { max-width: 1360px; margin: 0 auto; }
 
 /* -- type */
 h1, h2, h3, h4 { font-family: var(--display); letter-spacing: -.015em; margin: 0; color: var(--ink); }
 .ns-title { font-size: 30px; line-height: 1.15; font-weight: 700; }
-.ns-lede { color: var(--soft); margin: 10px 0 0; max-width: 62ch; }
+.ns-lede { color: var(--soft); margin: 10px 0 0; max-width: 80ch; }
 .ns-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px;
   padding-bottom: 24px; margin-bottom: 32px; border-bottom: 1px solid var(--line); }
 .ns-mono { font-family: var(--mono); font-size: 13px; }
@@ -233,7 +279,9 @@ h1, h2, h3, h4 { font-family: var(--display); letter-spacing: -.015em; margin: 0
   .ns-side { position: static; width: auto; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 16px; border-right: 0; border-bottom: 1px solid var(--line); }
   .ns-brand { padding: 0 8px 0 4px; }
   .ns-brand small { display: none; }
-  .ns-nav { flex-direction: row; flex-wrap: wrap; }
+  .ns-nav { flex-direction: row; flex-wrap: wrap; gap: 4px; width: 100%; order: 3; }
+  .ns-group { flex-direction: row; flex-wrap: wrap; }
+  .ns-group h2 { display: none; }
   .ns-nav a { padding: 8px 10px; }
   .ns-foot { margin: 0 0 0 auto; border: 0; padding: 0; flex-direction: row; }
   .ns-foot span { display: none; }
@@ -260,8 +308,11 @@ export interface NewLayoutOptions {
 }
 
 export function newLayout({ title, active, body, flash }: NewLayoutOptions): string {
+  const on = activeHref(active);
   const nav = NAV.map(
-    (item) => html`<a href="${item.href}" class="${item.href === active ? 'on' : ''}">${raw(item.icon)}<span>${item.label}</span></a>`,
+    (group) => html`<div class="ns-group">${group.title ? html`<h2>${group.title}</h2>` : raw('')}${group.items.map(
+      (item) => html`<a href="${item.href}" class="${item.href === on ? 'on' : ''}" ${raw(item.href === on ? 'aria-current="page"' : '')}>${raw(item.icon)}<span>${item.label}</span></a>`,
+    )}</div>`,
   );
 
   return `<!doctype html>
@@ -269,7 +320,7 @@ export function newLayout({ title, active, body, flash }: NewLayoutOptions): str
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${html`${title}`.value} · New website</title>
+<title>${html`${title}`.value} · Article Platform</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%23e63946'/></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -279,8 +330,8 @@ ${THEME}
 </head>
 <body>
 <aside class="ns-side">
-  <a class="ns-brand" href="/new-website"><b>New website</b><small>Sites on the new platform</small></a>
-  <nav class="ns-nav">${nav.map((n) => n.value).join('')}</nav>
+  <a class="ns-brand" href="/new-website/home"><b>Article Platform</b><small>Write, publish and share</small></a>
+  <nav class="ns-nav" aria-label="Main">${nav.map((n) => n.value).join('')}</nav>
   <div class="ns-foot">
     <button type="button" id="ns-theme">${raw(ICON('<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>'))}<span>Dark mode</span></button>
     <a href="/">${raw(ICON('<path d="M15 18l-6-6 6-6"/>'))}<span>Back to old dashboard</span></a>

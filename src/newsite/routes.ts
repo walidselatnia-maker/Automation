@@ -26,6 +26,7 @@ import {
 } from './repo.js';
 import { decrypt } from '../lib/crypto.js';
 import { newLayout, type NewFlash } from './layout.js';
+import { homePage, homeState } from './home.js';
 import { newWebsiteListPage, newWebsiteWizardPage, type WizardChannel } from './view.js';
 import { channelsFor, setWebsiteChannels, takesImages, takesReels, websiteChannels } from './channels.js';
 import { createReels, kickReels } from './reels.js';
@@ -199,6 +200,10 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
     }
     return { errors, clean, siteName: result.siteName, types: result.types };
   };
+
+  app.get('/new-website/home', async (request, reply) =>
+    send(reply, newLayout({ title: 'Start here', active: '/new-website/home', body: homePage(homeState(ready())), flash: readFlash(request.query) })),
+  );
 
   app.get('/new-website', async (request, reply) =>
     send(reply, newLayout({

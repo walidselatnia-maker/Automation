@@ -36,6 +36,16 @@ const PAGE_CSS = `
 .pf-group dd small { display: block; font-weight: 500; color: var(--bad); font-size: 13px; }
 .ns-btn.pf-change { height: 32px; padding: 0 12px; font-size: 13px; }
 .pf-wide { grid-column: 1 / -1; }
+.pf-more summary, .pf-advanced summary { cursor: pointer; font-weight: 600; color: var(--idle-ink); padding: 4px 0; }
+.pf-more[open] summary { margin-bottom: 14px; }
+.pf-advanced { margin-top: 20px; padding: 18px 32px; }
+.pf-advanced summary { list-style: none; display: flex; align-items: center; gap: 10px; color: var(--ink); font-weight: 400; }
+.pf-advanced summary::-webkit-details-marker { display: none; }
+.pf-advanced summary::before { content: '▸'; color: var(--faint); }
+.pf-advanced[open] summary::before { content: '▾'; }
+.pf-advanced summary b { margin-right: 8px; }
+.pf-advanced summary span { color: var(--soft); }
+.pf-advanced .pf-group { border-top: 1px solid var(--line); margin-top: 16px; }
 @media (max-width: 720px) {
   .pf-card { padding: 4px 20px; }
   .pf-group, .pf-group dl { grid-template-columns: 1fr; gap: 4px; }
@@ -63,8 +73,8 @@ export function platformPage(v: PlatformView): Html {
     <div class="ns-head">
       <div>
         <h1 class="ns-title">Platform settings</h1>
-        <p class="ns-lede">Settings for the whole platform: the timezone, automation, images, notifications and the AI.
-          Use Change on any part to edit just that part. They are shared with the old dashboard.</p>
+        <p class="ns-lede">What the whole platform needs to work: the AI that writes, the service that makes pictures, your time zone and where to send notifications.
+          Each part has its own Change button. These settings are shared with the old dashboard.</p>
       </div>
       ${d ? raw('') : html`<a class="ns-btn primary" href="/new-website/platform/setup">Set up the platform</a>`}
     </div>
@@ -74,17 +84,12 @@ export function platformPage(v: PlatformView): Html {
           <span>Websites and keywords need at least one working AI key and a saved setup.</span></div>`}
     <div class="pf-card">
       <section class="pf-group">
-        ${head('Timezone', 1, state(true, 'Set', ''), d)}
-        <dl><dt>Timezone</dt><dd>${v.value('timezone')}</dd></dl>
-      </section>
-      <section class="pf-group">
-        ${head('Automation', 2, switchState(v.value('automation_enabled') === 'true'), d)}
+        ${head('AI connection', 0, state(v.keys.length > 0, `${v.keys.length} key${v.keys.length === 1 ? '' : 's'}`, 'No AI key'), d)}
         <dl>
-          <dt>Check every</dt><dd class="ns-num">${v.value('tick_minutes')} minutes</dd>
-          <dt>Automatic retries</dt><dd>${v.value('auto_retry_enabled') === 'true' ? `${v.value('auto_retry_max')} attempt(s), ${v.value('auto_retry_delay_minutes')} minutes apart` : 'Off'}</dd>
-          <dt>Hold a keyword after</dt><dd class="ns-num">${v.value('pair_failure_limit')} failures on one site</dd>
-          <dt>Time limits</dt><dd class="ns-num">${v.value('run_step_timeout_minutes')} min per step, ${v.value('run_timeout_minutes')} min per run</dd>
-          <dt>Keep logs for</dt><dd class="ns-num">${v.value('retention_days')} days</dd>
+          <dt>Provider</dt><dd class="ns-mono">${v.value('llm_base_url')}</dd>
+          ${v.keys.length
+            ? v.keys.map((k) => html`<dt>${k.name}</dt><dd>${k.models.join(', ') || 'no models'}${k.enabled ? raw('') : html` · off`}${k.lastError ? html`<small>Last error: ${k.lastError.slice(0, 140)}</small>` : raw('')}</dd>`)
+            : html`<dt>Keys</dt><dd>None yet</dd>`}
         </dl>
       </section>
       <section class="pf-group" id="images">
@@ -96,7 +101,14 @@ export function platformPage(v: PlatformView): Html {
           <dt>Pause between images</dt><dd class="ns-num">${v.value('image_gap_seconds')} seconds</dd>
           <dt>Public address</dt>${v.value('public_base_url') ? html`<dd class="ns-mono">${v.value('public_base_url')}</dd>` : html`<dd>Not set<small>Needed for sharing: Buffer fetches the pictures from here.</small></dd>`}
         </dl>
-        <div class="pf-wide">${imageModelCards(v.value('image_model'), v.catalogue)}</div>
+        <details class="pf-wide pf-more">
+          <summary>Choose the image model</summary>
+          ${imageModelCards(v.value('image_model'), v.catalogue)}
+        </details>
+      </section>
+      <section class="pf-group">
+        ${head('Timezone', 1, state(true, 'Set', ''), d)}
+        <dl><dt>Timezone</dt><dd>${v.value('timezone')}</dd></dl>
       </section>
       <section class="pf-group">
         ${head('Notifications', 4, switchState(v.value('telegram_enabled') === 'true'), d)}
@@ -105,16 +117,20 @@ export function platformPage(v: PlatformView): Html {
           <dt>Chat ID</dt>${codeOr(v.value('telegram_chat_id'))}
         </dl>
       </section>
-      <section class="pf-group">
-        ${head('AI connection', 0, state(v.keys.length > 0, `${v.keys.length} key${v.keys.length === 1 ? '' : 's'}`, 'No AI key'), d)}
+    </div>
+    <details class="pf-card pf-advanced">
+      <summary><span><b>Advanced</b> How often the platform checks for work, retries, time limits and logs. The defaults suit most people.</span></summary>
+      <section class="pf-group" id="automation">
+        ${head('Automation', 2, switchState(v.value('automation_enabled') === 'true'), d)}
         <dl>
-          <dt>Provider</dt><dd class="ns-mono">${v.value('llm_base_url')}</dd>
-          ${v.keys.length
-            ? v.keys.map((k) => html`<dt>${k.name}</dt><dd>${k.models.join(', ') || 'no models'}${k.enabled ? raw('') : html` · off`}${k.lastError ? html`<small>Last error: ${k.lastError.slice(0, 140)}</small>` : raw('')}</dd>`)
-            : html`<dt>Keys</dt><dd>None yet</dd>`}
+          <dt>Check every</dt><dd class="ns-num">${v.value('tick_minutes')} minutes</dd>
+          <dt>Automatic retries</dt><dd>${v.value('auto_retry_enabled') === 'true' ? `${v.value('auto_retry_max')} attempt(s), ${v.value('auto_retry_delay_minutes')} minutes apart` : 'Off'}</dd>
+          <dt>Hold a keyword after</dt><dd class="ns-num">${v.value('pair_failure_limit')} failures on one site</dd>
+          <dt>Time limits</dt><dd class="ns-num">${v.value('run_step_timeout_minutes')} min per step, ${v.value('run_timeout_minutes')} min per run</dd>
+          <dt>Keep logs for</dt><dd class="ns-num">${v.value('retention_days')} days</dd>
         </dl>
       </section>
-    </div>
+    </details>
   `;
 }
 
