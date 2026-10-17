@@ -27,13 +27,20 @@ import {
 import { decrypt } from '../lib/crypto.js';
 import { newLayout, type NewFlash } from './layout.js';
 import { newWebsiteListPage, newWebsiteWizardPage, type WizardChannel } from './view.js';
-import { channelsFor, setWebsiteChannels, websiteChannelIds } from './channels.js';
+import { channelsFor, setWebsiteChannels, takesReels, websiteChannels } from './channels.js';
 import { createReels, kickReels } from './reels.js';
+import { sharingChanged } from './sharing-sync.js';
 
 /** The channels a website's wizard offers, ticked when the website already posts to them. */
 const wizardChannels = (websiteId: number): WizardChannel[] => {
-  const mine = new Set(websiteChannelIds(websiteId));
-  return channelsFor(websiteId).map((c) => ({ id: c.id, name: c.name, platform: c.platform, via: c.via, checked: mine.has(c.id) }));
+  const mine = new Map(websiteChannels(websiteId).map((c) => [c.id, c]));
+  return channelsFor(websiteId).map((c) => {
+    const used = mine.get(c.id) ?? c;
+    return {
+      id: c.id, name: c.name, platform: c.platform, via: c.via, checked: mine.has(c.id),
+      image: Boolean(used.post_image), reel: Boolean(used.post_reel), takesReels: takesReels(c.platform),
+    };
+  });
 };
 import { STEP_FIELDS, stepOf, validate, type CleanWebsite, type Errors } from './validate.js';
 
@@ -255,7 +262,9 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
       return reply.send({ errors: { domain: 'This website has already been added.' }, step: 0 });
     }
     const picked = (Array.isArray(raw.channelId) ? raw.channelId : raw.channelId === undefined ? [] : [raw.channelId]).map(Number).filter(Boolean);
-    const refused = setWebsiteChannels(websiteId, picked);
+    const content = new Map(picked.map((id) => [id, { image: raw[`image-${id}`] !== undefined, reel: raw[`reel-${id}`] !== undefined }]));
+    const refused = setWebsiteChannels(websiteId, picked, raw.channelContent ? content : undefined);
+    sharingChanged();
     return reply.send({
       saved: true,
       redirect: refused.length ? `/new-website?error=${encodeURIComponent(refused.join(' '))}` : '/new-website',

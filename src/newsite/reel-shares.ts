@@ -128,30 +128,6 @@ export function shareReelOn(reelId: number, channelId: number): number {
   return Number(run(`UPDATE newsite_reel_shares SET status = 'pending', error = '', retry_at = NULL WHERE reel_id = ? AND channel_id = ? AND status = 'failed'`, reelId, channelId).changes);
 }
 
-/** How far back a channel set to post reels catches up on reels it never had. */
-export const CATCH_UP_DAYS = 7;
-
-/**
- * A channel set to post reels gets every reel of its website made in the
- * last week that it never had: one made before the channel was added or
- * set to take reels, or before reels went to every channel. Failed shares
- * are left as they are; Try again is for those.
- */
-export function catchUpReelShares(): number {
-  const reels = all<{ id: number; seo_id: number }>(
-    `SELECT id, seo_id FROM newsite_reels WHERE status = 'done' AND done_at >= datetime('now', ?)`,
-    `-${CATCH_UP_DAYS} days`,
-  );
-  let added = 0;
-  for (const reel of reels) {
-    for (const c of reelDestinations(reel).filter((c) => c.post_reel)) {
-      added += Number(run('INSERT OR IGNORE INTO newsite_reel_shares (reel_id, channel_id) VALUES (?, ?)', reel.id, c.id).changes);
-    }
-  }
-  if (added) log.info(`${added} reel share(s) added for channels that missed a recent reel`);
-  return added;
-}
-
 /** Put a failed share back to work. */
 export function retryReelShare(id: number): void {
   run(`UPDATE newsite_reel_shares SET status = 'pending', error = '', retry_at = NULL WHERE id = ? AND status = 'failed'`, id);
@@ -170,6 +146,11 @@ async function work(share: ReelShareRow, deps: ReelShareDeps, now: number): Prom
   if (!reel || !channel || !row || !site) return fail(share.id, 'Its reel, article, website or channel is gone.');
   if (reel.status !== 'done' || !reel.file) return fail(share.id, 'The reel has no video yet.');
   if (row.post_status !== 'published' || !row.post_url) return fail(share.id, 'The article is not published on the website yet.');
+  if (!websiteChannels(site.id).some((c) => c.id === channel.id && c.post_reel)) {
+    // The website no longer sends reels there: it is dropped, never sent.
+    run('DELETE FROM newsite_reel_shares WHERE id = ?', share.id);
+    return;
+  }
   const check = channelRules(channel);
   if (!check.rules) return fail(share.id, `${check.file} have problems (open the channel and click Edit rules): ${check.errors.join(' ')}`);
   const rules = check.rules;
@@ -260,7 +241,6 @@ export function kickReelShares(deps: ReelShareDeps): Promise<void> {
   const now = deps.now ?? Date.now;
   running = Promise.resolve()
     .then(async () => {
-      catchUpReelShares();
       const seen = new Set<number>();
       for (;;) {
         const share = get<ReelShareRow>(

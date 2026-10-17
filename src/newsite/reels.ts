@@ -64,7 +64,7 @@ export const listPlanReels = (planId: number): ReelRow[] =>
 
 /** The platforms an article's website shares on that take reels, for people ("Facebook and Pinterest"). */
 function reelPlatformsLabel(websiteId: number): string {
-  const own = new Set(websiteChannels(websiteId).map((c) => c.platform));
+  const own = new Set(websiteChannels(websiteId).filter((c) => c.post_reel).map((c) => c.platform));
   const names = REEL_PLATFORMS.filter((p) => own.has(p)).map((p) => PLATFORMS.find((x) => x.key === p)?.label ?? p);
   if (!names.length) return 'short-video platforms';
   return names.length === 1 ? names[0]! : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
@@ -72,14 +72,14 @@ function reelPlatformsLabel(websiteId: number): string {
 
 /**
  * Queue the article's one reel, unless it has one already. By itself (once
- * published) only when its website has a channel that takes reels; `always`
+ * published) only when its website sends reels to one of its channels; `always`
  * is the Reels page's Make reel button. Returns 1 when one was queued.
  */
 export function createReels(seoId: number, always = false): number {
   const row = getSeoRow(seoId);
   const plan = row ? getKeywordPlan(row.plan_id) : undefined;
   if (!row || !plan || row.post_status !== 'published') return 0;
-  if (!always && !websiteChannels(plan.website_id).some((c) => takesReels(c.platform))) return 0;
+  if (!always && !websiteChannels(plan.website_id).some((c) => c.post_reel && takesReels(c.platform))) return 0;
   if (get('SELECT id FROM newsite_reels WHERE seo_id = ? LIMIT 1', seoId)) return 0;
   return Number(run(`INSERT OR IGNORE INTO newsite_reels (seo_id, platform) VALUES (?, ?)`, seoId, ALL_PLATFORMS).changes ?? 0);
 }

@@ -516,6 +516,11 @@ async function work(item: SocialPostRow, deps: SocialDeps, now: number): Promise
   const site = row ? websiteOf(row.id) : undefined;
   if (!row || !channel || !site) return fail(item.id, 'Its article, website or channel is gone.');
   if (row.post_status !== 'published' || !row.post_url) return fail(item.id, 'The article is not published on the website yet.');
+  if (!websiteChannels(site.id).some((c) => c.id === channel.id && c.post_image)) {
+    // The website no longer sends image posts there: it is dropped, never sent.
+    run('DELETE FROM newsite_social_posts WHERE id = ?', item.id);
+    return;
+  }
   // The channel's own rules, read fresh every time: a saved edit counts from the next post on.
   const check = channelRules(channel);
   if (!check.rules) return fail(item.id, `${check.file} have problems (open the channel and click Edit rules): ${check.errors.join(' ')}`);

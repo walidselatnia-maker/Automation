@@ -23,6 +23,7 @@ import {
   type ReelShareDeps,
 } from '../src/newsite/reel-shares.js';
 import { registerSocialRoutes } from '../src/newsite/social-routes.js';
+import { sharingChanged, syncSharing } from '../src/newsite/sharing-sync.js';
 import { refreshPostLinks } from '../src/newsite/post-links.js';
 import { checkMediaToken } from '../src/core/media-links.js';
 import { registerMedia } from '../src/web/media.js';
@@ -94,7 +95,7 @@ describe('sharing reels on the website channels', () => {
   /** The article's one made reel, its video on disk. */
   const madeReel = (): number => {
     const id = Number(run(`INSERT INTO newsite_reels (seo_id, platform, status, file) VALUES (?, 'all', 'done', '')`, seoId).lastInsertRowid);
-    run('UPDATE newsite_reels SET file = ? WHERE id = ?', `reel-${id}.mp4`, id);
+    run(`UPDATE newsite_reels SET file = ?, done_at = datetime('now') WHERE id = ?`, `reel-${id}.mp4`, id);
     mkdirSync(reelDir(dataDir), { recursive: true });
     writeFileSync(join(reelDir(dataDir), `reel-${id}.mp4`), Buffer.from('mp4-video-bytes'));
     return id;
@@ -182,14 +183,15 @@ describe('sharing reels on the website channels', () => {
     expect(get('SELECT COUNT(*) AS n FROM newsite_reels')).toEqual({ n: 1 });
   });
 
-  it('leaves a channel that is not set to post reels alone, unless it is picked for the reel', async () => {
+  it('a channel the website does not send reels to gets none: a share left over from before is dropped, never sent', async () => {
     const page = fbApiPage(false);
     setWebsiteChannels(websiteId, [page]);
     const reelId = madeReel();
     expect(createReelShares(reelId)).toBe(0);
-    expect(shareReelOn(reelId, page)).toBe(1);
+    run('INSERT INTO newsite_reel_shares (reel_id, channel_id) VALUES (?, ?)', reelId, page); // from before the website changed its mind
     await kickReelShares(deps());
-    expect(reelsPosted).toHaveLength(1);
+    expect(reelsPosted).toHaveLength(0);
+    expect(listPlanReelShares(planId)).toHaveLength(0);
   });
 
   it('queues a Pinterest video pin in Buffer: the video from this platform, its board and the article as the pin link', async () => {
@@ -303,7 +305,7 @@ describe('sharing reels on the website channels', () => {
     await app.close();
   });
 
-  it('the Reels page shows each reel once, with the channels to tick; a channel page shows only where it stands', async () => {
+  it('the Reels page shows each reel once and where the website sends it; a channel page shows only where it stands', async () => {
     const page1 = fbApiPage(false);
     const pin = pinChannel(false);
     setWebsiteChannels(websiteId, [page1, pin]);
@@ -319,16 +321,14 @@ describe('sharing reels on the website channels', () => {
 
     const reels = (await app.inject({ url: '/new-website/sharing/reels' })).body;
     expect(reels.match(/id="reel-\d+"/g)).toHaveLength(1);
-    expect(reels).toContain(`action="/new-website/reels/${reelId}/share"`);
-    expect(reels).toContain(`name="channel" value="${page1}"`);
-    expect(reels).toContain(`name="channel" value="${pin}"`);
-    expect(reels).toContain('Send to the ticked channels');
+    expect(reels).not.toContain('name="channel"'); // no ticking here: the website decides
+    expect(reels).not.toContain('Send to the ticked channels');
+    expect(reels).toContain(`href="/new-website/${websiteId}/edit?section=4"`);
+    expect(reels.match(/Reels off for this website/g)).toHaveLength(2);
 
-    const res = await app.inject({
-      method: 'POST', url: `/new-website/reels/${reelId}/share`,
-      payload: `channel=${page1}&channel=${pin}`, headers: { 'content-type': 'application/x-www-form-urlencoded', referer: 'https://dash.example.com/new-website/sharing/reels' },
-    });
-    expect(res.headers.location).toMatch(/^\/new-website\/sharing\/reels\?ok=Sending\+the\+reel\+to\+2\+channels/);
+    // The website now sends reels to both: they go out by themselves.
+    setWebsiteChannels(websiteId, [page1, pin], new Map([[page1, { image: true, reel: true }], [pin, { image: true, reel: true }]]));
+    expect(sharingChanged().added).toBe(2);
     await kickReelShares(deps());
     expect(reelsPosted).toHaveLength(1);
     expect(videoPosts).toHaveLength(1);
@@ -352,7 +352,6 @@ describe('sharing reels on the website channels', () => {
     const linked = (await app.inject({ url: '/new-website/sharing/reels' })).body;
     expect(linked).toContain('href="https://www.pinterest.com/pin/buffer-video-1/"');
     expect(linked).toContain('Open the reel on longlivo (Pinterest)');
-    expect(after).not.toContain('Send to the ticked channels'); // nothing left to send
 
     const channel = (await app.inject({ url: `/new-website/sharing/site/${websiteId}/channel/${page1}?tab=reels` })).body;
     expect(channel).toContain('Posted');
@@ -378,7 +377,7 @@ describe('sharing reels on the website channels', () => {
     expect(listPlanReelShares(planId)[0]!.post_link).toBe('https://www.facebook.com/reel/vid_1');
   });
 
-  it('a channel set to post reels later still gets the recent reels it missed, but not old ones or failed ones', async () => {
+  it('a channel the website starts sending reels to gets its recent reels, not old or failed ones; one taken off loses what has not gone out', async () => {
     const page1 = fbApiPage(true);
     setWebsiteChannels(websiteId, [page1]);
     const reelId = madeReel();
@@ -390,18 +389,27 @@ describe('sharing reels on the website channels', () => {
     const ig = igChannel();
     setWebsiteChannels(websiteId, [page1, pin, ig]);
     run(`UPDATE newsite_reels SET done_at = datetime('now', '-30 days') WHERE id = ?`, reelId);
-    await kickReelShares(deps());
-    expect(listPlanReelShares(planId)).toHaveLength(1); // too old to catch up on
+    expect(syncSharing().added).toBe(0); // too old to catch up on
 
     run(`UPDATE newsite_reels SET done_at = datetime('now', '-2 days') WHERE id = ?`, reelId);
-    await kickReelShares(deps());
+    expect(syncSharing().added).toBe(2);
     expect(listPlanReelShares(planId).map((x) => x.channel_id).sort()).toEqual([page1, pin, ig].sort());
-    expect(videoPosts).toHaveLength(2);
+
+    // Instagram taken off before it went out: its share is dropped; the page's stays.
+    setWebsiteChannels(websiteId, [page1, pin]);
+    expect(syncSharing().removed).toBe(1);
+    await kickReelShares(deps());
+    expect(videoPosts.map((p) => p.channelId)).toEqual(['ch-pin']);
     expect(reelsPosted).toHaveLength(1); // never twice on the page
 
     run(`UPDATE newsite_reel_shares SET status = 'failed' WHERE channel_id = ?`, pin);
-    await kickReelShares(deps());
+    syncSharing();
     expect(listPlanReelShares(planId).find((x) => x.channel_id === pin)!.status).toBe('failed');
+
+    // Reels off for the page on this website: what went out stays.
+    setWebsiteChannels(websiteId, [page1, pin], new Map([[page1, { image: true, reel: false }]]));
+    syncSharing();
+    expect(listPlanReelShares(planId).find((x) => x.channel_id === page1)!.status).toBe('sent');
   });
 
   it('marks a share failed when Buffer says it could not post it', async () => {

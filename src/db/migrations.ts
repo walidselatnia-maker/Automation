@@ -887,6 +887,19 @@ export const MIGRATIONS: Migration[] = [
       addColumn(db, 'newsite_reel_shares', 'post_link', "TEXT NOT NULL DEFAULT ''");
     },
   },
+  {
+    id: '038-newsite-website-channel-content',
+    description: 'New websites: each website decides what it sends to each of its channels (image posts, reels), starting from the channel’s own choice',
+    up(db) {
+      addColumn(db, 'newsite_website_channels', 'post_image', 'INTEGER NOT NULL DEFAULT 1');
+      addColumn(db, 'newsite_website_channels', 'post_reel', 'INTEGER NOT NULL DEFAULT 0');
+      db.exec(`
+        UPDATE newsite_website_channels SET
+          post_image = COALESCE((SELECT c.post_image FROM newsite_channels c WHERE c.id = channel_id), 1),
+          post_reel  = COALESCE((SELECT c.post_reel  FROM newsite_channels c WHERE c.id = channel_id), 0);
+      `);
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */

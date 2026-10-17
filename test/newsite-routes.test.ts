@@ -7,7 +7,8 @@ import { decrypt } from '../src/lib/crypto.js';
 import { registerNewWebsiteRoutes } from '../src/newsite/routes.js';
 import type { SiteCheck } from '../src/newsite/client.js';
 import { checkSite } from '../src/newsite/client.js';
-import type { NewWebsiteRow } from '../src/newsite/repo.js';
+import { saveKeywordPlan, type NewWebsiteRow } from '../src/newsite/repo.js';
+import { queuePlanSeo } from '../src/newsite/seo.js';
 
 const KEY = randomBytes(32);
 const API_KEY = 'sk_test_FAKE0000000000000000000000';
@@ -35,11 +36,11 @@ describe('new website routes', () => {
   let siteAnswer: SiteCheck;
   let asked: { domain: string; apiKey: string }[];
 
-  const post = (url: string, fields: Record<string, string>) =>
+  const post = (url: string, fields: Record<string, string | string[]>) =>
     app.inject({
       method: 'POST',
       url,
-      payload: new URLSearchParams(fields).toString(),
+      payload: new URLSearchParams(Object.entries(fields).flatMap(([k, v]) => (Array.isArray(v) ? v.map((x) => [k, x]) : [[k, v]]))).toString(),
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
     });
 
@@ -134,6 +135,37 @@ describe('new website routes', () => {
     const r = (await post('/new-website/save', { ...GOOD, channelId: '2' })).json();
     expect(r.saved).toBe(true);
     expect(all('SELECT website_id, channel_id FROM newsite_website_channels')).toEqual([{ website_id: 1, channel_id: 2 }]);
+  });
+
+  it('the website decides what each channel gets, and a save brings its sharing in line at once', async () => {
+    run(`INSERT INTO newsite_channels (platform, name, buffer_channel_id, post_image, post_reel) VALUES ('pinterest', 'longlivo', 'ch1', 1, 0)`);
+    run(`INSERT INTO newsite_channels (platform, name, fb_page_id, via, post_image, post_reel) VALUES ('facebook', 'Easy Cakes', 'p1', 'api', 1, 1)`);
+    const wizard = await app.inject({ method: 'GET', url: '/new-website/add' });
+    expect(wizard.body).toContain('name="image-1"');
+    expect(wizard.body).toContain('name="reel-2"');
+    expect(wizard.body).toMatch(/name="reel-2" value="1" checked/); // starts from the channel's own choice
+
+    // Pinterest: reels only. Facebook: image posts only.
+    expect((await post('/new-website/save', { ...GOOD, channelId: ['1', '2'], channelContent: '1', 'reel-1': '1', 'image-2': '1' })).json().saved).toBe(true);
+    expect(all('SELECT channel_id, post_image, post_reel FROM newsite_website_channels ORDER BY channel_id')).toEqual([
+      { channel_id: 1, post_image: 0, post_reel: 1 },
+      { channel_id: 2, post_image: 1, post_reel: 0 },
+    ]);
+
+    // A recent article: Facebook gets its image post, Pinterest none, and the article its reel.
+    const planId = saveKeywordPlan(1, 'cake', [], 'recipe');
+    queuePlanSeo(planId, 'cake', [], 'recipe');
+    run(`UPDATE keyword_seo SET post_status = 'published', post_url = 'https://f.longlivo.com/cake', posted_at = datetime('now', '-1 day')`);
+    const site = await app.inject({ method: 'GET', url: '/new-website/1/edit?section=4' });
+    expect(site.statusCode).toBe(200);
+    const edit = (await post('/new-website/save', { ...GOOD, id: '1', channelId: ['1', '2'], channelContent: '1', 'reel-1': '1', 'image-2': '1' })).json();
+    expect(edit.saved).toBe(true);
+    expect(all('SELECT channel_id FROM newsite_social_posts')).toEqual([{ channel_id: 2 }]);
+    expect(all('SELECT platform FROM newsite_reels')).toEqual([{ platform: 'all' }]);
+
+    // Facebook off this website: its post that had not gone out is dropped.
+    await post('/new-website/save', { ...GOOD, id: '1', channelId: '1', channelContent: '1', 'reel-1': '1' });
+    expect(all('SELECT channel_id FROM newsite_social_posts')).toEqual([]);
   });
 
   it('does not touch the old sites table', async () => {

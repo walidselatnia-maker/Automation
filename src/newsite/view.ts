@@ -1,5 +1,5 @@
 import { html, raw, type Html } from '../web/views/layout.js';
-import { websiteChannels } from './channels.js';
+import { CATCH_UP_DAYS, platformName, websiteChannels } from './channels.js';
 
 const channelNames = (websiteId: number): string => websiteChannels(websiteId).map((c) => c.name).join(', ');
 import type { NewWebsiteRow } from './repo.js';
@@ -199,6 +199,12 @@ export const WIZARD_CSS = `
 .wz-check { display: flex; align-items: center; gap: 10px; margin: -6px 0 20px; font-size: 14px; color: var(--ink); cursor: pointer; }
 .wz-check input { width: 16px; height: 16px; accent-color: var(--accent); }
 .wz-ch-platform { font-style: normal; color: var(--faint); font-size: 13px; }
+.wz-ch-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 16px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 8px; }
+.wz-ch-row .wz-check { margin: 0; }
+.wz-ch-what { display: flex; gap: 14px; font-size: 13px; color: var(--muted, var(--faint)); }
+.wz-ch-what label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.wz-ch-what input { accent-color: var(--accent); }
+.wz-ch-row:not(:has(input[name=channelId]:checked)) .wz-ch-what { opacity: .45; }
 .wz-saveerr { color: var(--bad); font-size: 14px; font-weight: 600; margin-top: 16px; }
 .wz-saveerr:empty { display: none; }
 @media (max-width: 640px) {
@@ -246,6 +252,10 @@ export interface WizardChannel {
   platform: string;
   via: string;
   checked: boolean;
+  /** What this website sends it: its saved choice, or the channel's own when it is not used yet. */
+  image: boolean;
+  reel: boolean;
+  takesReels: boolean;
 }
 
 export function newWebsiteWizardPage(existing?: NewWebsiteRow, channels: WizardChannel[] = [], section = -1): Html {
@@ -343,12 +353,19 @@ export function newWebsiteWizardPage(existing?: NewWebsiteRow, channels: WizardC
             <div class="wz-field">
               <label>Share this website’s articles on</label>
               ${channels.length
-                ? html`<div class="wz-channels">${channels.map(
-                    (c) => html`<label class="wz-check" style="margin:0 0 8px"><input type="checkbox" name="channelId" value="${String(c.id)}" data-name="${c.name}" ${c.checked ? raw('checked') : raw('')} />
-                      ${c.name} <em class="wz-ch-platform">${c.platform === 'facebook' ? 'Facebook' : 'Pinterest'} · ${c.via === 'buffer' ? 'Buffer' : 'API'}</em></label>`,
+                ? html`<input type="hidden" name="channelContent" value="1" />
+                  <div class="wz-channels">${channels.map(
+                    (c) => html`<div class="wz-ch-row">
+                      <label class="wz-check"><input type="checkbox" name="channelId" value="${String(c.id)}" data-name="${c.name}" ${c.checked ? raw('checked') : raw('')} />
+                        <span>${c.name} <em class="wz-ch-platform">${platformName(c.platform)} · ${c.via === 'buffer' ? 'Buffer' : 'API'}</em></span></label>
+                      <span class="wz-ch-what">
+                        <label><input type="checkbox" name="image-${String(c.id)}" value="1" ${c.image ? raw('checked') : raw('')} /> Image posts</label>
+                        ${c.takesReels ? html`<label><input type="checkbox" name="reel-${String(c.id)}" value="1" ${c.reel ? raw('checked') : raw('')} /> Reels</label>` : raw('')}
+                      </span>
+                    </div>`,
                   )}</div>`
-                : html`<div class="wz-hint">No channel to share on yet. Add Pinterest or Facebook on the <a href="/new-website/channels">Channels</a> page, then come back.</div>`}
-              <div class="wz-hint">One post per channel for each article, with the link in the first comment.</div>
+                : html`<div class="wz-hint">No channel to share on yet. Add one on the <a href="/new-website/channels">Channels</a> page, then come back.</div>`}
+              <div class="wz-hint">Tick a channel, then what this website sends it. Saving brings sharing in line at once: a channel you add gets this website's image posts and reels from the last ${String(CATCH_UP_DAYS)} days, and one you take off gets nothing more that has not gone out yet.</div>
             </div>
             ${field('projectId', 'Google Flow project', html`<input id="wz-projectId" name="projectId" spellcheck="false" placeholder="https://flow.google.com/project/…" value="${e?.project_id ?? ''}" />`, {
               optional: 'optional',

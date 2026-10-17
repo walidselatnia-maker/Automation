@@ -13,6 +13,7 @@ import { readyFor } from './keywords-view.js';
 import { reelsPage, shareArticlesStep, sharingChannelPage, sharingSitePage, sharingSitesPage, shareWebsiteStep, reelRulesPage, type ChannelTab, type SharingSite } from './sharing-view.js';
 import { checkPlatformRules, listPlatformRules } from './platform-rules.js';
 import { refreshPostLinks, refreshPostLinksSoon, type PostLinkDeps } from './post-links.js';
+import { onSharingChanged, syncSharing } from './sharing-sync.js';
 import { createReelShares, getReelShare, kickReelShares, listPlanReelShares, retryReelShare, shareReelOn, type ReelShareDeps } from './reel-shares.js';
 import { markdownToHtml } from './markdown.js';
 
@@ -37,16 +38,22 @@ export function registerSocialRoutes(
   const linksOnView = (): void => {
     if (deps.autoStart !== false) refreshPostLinksSoon(links);
   };
-  if (deps.autoStart !== false) {
-    void refreshPostLinks(links).catch(() => {});
-    setInterval(() => {
-      void refreshPostLinks(links).catch(() => {});
-      void kickReelShares(shares); // also catches channels up on recent reels they missed
-    }, 15 * 60_000).unref();
+  // A website's or channel's sharing choice saved: the posters get to work on what it added.
+  const kickAll = (): void => {
     void kickSocial(deps);
-    resetInterruptedReels();
     void kickReels(reels);
     void kickReelShares(shares);
+  };
+  if (deps.autoStart !== false) {
+    onSharingChanged(kickAll);
+    void refreshPostLinks(links).catch(() => {});
+    resetInterruptedReels();
+    syncSharing();
+    kickAll();
+    setInterval(() => {
+      void refreshPostLinks(links).catch(() => {});
+      if (syncSharing().added) kickAll();
+    }, 15 * 60_000).unref();
   }
 
   /* -- The Sharing page ---------------------------------------------------- */

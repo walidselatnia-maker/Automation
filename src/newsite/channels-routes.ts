@@ -14,6 +14,7 @@ import {
   saveBufferChannel,
   saveChannelRules,
   saveFacebookApiChannel,
+  setChannelContent,
   setChannelWebsites,
   takesReels,
   PLATFORMS,
@@ -45,6 +46,7 @@ import {
 } from './channels-view.js';
 import { newLayout, type NewFlash } from './layout.js';
 import { listNewWebsites } from './repo.js';
+import { sharingChanged } from './sharing-sync.js';
 import { channelRules, checkPlatformRules, defaultRulesText, listPlatformRules, parseRules } from './platform-rules.js';
 
 /** What the wizards ask Buffer and Facebook; replaceable so tests call neither. */
@@ -341,6 +343,7 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
         : saveFacebookApiChannel({ name: p.name, fbToken: d.token, pageId: p.id, postImage: d.postImage, postReel: d.postReel, multiWebsite: multi }, deps.encryptionKey),
     );
     for (const id of ids) setChannelWebsites(id, websiteIds);
+    sharingChanged();
     drafts.delete(String(b.draft));
 
     // A Buffer channel's last step, the check, runs on the channel's own page.
@@ -427,6 +430,7 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
         }
         run('UPDATE newsite_channels SET multi_website = ? WHERE id = ?', multi ? 1 : 0, c.id);
         const refused = setChannelWebsites(c.id, websiteIds);
+        sharingChanged();
         if (refused) return send(reply, page(title, websitesPart(getChannel(c.id)!, websiteChoices(websiteIds), refused), request));
         return toChannel(reply, c.id, 'Websites saved.');
       }
@@ -434,7 +438,8 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
         if (!on(b.postImage) && !on(b.postReel)) {
           return send(reply, page(title, postsPart({ ...c, post_image: 0, post_reel: 0 }, 'Pick what to post: an image post, a reel, or both.'), request));
         }
-        run('UPDATE newsite_channels SET post_image = ?, post_reel = ? WHERE id = ?', on(b.postImage) ? 1 : 0, on(b.postReel) ? 1 : 0, c.id);
+        setChannelContent(c.id, { image: on(b.postImage), reel: on(b.postReel) });
+        sharingChanged();
         return toChannel(reply, c.id, 'What to post saved.');
       }
       case 'plan':
