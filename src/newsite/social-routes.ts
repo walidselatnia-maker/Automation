@@ -14,6 +14,7 @@ import { reelsPage, shareArticlesStep, sharingChannelPage, sharingSitePage, shar
 import { checkPlatformRules, listPlatformRules } from './platform-rules.js';
 import { refreshPostLinks, refreshPostLinksSoon, type PostLinkDeps } from './post-links.js';
 import { onSharingChanged, syncSharing } from './sharing-sync.js';
+import { renewThreadsTokens } from './threads-token.js';
 import { createReelShares, getReelShare, kickReelShares, listPlanReelShares, retryReelShare, shareReelOn, type ReelShareDeps } from './reel-shares.js';
 import { markdownToHtml } from './markdown.js';
 
@@ -53,6 +54,7 @@ export function registerSocialRoutes(
     setInterval(() => {
       void refreshPostLinks(links).catch(() => {});
       if (syncSharing().added) kickAll();
+      void renewThreadsTokens(deps.encryptionKey);
     }, 15 * 60_000).unref();
   }
 

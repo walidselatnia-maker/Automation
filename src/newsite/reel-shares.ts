@@ -10,7 +10,8 @@ import { bufferTokenOf, fbTokenOf, getChannel, takesReels, websiteChannels, type
 import { channelRules } from './platform-rules.js';
 import { getReel, reelDir, type ReelRow } from './reels.js';
 import { getSeoRow } from './seo.js';
-import { bufferMetadata, isQueueFull, pickBoard, websiteOf, writePostWords } from './social.js';
+import { bufferMetadata, isQueueFull, pickBoard, realInstagram, realThreads, websiteOf, writePostWords, type InstagramApi, type ThreadsApi } from './social.js';
+import { threadsTokenOf, type Renew } from './threads-token.js';
 
 /**
  * Sharing a made reel: the one video of an article (reels.ts), sent to each
@@ -69,6 +70,9 @@ export interface ReelShareDeps {
   dataDir?: string;
   buffer?: (token: string) => ReelBufferApi;
   facebook?: (token: string) => ReelFacebookApi;
+  instagram?: (token: string) => InstagramApi;
+  threads?: (token: string) => ThreadsApi;
+  renewThreads?: Renew;
   now?: () => number;
   /** Wakes the sharer when a waiting share is due; tests pass their own. */
   wakeIn?: (ms: number, wake: () => void) => void;
@@ -203,6 +207,30 @@ async function work(share: ReelShareRow, deps: ReelShareDeps, now: number): Prom
     return;
   }
 
+  if (channel.platform === 'instagram' || channel.platform === 'threads') {
+    // Both fetch the video from its public link, post it, and say where it is.
+    try {
+      const base = deps.settings.get('public_base_url').trim();
+      if (!base) throw new Error(`This platform has no public address yet, so ${rules.label} cannot fetch the video. Open the dashboard once at its https address, or set it in Platform settings → Images.`);
+      const videoUrl = newsiteReelMediaUrl(base, reel.id, deps.settings.get('reel_media_link_days'), deps.encryptionKey, now);
+      const posted =
+        channel.platform === 'instagram'
+          ? await (deps.instagram ?? realInstagram)(fbTokenOf(channel, deps.encryptionKey)).publishInstagram({
+              pageId: channel.fb_page_id, igUserId: channel.api_account_id, kind: 'reel', mediaUrl: videoUrl, caption: share.text,
+            })
+          : await (deps.threads ?? realThreads)(await threadsTokenOf(channel, deps.encryptionKey, deps.renewThreads)).publish({
+              userId: channel.api_account_id, kind: 'video', mediaUrl: videoUrl, text: share.text,
+            });
+      run(
+        `UPDATE newsite_reel_shares SET status = 'sent', external_id = ?, post_link = ?, error = '', sent_at = datetime('now') WHERE id = ?`,
+        posted.mediaId, posted.permalink, share.id,
+      );
+      log.info(`reel ${reel.id} shared on ${channel.name} (${rules.label} API): ${posted.mediaId}`);
+    } catch (err) {
+      fail(share.id, errorMessage(err));
+    }
+    return;
+  }
   if (channel.platform !== 'facebook') return fail(share.id, `Posting reels to ${rules.label} through its own API is not built; connect it through Buffer.`);
   const api = (deps.facebook ?? realFacebook)(fbTokenOf(channel, deps.encryptionKey));
   let videoId: string;

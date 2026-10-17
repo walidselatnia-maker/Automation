@@ -10,7 +10,7 @@ import { Settings } from '../src/settings.js';
 import { configurePrompts } from '../src/pipeline/prompts.js';
 import { createNewWebsite, saveKeywordPlan } from '../src/newsite/repo.js';
 import { listPlanSeo, queuePlanSeo } from '../src/newsite/seo.js';
-import { saveBufferChannel, saveFacebookApiChannel, setWebsiteChannels } from '../src/newsite/channels.js';
+import { saveBufferChannel, saveFacebookApiChannel, saveInstagramApiChannel, saveThreadsApiChannel, setWebsiteChannels } from '../src/newsite/channels.js';
 import { createReels, kickReels, onReelMade, reelDir, type ReelDeps } from '../src/newsite/reels.js';
 import {
   createReelShares,
@@ -45,6 +45,10 @@ const GOOD_FB = {
   alt: 'A tall slice of strawberry cake with whipped cream on a white plate',
 };
 
+const GOOD_THREADS = {
+  text: 'Real berries in the batter make this cake pink all the way through. Would you bake it this weekend?',
+  alt: 'A tall slice of strawberry cake with whipped cream on a white plate',
+};
 const GOOD_IG = {
   text: 'Real berries go right into the batter, and that first pink slice says it all. Save this for your next bake. #strawberrycake #baking #summerdessert',
   alt: 'A tall slice of strawberry cake with whipped cream on a white plate',
@@ -88,7 +92,7 @@ describe('sharing reels on the website channels', () => {
   const ask = async (name: string, vars: Record<string, unknown>): Promise<string> => {
     asked.push({ name, vars });
     if (name === 'newsite-pick-board') return '{"board": "Strawberry Desserts"}';
-    return JSON.stringify(vars.label === 'Pinterest' ? GOOD_PIN : vars.label === 'Instagram' ? GOOD_IG : GOOD_FB);
+    return JSON.stringify(vars.label === 'Pinterest' ? GOOD_PIN : vars.label === 'Instagram' ? GOOD_IG : vars.label === 'Threads' ? GOOD_THREADS : GOOD_FB);
   };
   const deps = (): ReelShareDeps => ({ settings, encryptionKey: KEY, dataDir, ask, buffer, facebook, now: () => clock, wakeIn: () => {} });
 
@@ -192,6 +196,28 @@ describe('sharing reels on the website channels', () => {
     await kickReelShares(deps());
     expect(reelsPosted).toHaveLength(0);
     expect(listPlanReelShares(planId)).toHaveLength(0);
+  });
+
+  it('sends the reel to Instagram and Threads through their own APIs by its public link, with each one’s address', async () => {
+    const ig = saveInstagramApiChannel({ name: 'easycakes', fbToken: 'fbtok', pageId: 'p1', igUserId: 'ig1', postImage: false, postReel: true, multiWebsite: false }, KEY);
+    const th = saveThreadsApiChannel({ name: 'easycakes', token: 'th-tok', userId: 'th1', expiresAt: Date.now() + 40 * 86_400_000, postImage: false, postReel: true, multiWebsite: false }, KEY);
+    setWebsiteChannels(websiteId, [ig, th]);
+    const sent: Record<string, unknown>[] = [];
+    const reelId = madeReel();
+    createReelShares(reelId);
+    await kickReelShares({
+      ...deps(),
+      instagram: (token) => ({ publishInstagram: async (i) => (sent.push({ token, ...i }), { mediaId: 'ig-reel', permalink: 'https://www.instagram.com/reel/R1/' }) }),
+      threads: (token) => ({ publish: async (i) => (sent.push({ token, ...i }), { mediaId: 'th-video', permalink: 'https://www.threads.net/@easycakes/post/V1' }) }),
+    });
+    expect(sent).toEqual([
+      expect.objectContaining({ token: 'fbtok', igUserId: 'ig1', kind: 'reel', caption: GOOD_IG.text }),
+      expect.objectContaining({ token: 'th-tok', userId: 'th1', kind: 'video' }),
+    ]);
+    for (const x of sent) expect(String(x.mediaUrl)).toMatch(new RegExp(`/media/newsite-reel/${reelId}/`));
+    const shares = listPlanReelShares(planId);
+    expect(shares.find((x) => x.channel_id === ig)).toMatchObject({ status: 'sent', post_link: 'https://www.instagram.com/reel/R1/' });
+    expect(shares.find((x) => x.channel_id === th)).toMatchObject({ status: 'sent', post_link: 'https://www.threads.net/@easycakes/post/V1' });
   });
 
   it('queues a Pinterest video pin in Buffer: the video from this platform, its board and the article as the pin link', async () => {

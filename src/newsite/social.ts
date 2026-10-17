@@ -4,6 +4,8 @@ import { all, get, run } from '../db/index.js';
 import { resolveDataDir } from '../config.js';
 import { BufferClient, type BufferChannel } from '../integrations/buffer.js';
 import { FacebookClient } from '../integrations/facebook.js';
+import { ThreadsClient } from '../integrations/threads.js';
+import { threadsTokenOf, type Renew } from './threads-token.js';
 import { createLogger, errorMessage } from '../lib/logger.js';
 import { pictureMediaUrl } from '../core/media-links.js';
 import { channelRules, type PlatformRules } from './platform-rules.js';
@@ -91,6 +93,26 @@ export interface FacebookApi {
   commentOnPost: (input: { pageId: string; postId: string; message: string }) => Promise<{ commentId: string }>;
 }
 
+/** Instagram through its Facebook page's API; replaceable so tests call no real Instagram. */
+export interface InstagramApi {
+  publishInstagram: (input: { pageId: string; igUserId: string; kind: 'image' | 'reel'; mediaUrl: string; caption: string }) => Promise<{ mediaId: string; permalink: string }>;
+}
+
+/** Threads through its own API; replaceable so tests call no real Threads. */
+export interface ThreadsApi {
+  publish: (input: { userId: string; kind: 'image' | 'video'; mediaUrl: string; text: string }) => Promise<{ mediaId: string; permalink: string }>;
+}
+
+export const realInstagram = (token: string): InstagramApi => {
+  const client = new FacebookClient({ systemUserToken: token });
+  return { publishInstagram: (i) => client.publishInstagram(i) };
+};
+
+export const realThreads = (token: string): ThreadsApi => {
+  const client = new ThreadsClient({ token });
+  return { publish: (i) => client.publish(i) };
+};
+
 export interface SocialDeps {
   settings: Settings;
   encryptionKey: Buffer;
@@ -100,6 +122,10 @@ export interface SocialDeps {
   fetchImpl?: Fetch;
   buffer?: (token: string) => BufferApi;
   facebook?: (token: string) => FacebookApi;
+  instagram?: (token: string) => InstagramApi;
+  threads?: (token: string) => ThreadsApi;
+  /** Renews a Threads token that runs out soon; tests pass their own. */
+  renewThreads?: Renew;
   /** Makes Instagram's 4:5 copy of a picture; tests pass their own. */
   instagramPicture?: (src: string, out: string) => Promise<void>;
   /** Wakes the picture maker once a social picture is queued. */
@@ -400,7 +426,7 @@ async function instagramPictureLink(picture: PictureRow, deps: SocialDeps, now: 
  * Buffer fails a post whose picture it cannot download ("Image could not be
  * read from its URL"), so the link is tried first, the way Buffer will try it.
  */
-async function checkPictureLink(url: string, deps: SocialDeps): Promise<void> {
+async function checkPictureLink(url: string, deps: SocialDeps, who = 'Buffer'): Promise<void> {
   let status = 0;
   try {
     const res = await (deps.fetchImpl ?? fetch)(url, { method: 'GET', signal: AbortSignal.timeout(20_000) });
@@ -408,9 +434,9 @@ async function checkPictureLink(url: string, deps: SocialDeps): Promise<void> {
     const type = res.headers.get('content-type') ?? '';
     if (res.ok && type.startsWith('image/')) return;
   } catch (err) {
-    throw new Error(`Buffer could not download the picture: ${new URL(url).origin} did not answer (${errorMessage(err)}). Check the public address in Platform settings → Images.`);
+    throw new Error(`${who} could not download the picture: ${new URL(url).origin} did not answer (${errorMessage(err)}). Check the public address in Platform settings → Images.`);
   }
-  throw new Error(`Buffer could not download the picture: ${new URL(url).origin} answered HTTP ${status} instead of the picture. Check the public address in Platform settings → Images, and that /media/ reaches this platform.`);
+  throw new Error(`${who} could not download the picture: ${new URL(url).origin} answered HTTP ${status} instead of the picture. Check the public address in Platform settings → Images, and that /media/ reaches this platform.`);
 }
 
 const typeOf = (file: string): string => (file.endsWith('.png') ? 'image/png' : file.endsWith('.jpg') || file.endsWith('.jpeg') ? 'image/jpeg' : 'image/webp');
@@ -512,6 +538,33 @@ async function sendThroughFacebook(w: Work, picture: PictureRow, deps: SocialDep
   }
 }
 
+/**
+ * Step 3, through Instagram's or Threads' own API: both fetch the picture
+ * from its public link (the 4:5 JPEG copy, which both take), post it, and say
+ * where the post is.
+ */
+async function sendThroughMetaApi(w: Work, picture: PictureRow, deps: SocialDeps, now: number): Promise<void> {
+  const who = w.rules.label;
+  try {
+    const url = await instagramPictureLink(picture, deps, now);
+    await checkPictureLink(url, deps, who);
+    const posted =
+      w.channel.platform === 'instagram'
+        ? await (deps.instagram ?? realInstagram)(fbTokenOf(w.channel, deps.encryptionKey)).publishInstagram({
+            pageId: w.channel.fb_page_id, igUserId: w.channel.api_account_id, kind: 'image', mediaUrl: url, caption: w.item.text,
+          })
+        : await (deps.threads ?? realThreads)(await threadsTokenOf(w.channel, deps.encryptionKey, deps.renewThreads)).publish({
+            userId: w.channel.api_account_id, kind: 'image', mediaUrl: url, text: w.item.text,
+          });
+    run(
+      `UPDATE newsite_social_posts SET status = 'sent', external_id = ?, post_link = ?, error = '', sent_at = datetime('now') WHERE id = ?`,
+      posted.mediaId, posted.permalink, w.item.id,
+    );
+  } catch (err) {
+    fail(w.item.id, errorMessage(err));
+  }
+}
+
 /** One post, one step further: words, then picture, then sending. */
 async function work(item: SocialPostRow, deps: SocialDeps, now: number): Promise<void> {
   const row = getSeoRow(item.seo_id);
@@ -534,6 +587,7 @@ async function work(item: SocialPostRow, deps: SocialDeps, now: number): Promise
   if (!picture || picture.status !== 'done') return queuePicture(w, deps);
   if (channel.via === 'buffer') return sendThroughBuffer(w, picture, deps, now);
   if (channel.platform === 'facebook') return sendThroughFacebook(w, picture, deps);
+  if (channel.platform === 'instagram' || channel.platform === 'threads') return sendThroughMetaApi(w, picture, deps, now);
   return fail(item.id, `Posting to ${w.rules.label} through its own API is not built; connect it through Buffer.`);
 }
 

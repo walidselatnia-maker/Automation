@@ -900,6 +900,14 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    id: '039-newsite-api-accounts',
+    description: 'New websites: Instagram and Threads through their own APIs (the account posted to, and when a Threads token runs out)',
+    up(db) {
+      addColumn(db, 'newsite_channels', 'api_account_id', "TEXT NOT NULL DEFAULT ''");
+      addColumn(db, 'newsite_channels', 'token_expires_at', 'INTEGER');
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */

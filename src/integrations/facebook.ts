@@ -36,6 +36,14 @@ export interface FacebookPage {
   name: string;
 }
 
+/** An Instagram professional account, reached through the Facebook page it is linked to. */
+export interface InstagramAccount {
+  pageId: string;
+  pageName: string;
+  igUserId: string;
+  username: string;
+}
+
 export interface PublishedReel {
   videoId: string;
   permalink: string;
@@ -362,6 +370,113 @@ export class FacebookClient {
       `Reel ${videoId} was still processing after ${waited}s. It may yet publish — ` +
         'check the page before uploading it again.',
     );
+  }
+
+  /**
+   * The Instagram professional accounts linked to the pages this token sees.
+   * Instagram's publishing API reaches an account only through its page.
+   */
+  async listInstagramAccounts(): Promise<InstagramAccount[]> {
+    this.assertConfigured();
+
+    const url = new URL(`${GRAPH}/me/accounts`);
+    url.searchParams.set('fields', 'id,name,instagram_business_account{id,username}');
+    url.searchParams.set('limit', '200');
+    url.searchParams.set('access_token', this.token);
+
+    const response = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+    const body = await this.read<{ data?: (FacebookPage & { instagram_business_account?: { id?: string; username?: string } })[] }>(
+      response,
+      'Listing Instagram accounts',
+    );
+    return (body.data ?? [])
+      .filter((p) => p.instagram_business_account?.id)
+      .map((p) => ({
+        pageId: p.id,
+        pageName: p.name,
+        igUserId: p.instagram_business_account!.id!,
+        username: p.instagram_business_account!.username ?? '',
+      }));
+  }
+
+  /**
+   * Publish a picture or a reel on an Instagram account.
+   *
+   * Instagram fetches the file itself from a public address, so the caller
+   * hands a link, not bytes. Three steps: a container is made from the link,
+   * Instagram is asked until it has finished with it (a video takes a while,
+   * and a refused one says so here), then the container is published. The
+   * post's address is read last, so the dashboard can link to it.
+   */
+  async publishInstagram(input: {
+    pageId: string;
+    igUserId: string;
+    kind: 'image' | 'reel';
+    mediaUrl: string;
+    caption: string;
+  }): Promise<{ mediaId: string; permalink: string }> {
+    const token = await this.pageToken(input.pageId);
+    const what = input.kind === 'reel' ? 'the Instagram reel' : 'the Instagram post';
+
+    const params: Record<string, string> =
+      input.kind === 'reel'
+        ? { media_type: 'REELS', video_url: input.mediaUrl, share_to_feed: 'true' }
+        : { image_url: input.mediaUrl };
+    const made = await this.read<{ id?: string }>(
+      await fetch(`${GRAPH}/${input.igUserId}/media`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...params, caption: input.caption, access_token: token }),
+        signal: AbortSignal.timeout(120_000),
+      }),
+      `Preparing ${what}`,
+    );
+    if (!made.id) throw new FacebookError('Instagram did not return a container id');
+
+    await this.waitForContainer(made.id, token, what);
+
+    const published = await this.read<{ id?: string }>(
+      await fetch(`${GRAPH}/${input.igUserId}/media_publish`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ creation_id: made.id, access_token: token }),
+        signal: AbortSignal.timeout(120_000),
+      }),
+      `Publishing ${what}`,
+    );
+    if (!published.id) throw new FacebookError('Instagram did not return a post id');
+
+    let permalink = '';
+    try {
+      const url = new URL(`${GRAPH}/${published.id}`);
+      url.searchParams.set('fields', 'permalink');
+      url.searchParams.set('access_token', token);
+      permalink = (await this.read<{ permalink?: string }>(await fetch(url, { signal: AbortSignal.timeout(30_000) }), 'Reading the post address')).permalink ?? '';
+    } catch (err) {
+      log.warn(`instagram ${published.id}: published, but its address could not be read: ${errorMessage(err)}`);
+    }
+    return { mediaId: published.id, permalink };
+  }
+
+  /** Wait until Instagram has finished with a container, and fail if it refused the file. */
+  private async waitForContainer(containerId: string, token: string, what: string): Promise<void> {
+    for (let attempt = 1; attempt <= this.maxAttempts; attempt++) {
+      const url = new URL(`${GRAPH}/${containerId}`);
+      url.searchParams.set('fields', 'status_code,status');
+      url.searchParams.set('access_token', token);
+      const body = await this.read<{ status_code?: string; status?: string }>(
+        await fetch(url, { signal: AbortSignal.timeout(30_000) }),
+        `Checking ${what}`,
+      );
+      const code = (body.status_code ?? '').toUpperCase();
+      if (code === 'FINISHED' || code === 'PUBLISHED') return;
+      if (code === 'ERROR' || code === 'EXPIRED') {
+        throw new FacebookError(`Instagram refused ${what}: ${body.status || code}`, JSON.stringify(body));
+      }
+      await new Promise((r) => setTimeout(r, this.pollIntervalMs));
+    }
+    const waited = Math.round((this.maxAttempts * this.pollIntervalMs) / 1000);
+    throw new FacebookError(`Instagram was still working on ${what} after ${waited}s. Try again later.`);
   }
 
   /** Prove the token works, without publishing anything. */

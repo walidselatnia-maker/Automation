@@ -10,6 +10,7 @@ import { createNewWebsite } from '../src/newsite/repo.js';
 const KEY = randomBytes(32);
 const BUFFER_TOKEN = 'buffer-secret-token-123';
 const FB_TOKEN = 'fb-secret-token-456';
+const THREADS_TOKEN = 'threads-secret-token-789';
 
 const lookups: ChannelLookups = {
   bufferChannels: async (token) => {
@@ -25,6 +26,14 @@ const lookups: ChannelLookups = {
   },
   facebookPageCheck: async (_token, pageId) => {
     if (pageId === 'p2') throw new Error('Page p2 returned no access token');
+  },
+  instagramAccounts: async (token) => {
+    if (token !== FB_TOKEN) throw new Error('Listing Instagram accounts failed: Invalid OAuth access token');
+    return [{ pageId: 'p1', pageName: 'Easy Cakes', igUserId: 'ig1', username: 'easycakes' }];
+  },
+  threadsProfile: async (token) => {
+    if (token !== THREADS_TOKEN) throw new Error('Reading the Threads profile failed: Invalid OAuth access token');
+    return { id: 'th1', username: 'easycakes' };
   },
 };
 
@@ -56,6 +65,49 @@ describe('New dashboard: channels', () => {
       },
       KEY,
     );
+
+  it('adds Instagram through the Facebook page’s API, and Threads through its own API', async () => {
+    const a = await app();
+    const one = site('Long Livo', 'f.longlivo.com');
+    for (const platform of ['instagram', 'threads']) {
+      const via = (await post(a, '/new-website/channels/add', { platform })).body;
+      expect(via).toContain('value="api"');
+    }
+
+    // Instagram: the accounts linked to the token's pages.
+    const igPick = await post(a, '/new-website/channels/instagram/api/connect', { token: FB_TOKEN });
+    expect(igPick.body).toContain('easycakes');
+    expect(igPick.body).toContain('Instagram of the page Easy Cakes');
+    let draft = draftIn(igPick.body);
+    const igCheck = await post(a, '/new-website/channels/instagram/api/pick', { draft, pick: 'p1:ig1' });
+    expect(igCheck.body).toContain('easycakes: connected.');
+    await post(a, '/new-website/channels/instagram/api/checked', { draft });
+    await post(a, '/new-website/channels/instagram/api/what', { draft, postImage: '1', postReel: '1' });
+    await post(a, '/new-website/channels/instagram/api/save', { draft, websiteId: String(one) });
+    const ig = listChannels().find((c) => c.platform === 'instagram')!;
+    expect(ig).toMatchObject({ via: 'api', name: 'easycakes', fb_page_id: 'p1', api_account_id: 'ig1', post_image: 1, post_reel: 1 });
+    expect(fbTokenOf(ig, KEY)).toBe(FB_TOKEN);
+
+    // Threads: its own token, the one profile it belongs to, counted on for a while before its first renewal.
+    expect((await post(a, '/new-website/channels/threads/api/connect', { token: 'wrong' })).body).toContain('Threads did not accept this token');
+    const thPick = await post(a, '/new-website/channels/threads/api/connect', { token: THREADS_TOKEN });
+    expect(thPick.body).toContain('Your Threads profile');
+    draft = draftIn(thPick.body);
+    expect((await post(a, '/new-website/channels/threads/api/pick', { draft, pick: 'th1' })).body).toContain('easycakes: connected.');
+    await post(a, '/new-website/channels/threads/api/checked', { draft });
+    await post(a, '/new-website/channels/threads/api/what', { draft, postImage: '1' });
+    await post(a, '/new-website/channels/threads/api/save', { draft, websiteId: String(one) });
+    const th = listChannels().find((c) => c.platform === 'threads')!;
+    expect(th).toMatchObject({ via: 'api', name: 'easycakes', api_account_id: 'th1', post_image: 1 });
+    expect(fbTokenOf(th, KEY)).toBe(THREADS_TOKEN);
+    expect(th.token_expires_at! - Date.now()).toBeGreaterThan(20 * 86_400_000);
+
+    const card = (await a.inject({ url: `/new-website/channels/${th.id}?check=1` })).body;
+    expect((await a.inject({ url: `/new-website/channels/${th.id}` })).body).toContain('The Threads API');
+    expect(card).toContain('Connected. Threads answers as @easycakes.');
+    expect((await a.inject({ url: `/new-website/channels/${ig.id}?check=1` })).body).toContain('linked to the page Easy Cakes');
+    await a.close();
+  });
 
   it('adds channels through one wizard: Add channel, the platform, then how it posts', async () => {
     const a = await app();

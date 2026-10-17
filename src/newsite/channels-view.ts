@@ -1,5 +1,5 @@
 import { html, raw, type Html } from '../web/views/layout.js';
-import { channelColor, PLATFORMS, takesReels, videoOnly, viasOf, viaLabel, type ChannelRow, type Platform, type Via } from './channels.js';
+import { apiName, channelColor, PLATFORMS, takesReels, videoOnly, viasOf, viaLabel, type ChannelRow, type Platform, type Via } from './channels.js';
 import type { RulesCheck } from './platform-rules.js';
 import { WIZARD_CSS, field } from './view.js';
 
@@ -105,7 +105,7 @@ const sites = (n: number): string => (n === 1 ? '1 website' : `${n} websites`);
 
 /** The steps of each wizard, by platform and how it posts. */
 export function stepsOf(platform: Platform, via: Via, firstComment = platform === 'facebook'): string[] {
-  if (via === 'api') return ['Connect', 'Pick pages', 'Check', 'What to post', 'Websites'];
+  if (via === 'api') return ['Connect', apiPickName(platform), 'Check', 'What to post', 'Websites'];
   if (platform === 'pinterest') return ['Connect', 'Pick the channel', 'What to post', 'Websites', 'Check'];
   return [
     'Connect',
@@ -126,7 +126,24 @@ export interface WizardContext {
 }
 
 const titleOf = (w: WizardContext): string => `Add ${platformLabel(w.platform)}`;
-const subOf = (w: WizardContext): string => (w.via === 'buffer' ? 'Through a Buffer account' : 'Through the Facebook API');
+const subOf = (w: WizardContext): string => (w.via === 'buffer' ? 'Through a Buffer account' : `Through ${apiName(w.platform)}`);
+
+/** The pick step of an API wizard: pages, Instagram accounts, or the one Threads profile. */
+const apiPickName = (platform: string): string => (platform === 'instagram' ? 'Pick accounts' : platform === 'threads' ? 'Pick the profile' : 'Pick pages');
+
+/** What to paste in an API wizard's first step, per platform. */
+function apiTokenField(platform: string): Html {
+  if (platform === 'threads') {
+    return html`<p>Paste a long-lived Threads access token for your Threads profile (from your Meta app: Use cases → Access the Threads API → User Token Generator). It needs <b>threads_basic</b> and <b>threads_content_publish</b>. It lasts 60 days and the platform renews it by itself.</p>
+      ${field('token', 'Threads access token', html`<input id="wz-token" name="token" type="password" spellcheck="false" autocomplete="off" required />`)}`;
+  }
+  if (platform === 'instagram') {
+    return html`<p>Paste the Facebook business access token (a system user token from Business Manager), the same kind as for Facebook pages. The Instagram account must be a business or creator account linked to one of its pages. It needs <b>instagram_basic</b>, <b>instagram_content_publish</b> and <b>pages_show_list</b>.</p>
+      ${field('token', 'Facebook access token', html`<input id="wz-token" name="token" type="password" spellcheck="false" autocomplete="off" required />`)}`;
+  }
+  return html`<p>Paste the Facebook business access token (a system user token from Business Manager). It needs <b>pages_manage_posts</b> and <b>pages_manage_engagement</b>, so the platform can post and add the link comment.</p>
+    ${field('token', 'Facebook access token', html`<input id="wz-token" name="token" type="password" spellcheck="false" autocomplete="off" required />`)}`;
+}
 const base = (w: WizardContext): string => `/new-website/channels/${w.platform}/${w.via}`;
 
 /** The shell every channel wizard step shares. */
@@ -167,8 +184,7 @@ export function connectStep(w: WizardContext, error = ''): Html {
           ${field('token', 'Buffer access token', html`<input id="wz-token" name="token" type="password" spellcheck="false" autocomplete="off" required />`, {
             hint: 'In Buffer: Settings → API → Access token.',
           })}`
-        : html`<p>Paste the Facebook business access token (a system user token from Business Manager). It needs <b>pages_manage_posts</b> and <b>pages_manage_engagement</b>, so the platform can post and add the link comment.</p>
-          ${field('token', 'Facebook access token', html`<input id="wz-token" name="token" type="password" spellcheck="false" autocomplete="off" required />`)}`}
+        : apiTokenField(w.platform)}
     </form>`,
     html`${cancel}${next()}`,
     error,
@@ -184,15 +200,19 @@ export interface PickChoice {
 
 /** Pick the channel (Pinterest, one) or the pages (Facebook, one or more). */
 export function pickStep(w: WizardContext, choices: PickChoice[], error = ''): Html {
-  const one = w.platform === 'pinterest';
-  const name = one ? 'Pick the channel' : w.platform === 'facebook' ? 'Pick pages' : 'Pick channels';
+  const one = w.platform === 'pinterest' || (w.via === 'api' && w.platform === 'threads');
+  const name = w.via === 'api' ? apiPickName(w.platform) : one ? 'Pick the channel' : w.platform === 'facebook' ? 'Pick pages' : 'Pick channels';
   return wizard(
     w,
     name,
     html`<form id="ch-form" method="post" action="${base(w)}/pick">
       ${draftInput(w)}
       <h2>${name}</h2>
-      <p>${one
+      <p>${w.via === 'api' && w.platform !== 'facebook'
+        ? w.platform === 'threads'
+          ? 'The Threads profile this token belongs to.'
+          : 'The Instagram business accounts linked to the pages this token can post to. Each one you pick becomes its own channel.'
+        : one
         ? 'The Pinterest channels in this Buffer account. Pins go to the boards of the one you pick; the AI chooses the board for each article.'
         : w.via === 'api'
           ? 'The pages this token can post to. Each page you pick becomes its own channel.'
@@ -218,7 +238,7 @@ export function checkStep(w: WizardContext, results: { name: string; ok: boolean
     html`<form id="ch-form" method="post" action="${base(w)}/checked">
       ${draftInput(w)}
       <h2>Check</h2>
-      <p>Each page was asked for its posting token.</p>
+      <p>${w.platform === 'threads' ? 'Threads was asked whose token this is.' : w.platform === 'instagram' ? 'The page of each account was asked for its posting token.' : 'Each page was asked for its posting token.'}</p>
       ${results.map((r) => (r.ok ? html`<p class="ch-ok">${r.name}: connected.</p>` : html`<p class="ch-bad">${r.name}: ${r.error}</p>`))}
     </form>`,
     html`<a class="ns-btn quiet" href="${base(w)}/new">Start again</a>${allOk ? next() : html`<span class="wz-hint">Fix the pages that failed, then start again.</span>`}`,
@@ -389,7 +409,7 @@ export function channelCard(c: ChannelRow, websites: string[], rules: RulesCheck
       <button type="button" class="ch-toggle" aria-expanded="${alwaysOpen ? 'true' : 'false'}" aria-controls="channel-body-${String(c.id)}">
         <span class="ch-toggle-text">
           <span class="ch-name">${c.name}</span>
-          <span class="ch-meta"><span>${platformLabel(c.platform)}</span><span>${c.via === 'buffer' ? 'Through Buffer' : 'Through the Facebook API'}</span><span>${websites.length ? websites.join(', ') : 'No website yet'}</span></span>
+          <span class="ch-meta"><span>${platformLabel(c.platform)}</span><span>${c.via === 'buffer' ? 'Through Buffer' : `Through ${apiName(c.platform)}`}</span><span>${websites.length ? websites.join(', ') : 'No website yet'}</span></span>
         </span>
         ${rules.rules ? raw('') : html`<span class="ns-badge bad">Rules have problems</span>`}
         ${alwaysOpen ? raw('') : raw('<svg class="ch-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>')}
@@ -402,7 +422,7 @@ export function channelCard(c: ChannelRow, websites: string[], rules: RulesCheck
     <div class="ch-parts" id="channel-body-${String(c.id)}">
       ${part(c, 'connection', 'Connection', [
         ['Platform', platformLabel(c.platform)],
-        ['Posts through', viaLabel(c.via)],
+        ['Posts through', c.via === 'buffer' ? 'Buffer' : apiName(c.platform).replace(/^the /, 'The ')],
       ], 'Check')}
       ${part(c, 'websites', 'Websites', [
         ['Shares articles of', websites.length ? websites.join(', ') : 'No website yet'],
@@ -482,7 +502,11 @@ export function addViaStep(platform: string): Html {
         <label class="ch-option"><input type="radio" name="via" value="buffer" checked />
           <div><b>Through Buffer</b><span>Buffer queues the posts and sends them at its times.</span></div></label>
         <label class="ch-option"><input type="radio" name="via" value="api" />
-          <div><b>Through the Facebook API</b><span>Posts straight to the page, with the link as the first comment.</span></div></label>
+          <div><b>Through ${apiName(platform)}</b><span>${platform === 'facebook'
+            ? 'Posts straight to the page, with the link as the first comment.'
+            : platform === 'instagram'
+              ? 'Posts straight to the account, through the Facebook page it is linked to, at once.'
+              : 'Posts straight to your Threads profile, at once.'}</span></div></label>
       </div>
     </form>`,
     html`<a class="ns-btn quiet" href="/new-website/channels/add">Previous</a><button class="ns-btn primary" form="ch-form">Next</button>`,

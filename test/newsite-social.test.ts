@@ -16,7 +16,7 @@ import { createNewWebsite, getNewWebsite, listKeywordPlans, saveKeywordPlan } fr
 import { registerSocialRoutes } from '../src/newsite/social-routes.js';
 import { shareStepPage } from '../src/newsite/keywords-view.js';
 import { listPlanSeo, queuePlanSeo } from '../src/newsite/seo.js';
-import { listChannels, saveBufferChannel, saveChannelRules, saveFacebookApiChannel, setWebsiteChannels, websiteChannels } from '../src/newsite/channels.js';
+import { listChannels, saveBufferChannel, saveChannelRules, saveFacebookApiChannel, saveInstagramApiChannel, saveThreadsApiChannel, setWebsiteChannels, websiteChannels } from '../src/newsite/channels.js';
 import { kickPictureMaker, resetPictureMakerState } from '../src/newsite/pictures.js';
 import { checkPlatformRules, listPlatformRules, loadPlatformRules, parseRules } from '../src/newsite/platform-rules.js';
 import {
@@ -378,6 +378,53 @@ describe('Sharing an article on its channels', () => {
     expect(res.body).toBe('jpeg-4x5');
     expect((await app.inject({ url: path.replace('/ig-picture/', '/picture/') })).statusCode).toBe(404); // signed for the copy only
     await app.close();
+  });
+
+  it('Instagram and Threads through their own APIs: the 4:5 copy by its link, the words, and the real post’s address', async () => {
+    const ig = saveInstagramApiChannel({ name: 'easycakes', fbToken: 'fbtok', pageId: 'p1', igUserId: 'ig1', postImage: true, postReel: false, multiWebsite: false }, KEY);
+    const th = saveThreadsApiChannel({ name: 'easycakes', token: 'old-th', userId: 'th1', expiresAt: Date.now() + 3 * 86_400_000, postImage: true, postReel: false, multiWebsite: false }, KEY);
+    setWebsiteChannels(websiteId, [ig, th]);
+    answers.Threads = JSON.stringify({ text: 'Real berries in the batter make this cake pink all the way through. Would you bake it this weekend?', alt: 'A tall slice of strawberry cake with whipped cream on a white plate' });
+    const igPosts: unknown[] = [];
+    const thPosts: { token: string; input: unknown }[] = [];
+    const apiDeps = (): SocialDeps => ({
+      ...deps(),
+      now: () => Date.now(),
+      instagramPicture: async (_src, out) => writeFileSync(out, 'jpeg-4x5'),
+      instagram: (token) => ({
+        publishInstagram: async (input) => {
+          igPosts.push({ token, ...input });
+          return { mediaId: 'ig-media-1', permalink: 'https://www.instagram.com/p/ABC/' };
+        },
+      }),
+      threads: (token) => ({
+        publish: async (input) => {
+          thPosts.push({ token, input });
+          return { mediaId: 'th-media-1', permalink: 'https://www.threads.net/@easycakes/post/XYZ' };
+        },
+      }),
+      renewThreads: async (token) => ({ token: `${token}-renewed`, expiresAt: Date.now() + 60 * 86_400_000 }),
+    });
+    createSocialPosts(seoId);
+    await kickSocial(apiDeps());
+    await kickPictureMaker({
+      settings, dataDir, now: () => clock, sleep: async () => {},
+      make: async () => ({ data: Buffer.from('pic'), contentType: 'image/png' }),
+      afterPin: (id, ok) => onPinPicture(id, ok, apiDeps()),
+    });
+    await kickSocial(apiDeps());
+
+    expect(bufferPosts).toHaveLength(0);
+    expect(igPosts).toEqual([expect.objectContaining({ token: 'fbtok', pageId: 'p1', igUserId: 'ig1', kind: 'image', caption: GOOD_IG.text })]);
+    expect((igPosts[0] as { mediaUrl: string }).mediaUrl).toMatch(/\/media\/ig-picture\/\d+\/\d+\/[A-Za-z0-9_-]+\.jpg$/);
+    // The Threads token ran out within days: it was renewed first, and the new one saved.
+    expect(thPosts[0]!.token).toBe('old-th-renewed');
+    expect(thPosts[0]!.input).toMatchObject({ userId: 'th1', kind: 'image' });
+    const saved = listChannels().find((c) => c.id === th)!;
+    expect(saved.token_expires_at! - Date.now()).toBeGreaterThan(50 * 86_400_000);
+    const posts = listSocialPosts();
+    expect(posts.find((p) => p.channel_id === ig)).toMatchObject({ status: 'sent', external_id: 'ig-media-1', post_link: 'https://www.instagram.com/p/ABC/' });
+    expect(posts.find((p) => p.channel_id === th)).toMatchObject({ status: 'sent', external_id: 'th-media-1', post_link: 'https://www.threads.net/@easycakes/post/XYZ' });
   });
 
   it('cuts a 3:4 picture to Instagram’s 4:5 as a JPEG', async () => {

@@ -2,7 +2,8 @@ import { randomBytes } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { run } from '../db/index.js';
 import { BufferClient, type BufferChannel } from '../integrations/buffer.js';
-import { FacebookClient, type FacebookPage } from '../integrations/facebook.js';
+import { FacebookClient, type FacebookPage, type InstagramAccount } from '../integrations/facebook.js';
+import { ThreadsClient, type ThreadsProfile } from '../integrations/threads.js';
 import { errorMessage } from '../lib/logger.js';
 import {
   bufferTokenOf,
@@ -14,6 +15,8 @@ import {
   saveBufferChannel,
   saveChannelRules,
   saveFacebookApiChannel,
+  saveInstagramApiChannel,
+  saveThreadsApiChannel,
   setChannelContent,
   setChannelWebsites,
   takesImages,
@@ -59,6 +62,10 @@ export interface ChannelLookups {
   facebookPages: (token: string) => Promise<FacebookPage[]>;
   /** Proves a page can be posted to with this token (its page token can be had). */
   facebookPageCheck: (token: string, pageId: string) => Promise<void>;
+  /** The Instagram business accounts linked to the pages a business token sees. */
+  instagramAccounts?: (token: string) => Promise<InstagramAccount[]>;
+  /** The Threads profile a Threads token belongs to (proves it works). */
+  threadsProfile?: (token: string) => Promise<ThreadsProfile>;
 }
 
 export const realLookups: ChannelLookups = {
@@ -70,7 +77,12 @@ export const realLookups: ChannelLookups = {
   facebookPageCheck: async (token, pageId) => {
     await new FacebookClient({ systemUserToken: token }).pageToken(pageId);
   },
+  instagramAccounts: (token) => new FacebookClient({ systemUserToken: token }).listInstagramAccounts(),
+  threadsProfile: (token) => new ThreadsClient({ token }).me(),
 };
+
+/** How long a pasted Threads token is counted on for, until its first renewal tells the real end. */
+const THREADS_TOKEN_GUESS_MS = 30 * 86_400_000;
 
 export interface ChannelRouteDeps {
   encryptionKey: Buffer;
@@ -152,7 +164,9 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
     new Set(
       listChannels()
         .filter((c) => c.platform === w.platform && c.via === w.via)
-        .map((c) => (w.via === 'buffer' ? c.buffer_channel_id : c.fb_page_id)),
+        .map((c) =>
+          w.via === 'buffer' ? c.buffer_channel_id : c.platform === 'instagram' ? `${c.fb_page_id}:${c.api_account_id}` : c.platform === 'threads' ? c.api_account_id : c.fb_page_id,
+        ),
     );
 
   const choiceList = (w: WizardContext, d: Draft): PickChoice[] => {
@@ -213,7 +227,7 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
     const w = routeOf(request);
     if (!w) return reply.redirect('/new-website/channels', 303);
     const token = String(body(request).token ?? '').trim();
-    const name = w.via === 'buffer' ? 'Buffer' : 'Facebook';
+    const name = w.via === 'buffer' ? 'Buffer' : w.platform === 'threads' ? 'Threads' : 'Facebook';
     if (!token) return send(reply, page(title(w), connectStep(w, `Paste the ${name} access token.`), request));
 
     let choices: PickChoice[];
@@ -224,6 +238,15 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
           name: c.name,
           note: w.platform === 'pinterest' ? (c.boards.length === 1 ? '1 board' : `${c.boards.length} boards`) : `${platformLabel(w.platform)} in Buffer`,
         }));
+      } else if (w.platform === 'instagram') {
+        choices = (await (lookups.instagramAccounts ?? realLookups.instagramAccounts!)(token)).map((a) => ({
+          id: `${a.pageId}:${a.igUserId}`,
+          name: a.username || a.igUserId,
+          note: `Instagram of the page ${a.pageName}`,
+        }));
+      } else if (w.platform === 'threads') {
+        const me = await (lookups.threadsProfile ?? realLookups.threadsProfile!)(token);
+        choices = [{ id: me.id, name: me.username || me.id, note: 'Your Threads profile' }];
       } else {
         choices = (await lookups.facebookPages(token)).map((p) => ({ id: p.id, name: p.name, note: `Page ${p.id}` }));
       }
@@ -233,7 +256,9 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
     if (!choices.length) {
       const why =
         w.via === 'api'
-          ? 'This token sees no Facebook page. Give it a role on your pages first.'
+          ? w.platform === 'instagram'
+            ? 'This token sees no Instagram business account. Link the account to one of your Facebook pages (in its settings), and give the token a role on that page.'
+            : 'This token sees no Facebook page. Give it a role on your pages first.'
           : `This Buffer account has no ${platformLabel(w.platform)} ${w.platform === 'facebook' ? 'page' : 'channel'}. Connect it in Buffer first.`;
       return send(reply, page(title(w), connectStep(w, why), request));
     }
@@ -256,14 +281,15 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
       const msg = w.platform === 'pinterest' ? 'Pick one channel.' : 'Pick at least one.';
       return send(reply, page(title(w), pickStep(ctx, choiceList(ctx, d), msg), request));
     }
-    d.picked = w.platform === 'pinterest' ? picked.slice(0, 1) : picked;
+    d.picked = w.platform === 'pinterest' || (w.via === 'api' && w.platform === 'threads') ? picked.slice(0, 1) : picked;
 
     if (w.via === 'api') {
       // The check step: each page is asked for its posting token.
       const results = await Promise.all(
         d.picked.map(async (p) => {
           try {
-            await lookups.facebookPageCheck(d.token, p.id);
+            if (w.platform === 'threads') await (lookups.threadsProfile ?? realLookups.threadsProfile!)(d.token);
+            else await lookups.facebookPageCheck(d.token, p.id.split(':')[0]!);
             return { name: p.name, ok: true };
           } catch (err) {
             return { name: p.name, ok: false, error: errorMessage(err) };
@@ -344,7 +370,17 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
             },
             deps.encryptionKey,
           )
-        : saveFacebookApiChannel({ name: p.name, fbToken: d.token, pageId: p.id, postImage: d.postImage, postReel: d.postReel, multiWebsite: multi }, deps.encryptionKey),
+        : w.platform === 'instagram'
+          ? saveInstagramApiChannel(
+              { name: p.name, fbToken: d.token, pageId: p.id.split(':')[0]!, igUserId: p.id.split(':')[1]!, postImage: d.postImage, postReel: d.postReel, multiWebsite: multi },
+              deps.encryptionKey,
+            )
+          : w.platform === 'threads'
+            ? saveThreadsApiChannel(
+                { name: p.name, token: d.token, userId: p.id, expiresAt: Date.now() + THREADS_TOKEN_GUESS_MS, postImage: d.postImage, postReel: d.postReel, multiWebsite: multi },
+                deps.encryptionKey,
+              )
+            : saveFacebookApiChannel({ name: p.name, fbToken: d.token, pageId: p.id, postImage: d.postImage, postReel: d.postReel, multiWebsite: multi }, deps.encryptionKey),
     );
     for (const id of ids) setChannelWebsites(id, websiteIds);
     sharingChanged();
@@ -369,6 +405,16 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
           return { ok: true, text: `Connected. Buffer answers, with ${found.boards.length} board${found.boards.length === 1 ? '' : 's'} to pick from.` };
         }
         return { ok: true, text: `Connected. Buffer answers and lists this ${c.platform === 'facebook' ? 'page' : 'channel'}.` };
+      }
+      if (c.platform === 'threads') {
+        const me = await (lookups.threadsProfile ?? realLookups.threadsProfile!)(fbTokenOf(c, deps.encryptionKey));
+        const ends = c.token_expires_at ? ` The token is renewed by itself before ${new Date(c.token_expires_at).toISOString().slice(0, 10)}.` : '';
+        return { ok: true, text: `Connected. Threads answers as @${me.username || me.id}.${ends}` };
+      }
+      if (c.platform === 'instagram') {
+        const found = (await (lookups.instagramAccounts ?? realLookups.instagramAccounts!)(fbTokenOf(c, deps.encryptionKey))).find((a) => a.igUserId === c.api_account_id);
+        if (!found) return { ok: false, text: 'This token no longer sees the Instagram account. Check that it is still linked to its Facebook page.' };
+        return { ok: true, text: `Connected. The account is linked to the page ${found.pageName}.` };
       }
       await lookups.facebookPageCheck(fbTokenOf(c, deps.encryptionKey), c.fb_page_id);
       return { ok: true, text: 'Connected. Facebook gives this page a posting token.' };

@@ -47,6 +47,10 @@ export interface ChannelRow {
   buffer_channel_id: string;
   fb_token_enc: string;
   fb_page_id: string;
+  /** Through the API: the Instagram account (via the page in fb_page_id) or the Threads profile posted to. */
+  api_account_id: string;
+  /** A Threads token runs out (ms); it is renewed before then. */
+  token_expires_at: number | null;
   paid_buffer: number;
   post_image: number;
   post_reel: number;
@@ -80,7 +84,7 @@ export const fbTokenOf = (c: ChannelRow, key: Buffer): string => secret(c.fb_tok
 export const CATCH_UP_DAYS = 7;
 
 /** The platforms a reel (a vertical video) can be shared on. */
-export const REEL_PLATFORMS = ['facebook', 'instagram', 'pinterest', 'youtube', 'tiktok'] as const;
+export const REEL_PLATFORMS = ['facebook', 'instagram', 'threads', 'pinterest', 'youtube', 'tiktok'] as const;
 export const takesReels = (platform: string): boolean => (REEL_PLATFORMS as readonly string[]).includes(platform);
 
 /** The platforms that take videos only (YouTube Shorts, TikTok): reels, never an image post. */
@@ -93,8 +97,15 @@ export const takesImages = (platform: string): boolean => !videoOnly(platform);
 /** How a channel posts. Buffer and the platform's own API are kept apart. */
 export type Via = 'buffer' | 'api';
 
-/** The ways each built platform can be connected. Pinterest only goes through Buffer. */
-export const viasOf = (platform: string): Via[] => (platform === 'facebook' ? ['buffer', 'api'] : ['buffer']);
+/** The platforms that can also post through their own API (Meta's): the rest go through Buffer only. */
+export const API_PLATFORMS = ['facebook', 'instagram', 'threads'] as const;
+
+/** The ways each built platform can be connected. */
+export const viasOf = (platform: string): Via[] => ((API_PLATFORMS as readonly string[]).includes(platform) ? ['buffer', 'api'] : ['buffer']);
+
+/** What the API way of a platform is called on the pages. */
+export const apiName = (platform: string): string =>
+  platform === 'instagram' ? 'the Instagram API (through its Facebook page)' : platform === 'threads' ? 'the Threads API' : 'the Facebook API';
 
 export const viaLabel = (via: string): string => (via === 'buffer' ? 'Buffer' : 'API');
 
@@ -163,6 +174,66 @@ export function saveFacebookApiChannel(input: FacebookApiChannelInput, key: Buff
       ...values, input.pageId, defaultRulesText('facebook', 'Facebook'),
     ).lastInsertRowid,
   );
+}
+
+export interface InstagramApiChannelInput {
+  name: string;
+  fbToken: string;
+  pageId: string;
+  igUserId: string;
+  postImage: boolean;
+  postReel: boolean;
+  multiWebsite: boolean;
+}
+
+/** Add an Instagram account posted to through its Facebook page's API, or update the one for the same account. */
+export function saveInstagramApiChannel(input: InstagramApiChannelInput, key: Buffer): number {
+  return saveApiChannel('instagram', input.igUserId, { ...input, token: input.fbToken, expiresAt: null }, key);
+}
+
+export interface ThreadsApiChannelInput {
+  name: string;
+  token: string;
+  userId: string;
+  /** When the token runs out (ms), if known. */
+  expiresAt: number | null;
+  postImage: boolean;
+  postReel: boolean;
+  multiWebsite: boolean;
+}
+
+/** Add a Threads profile posted to through the Threads API, or update the one for the same profile. */
+export function saveThreadsApiChannel(input: ThreadsApiChannelInput, key: Buffer): number {
+  return saveApiChannel('threads', input.userId, { ...input, pageId: '' }, key);
+}
+
+function saveApiChannel(
+  platform: 'instagram' | 'threads',
+  accountId: string,
+  input: { name: string; token: string; pageId: string; expiresAt: number | null; postImage: boolean; postReel: boolean; multiWebsite: boolean },
+  key: Buffer,
+): number {
+  const old = get<{ id: number }>(`SELECT id FROM newsite_channels WHERE platform = ? AND via = 'api' AND api_account_id = ?`, platform, accountId);
+  const values = [input.name, encrypt(input.token, key), input.pageId, input.expiresAt, input.postImage ? 1 : 0, input.postReel ? 1 : 0, input.multiWebsite ? 1 : 0];
+  if (old) {
+    run(
+      `UPDATE newsite_channels SET name = ?, fb_token_enc = ?, fb_page_id = ?, token_expires_at = ?, post_image = ?, post_reel = ?, multi_website = ? WHERE id = ?`,
+      ...values, old.id,
+    );
+    return old.id;
+  }
+  return Number(
+    run(
+      `INSERT INTO newsite_channels (name, fb_token_enc, fb_page_id, token_expires_at, post_image, post_reel, multi_website, platform, via, api_account_id, rules_text)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'api', ?, ?)`,
+      ...values, platform, accountId, defaultRulesText(platform, platformName(platform)),
+    ).lastInsertRowid,
+  );
+}
+
+/** A Threads channel's renewed token, saved with its new end. */
+export function saveChannelToken(channelId: number, token: string, expiresAt: number, key: Buffer): void {
+  run('UPDATE newsite_channels SET fb_token_enc = ?, token_expires_at = ? WHERE id = ?', encrypt(token, key), expiresAt, channelId);
 }
 
 /** A platform's name for people: Buffer's label, or the key with a capital. */
@@ -296,7 +367,8 @@ export function postLinkOf(p: { status: string; post_link: string; external_id: 
 /** The channel's own page on its platform, when its address is known. */
 export function channelPageLink(channel: ChannelRow | undefined): string {
   if (channel?.platform === 'facebook' && channel.fb_page_id) return `https://www.facebook.com/${channel.fb_page_id}`;
-  // Buffer names an Instagram channel by its username.
-  const username = channel?.platform === 'instagram' ? channel.name.replace(/^@/, '').trim() : '';
-  return /^[A-Za-z0-9._]{1,30}$/.test(username) ? `https://www.instagram.com/${username}/` : '';
+  // An Instagram or Threads channel is named by its username.
+  const username = channel?.platform === 'instagram' || channel?.platform === 'threads' ? channel.name.replace(/^@/, '').trim() : '';
+  if (!/^[A-Za-z0-9._]{1,30}$/.test(username)) return '';
+  return channel!.platform === 'instagram' ? `https://www.instagram.com/${username}/` : `https://www.threads.net/@${username}`;
 }

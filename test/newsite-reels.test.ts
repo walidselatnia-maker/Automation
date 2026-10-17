@@ -102,7 +102,7 @@ describe('reels: one Flow video per article, from one prompt', () => {
     expect(submitted).toHaveLength(1);
     // The AI wrote the prompt from the article, by the one set of reel rules, knowing where it goes.
     const writes = asked.filter((a) => a.name === 'newsite-reel-prompt');
-    expect(writes.map((w) => w.vars.label)).toEqual(['Facebook and Pinterest']);
+    expect(writes.map((w) => w.vars.label)).toEqual(['Facebook, Threads and Pinterest']);
     expect(String(writes[0]!.vars.reelRules)).toContain('0-2s: THE HOOK');
     expect(String(writes[0]!.vars.references)).toMatch(/^1\. The finished result/);
     expect(submitted[0]!.prompt).toContain('"Full recipe linked below."');
@@ -113,7 +113,7 @@ describe('reels: one Flow video per article, from one prompt', () => {
   });
 
   it('makes no reel by itself for a website with no channel that takes reels, but the Reels page can', () => {
-    setWebsiteChannels(websiteId, [channel('threads', 't1')]);
+    setWebsiteChannels(websiteId, [channel('linkedin', 'l1')]);
     expect(createReels(seoId)).toBe(0);
     expect(createReels(seoId, true)).toBe(1);
   });

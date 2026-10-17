@@ -17,7 +17,7 @@ These rules decide what the sharing phase makes for an Instagram channel (a busi
 
 - One image post per article, on each Instagram account the website shares on, when the account is set to post image posts.
 - One reel per article, on each account set to post reels, as soon as the article's reel is made. Its words follow these same rules, written for the video.
-- Sent through the channel's Buffer account.
+- Sent the way the channel is connected: through its Buffer account, or through the Instagram API (by way of the Facebook page the account is linked to).
 - Instagram does not make links in captions or comments clickable, so the post carries no link at all.
 
 ## The post's words

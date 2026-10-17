@@ -16,7 +16,8 @@ These rules decide what the sharing phase makes for a Threads account, after the
 ## What goes out per article
 
 - One image post per article, on each Threads account the website sends image posts to.
-- Sent through the channel's Buffer account.
+- One video per article, on each account the website sends reels to, as soon as the article's reel is made. Its words follow these same rules, written for the video.
+- Sent the way the channel is connected: through its Buffer account, or through the Threads API.
 - The post carries no link.
 
 ## The post's words
