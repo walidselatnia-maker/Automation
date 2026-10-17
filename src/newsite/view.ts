@@ -202,8 +202,8 @@ export const WIZARD_CSS = `
 .wz-ch-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 16px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 8px; }
 .wz-ch-row .wz-check { margin: 0; }
 .wz-ch-what { display: flex; gap: 14px; font-size: 13px; color: var(--muted, var(--faint)); }
-.wz-ch-what label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
-.wz-ch-what input { accent-color: var(--accent); }
+.wz-ch-what label { display: flex; align-items: center; gap: 6px; cursor: pointer; white-space: nowrap; margin: 0; font-weight: 400; }
+.wz-ch-what input { width: 16px; height: 16px; min-height: 0; margin: 0; padding: 0; flex: none; accent-color: var(--accent); }
 .wz-ch-row:not(:has(input[name=channelId]:checked)) .wz-ch-what { opacity: .45; }
 .wz-saveerr { color: var(--bad); font-size: 14px; font-weight: 600; margin-top: 16px; }
 .wz-saveerr:empty { display: none; }
