@@ -23,6 +23,7 @@ import {
   type ReelShareDeps,
 } from '../src/newsite/reel-shares.js';
 import { registerSocialRoutes } from '../src/newsite/social-routes.js';
+import { refreshPostLinks } from '../src/newsite/post-links.js';
 import { checkMediaToken } from '../src/core/media-links.js';
 import { registerMedia } from '../src/web/media.js';
 
@@ -333,8 +334,22 @@ describe('sharing reels on the website channels', () => {
     expect(videoPosts).toHaveLength(1);
 
     const after = (await app.inject({ url: '/new-website/sharing/reels' })).body;
-    expect(after).toContain('https://www.facebook.com/reel/vid_1');
+    expect(after).toContain('href="https://www.facebook.com/reel/vid_1"');
+    expect(after).toContain('Open the post on Facebook');
     expect(after).toContain('Queued in Buffer');
+    expect(after).toContain('The link appears once Buffer has posted it.');
+    expect(after).toContain(`href="${POST_URL}"`); // the article itself
+    expect(after).toContain('class="acc rl'); // a full-width card that opens and closes
+
+    // Once Buffer has sent the pin, its address becomes the link.
+    const found = await refreshPostLinks({
+      encryptionKey: KEY,
+      buffer: () => ({ getPost: async (id) => ({ status: 'sent', externalLink: `https://www.pinterest.com/pin/${id}/`, error: '' }) }),
+    });
+    expect(found).toBe(1);
+    const linked = (await app.inject({ url: '/new-website/sharing/reels' })).body;
+    expect(linked).toContain('href="https://www.pinterest.com/pin/buffer-video-1/"');
+    expect(linked).toContain('Open the post on Pinterest');
     expect(after).not.toContain('Send to the ticked channels'); // nothing left to send
 
     const channel = (await app.inject({ url: `/new-website/sharing/site/${websiteId}/channel/${page1}?tab=reels` })).body;
@@ -342,6 +357,14 @@ describe('sharing reels on the website channels', () => {
     expect(channel).toContain('href="/new-website/sharing/reels?website=');
     expect(channel).not.toContain('/remake'); // no making here
     await app.close();
+  });
+
+  it('marks a share failed when Buffer says it could not post it', async () => {
+    setWebsiteChannels(websiteId, [pinChannel()]);
+    createReelShares(madeReel());
+    await kickReelShares(deps());
+    await refreshPostLinks({ encryptionKey: KEY, buffer: () => ({ getPost: async () => ({ status: 'error', externalLink: '', error: 'Video too short' }) }) });
+    expect(listPlanReelShares(planId)[0]).toMatchObject({ status: 'failed', error: 'Buffer could not post it: Video too short' });
   });
 
   it('the Reels page makes a reel for a published article that has none', async () => {

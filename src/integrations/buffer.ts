@@ -233,6 +233,20 @@ export class BufferClient {
     return { id, dueAt: String(data.createPost.post?.dueAt ?? '') };
   }
 
+  /**
+   * Where a queued post stands: its status, and once Buffer has sent it, the
+   * address of the post on the platform itself (externalLink).
+   */
+  async getPost(id: string): Promise<{ status: string; externalLink: string; error: string }> {
+    const data = await this.graphql<{ post?: { status?: string | null; externalLink?: string | null; error?: { message?: string | null } | null } | null }>(
+      'query GetPost($id: PostId!) { post(input: { id: $id }) { status externalLink error { message } } }',
+      { id },
+    );
+    const post = data.post;
+    if (!post) throw new BufferError(`Buffer no longer has post ${id}`);
+    return { status: String(post.status ?? ''), externalLink: String(post.externalLink ?? ''), error: String(post.error?.message ?? '') };
+  }
+
   /** GraphQL text for a string value, escaped. */
   static literal(value: string): string {
     return JSON.stringify(value ?? '');

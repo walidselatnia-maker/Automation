@@ -116,14 +116,41 @@ const SHARING_CSS = `
 .sh-hook { width: 100%; font-size: 14px; line-height: 1.45; color: var(--ink); background: var(--surface); border-left: 3px solid var(--accent); padding: 8px 10px; border-radius: 6px; overflow-wrap: anywhere; }
 .sh-hook small { display: block; font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--soft); margin-bottom: 2px; }
 .sh-pick { display: grid; gap: 10px; }
+/* The Reels page: one full-width card per reel that opens and closes. */
+.rl-list { padding-top: 16px; }
+.rl-site { margin: 22px 0 0; font-size: 17px; }
+.rl .acc-head b { flex: 1 1 280px; font-size: 15px; }
+.rl-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.rl-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 999px; background: var(--idle); color: var(--idle-ink); }
+.rl-chip .sh-dot { width: 8px; height: 8px; }
+.rl-chip.ok { background: var(--good-tint); color: var(--good); }
+.rl-chip.bad { background: var(--bad-tint); color: var(--bad); }
+.rl-body { padding: 0 18px 18px; }
+.rl-actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 4px 0 16px; border-bottom: 1px solid var(--line); margin-bottom: 16px; }
+.rl-actions form { margin: 0; }
+.rl-grid { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 24px; align-items: start; }
+.rl-grid .sh-reel-media video, .rl-grid .sh-reel-media .sh-reel-empty { width: 200px; }
+.rl-main { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.rl-main .kw-seo-problems { margin: 0; font-size: 13px; overflow-wrap: anywhere; }
+.rl-h { margin: 4px 0 0; font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--soft); }
+.rl-main form { margin: 0; }
+.rl-dests { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 8px; }
+.rl-dest { display: grid; grid-template-columns: 28px minmax(180px, 260px) minmax(0, 1fr); align-items: center; gap: 8px 12px; padding: 10px 14px; border-bottom: 1px solid var(--line); font-size: 14px; }
+.rl-dest:last-child { border-bottom: 0; }
+.rl-name { display: flex; align-items: center; gap: 8px; min-width: 0; overflow-wrap: anywhere; }
+.rl-state { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-width: 0; }
+.rl-state form { margin: 0; }
+.rl-state .kw-seo-problems { flex-basis: 100%; }
+.rl-state a { font-size: 13px; font-weight: 600; color: var(--accent-text); }
+.rl-main details { font-size: 13px; color: var(--soft); }
+.rl-main details summary { cursor: pointer; }
+.rl-main details pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; max-height: 260px; overflow: auto; margin: 8px 0 0; padding: 10px; background: var(--raised); border-radius: 6px; }
+@media (max-width: 720px) {
+  .rl-grid { grid-template-columns: 1fr; }
+  .rl-dest { grid-template-columns: 28px minmax(0, 1fr); }
+  .rl-state { grid-column: 2; }
+}
 .sh-reels-card { background: color-mix(in srgb, var(--accent) 6%, var(--surface)); border-top: 4px solid var(--accent); }
-.sh-dest { width: 100%; display: grid; gap: 6px; margin: 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
-.sh-dest legend { font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--soft); padding: 0 4px; }
-.sh-dest-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 14px; min-height: 30px; }
-.sh-dest-row label { display: flex; align-items: center; gap: 8px; flex: 1 1 180px; min-width: 0; }
-.sh-dest-row .sh-dot { width: 10px; height: 10px; }
-.sh-dest-row .kw-seo-problems { flex-basis: 100%; }
-.sh-dest-row a { font-size: 13px; font-weight: 600; color: var(--accent-text); }
 .sh-shares { list-style: none; margin: 0; padding: 0; }
 .sh-share { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
 .sh-share:last-child { border-bottom: 0; }
@@ -288,7 +315,7 @@ export function sharingChannelPage(s: SharingSite, ch: ChannelRow, tab: ChannelT
         return [html`<li class="sh-article"><div class="sh-none-row"><div><b>${titleOf(a)}</b><div class="kw-share-meta">Not shared on this channel yet.</div></div>
           ${canShare ? html`<form method="post" action="/new-website/keywords/share/${String(a.row.id)}"><button class="ns-btn small primary">Share now</button></form>` : raw('')}</div></li>`];
       }
-      return [html`<li class="sh-article">${stepStrip(post)}<ul class="kw-share-list">${sharePostRow(post, ch, a.planId, pictureOf(post), titleOf(a))}</ul></li>`];
+      return [html`<li class="sh-article">${stepStrip(post)}<ul class="kw-share-list">${sharePostRow(post, ch, a.planId, pictureOf(post), titleOf(a), a.row.post_url)}</ul></li>`];
     });
 
   const shareRows = (shares: ReelShareRow[]): Html =>
@@ -432,9 +459,10 @@ function shareState(x: ReelShareRow, ch: ChannelRow): Html {
         <form method="post" action="/new-website/reels/shares/${String(x.id)}/retry"><button class="ns-btn small primary">Try again</button></form>
         <div class="kw-seo-problems">${x.error}</div>`;
     default: {
-      const link = ch.via === 'api' && ch.platform === 'facebook' && x.external_id ? `https://www.facebook.com/reel/${x.external_id}` : '';
-      return html`<span class="ns-badge ok">${ch.via === 'buffer' ? 'Queued in Buffer' : 'Posted'}</span>
-        ${link ? html`<a href="${link}" target="_blank" rel="noopener">See it</a>` : raw('')}
+      return html`<span class="ns-badge ok">${x.post_link ? 'Posted' : ch.via === 'buffer' ? 'Queued in Buffer' : 'Posted'}</span>
+        ${x.post_link
+          ? html`<a href="${x.post_link}" target="_blank" rel="noopener">Open the post on ${platformLabelOf(ch.platform)} ↗</a>`
+          : ch.via === 'buffer' ? html`<span class="sh-reels-line">The link appears once Buffer has posted it.</span>` : raw('')}
         ${x.board_name ? html`<span class="sh-reels-line">Board: ${x.board_name}</span>` : raw('')}
         ${x.error ? html`<div class="kw-seo-problems">${x.error}</div>` : raw('')}`;
     }
@@ -458,7 +486,21 @@ function reelsCard(sites: SharingSite[]): Html {
   </a>`;
 }
 
-/** One reel, made once: its video, where it stands, and the channels it goes to. */
+const CHEVRON = '<svg class="acc-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>';
+
+/** A short word for where a reel stands on a channel, for the closed card's head. */
+const SHARE_WORD: Record<ReelShareRow['status'], [string, string]> = {
+  pending: ['Being sent', 'busy'],
+  waiting: ['Waiting for Buffer', 'busy'],
+  sent: ['Sent', 'ok'],
+  failed: ['Failed', 'bad'],
+};
+
+/**
+ * One reel, made once, as a full-width card that opens and closes: the head
+ * says what it is and where it stands on each channel; the body has the
+ * actions first, then the video beside its hook and the channels it goes to.
+ */
 function reelItem(r: ReelRow, s: SharingSite): Html {
   const a = s.articles.find((x) => x.row.id === r.seo_id);
   const [status, cls] = REEL_STATUS[r.status];
@@ -466,40 +508,76 @@ function reelItem(r: ReelRow, s: SharingSite): Html {
   const shareOf = (c: ChannelRow) => s.reelShares.find((x) => x.reel_id === r.id && x.channel_id === c.id);
   const canPick = (c: ChannelRow) => r.status === 'done' && (!shareOf(c) || shareOf(c)!.status === 'failed');
   const formId = `reel-share-${String(r.id)}`;
-  return html`<div class="sh-reel" id="reel-${String(r.id)}">
-    <div class="sh-reel-media">
-      ${r.status === 'done'
-        ? html`<video src="/new-website/reels/${String(r.id)}/file" controls preload="metadata" playsinline></video>`
-        : html`<div class="sh-reel-empty ${r.status === 'failed' ? 'bad' : ''}">${r.status === 'failed' ? 'No video' : 'Being made in Flow. A few minutes.'}</div>`}
-    </div>
-    <div class="sh-reel-body">
-      <span class="sh-reel-title">${a ? a.row.title || a.row.keyword : 'An article'}</span>
+  const needsLook = r.status === 'failed' || destinations.some((c) => shareOf(c)?.status === 'failed');
+  const chips = destinations.map((c) => {
+    const x = shareOf(c);
+    const [word, tone] = !x ? ['Not sent', ''] : x.status === 'sent' && !x.post_link && c.via === 'buffer' ? ['Queued in Buffer', 'ok'] : SHARE_WORD[x.status];
+    return html`<span class="rl-chip ${tone}" style="--ch-color:${channelColor(c)}"><span class="sh-dot"></span>${platformLabelOf(c.platform)}: ${word}</span>`;
+  });
+  return html`<li class="acc rl ${needsLook ? 'open' : ''}" id="reel-${String(r.id)}" data-reel="${String(r.id)}">
+    <button type="button" class="acc-head" aria-expanded="${needsLook ? 'true' : 'false'}">
+      <b>${a ? a.row.title || a.row.keyword : 'An article'}</b>
       <span class="ns-badge ${cls}">${status}</span>
-      ${r.hook ? html`<div class="sh-hook"><small>Hook</small>“${r.hook}”</div>` : raw('')}
-      ${r.error ? html`<div class="kw-seo-problems">${r.error}</div>` : raw('')}
-      ${destinations.length
-        ? html`<form id="${formId}" method="post" action="/new-website/reels/${String(r.id)}/share" style="width:100%"><fieldset class="sh-dest">
-            <legend>Where it goes</legend>
-            ${destinations.map((c) => {
-              const x = shareOf(c);
-              return html`<div class="sh-dest-row" style="--ch-color:${channelColor(c)}">
-                <label>${canPick(c) ? html`<input type="checkbox" name="channel" value="${String(c.id)}" ${!x && c.post_reel ? raw('checked') : raw('')} />` : raw('')}
-                  <span class="sh-dot"></span><span>${platformLabelOf(c.platform)} · ${c.name}</span></label>
-                ${x ? shareState(x, c) : html`<span class="ns-badge">${r.status === 'done' ? 'Not sent' : 'After the video is made'}</span>`}
-              </div>`;
-            })}
-          </fieldset></form>`
-        : html`<p class="sh-reels-line">${s.site.name} has no channel that takes reels (Facebook, Instagram or Pinterest).</p>`}
-      <div class="ns-actions" style="display:flex;flex-wrap:wrap;gap:8px">
+      <span class="rl-chips">${chips}</span>
+      ${raw(CHEVRON)}
+    </button>
+    <div class="acc-panel"><div class="acc-inner"><div class="acc-body rl-body">
+      <div class="rl-actions">
+        ${a?.row.post_url ? html`<a class="ns-btn small quiet" href="${a.row.post_url}" target="_blank" rel="noopener">Open the article ↗</a>` : raw('')}
         ${r.status === 'done' && destinations.some(canPick) ? html`<button class="ns-btn small primary" form="${formId}">Send to the ticked channels</button>` : raw('')}
         ${r.status === 'done' || r.status === 'failed'
           ? html`<form method="post" action="/new-website/reels/${String(r.id)}/remake"><button class="ns-btn small ${r.status === 'failed' ? 'primary' : ''}">${r.status === 'failed' ? 'Try again' : 'Make again'}</button></form>`
           : raw('')}
       </div>
-      ${r.prompt ? html`<details><summary>The prompt</summary><pre>${r.prompt}</pre></details>` : raw('')}
-    </div>
-  </div>`;
+      <div class="rl-grid">
+        <div class="sh-reel-media">
+          ${r.status === 'done'
+            ? html`<video src="/new-website/reels/${String(r.id)}/file" controls preload="metadata" playsinline></video>`
+            : html`<div class="sh-reel-empty ${r.status === 'failed' ? 'bad' : ''}">${r.status === 'failed' ? 'No video' : 'Being made in Flow. A few minutes.'}</div>`}
+        </div>
+        <div class="rl-main">
+          ${r.hook ? html`<div class="sh-hook"><small>Hook</small>“${r.hook}”</div>` : raw('')}
+          ${r.error ? html`<div class="kw-seo-problems">${r.error}</div>` : raw('')}
+          <h3 class="rl-h">Where it goes</h3>
+          ${destinations.length
+            ? html`<form id="${formId}" method="post" action="/new-website/reels/${String(r.id)}/share">
+                <ul class="rl-dests">${destinations.map((c) => {
+                  const x = shareOf(c);
+                  return html`<li class="rl-dest" style="--ch-color:${channelColor(c)}">
+                    <span class="rl-pick">${canPick(c) ? html`<input type="checkbox" name="channel" value="${String(c.id)}" aria-label="Send to ${c.name}" ${!x && c.post_reel ? raw('checked') : raw('')} />` : raw('')}</span>
+                    <span class="rl-name"><span class="sh-dot"></span><span><b>${platformLabelOf(c.platform)}</b> · ${c.name}</span></span>
+                    <span class="rl-state">${x ? shareState(x, c) : html`<span class="ns-badge">${r.status === 'done' ? 'Not sent' : 'After the video is made'}</span>`}</span>
+                  </li>`;
+                })}</ul>
+              </form>`
+            : html`<p class="sh-reels-line">${s.site.name} has no channel that takes reels (Facebook, Instagram or Pinterest).</p>`}
+          ${r.prompt ? html`<details><summary>The prompt</summary><pre>${r.prompt}</pre></details>` : raw('')}
+        </div>
+      </div>
+    </div></div></div>
+  </li>`;
 }
+
+/** The reel cards: open and close, and stay as they were when the page reloads itself. */
+const REELS_SCRIPT = `<script>
+(function () {
+  var key = 'reels-open';
+  var saved = {};
+  try { saved = JSON.parse(sessionStorage.getItem(key) || '{}'); } catch (e) {}
+  document.querySelectorAll('.rl').forEach(function (card) {
+    var head = card.querySelector('.acc-head');
+    var id = card.getAttribute('data-reel');
+    function set(open) { card.classList.toggle('open', open); head.setAttribute('aria-expanded', open ? 'true' : 'false'); }
+    if (id in saved) set(saved[id]);
+    head.addEventListener('click', function () {
+      var open = !card.classList.contains('open');
+      set(open);
+      saved[id] = open;
+      try { sessionStorage.setItem(key, JSON.stringify(saved)); } catch (e) {}
+    });
+  });
+})();
+</script>`;
 
 /**
  * The Reels page: every article's one reel, made once and managed here, then
@@ -528,7 +606,7 @@ export function reelsPage(sites: SharingSite[], websiteId = 0): Html {
       : raw('')}
     <div class="sh-panel">
       ${shown.some((s) => s.reels.length)
-        ? shown.filter((s) => s.reels.length).map((s) => html`${shown.length > 1 ? html`<h2 style="margin:18px 0 0">${s.site.name}</h2>` : raw('')}<div class="sh-reel-list">${s.reels.map((r) => reelItem(r, s))}</div>`)
+        ? shown.filter((s) => s.reels.length).map((s) => html`${shown.length > 1 ? html`<h2 class="rl-site">${s.site.name}</h2>` : raw('')}<ul class="acc-list rl-list">${s.reels.map((r) => reelItem(r, s))}</ul>`)
         : html`<p class="sh-empty">No reel yet. A reel is made for each article once it is published, when its website has a channel that takes reels.</p>`}
       ${noReel.length
         ? html`<h2 style="margin:22px 0 4px;font-size:16px">Published articles with no reel</h2>
@@ -537,7 +615,7 @@ export function reelsPage(sites: SharingSite[], websiteId = 0): Html {
         : raw('')}
     </div>
     ${watch(shown.some(isBusy))}
-    ${raw(SHARING_SCRIPT)}`;
+    ${raw(SHARING_SCRIPT)}${raw(REELS_SCRIPT)}`;
 }
 
 /* -- The reel rules, edited in place ---------------------------------------- */

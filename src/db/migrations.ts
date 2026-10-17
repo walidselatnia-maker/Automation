@@ -879,6 +879,14 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    id: '037-newsite-post-links',
+    description: 'New websites: the address of each shared post on its platform, once it is out',
+    up(db) {
+      addColumn(db, 'newsite_social_posts', 'post_link', "TEXT NOT NULL DEFAULT ''");
+      addColumn(db, 'newsite_reel_shares', 'post_link', "TEXT NOT NULL DEFAULT ''");
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */

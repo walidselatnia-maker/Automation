@@ -12,12 +12,13 @@ import { join } from 'node:path';
 import { readyFor } from './keywords-view.js';
 import { reelsPage, shareArticlesStep, sharingChannelPage, sharingSitePage, sharingSitesPage, shareWebsiteStep, reelRulesPage, type ChannelTab, type SharingSite } from './sharing-view.js';
 import { checkPlatformRules, listPlatformRules } from './platform-rules.js';
+import { refreshPostLinks, refreshPostLinksSoon, type PostLinkDeps } from './post-links.js';
 import { createReelShares, getReelShare, kickReelShares, listPlanReelShares, retryReelShare, shareReelOn, type ReelShareDeps } from './reel-shares.js';
 import { markdownToHtml } from './markdown.js';
 
 export function registerSocialRoutes(
   app: FastifyInstance,
-  deps: SocialDeps & { readFlash: (q: unknown) => NewFlash; autoStart?: boolean; reelShares?: Partial<ReelShareDeps> },
+  deps: SocialDeps & { readFlash: (q: unknown) => NewFlash; autoStart?: boolean; reelShares?: Partial<ReelShareDeps>; postLinks?: Partial<PostLinkDeps> },
 ): void {
   // Posts left ready or waiting by a restart carry on.
   const shares: ReelShareDeps = { settings: deps.settings, encryptionKey: deps.encryptionKey, dataDir: deps.dataDir, ask: deps.ask, ...deps.reelShares };
@@ -31,7 +32,14 @@ export function registerSocialRoutes(
   onReelMade((id) => {
     if (createReelShares(id)) void kickReelShares(shares);
   });
+  // Links to posts Buffer has sent since: asked for now and then, and when a Sharing page is opened.
+  const links: PostLinkDeps = { encryptionKey: deps.encryptionKey, ...deps.postLinks };
+  const linksOnView = (): void => {
+    if (deps.autoStart !== false) refreshPostLinksSoon(links);
+  };
   if (deps.autoStart !== false) {
+    void refreshPostLinks(links).catch(() => {});
+    setInterval(() => void refreshPostLinks(links).catch(() => {}), 15 * 60_000).unref();
     void kickSocial(deps);
     resetInterruptedReels();
     void kickReels(reels);
@@ -92,6 +100,7 @@ export function registerSocialRoutes(
 
   /** Level 1: the websites. A keyword plan's link goes straight to its website. */
   app.get('/new-website/sharing', async (request, reply) => {
+    linksOnView();
     const plan = planFilter(request.query);
     if (plan) return reply.redirect(`/new-website/sharing/site/${plan.websiteId}?plan=${plan.id}`, 303);
     return reply.type('text/html; charset=utf-8').send(page('Sharing', sharingSitesPage(sharingSites()), request.query));
@@ -99,6 +108,7 @@ export function registerSocialRoutes(
 
   /** Level 2: one website's channels. */
   app.get('/new-website/sharing/site/:id', async (request, reply) => {
+    linksOnView();
     const s = sharingSites().find((x) => x.site.id === Number((request.params as { id: string }).id));
     if (!s) return reply.redirect('/new-website/sharing', 303);
     const plan = planFilter(request.query);
@@ -107,6 +117,7 @@ export function registerSocialRoutes(
 
   /** Level 3: one channel of that website: its posts, reels and problems. */
   app.get('/new-website/sharing/site/:id/channel/:channel', async (request, reply) => {
+    linksOnView();
     const params = request.params as { id: string; channel: string };
     const s = sharingSites().find((x) => x.site.id === Number(params.id));
     const ch = s?.channels.find((c) => c.id === Number(params.channel));
@@ -179,6 +190,7 @@ export function registerSocialRoutes(
 
   /** The Reels page: each article's one reel, made and managed here, then sent to channels. */
   app.get('/new-website/sharing/reels', async (request, reply) => {
+    linksOnView();
     const websiteId = Number((request.query as { website?: string }).website) || 0;
     return reply.type('text/html; charset=utf-8').send(page('Reels', reelsPage(sharingSites(), websiteId), request.query));
   });

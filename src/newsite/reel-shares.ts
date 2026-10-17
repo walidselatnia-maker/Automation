@@ -44,6 +44,8 @@ export interface ReelShareRow {
   board_name: string;
   external_id: string;
   comment_id: string;
+  /** The reel on its platform, once it is out (post-links.ts fills it in for Buffer posts). */
+  post_link: string;
   error: string;
   retry_at: number | null;
   created_at: string;
@@ -205,7 +207,7 @@ async function work(share: ReelShareRow, deps: ReelShareDeps, now: number): Prom
   } catch (err) {
     return fail(share.id, errorMessage(err));
   }
-  run(`UPDATE newsite_reel_shares SET status = 'sent', external_id = ?, error = '', sent_at = datetime('now') WHERE id = ?`, videoId, share.id);
+  run(`UPDATE newsite_reel_shares SET status = 'sent', external_id = ?, post_link = ?, error = '', sent_at = datetime('now') WHERE id = ?`, videoId, `https://www.facebook.com/reel/${videoId}`, share.id);
   log.info(`reel ${reel.id} shared on ${channel.name}: video ${videoId}`);
   if (rules.link !== 'first_comment') return;
   try {

@@ -72,6 +72,8 @@ export interface SocialPostRow {
   retry_at: number | null;
   /** When Buffer said it will post it (Buffer's own answer); empty for a direct post. */
   due_at: string;
+  /** The post on its platform, once it is out (post-links.ts fills it in for Buffer posts). */
+  post_link: string;
   created_at: string;
   sent_at: string | null;
 }
@@ -476,7 +478,7 @@ async function sendThroughFacebook(w: Work, picture: PictureRow, deps: SocialDep
   } catch (err) {
     return fail(w.item.id, errorMessage(err));
   }
-  run(`UPDATE newsite_social_posts SET status = 'sent', external_id = ?, error = '', sent_at = datetime('now') WHERE id = ?`, postId, w.item.id);
+  run(`UPDATE newsite_social_posts SET status = 'sent', external_id = ?, post_link = ?, error = '', sent_at = datetime('now') WHERE id = ?`, postId, `https://www.facebook.com/${postId}`, w.item.id);
   if (w.rules.link !== 'first_comment') return;
   try {
     const { commentId } = await api.commentOnPost({ pageId: w.channel.fb_page_id, postId, message: w.row.post_url });

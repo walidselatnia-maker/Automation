@@ -307,7 +307,7 @@ describe('Sharing an article on its channels', () => {
     expect(await makeSocialPictures()).toEqual(['PORTRAIT_3_4']);
     expect(fbPosts).toEqual([{ message: GOOD_FB.text }]);
     expect(comments).toEqual([{ postId: 'page_123', message: POST_URL }]);
-    expect(listSocialPosts()[0]).toMatchObject({ status: 'sent', external_id: 'page_123', comment_id: 'c1' });
+    expect(listSocialPosts()[0]).toMatchObject({ status: 'sent', external_id: 'page_123', comment_id: 'c1', post_link: 'https://www.facebook.com/page_123' });
   });
 
   it('Facebook through Buffer: the link only as Buffer’s first comment on a paid plan, none at all on the free plan', async () => {

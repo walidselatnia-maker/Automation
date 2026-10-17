@@ -179,6 +179,7 @@ a.kw-step:hover span { text-decoration: underline; }
 .kw-waiting { margin: 14px 0 0; padding: 10px 14px; border-radius: var(--r-ctl); background: var(--idle); color: var(--idle-ink); font-size: 14px; }
 .kw-share-channels { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 20px; font-size: 14px; color: var(--soft); }
 .kw-share-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.kw-share-links { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
 .kw-share-actions form { margin: 0; }
 .kw-share-actions:empty { display: none; }
 .kw-share-list { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 0; border-top: 1px solid var(--line); }
@@ -937,8 +938,24 @@ const fieldLabel = (f: string): string => ({ cta: 'Call to action', alt: 'Alt te
 /** Posts still being made: the page refreshes itself while there are any. */
 export const sharingBusy = (posts: SocialPostRow[]): boolean => posts.some((p) => p.status === 'pending' || p.status === 'picture');
 
+/**
+ * The links of a shared post: the post itself on its platform once it is
+ * out, and the article it shares. A Buffer post has its link only once
+ * Buffer has sent it.
+ */
+export function postLinks(p: { status: string; post_link: string }, channel: ChannelRow | undefined, articleUrl = ''): Html {
+  const platform = channel ? labelOf(channel.platform) : 'its platform';
+  const post = p.post_link
+    ? html`<a class="ns-btn small" href="${p.post_link}" target="_blank" rel="noopener">Open the post on ${platform} ↗</a>`
+    : p.status === 'sent' && channel?.via === 'buffer'
+      ? html`<span class="kw-share-meta">The link to the post appears here once Buffer has posted it.</span>`
+      : raw('');
+  const article = articleUrl ? html`<a class="ns-btn small quiet" href="${articleUrl}" target="_blank" rel="noopener">Open the article ↗</a>` : raw('');
+  return p.post_link || articleUrl || p.status === 'sent' ? html`<div class="kw-share-links">${post}${article}</div>` : raw('');
+}
+
 /** One post on one channel: the words and picture it was made with, where it stands, and what you can do. */
-export function sharePostRow(p: SocialPostRow, channel: ChannelRow | undefined, planId: number, picture: PictureRow | undefined, heading = ''): Html {
+export function sharePostRow(p: SocialPostRow, channel: ChannelRow | undefined, planId: number, picture: PictureRow | undefined, heading = '', articleUrl = ''): Html {
   const where = channel ? `${channel.name} · ${labelOf(channel.platform)} through ${channel.via === 'buffer' ? 'Buffer' : 'the API'}` : 'A removed channel';
   const viaBuffer = channel?.via === 'buffer';
   const status = p.status === 'sent' && viaBuffer ? 'Queued in Buffer' : SHARE_STATUS[p.status];
@@ -947,7 +964,6 @@ export function sharePostRow(p: SocialPostRow, channel: ChannelRow | undefined, 
     p.template ? `picture template ${p.template}` : '',
     p.status === 'sent' && viaBuffer && p.due_at ? `Buffer posts it ${p.due_at.replace('T', ' ').slice(0, 16)} UTC` : '',
     p.status === 'sent' && !viaBuffer && p.sent_at ? `posted ${p.sent_at} UTC` : '',
-    p.external_id ? `id ${p.external_id}` : '',
     p.status === 'waiting' && p.retry_at ? `tries again ${new Date(p.retry_at).toISOString().slice(0, 16).replace('T', ' ')} UTC` : '',
   ].filter(Boolean).join(' · ');
   let fields: Record<string, string> = {};
@@ -980,6 +996,7 @@ export function sharePostRow(p: SocialPostRow, channel: ChannelRow | undefined, 
         ? html`<dl class="kw-share-words">${shown.map(([k, v]) => html`<div><dt>${fieldLabel(k)}</dt><dd>${v}</dd></div>`)}</dl>`
         : html`<p class="kw-share-meta">Its words are being written from the article, by ${channel ? html`<a href="/new-website/channels/${String(channel.id)}">this channel’s rules</a>` : 'its channel’s rules'}.</p>`}
       ${p.error ? html`<div class="${p.status === 'failed' ? 'kw-seo-problems' : 'kw-kept'}">${p.error}</div>` : raw('')}
+      ${postLinks(p, channel, articleUrl)}
       <div class="kw-share-actions">
         ${p.status === 'failed'
           ? html`<form method="post" action="/new-website/keywords/share/post/${p.id}/retry"><button class="ns-btn small primary">Try again</button></form>`
@@ -1024,7 +1041,7 @@ export function shareCard(row: SeoRow, intent: string, posts: SocialPostRow[], c
       : !channels.length && !posts.length
         ? html`<p class="kw-none" style="margin:0">This website shares on no channel yet.</p>`
         : raw('')}
-    ${posts.length ? html`<ul class="kw-share-list">${posts.map((p) => sharePostRow(p, byId.get(p.channel_id), planId, pictures.find((x) => x.id === p.picture_id)))}</ul>` : raw('')}`;
+    ${posts.length ? html`<ul class="kw-share-list">${posts.map((p) => sharePostRow(p, byId.get(p.channel_id), planId, pictures.find((x) => x.id === p.picture_id), '', row.post_url))}</ul>` : raw('')}`;
   return card(head, body, failed > 0);
 }
 
