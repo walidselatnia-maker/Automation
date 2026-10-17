@@ -13,6 +13,7 @@ import { bufferTokenOf, fbTokenOf, getChannel, websiteChannels, type ChannelRow 
 import type { Fetch } from './client.js';
 import { parseImageSet } from './images.js';
 import { pictureDir, type PictureRow } from './pictures.js';
+import { instagramFileOf, makeInstagramPicture } from './instagram-picture.js';
 import { getNewWebsite, type NewWebsiteRow } from './repo.js';
 import { correctUntilRight } from './rounds.js';
 import { getSeoRow, type SeoRow } from './seo.js';
@@ -99,6 +100,8 @@ export interface SocialDeps {
   fetchImpl?: Fetch;
   buffer?: (token: string) => BufferApi;
   facebook?: (token: string) => FacebookApi;
+  /** Makes Instagram's 4:5 copy of a picture; tests pass their own. */
+  instagramPicture?: (src: string, out: string) => Promise<void>;
   /** Wakes the picture maker once a social picture is queued. */
   startPictures?: () => void;
   now?: () => number;
@@ -376,6 +379,24 @@ function pictureLink(picture: PictureRow, deps: SocialDeps, now: number): string
 }
 
 /**
+ * Instagram takes a feed picture no taller than 4:5, so it gets its own 4:5
+ * JPEG copy, made once beside the picture. Should the copy fail to be made,
+ * the picture itself is sent and Buffer says whether Instagram took it.
+ */
+async function instagramPictureLink(picture: PictureRow, deps: SocialDeps, now: number): Promise<string> {
+  const dir = pictureDir(picture.seo_id, deps.dataDir ?? resolveDataDir());
+  try {
+    await (deps.instagramPicture ?? makeInstagramPicture)(join(dir, picture.file), join(dir, instagramFileOf(picture.file)));
+  } catch (err) {
+    log.warn(`picture ${picture.id}: no 4:5 copy for Instagram, sending it as it is: ${errorMessage(err)}`);
+    return pictureLink(picture, deps, now);
+  }
+  const base = deps.settings.get('public_base_url').trim();
+  if (!base) return pictureLink(picture, deps, now); // says what is missing
+  return pictureMediaUrl(base, picture.id, 'jpg', Number(deps.settings.get('reel_media_link_days')), deps.encryptionKey, now, 'ig-picture');
+}
+
+/**
  * Buffer fails a post whose picture it cannot download ("Image could not be
  * read from its URL"), so the link is tried first, the way Buffer will try it.
  */
@@ -422,7 +443,7 @@ export function bufferMetadata(
     case 'facebook':
       return `facebook: { type: ${type}${comment} }`;
     case 'instagram':
-      return `instagram: { type: ${type}${type === 'reel' ? ' shouldShareToFeed: true' : ''}${comment} }`;
+      return `instagram: { type: ${type} shouldShareToFeed: true${comment} }`;
     case 'linkedin':
       return comment ? `linkedin: {${comment} }` : '';
     default:
@@ -443,7 +464,7 @@ async function sendThroughBuffer(w: Work, picture: PictureRow, deps: SocialDeps,
     }
     // The link, only ever where the rules put it: the pin's own link, or the first comment (paid Buffer plans only).
     const firstComment = w.rules.link === 'first_comment' && w.channel.paid_buffer ? w.row.post_url : '';
-    const url = pictureLink(picture, deps, now);
+    const url = w.channel.platform === 'instagram' ? await instagramPictureLink(picture, deps, now) : pictureLink(picture, deps, now);
     await checkPictureLink(url, deps);
     const { id, dueAt } = await api.createImagePost({
       text: w.item.text,

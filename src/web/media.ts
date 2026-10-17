@@ -19,6 +19,7 @@ import { checkMediaToken } from '../core/media-links.js';
 import { getReel } from '../db/repos.js';
 import { get } from '../db/index.js';
 import { pictureDir } from '../newsite/pictures.js';
+import { instagramFileOf } from '../newsite/instagram-picture.js';
 import { reelDir } from '../newsite/reels.js';
 import { resolveDataDir } from '../config.js';
 import { createLogger } from '../lib/logger.js';
@@ -124,15 +125,18 @@ export function registerMedia(app: FastifyInstance, options: MediaOptions): void
    * for Buffer to fetch when it posts. Same rules as a reel: the link proves
    * itself, and anything wrong with it is just "not found".
    */
-  app.get<{ Params: { id: string; expires: string; file: string } }>(
-    '/media/picture/:id/:expires/:file',
-    async (request, reply) => {
+  /**
+   * Serve a new-website picture by its signed link: the picture itself, or
+   * (`ig-picture`) Instagram's 4:5 JPEG copy made beside it before it is sent.
+   */
+  const servePicture = (kind: 'picture' | 'ig-picture') =>
+    async (request: FastifyRequest<{ Params: { id: string; expires: string; file: string } }>, reply: FastifyReply) => {
       const { id: rawId, expires: rawExpires, file: rawFile } = request.params;
       const match = /^([A-Za-z0-9_-]{1,100})\.(png|jpg|jpeg|webp)$/.exec(rawFile);
       if (!/^\d+$/.test(rawId) || !/^\d+$/.test(rawExpires) || !match) return notFound(reply);
 
       const id = Number(rawId);
-      const check = checkMediaToken({ kind: 'picture', id, expiresAt: Number(rawExpires), signature: match[1]! }, options.secret);
+      const check = checkMediaToken({ kind, id, expiresAt: Number(rawExpires), signature: match[1]! }, options.secret);
       if (!check.ok) {
         if (check.reason === 'expired') {
           log.warn(`picture ${id}: a media link expired before it was fetched`);
@@ -143,22 +147,30 @@ export function registerMedia(app: FastifyInstance, options: MediaOptions): void
 
       const picture = get<{ seo_id: number; file: string; status: string }>('SELECT seo_id, file, status FROM newsite_pictures WHERE id = ?', id);
       if (!picture || picture.status !== 'done' || !picture.file || /[\\/]/.test(picture.file)) return notFound(reply);
-      const path = join(pictureDir(picture.seo_id, options.dataDir ?? resolveDataDir()), picture.file);
+      const file = kind === 'ig-picture' ? instagramFileOf(picture.file) : picture.file;
+      const path = join(pictureDir(picture.seo_id, options.dataDir ?? resolveDataDir()), file);
       const info = await stat(path).catch(() => null);
       if (!info?.isFile()) {
         log.warn(`picture ${id}: a valid media link, but no file on disk at ${path}`);
         return notFound(reply);
       }
-      log.info(`picture ${id}: serving it to ${request.ip} (${String(request.headers['user-agent'] ?? 'no user-agent').slice(0, 80)})`);
-      const type = picture.file.endsWith('.png') ? 'image/png' : picture.file.endsWith('.webp') ? 'image/webp' : 'image/jpeg';
+      log.info(`picture ${id}: serving ${file} to ${request.ip} (${String(request.headers['user-agent'] ?? 'no user-agent').slice(0, 80)})`);
+      const type = file.endsWith('.png') ? 'image/png' : file.endsWith('.webp') ? 'image/webp' : 'image/jpeg';
       return reply
         .type(type)
         .header('cache-control', 'private, no-store')
         .header('x-robots-tag', 'noindex, nofollow, noarchive')
         .header('content-length', info.size)
         .send(createReadStream(path));
-    },
-  );
+    };
+
+  /**
+   * A new-website picture (a pin's 3:4 picture, an article's feature picture),
+   * for Buffer to fetch when it posts. Same rules as a reel: the link proves
+   * itself, and anything wrong with it is just "not found".
+   */
+  app.get<{ Params: { id: string; expires: string; file: string } }>('/media/picture/:id/:expires/:file', servePicture('picture'));
+  app.get<{ Params: { id: string; expires: string; file: string } }>('/media/ig-picture/:id/:expires/:file', servePicture('ig-picture'));
 
   /**
    * A new-website reel (newsite_reels), for Buffer to fetch when it posts the

@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { cpSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -9,6 +10,8 @@ import { closeDatabase, get, openDatabase, run } from '../src/db/index.js';
 import { Settings } from '../src/settings.js';
 import { configurePrompts } from '../src/pipeline/prompts.js';
 import { BufferClient } from '../src/integrations/buffer.js';
+import { registerMedia } from '../src/web/media.js';
+import { instagramFileOf, makeInstagramPicture } from '../src/newsite/instagram-picture.js';
 import { createNewWebsite, getNewWebsite, listKeywordPlans, saveKeywordPlan } from '../src/newsite/repo.js';
 import { registerSocialRoutes } from '../src/newsite/social-routes.js';
 import { shareStepPage } from '../src/newsite/keywords-view.js';
@@ -43,6 +46,10 @@ const GOOD_PIN = {
     'A soft strawberry cake with fresh berries folded into the batter and a light whipped cream frosting. Easy to bake at home for birthdays, picnics and slow summer weekends.',
   alt: 'Slice of layered strawberry cake with whipped cream and fresh strawberries on a white plate',
 };
+const GOOD_IG = {
+  text: 'Real berries go right into the batter, and that first pink slice says it all. Save this for your next bake. #strawberrycake #baking #summerdessert',
+  alt: 'A tall slice of strawberry cake with whipped cream on a white plate',
+};
 const GOOD_FB = {
   text: 'This cake gets its pink crumb from real berries folded right into the batter. Soft, light and easy. Full recipe in the first comment.',
   alt: 'A tall slice of strawberry cake with whipped cream on a white plate',
@@ -69,6 +76,7 @@ describe('Sharing an article on its channels', () => {
     channels: async () => [
       { id: 'ch-pin', name: 'longlivo', service: 'pinterest', boards: [{ serviceId: 'b1', name: 'Recipes' }, { serviceId: 'b2', name: 'Strawberry Desserts' }] },
       { id: 'ch-fb', name: 'Easy Cakes', service: 'facebook', boards: [] },
+      { id: 'ch-ig', name: 'longlivo.kitchen', service: 'instagram', boards: [] },
       { id: 'ch-threads', name: 'longlivo threads', service: 'threads', boards: [] },
     ],
     createImagePost: async (input) => {
@@ -91,7 +99,7 @@ describe('Sharing an article on its channels', () => {
   });
   /** The platform's own picture link, as Buffer would fetch it. */
   const internet = (async (url: string | URL) => {
-    if (String(url).includes('/media/picture/')) {
+    if (String(url).includes('/media/picture/') || String(url).includes('/media/ig-picture/')) {
       return pictureStatus === 200
         ? new Response('img', { status: 200, headers: { 'content-type': 'image/png' } })
         : new Response('Not found', { status: pictureStatus, headers: { 'content-type': 'text/plain' } });
@@ -167,7 +175,7 @@ describe('Sharing an article on its channels', () => {
     bufferFull = false;
     bufferAnswer = 'ok';
     pictureStatus = 200;
-    answers = { Pinterest: JSON.stringify(GOOD_PIN), Facebook: JSON.stringify(GOOD_FB) };
+    answers = { Pinterest: JSON.stringify(GOOD_PIN), Facebook: JSON.stringify(GOOD_FB), Instagram: JSON.stringify(GOOD_IG) };
     clock = 1_000_000;
     resetPictureMakerState();
   });
@@ -323,6 +331,61 @@ describe('Sharing an article on its channels', () => {
     await share();
     expect(bufferPosts[0]!.metadata).toBe('facebook: { type: post }');
     expect(listSocialPosts()[0]!.error).toMatch(/without the link/);
+  });
+
+  it('Instagram through Buffer: its own words with no link, and a 4:5 JPEG copy of its picture, which the media door serves', async () => {
+    const ig = saveBufferChannel(
+      { platform: 'instagram', name: 'longlivo.kitchen', bufferToken: 'tok', bufferChannelId: 'ch-ig', paidBuffer: false, postImage: true, postReel: true, multiWebsite: false },
+      KEY,
+    );
+    setWebsiteChannels(websiteId, [ig]);
+    const copies: string[] = [];
+    const igDeps = (): SocialDeps => ({
+      ...deps(),
+      now: () => Date.now(), // a real clock, so the media link has not expired when it is fetched
+      instagramPicture: async (src, out) => {
+        copies.push(out);
+        writeFileSync(out, 'jpeg-4x5');
+      },
+    });
+    createSocialPosts(seoId);
+    await kickSocial(igDeps());
+    await kickPictureMaker({
+      settings, dataDir, now: () => clock, sleep: async () => {},
+      make: async () => ({ data: Buffer.from('pic'), contentType: 'image/png' }),
+      afterPin: (id, ok) => onPinPicture(id, ok, igDeps()),
+    });
+    await kickSocial(igDeps());
+
+    expect(bufferPosts).toHaveLength(1);
+    const sent = bufferPosts[0]!;
+    expect(sent.channelId).toBe('ch-ig');
+    expect(sent.text).toBe(GOOD_IG.text);
+    expect(sent.text).not.toMatch(/http|longlivo\.com/);
+    expect(sent.metadata).toBe('instagram: { type: post shouldShareToFeed: true }');
+    expect(sent.imageUrl).toMatch(/^https:\/\/dash\.example\.com\/media\/ig-picture\/\d+\/\d+\/[A-Za-z0-9_-]+\.jpg$/);
+    expect(copies).toHaveLength(1);
+    expect(copies[0]).toMatch(/\.ig\.jpg$/);
+    expect(listSocialPosts()[0]).toMatchObject({ kind: 'instagram', status: 'sent', external_id: 'buffer-1' });
+
+    const app = Fastify();
+    registerMedia(app, { secret: KEY, clipsDir: dataDir, dataDir });
+    const path = new URL(sent.imageUrl).pathname;
+    const res = await app.inject({ url: path });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toBe('image/jpeg');
+    expect(res.body).toBe('jpeg-4x5');
+    expect((await app.inject({ url: path.replace('/ig-picture/', '/picture/') })).statusCode).toBe(404); // signed for the copy only
+    await app.close();
+  });
+
+  it('cuts a 3:4 picture to Instagram’s 4:5 as a JPEG', async () => {
+    const src = join(dataDir, 'p.png');
+    execFileSync('ffmpeg', ['-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'color=red:s=896x1200', '-frames:v', '1', src]);
+    const out = join(dataDir, instagramFileOf('p.png'));
+    await makeInstagramPicture(src, out);
+    const probe = execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=width,height,codec_name', '-of', 'csv=p=0', out]).toString().trim();
+    expect(probe).toBe('mjpeg,896,1120');
   });
 
   it('makes no image post for a page set to post reels only', () => {

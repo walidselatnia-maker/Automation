@@ -34,7 +34,7 @@ These rules decide what the sharing phase makes for an Instagram channel (a busi
 ## The post picture
 
 - Made by Google Flow for Instagram: its own picture, not one of the article's pictures.
-- Portrait, 3:4 (896 x 1200), the closest Flow gets to Instagram's 4:5 feed size.
+- Made portrait, 3:4 (896 x 1200), the closest Flow gets. Instagram takes a feed picture no taller than 4:5, so before it goes to Buffer the platform cuts a 4:5 JPEG copy from its middle (896 x 1120).
 - No words, logos or watermarks on the picture.
 - The scene comes from the article's own picture descriptions (the feature and close-up pictures).
 

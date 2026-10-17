@@ -32,8 +32,11 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
  */
 const PURPOSE = 'media-link-v1';
 
-/** What a link may point at: a reel video, a new-website picture (a pin, an image post), or a new-website reel. */
-export type MediaKind = 'reel' | 'picture' | 'newsite-reel';
+/**
+ * What a link may point at: a reel video, a new-website picture (a pin, an
+ * image post), Instagram's 4:5 copy of one, or a new-website reel.
+ */
+export type MediaKind = 'reel' | 'picture' | 'ig-picture' | 'newsite-reel';
 
 export type MediaCheck =
   | { ok: true }
@@ -134,11 +137,12 @@ export function pictureMediaUrl(
   days: number,
   secret: Buffer,
   now: number = Date.now(),
+  kind: 'picture' | 'ig-picture' = 'picture',
 ): string {
   const base = baseUrl.trim().replace(/\/+$/, '');
   if (!base) throw new Error('No public address for this platform yet.');
   const expiresAt = now + linkDays(days) * 86_400_000;
-  return `${base}${mediaPath('picture', pictureId, expiresAt, secret, ext)}`;
+  return `${base}${mediaPath(kind, pictureId, expiresAt, secret, ext)}`;
 }
 
 /**

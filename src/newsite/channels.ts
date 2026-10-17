@@ -248,5 +248,8 @@ export function postLinkOf(p: { status: string; post_link: string; external_id: 
 
 /** The channel's own page on its platform, when its address is known. */
 export function channelPageLink(channel: ChannelRow | undefined): string {
-  return channel?.platform === 'facebook' && channel.fb_page_id ? `https://www.facebook.com/${channel.fb_page_id}` : '';
+  if (channel?.platform === 'facebook' && channel.fb_page_id) return `https://www.facebook.com/${channel.fb_page_id}`;
+  // Buffer names an Instagram channel by its username.
+  const username = channel?.platform === 'instagram' ? channel.name.replace(/^@/, '').trim() : '';
+  return /^[A-Za-z0-9._]{1,30}$/.test(username) ? `https://www.instagram.com/${username}/` : '';
 }
