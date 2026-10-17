@@ -210,7 +210,7 @@ export function registerSocialRoutes(
   /** The reel rules: edited in place, saved for the next reel. */
   const backOf = (v: unknown): string => {
     const s = String(v ?? '');
-    return s.startsWith('/new-website/sharing') ? s : '/new-website/sharing/reels';
+    return s.startsWith('/new-website/sharing') || s === '/new-website/prompts' ? s : '/new-website/sharing/reels';
   };
   // Old per-platform links land on the one set of rules.
   app.get('/new-website/sharing/reel-rules/:platform', async (request, reply) => reply.redirect('/new-website/sharing/reel-rules', 303));

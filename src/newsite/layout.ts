@@ -25,7 +25,7 @@ const PLATFORM_SCRIPT = `<script>
     var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
       acceptNode: function (n) {
         for (var e = n.parentNode; e && e !== root.parentNode; e = e.parentNode) {
-          if (e.nodeType === 1 && (skip.test(e.nodeName) || e.isContentEditable || (e.classList && e.classList.contains('pf')))) return NodeFilter.FILTER_REJECT;
+          if (e.nodeType === 1 && (skip.test(e.nodeName) || e.isContentEditable || (e.classList && e.classList.contains('pf')) || (e.hasAttribute && e.hasAttribute('data-plain')))) return NodeFilter.FILTER_REJECT;
         }
         re.lastIndex = 0;
         return re.test(n.nodeValue) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
@@ -117,6 +117,11 @@ export const NAV: NavGroup[] = [
         href: '/new-website/channels',
         label: 'Social channels',
         icon: ICON('<circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M8.2 10.9l7.6-3.8M8.2 13.1l7.6 3.8"/>'),
+      },
+      {
+        href: '/new-website/prompts',
+        label: 'Prompts',
+        icon: ICON('<path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/>'),
       },
     ],
   },

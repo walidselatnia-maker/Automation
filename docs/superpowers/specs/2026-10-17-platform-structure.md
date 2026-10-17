@@ -8,6 +8,7 @@ The platform is organized in the order the work is done. Every feature has one h
 | 1 · Set up | Platform settings `/new-website/platform` | AI key, pictures, time zone, notifications. Automation timings are under Advanced |
 | | Websites `/new-website` | Each website: a summary (topic, voice, publishing, channels), links to its articles, posts and reels; all settings on demand |
 | | Social channels `/new-website/channels` | Social accounts, added once; each website picks which ones it shares on |
+| | Prompts `/new-website/prompts` | The instructions the AI follows at each step (keywords, SEO, article, pictures, publishing, social posts, reels), with earlier versions and the default one click away |
 | 2 · Create | Keywords & articles `/new-website/keywords` | Main keywords by website; each opens the step-by-step pipeline (SEO → … → Publish → Share) |
 | | Reels `/new-website/sharing/reels` | One reel per article, made centrally, then sent to the channels its website takes reels on |
 | 3 · Share | Social posts `/new-website/sharing` | What went out on each channel, with links and problems |
