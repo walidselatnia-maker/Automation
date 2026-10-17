@@ -1,6 +1,7 @@
 import { html, raw, type Html } from '../web/views/layout.js';
 import { apiName, channelColor, PLATFORMS, takesReels, videoOnly, viasOf, viaLabel, type ChannelRow, type Platform, type Via } from './channels.js';
 import type { RulesCheck } from './platform-rules.js';
+import { commentsThroughApi, COMMENT_PLATFORMS } from './first-comment.js';
 import { WIZARD_CSS, field } from './view.js';
 
 /**
@@ -268,6 +269,7 @@ export function planStep(w: WizardContext, paid: boolean): Html {
       <h2>Buffer plan</h2>
       <p>The article link always goes in the first comment, never in the post. The platform cannot see your Buffer plan, so tell it here.</p>
       ${paidBox(paid)}
+      <p>On the free plan, the link can still be commented through the Facebook Graph API: once the channel is added, open it and use <b>First comment through the API</b>.</p>
     </form>`,
     html`${cancel}${next()}`,
   );
@@ -431,6 +433,11 @@ export function channelCard(c: ChannelRow, websites: string[], rules: RulesCheck
       ${reels
         ? part(c, 'posts', 'What to post', [['Each article gets', [c.post_image ? 'An image post' : '', c.post_reel ? 'A reel' : ''].filter(Boolean).join(' and ') || 'Nothing']])
         : raw('')}
+      ${takesApiComment(c)
+        ? part(c, 'comment', 'First comment through the API', [
+            ['The article link', commentsThroughApi(c) ? `Commented through the Facebook Graph API once Buffer has posted (${c.platform === 'instagram' ? 'as the Instagram account' : 'as the page'})` : 'Not set up'],
+          ], commentsThroughApi(c) ? 'Change' : 'Set up')
+        : raw('')}
       ${c.via === 'buffer' && firstComment ? part(c, 'plan', 'Buffer plan', [['Plan', c.paid_buffer ? 'Paid (first comment with the link)' : 'Free (posts go out with no link)']]) : raw('')}
       ${part(c, 'rules', 'Rules', [
         ['State', rules.rules ? html`<span class="ns-badge ok">Rules OK</span>` : html`<span class="ns-badge bad">Rules have problems</span>`],
@@ -520,6 +527,7 @@ export const PART_TITLE: Record<string, string> = {
   websites: 'Websites',
   posts: 'What to post',
   plan: 'Buffer plan',
+  comment: 'First comment through the API',
   rules: 'Rules',
 };
 
@@ -575,6 +583,36 @@ export const postsPart = (c: ChannelRow, error = ''): Html =>
       </div>`,
     { error },
   );
+
+/** A Buffer channel whose posts can get their first comment through the Graph API. */
+export const takesApiComment = (c: Pick<ChannelRow, 'via' | 'platform'>): boolean =>
+  c.via === 'buffer' && (COMMENT_PLATFORMS as readonly string[]).includes(c.platform);
+
+/**
+ * The first comment through the API: a Facebook token, then the page (or the
+ * Instagram account linked to a page) that this Buffer channel is.
+ */
+export function commentPart(
+  c: ChannelRow,
+  opts: { choices?: PickChoice[]; draft?: string; selected?: string; error?: string; hasToken?: boolean } = {},
+): Html {
+  const ig = c.platform === 'instagram';
+  const what = ig ? 'Instagram account' : 'page';
+  const body = opts.choices
+    ? html`<h2>Which ${what} is this?</h2>
+        <p>Pick the ${what} that Buffer posts to on this channel. The link is commented there.</p>
+        <input type="hidden" name="draft" value="${opts.draft ?? ''}" />
+        <div class="ch-pick">${opts.choices.map(
+          (ch) => html`<label class="ch-option"><input type="radio" name="pick" value="${ch.id}" ${checked(ch.id === opts.selected)} required />
+            <div><b>${ch.name}</b><span>${ch.note}</span></div></label>`,
+        )}</div>`
+    : html`<h2>First comment through the API</h2>
+        <p>Buffer keeps posting. Once a post is out, the platform finds it on ${ig ? 'Instagram' : 'the page'} and adds the article link as its first comment through the Facebook Graph API.${ig ? ' Instagram does not make the link clickable, but people can copy it.' : ''}</p>
+        <p>Paste the Facebook business access token (a system user token from Business Manager). It needs <b>pages_show_list</b>, <b>pages_read_engagement</b> and ${ig ? html`<b>instagram_basic</b> and <b>instagram_manage_comments</b>` : html`<b>pages_manage_engagement</b>`}.${opts.hasToken ? ' Leave it empty to use the token already saved.' : ''}</p>
+        ${field('token', 'Facebook access token', html`<input id="wz-token" name="token" type="password" spellcheck="false" autocomplete="off" ${raw(opts.hasToken ? '' : 'required')} />`)}
+        ${commentsThroughApi(c) ? html`<label class="ch-option"><input type="checkbox" name="off" value="1" /><div><b>Stop commenting through the API</b><span>Posts then get the link only from Buffer's paid plan, or none.</span></div></label>` : raw('')}`;
+  return partPage(c, 'comment', body, { error: opts.error });
+}
 
 export const planPart = (c: ChannelRow): Html =>
   partPage(c, 'plan', html`<h2>Buffer plan</h2><p>The article link goes in the first comment, never in the post. The platform cannot see your Buffer plan, so tell it here.</p>${paidBox(Boolean(c.paid_buffer))}`);

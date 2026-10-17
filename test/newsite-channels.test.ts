@@ -4,7 +4,7 @@ import formbody from '@fastify/formbody';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { closeDatabase, openDatabase } from '../src/db/index.js';
 import { registerChannelRoutes, type ChannelLookups } from '../src/newsite/channels-routes.js';
-import { bufferTokenOf, channelsFor, fbTokenOf, getChannel, listChannels, setWebsiteChannels, websiteChannels } from '../src/newsite/channels.js';
+import { bufferTokenOf, channelsFor, fbTokenOf, getChannel, listChannels, saveBufferChannel, setWebsiteChannels, websiteChannels } from '../src/newsite/channels.js';
 import { createNewWebsite } from '../src/newsite/repo.js';
 
 const KEY = randomBytes(32);
@@ -65,6 +65,40 @@ describe('New dashboard: channels', () => {
       },
       KEY,
     );
+
+  it('sets a Buffer channel to get its first comment through the Facebook Graph API', async () => {
+    const a = await app();
+    const fb = saveBufferChannel({ platform: 'facebook', name: 'Cookie Corner', bufferToken: BUFFER_TOKEN, bufferChannelId: 'ch-fb', paidBuffer: false, postImage: true, postReel: true, multiWebsite: false }, KEY);
+    const ig = saveBufferChannel({ platform: 'instagram', name: 'easycakes', bufferToken: BUFFER_TOKEN, bufferChannelId: 'ch-ig', paidBuffer: false, postImage: true, postReel: true, multiWebsite: false }, KEY);
+
+    const card = (await a.inject({ url: `/new-website/channels/${fb}` })).body;
+    expect(card).toContain('First comment through the API');
+    expect(card).toContain(`href="/new-website/channels/${fb}/edit/comment"`);
+    expect(card).toContain('Not set up');
+
+    expect((await a.inject({ url: `/new-website/channels/${fb}/edit/comment` })).body).toContain('pages_manage_engagement');
+    expect((await post(a, `/new-website/channels/${fb}/edit/comment`, { token: 'wrong' })).body).toContain('Facebook did not accept this token');
+    // The page Buffer calls this channel by is picked to start with.
+    const pick = (await post(a, `/new-website/channels/${fb}/edit/comment`, { token: FB_TOKEN })).body;
+    expect(pick).toMatch(/value="p2" checked/);
+    const saved = await post(a, `/new-website/channels/${fb}/edit/comment`, { draft: draftIn(pick), pick: 'p2' });
+    expect(saved.statusCode).toBe(303);
+    expect(getChannel(fb)).toMatchObject({ via: 'buffer', fb_page_id: 'p2', api_account_id: '' });
+    expect(fbTokenOf(getChannel(fb)!, KEY)).toBe(FB_TOKEN);
+    expect((await a.inject({ url: `/new-website/channels/${fb}` })).body).toContain('Commented through the Facebook Graph API once Buffer has posted (as the page)');
+
+    // Instagram: the token already saved is used when none is pasted; the account linked to a page is picked.
+    expect((await a.inject({ url: `/new-website/channels/${ig}/edit/comment` })).body).toContain('Leave it empty to use the token already saved.');
+    const igPick = (await post(a, `/new-website/channels/${ig}/edit/comment`, { token: '' })).body;
+    expect(igPick).toMatch(/value="p1:ig1" checked/);
+    await post(a, `/new-website/channels/${ig}/edit/comment`, { draft: draftIn(igPick), pick: 'p1:ig1' });
+    expect(getChannel(ig)).toMatchObject({ fb_page_id: 'p1', api_account_id: 'ig1' });
+
+    // And off again.
+    await post(a, `/new-website/channels/${ig}/edit/comment`, { off: '1' });
+    expect(getChannel(ig)).toMatchObject({ fb_token_enc: '', fb_page_id: '', api_account_id: '' });
+    await a.close();
+  });
 
   it('adds Instagram through the Facebook page’s API, and Threads through its own API', async () => {
     const a = await app();

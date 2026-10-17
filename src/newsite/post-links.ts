@@ -2,6 +2,7 @@ import { all, run } from '../db/index.js';
 import { BufferClient } from '../integrations/buffer.js';
 import { createLogger, errorMessage } from '../lib/logger.js';
 import { bufferTokenOf, getChannel } from './channels.js';
+import { addFirstComments, type CommentApi } from './first-comment.js';
 
 /**
  * The link to each shared post on its platform.
@@ -24,6 +25,8 @@ export interface BufferPostReader {
 export interface PostLinkDeps {
   encryptionKey: Buffer;
   buffer?: (token: string) => BufferPostReader;
+  /** The Graph API that adds the first comment on Buffer posts; replaceable for tests. */
+  comments?: (token: string) => CommentApi;
 }
 
 const TABLES = ['newsite_social_posts', 'newsite_reel_shares'] as const;
@@ -64,6 +67,12 @@ export function refreshPostLinks(deps: PostLinkDeps): Promise<number> {
           log.warn(`${table} ${row.id}: Buffer did not say where the post is: ${errorMessage(err)}`);
         }
       }
+    }
+    // Buffer posted it; where the channel is set up for it, the Graph API adds the link as the first comment.
+    try {
+      await addFirstComments(deps);
+    } catch (err) {
+      log.warn(`First comments: ${errorMessage(err)}`);
     }
     return found;
   })().finally(() => {

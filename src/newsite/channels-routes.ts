@@ -8,6 +8,8 @@ import { errorMessage } from '../lib/logger.js';
 import {
   bufferTokenOf,
   channelWebsiteIds,
+  clearCommentApi,
+  setCommentApi,
   deleteChannel,
   fbTokenOf,
   getChannel,
@@ -29,6 +31,8 @@ import {
 } from './channels.js';
 import {
   channelPage,
+  commentPart,
+  takesApiComment,
   addPlatformStep,
   addViaStep,
   connectionPart,
@@ -427,6 +431,13 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
 
   const channelOf = (request: FastifyRequest) => getChannel(Number((request.params as { id: string }).id) || 0);
   const websiteNames = (id: number): string[] => websiteChoices(channelWebsiteIds(id)).filter((s) => s.checked).map((s) => s.name);
+  /** A Facebook token already saved: this channel's own, or another Facebook or Instagram channel's. */
+  const savedFbToken = (c: NonNullable<ReturnType<typeof getChannel>>): string => {
+    const own = c.fb_token_enc ? fbTokenOf(c, deps.encryptionKey) : '';
+    if (own) return own;
+    const other = listChannels().find((x) => x.fb_token_enc && (x.platform === 'facebook' || x.platform === 'instagram'));
+    return other ? fbTokenOf(other, deps.encryptionKey) : '';
+  };
   const toChannel = (reply: FastifyReply, id: number, msg: string) => reply.redirect(`/new-website/channels/${id}?ok=${encodeURIComponent(msg)}`, 303);
 
   /** What the rules box opens with: the channel's saved rules, or its platform's default until it saves its own. */
@@ -456,6 +467,8 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
         return takesReels(c.platform) && !videoOnly(c.platform) ? send(reply, page(title, postsPart(c), request)) : reply.redirect(`/new-website/channels/${c.id}`, 303);
       case 'plan':
         return c.via === 'buffer' ? send(reply, page(title, planPart(c), request)) : reply.redirect(`/new-website/channels/${c.id}`, 303);
+      case 'comment':
+        return takesApiComment(c) ? send(reply, page(title, commentPart(c, { hasToken: Boolean(savedFbToken(c)) }), request)) : reply.redirect(`/new-website/channels/${c.id}`, 303);
       case 'rules':
         return send(reply, page(title, rulesPart(c, rulesTextOf(c)), request));
       default:
@@ -491,6 +504,44 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
         setChannelContent(c.id, { image: on(b.postImage), reel: on(b.postReel) });
         sharingChanged();
         return toChannel(reply, c.id, 'What to post saved.');
+      }
+      case 'comment': {
+        if (!takesApiComment(c)) return reply.redirect(`/new-website/channels/${c.id}`, 303);
+        if (on(b.off)) {
+          clearCommentApi(c.id);
+          return toChannel(reply, c.id, 'The first comment is no longer added through the API.');
+        }
+        const ig = c.platform === 'instagram';
+        // Second visit: the page or account was picked.
+        const d = b.draft ? drafts.get(String(b.draft)) : undefined;
+        if (d && d.expires > Date.now() && d.platform === c.platform) {
+          const pick = d.choices.find((x) => x.id === String(b.pick ?? ''));
+          if (!pick) return send(reply, page(title, commentPart(c, { choices: d.choices, draft: String(b.draft), error: 'Pick one.' }), request));
+          const [pageId, igUserId = ''] = pick.id.split(':');
+          setCommentApi(c.id, { token: d.token, pageId: pageId!, igUserId }, deps.encryptionKey);
+          drafts.delete(String(b.draft));
+          sharingChanged();
+          return toChannel(reply, c.id, `From now on the article link is commented on ${pick.name} through the API once Buffer has posted.`);
+        }
+        // First visit: the token, then the pages or accounts it sees.
+        const token = String(b.token ?? '').trim() || savedFbToken(c);
+        const again = (error: string) => send(reply, page(title, commentPart(c, { hasToken: Boolean(savedFbToken(c)), error }), request));
+        if (!token) return again('Paste the Facebook access token.');
+        let choices: PickChoice[];
+        try {
+          choices = ig
+            ? (await (lookups.instagramAccounts ?? realLookups.instagramAccounts!)(token)).map((a) => ({ id: `${a.pageId}:${a.igUserId}`, name: a.username || a.igUserId, note: `Instagram of the page ${a.pageName}` }))
+            : (await lookups.facebookPages(token)).map((p) => ({ id: p.id, name: p.name, note: `Page ${p.id}` }));
+        } catch (err) {
+          return again(`Facebook did not accept this token: ${errorMessage(err)}`);
+        }
+        if (!choices.length) {
+          return again(ig ? 'This token sees no Instagram business account. Link the account to one of your Facebook pages, and give the token a role on that page.' : 'This token sees no Facebook page. Give it a role on your pages first.');
+        }
+        const draft = newDraft({ platform: c.platform, via: c.via, token, choices });
+        // The one Buffer calls this channel by, or the one already set, is picked to start with.
+        const same = (x: PickChoice) => letters(x.name) === letters(c.name) || x.id === (ig ? `${c.fb_page_id}:${c.api_account_id}` : c.fb_page_id);
+        return send(reply, page(title, commentPart(c, { choices, draft, selected: (choices.find(same) ?? (choices.length === 1 ? choices[0] : undefined))?.id }), request));
       }
       case 'plan':
         run('UPDATE newsite_channels SET paid_buffer = ? WHERE id = ?', on(b.paidBuffer) ? 1 : 0, c.id);

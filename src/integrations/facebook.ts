@@ -458,6 +458,63 @@ export class FacebookClient {
     return { mediaId: published.id, permalink };
   }
 
+  /**
+   * The id of a page's post, from the address Buffer gave for it. Most
+   * addresses carry the id; a short share address is matched against the
+   * page's latest posts and reels instead. Null when it is not found.
+   */
+  async findPagePost(pageId: string, link: string): Promise<string | null> {
+    const fromLink = facebookIdOf(link, pageId);
+    if (fromLink) return fromLink;
+    const token = await this.pageToken(pageId);
+    const want = sameAddress(link);
+    for (const edge of ['posts', 'video_reels']) {
+      const url = new URL(`${GRAPH}/${pageId}/${edge}`);
+      url.searchParams.set('fields', 'id,permalink_url');
+      url.searchParams.set('limit', '50');
+      url.searchParams.set('access_token', token);
+      const body = await this.read<{ data?: { id: string; permalink_url?: string }[] }>(
+        await fetch(url, { signal: AbortSignal.timeout(30_000) }),
+        'Finding the post on the page',
+      );
+      const hit = (body.data ?? []).find((p) => p.permalink_url && sameAddress(p.permalink_url) === want);
+      if (hit) return hit.id;
+    }
+    return null;
+  }
+
+  /** The id of an Instagram post, from its address (matched by its short code). Null when it is not found. */
+  async findInstagramMedia(input: { pageId: string; igUserId: string; link: string }): Promise<string | null> {
+    const code = /instagram\.com\/(?:[^/]+\/)?(?:p|reel|reels|tv)\/([A-Za-z0-9_-]+)/.exec(input.link)?.[1];
+    if (!code) return null;
+    const token = await this.pageToken(input.pageId);
+    const url = new URL(`${GRAPH}/${input.igUserId}/media`);
+    url.searchParams.set('fields', 'id,permalink,shortcode');
+    url.searchParams.set('limit', '50');
+    url.searchParams.set('access_token', token);
+    const body = await this.read<{ data?: { id: string; permalink?: string; shortcode?: string }[] }>(
+      await fetch(url, { signal: AbortSignal.timeout(30_000) }),
+      'Finding the Instagram post',
+    );
+    return (body.data ?? []).find((m) => m.shortcode === code || (m.permalink ?? '').includes(`/${code}`))?.id ?? null;
+  }
+
+  /** Comment on an Instagram post as the account (needs instagram_manage_comments). */
+  async commentOnInstagram(input: { pageId: string; mediaId: string; message: string }): Promise<{ commentId: string }> {
+    const token = await this.pageToken(input.pageId);
+    const body = await this.read<{ id?: string }>(
+      await fetch(`${GRAPH}/${input.mediaId}/comments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: input.message, access_token: token }),
+        signal: AbortSignal.timeout(60_000),
+      }),
+      'Commenting on the Instagram post',
+    );
+    if (!body.id) throw new FacebookError('Instagram did not return a comment id');
+    return { commentId: body.id };
+  }
+
   /** Wait until Instagram has finished with a container, and fail if it refused the file. */
   private async waitForContainer(containerId: string, token: string, what: string): Promise<void> {
     for (let attempt = 1; attempt <= this.maxAttempts; attempt++) {
@@ -488,4 +545,21 @@ export class FacebookClient {
       return { ok: false, error: errorMessage(err) };
     }
   }
+}
+
+/** An address without its scheme, www, query or trailing slash, to compare two of them. */
+const sameAddress = (link: string): string =>
+  link.trim().toLowerCase().replace(/^https?:\/\/(www\.|m\.|web\.)?/, '').replace(/[?#].*$/, '').replace(/\/+$/, '');
+
+/**
+ * The Graph id in a Facebook post address, when it carries one:
+ * PAGE_POST, /posts/ID, story_fbid=ID, /reel/ID, /videos/ID, photo fbid=ID or /photos/.../ID.
+ */
+export function facebookIdOf(link: string, pageId: string): string | null {
+  const pair = /facebook\.com\/(\d+)_(\d+)/.exec(link);
+  if (pair) return `${pair[1]}_${pair[2]}`;
+  const post = /\/posts\/(\d+)/.exec(link) ?? /[?&]story_fbid=(\d+)/.exec(link);
+  if (post) return `${pageId}_${post[1]}`;
+  const id = /\/(?:reel|videos)\/(\d+)/.exec(link) ?? /[?&](?:fbid|v)=(\d+)/.exec(link) ?? /\/photos\/[^?#]*?\/(\d+)\/?(?:[?#]|$)/.exec(link);
+  return id ? id[1]! : null;
 }

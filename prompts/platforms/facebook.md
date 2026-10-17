@@ -20,8 +20,9 @@ These rules decide what the sharing phase makes for a Facebook channel (a page),
 - Through the Facebook API, or through Buffer, as the channel was set up.
 - The link to the article is never in the post. It is always the first comment.
 - Through the Facebook API: the link is posted as the first comment right after the post.
+- Through Buffer with the Facebook API set for the first comment: Buffer posts, then the link is commented through the Facebook Graph API as soon as the post is out.
 - Through Buffer on a paid plan: the link is Buffer's first comment.
-- Through Buffer on the free plan: there is no first comment, so the post goes out with no link at all.
+- Through Buffer on the free plan with no API comment: there is no first comment, so the post goes out with no link at all.
 
 ## The post's words
 

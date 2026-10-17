@@ -236,6 +236,24 @@ export function saveChannelToken(channelId: number, token: string, expiresAt: nu
   run('UPDATE newsite_channels SET fb_token_enc = ?, token_expires_at = ? WHERE id = ?', encrypt(token, key), expiresAt, channelId);
 }
 
+/**
+ * A Buffer channel's first comment through the Graph API: Buffer posts, then
+ * the Facebook token comments the article link (as the page, or as the
+ * Instagram account linked to it). Its rules are set to put the link there.
+ */
+export function setCommentApi(channelId: number, input: { token: string; pageId: string; igUserId: string }, key: Buffer): void {
+  run('UPDATE newsite_channels SET fb_token_enc = ?, fb_page_id = ?, api_account_id = ? WHERE id = ?', encrypt(input.token, key), input.pageId, input.igUserId, channelId);
+  const c = getChannel(channelId);
+  if (c?.rules_text && /^link:\s*(?!first_comment\b)\S+/m.test(c.rules_text)) {
+    saveChannelRules(channelId, c.rules_text.replace(/^link:\s*\S+/m, 'link: first_comment'));
+  }
+}
+
+/** Stop commenting through the API on a Buffer channel. */
+export function clearCommentApi(channelId: number): void {
+  run(`UPDATE newsite_channels SET fb_token_enc = '', fb_page_id = '', api_account_id = '' WHERE id = ? AND via = 'buffer'`, channelId);
+}
+
 /** A platform's name for people: Buffer's label, or the key with a capital. */
 export const platformName = (key: string): string => PLATFORMS.find((p) => p.key === key)?.label ?? key.charAt(0).toUpperCase() + key.slice(1);
 

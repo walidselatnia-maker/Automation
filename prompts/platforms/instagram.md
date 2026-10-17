@@ -7,7 +7,7 @@ post_text: text
 alt_field: alt
 picture_shape: PORTRAIT_3_4
 picture_templates: newsite-ig-1.template.txt
-link: none
+link: first_comment
 ---
 # Instagram rules
 
@@ -18,13 +18,14 @@ These rules decide what the sharing phase makes for an Instagram channel (a busi
 - One image post per article, on each Instagram account the website shares on, when the account is set to post image posts.
 - One reel per article, on each account set to post reels, as soon as the article's reel is made. Its words follow these same rules, written for the video.
 - Sent the way the channel is connected: through its Buffer account, or through the Instagram API (by way of the Facebook page the account is linked to).
-- Instagram does not make links in captions or comments clickable, so the post carries no link at all.
+- The link to the article is never in the caption. It is the first comment, added through the Facebook Graph API (by way of the Facebook page the account is linked to), or by Buffer on a paid plan. Instagram does not make it clickable, but people can copy it.
+- With neither, the post goes out with no link at all.
 
 ## The post's words
 
 - Two to four short sentences. Start with a hook that makes people stop: a specific detail, a small surprise or a question about the dish or topic.
 - Warm and friendly, like a person who made it, in plain everyday words, in the website's author voice.
-- End by inviting people to save the post, for example "Save this for your next bake."
+- End by inviting people to save the post and pointing to the comment, for example "Save this for your next bake. Full recipe link in the first comment."
 - Never a link, a web address or a domain name in the post, and never "link in bio".
 - Three to five relevant hashtags at the very end, about the dish or topic.
 - Never generic phrases such as "mouth-watering", "delve", "game-changer", "look no further", "you won't believe".

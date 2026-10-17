@@ -4,6 +4,7 @@ import { all, get, run } from '../db/index.js';
 import { BufferClient, type BufferChannel } from '../integrations/buffer.js';
 import { FacebookClient } from '../integrations/facebook.js';
 import { createLogger, errorMessage } from '../lib/logger.js';
+import { commentsThroughApi } from './first-comment.js';
 import { newsiteReelMediaUrl } from '../core/media-links.js';
 import type { Settings } from '../settings.js';
 import { bufferTokenOf, fbTokenOf, getChannel, takesReels, websiteChannels, type ChannelRow } from './channels.js';
@@ -182,14 +183,14 @@ async function work(share: ReelShareRow, deps: ReelShareDeps, now: number): Prom
         throw new Error('This platform has no public address yet, so Buffer cannot fetch the video. Open the dashboard once at its https address, or set it in Platform settings → Images.');
       }
       const videoUrl = newsiteReelMediaUrl(base, reel.id, deps.settings.get('reel_media_link_days'), deps.encryptionKey, now);
-      const firstComment = rules.link === 'first_comment' && channel.paid_buffer ? row.post_url : '';
+      const firstComment = rules.link === 'first_comment' && channel.paid_buffer && !commentsThroughApi(channel) ? row.post_url : '';
       const id = await api.createVideoPost({
         text: share.text,
         channelId: channel.buffer_channel_id,
         videoUrl,
         metadata: bufferMetadata(channel.platform, { title: share.title || row.title, url: row.post_url, boardServiceId: board?.serviceId, firstComment, type: 'reel' }),
       });
-      const note = rules.link === 'first_comment' && !channel.paid_buffer ? 'Queued without the link: Buffer’s free plan cannot add a first comment.' : '';
+      const note = rules.link === 'first_comment' && !channel.paid_buffer && !commentsThroughApi(channel) ? 'Queued without the link: Buffer’s free plan cannot add a first comment.' : '';
       run(
         `UPDATE newsite_reel_shares SET status = 'sent', external_id = ?, board_name = ?, error = ?, retry_at = NULL, sent_at = datetime('now') WHERE id = ?`,
         id, board?.name ?? '', note, share.id,

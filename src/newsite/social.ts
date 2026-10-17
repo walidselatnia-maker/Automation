@@ -7,6 +7,7 @@ import { FacebookClient } from '../integrations/facebook.js';
 import { ThreadsClient } from '../integrations/threads.js';
 import { threadsTokenOf, type Renew } from './threads-token.js';
 import { createLogger, errorMessage } from '../lib/logger.js';
+import { commentsThroughApi } from './first-comment.js';
 import { pictureMediaUrl } from '../core/media-links.js';
 import { channelRules, type PlatformRules } from './platform-rules.js';
 import { loadTemplate } from '../pipeline/prompts.js';
@@ -492,7 +493,7 @@ async function sendThroughBuffer(w: Work, picture: PictureRow, deps: SocialDeps,
       board = await pickBoard(w, found.boards, deps);
     }
     // The link, only ever where the rules put it: the pin's own link, or the first comment (paid Buffer plans only).
-    const firstComment = w.rules.link === 'first_comment' && w.channel.paid_buffer ? w.row.post_url : '';
+    const firstComment = w.rules.link === 'first_comment' && w.channel.paid_buffer && !commentsThroughApi(w.channel) ? w.row.post_url : '';
     const url = w.channel.platform === 'instagram' ? await instagramPictureLink(picture, deps, now) : pictureLink(picture, deps, now);
     await checkPictureLink(url, deps);
     const { id, dueAt } = await api.createImagePost({
@@ -507,7 +508,7 @@ async function sendThroughBuffer(w: Work, picture: PictureRow, deps: SocialDeps,
         firstComment,
       }),
     });
-    const note = w.rules.link === 'first_comment' && !w.channel.paid_buffer ? 'Queued without the link: Buffer’s free plan cannot add a first comment.' : '';
+    const note = w.rules.link === 'first_comment' && !w.channel.paid_buffer && !commentsThroughApi(w.channel) ? 'Queued without the link: Buffer’s free plan cannot add a first comment.' : '';
     run(
       `UPDATE newsite_social_posts SET status = 'sent', external_id = ?, due_at = ?, board_name = ?, error = ?, retry_at = NULL, sent_at = datetime('now') WHERE id = ?`,
       id, dueAt, board?.name ?? '', note, w.item.id,

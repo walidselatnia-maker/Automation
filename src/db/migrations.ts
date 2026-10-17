@@ -908,6 +908,14 @@ export const MIGRATIONS: Migration[] = [
       addColumn(db, 'newsite_channels', 'token_expires_at', 'INTEGER');
     },
   },
+  {
+    id: '040-newsite-comment-tries',
+    description: 'New websites: how often the first comment was tried on a post Buffer sent (it stops after a few)',
+    up(db) {
+      addColumn(db, 'newsite_social_posts', 'comment_tries', 'INTEGER NOT NULL DEFAULT 0');
+      addColumn(db, 'newsite_reel_shares', 'comment_tries', 'INTEGER NOT NULL DEFAULT 0');
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */

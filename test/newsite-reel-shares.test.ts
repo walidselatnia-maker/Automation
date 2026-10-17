@@ -10,7 +10,9 @@ import { Settings } from '../src/settings.js';
 import { configurePrompts } from '../src/pipeline/prompts.js';
 import { createNewWebsite, saveKeywordPlan } from '../src/newsite/repo.js';
 import { listPlanSeo, queuePlanSeo } from '../src/newsite/seo.js';
-import { saveBufferChannel, saveFacebookApiChannel, saveInstagramApiChannel, saveThreadsApiChannel, setWebsiteChannels } from '../src/newsite/channels.js';
+import { getChannel, saveBufferChannel, saveFacebookApiChannel, saveInstagramApiChannel, saveThreadsApiChannel, setCommentApi, setWebsiteChannels } from '../src/newsite/channels.js';
+import type { CommentApi } from '../src/newsite/first-comment.js';
+import { facebookIdOf } from '../src/integrations/facebook.js';
 import { createReels, kickReels, onReelMade, reelDir, type ReelDeps } from '../src/newsite/reels.js';
 import {
   createReelShares,
@@ -436,6 +438,63 @@ describe('sharing reels on the website channels', () => {
     setWebsiteChannels(websiteId, [page1, pin], new Map([[page1, { image: true, reel: false }]]));
     syncSharing();
     expect(listPlanReelShares(planId).find((x) => x.channel_id === page1)!.status).toBe('sent');
+  });
+
+  it('Buffer posts the reel, then the Graph API adds the article link as the first comment on Facebook and Instagram', async () => {
+    const fb = fbBufferPage(false);
+    const ig = igChannel();
+    run(`UPDATE newsite_channels SET rules_text = replace(rules_text, 'link: first_comment', 'link: none') WHERE id = ?`, ig); // an older Instagram channel
+    setCommentApi(fb, { token: 'fb-tok', pageId: 'page-1', igUserId: '' }, KEY);
+    setCommentApi(ig, { token: 'fb-tok', pageId: 'page-1', igUserId: 'ig-9' }, KEY);
+    expect(getChannel(ig)!.rules_text).toMatch(/^link: first_comment$/m); // the link now goes in the first comment
+    setWebsiteChannels(websiteId, [fb, ig]);
+    createReelShares(madeReel());
+    await kickReelShares(deps());
+
+    // Buffer posts both, with no first comment of its own and no "without the link" note.
+    expect(videoPosts.map((p) => p.channelId).sort()).toEqual(['ch-fb', 'ch-ig']);
+    expect(videoPosts.every((p) => !String(p.metadata).includes('firstComment'))).toBe(true);
+    expect(listPlanReelShares(planId).map((x) => x.error)).toEqual(['', '']);
+
+    const made: string[] = [];
+    let igFails = 0;
+    const comments = (token: string): CommentApi => ({
+      findPagePost: async (pageId, link) => (expect(token).toBe('fb-tok'), facebookIdOf(link, pageId)),
+      commentOnPost: async ({ postId, message }) => (made.push(`fb ${postId} ${message}`), { commentId: 'fbc-1' }),
+      findInstagramMedia: async ({ igUserId, link }) => (link.includes('/reel/Cx1') ? `${igUserId}-media` : null),
+      commentOnInstagram: async ({ mediaId, message }) => {
+        if (igFails-- > 0) throw new Error('Instagram is busy');
+        made.push(`ig ${mediaId} ${message}`);
+        return { commentId: 'igc-1' };
+      },
+    });
+    const links: Record<string, string> = { 'buffer-video-1': '', 'buffer-video-2': '' };
+    const post = videoPosts.findIndex((p) => p.channelId === 'ch-fb') + 1;
+    links[`buffer-video-${post}`] = 'https://www.facebook.com/reel/555';
+    links[`buffer-video-${3 - post}`] = 'https://www.instagram.com/reel/Cx1/';
+    igFails = 1;
+    const refresh = () =>
+      refreshPostLinks({ encryptionKey: KEY, comments, buffer: () => ({ getPost: async (id) => ({ status: 'sent', externalLink: links[id]!, error: '' }) }) });
+    await refresh();
+    expect(made).toEqual([`fb 555 ${POST_URL}`]);
+    const igShare = () => listPlanReelShares(planId).find((x) => x.channel_id === ig)!;
+    expect(igShare().error).toContain('did not go on yet: Instagram is busy');
+
+    // The next round tries again; nothing is ever commented twice.
+    await refresh();
+    await refresh();
+    expect(made).toEqual([`fb 555 ${POST_URL}`, `ig ig-9-media ${POST_URL}`]);
+    expect(listPlanReelShares(planId).map((x) => x.comment_id).sort()).toEqual(['fbc-1', 'igc-1']);
+    expect(igShare().error).toBe('');
+  });
+
+  it('reads the post id from the addresses Facebook uses', () => {
+    expect(facebookIdOf('https://www.facebook.com/123_456', 'p')).toBe('123_456');
+    expect(facebookIdOf('https://www.facebook.com/EasyCakes/posts/789', '123')).toBe('123_789');
+    expect(facebookIdOf('https://www.facebook.com/permalink.php?story_fbid=789&id=123', '123')).toBe('123_789');
+    expect(facebookIdOf('https://www.facebook.com/reel/555/', 'p')).toBe('555');
+    expect(facebookIdOf('https://www.facebook.com/photo.php?fbid=42&set=a.1', 'p')).toBe('42');
+    expect(facebookIdOf('https://www.facebook.com/EasyCakes/posts/pfbid0abc', 'p')).toBeNull();
   });
 
   it('marks a share failed when Buffer says it could not post it', async () => {
