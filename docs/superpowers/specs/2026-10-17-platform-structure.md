@@ -4,6 +4,7 @@ The platform is organized in the order the work is done. Every feature has one h
 
 | Menu | Page | What it is for |
 |---|---|---|
+| Dashboard | `/new-website/dashboard` | The first page: what was published, written, pictured, shared and turned into reels over 7, 30 or 90 days, with daily activity, where every keyword stands, websites, platforms, the latest events and anything that stopped |
 | Start here | `/new-website/home` | What the platform does, the six steps from a fresh install to shared posts, where each stands, the next action, and anything that stopped |
 | 1 · Set up | Platform settings `/new-website/platform` | AI key, pictures, time zone, notifications. Automation timings are under Advanced |
 | | Websites `/new-website` | Each website: a summary (topic, voice, publishing, channels), links to its articles, posts and reels; all settings on demand |

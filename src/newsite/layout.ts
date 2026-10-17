@@ -98,7 +98,10 @@ const ICON = (paths: string): string =>
 export const NAV: NavGroup[] = [
   {
     title: '',
-    items: [{ href: '/new-website/home', label: 'Start here', icon: ICON('<path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/>') }],
+    items: [
+      { href: '/new-website/dashboard', label: 'Dashboard', icon: ICON('<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>') },
+      { href: '/new-website/home', label: 'Start here', icon: ICON('<path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/>') },
+    ],
   },
   {
     title: '1 · Set up',
@@ -358,7 +361,7 @@ ${THEME}
 </head>
 <body>
 <aside class="ns-side">
-  <a class="ns-brand" href="/new-website/home"><b>Article Platform</b><small>Write, publish and share</small></a>
+  <a class="ns-brand" href="/new-website/dashboard"><b>Article Platform</b><small>Write, publish and share</small></a>
   <nav class="ns-nav" aria-label="Main">${nav.map((n) => n.value).join('')}</nav>
   <div class="ns-foot">
     <button type="button" id="ns-theme">${raw(ICON('<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>'))}<span>Dark mode</span></button>

@@ -29,6 +29,7 @@ import {
 import { decrypt } from '../lib/crypto.js';
 import { newLayout, type NewFlash } from './layout.js';
 import { homePage, homeState } from './home.js';
+import { dashboardData, dashboardPage, PERIODS, type Period } from './dashboard.js';
 import { newWebsiteListPage, newWebsiteWizardPage, type WizardChannel } from './view.js';
 import { channelsFor, setWebsiteChannels, takesImages, takesReels, websiteChannels } from './channels.js';
 import { createReels, kickReels } from './reels.js';
@@ -207,6 +208,13 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
     }
     return { errors, clean, siteName: result.siteName, types: result.types };
   };
+
+  app.get('/new-website/dashboard', async (request, reply) => {
+    const asked = Number((request.query as { days?: string }).days);
+    const days: Period = (PERIODS as readonly number[]).includes(asked) ? (asked as Period) : 30;
+    const body = dashboardPage(dashboardData(days, deps.settings?.get('timezone') ?? 'UTC'));
+    return send(reply, newLayout({ title: 'Dashboard', active: '/new-website/dashboard', body, flash: readFlash(request.query) }));
+  });
 
   app.get('/new-website/home', async (request, reply) =>
     send(reply, newLayout({ title: 'Start here', active: '/new-website/home', body: homePage(homeState(ready())), flash: readFlash(request.query) })),
