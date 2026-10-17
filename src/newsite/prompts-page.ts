@@ -125,7 +125,7 @@ const unknownWords = (text: string, allowed: string[]): string[] => {
 
 const CSS = `
 .pr-stage { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); box-shadow: var(--shadow); margin-bottom: 20px; }
-.pr-stage > header { padding: 18px 28px; border-bottom: 1px solid var(--line); }
+.pr-stage > header { padding: 18px 28px; border-bottom: 1px solid var(--line-strong); background: color-mix(in srgb, var(--line) 60%, var(--surface)); border-radius: var(--r-card) var(--r-card) 0 0; }
 .pr-stage h2 { font-size: 18px; margin: 0; }
 .pr-stage header p { margin: 4px 0 0; color: var(--soft); }
 .pr-row { display: flex; align-items: center; gap: 20px; padding: 14px 28px; border-top: 1px solid var(--line); }
