@@ -36,7 +36,7 @@ export function refreshPostLinks(deps: PostLinkDeps): Promise<number> {
   if (running) return running;
   lastRun = Date.now();
   running = (async () => {
-    let found = 0;
+    let found = fillFacebookApiLinks();
     const readers = new Map<number, BufferPostReader>();
     for (const table of TABLES) {
       const rows = all<{ id: number; channel_id: number; external_id: string }>(
@@ -70,6 +70,19 @@ export function refreshPostLinks(deps: PostLinkDeps): Promise<number> {
     running = null;
   });
   return running;
+}
+
+/**
+ * Posts sent through the Facebook API before links were kept: their link
+ * follows from the id Facebook gave, so it is filled in without asking anyone.
+ */
+export function fillFacebookApiLinks(): number {
+  const where = `status = 'sent' AND post_link = '' AND external_id <> ''
+    AND channel_id IN (SELECT id FROM newsite_channels WHERE platform = 'facebook' AND via = 'api')`;
+  return (
+    run(`UPDATE newsite_reel_shares SET post_link = 'https://www.facebook.com/reel/' || external_id WHERE ${where}`).changes +
+    run(`UPDATE newsite_social_posts SET post_link = 'https://www.facebook.com/' || external_id WHERE ${where}`).changes
+  );
 }
 
 /** On a page view: ask again, at most every few minutes. */

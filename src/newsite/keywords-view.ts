@@ -8,7 +8,7 @@ import { parseImageSet } from './images.js';
 import { isStepSlot, STEP_GAP_MINUTES, type PictureRow } from './pictures.js';
 import { notReadyReason } from './publish.js';
 import { WIZARD_CSS } from './view.js';
-import type { ChannelRow } from './channels.js';
+import { postLinkOf, type ChannelRow } from './channels.js';
 import type { SocialPostRow } from './social.js';
 import type { ImportCheck, PlanStats } from './keyword-import.js';
 
@@ -943,15 +943,16 @@ export const sharingBusy = (posts: SocialPostRow[]): boolean => posts.some((p) =
  * out, and the article it shares. A Buffer post has its link only once
  * Buffer has sent it.
  */
-export function postLinks(p: { status: string; post_link: string }, channel: ChannelRow | undefined, articleUrl = ''): Html {
-  const platform = channel ? labelOf(channel.platform) : 'its platform';
-  const post = p.post_link
-    ? html`<a class="ns-btn small" href="${p.post_link}" target="_blank" rel="noopener">Open the post on ${platform} ↗</a>`
+export function postLinks(p: { status: string; post_link: string; external_id: string }, channel: ChannelRow | undefined, articleUrl = ''): Html {
+  const where = channel ? `${channel.name} (${labelOf(channel.platform)})` : 'its platform';
+  const link = postLinkOf(p, channel, 'post');
+  const post = link
+    ? html`<a class="ns-btn small" href="${link}" target="_blank" rel="noopener">Open the post on ${where} ↗</a>`
     : p.status === 'sent' && channel?.via === 'buffer'
       ? html`<span class="kw-share-meta">The link to the post appears here once Buffer has posted it.</span>`
       : raw('');
   const article = articleUrl ? html`<a class="ns-btn small quiet" href="${articleUrl}" target="_blank" rel="noopener">Open the article ↗</a>` : raw('');
-  return p.post_link || articleUrl || p.status === 'sent' ? html`<div class="kw-share-links">${post}${article}</div>` : raw('');
+  return link || articleUrl || p.status === 'sent' ? html`<div class="kw-share-links">${post}${article}</div>` : raw('');
 }
 
 /** One post on one channel: the words and picture it was made with, where it stands, and what you can do. */

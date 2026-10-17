@@ -335,7 +335,9 @@ describe('sharing reels on the website channels', () => {
 
     const after = (await app.inject({ url: '/new-website/sharing/reels' })).body;
     expect(after).toContain('href="https://www.facebook.com/reel/vid_1"');
-    expect(after).toContain('Open the post on Facebook');
+    expect(after).toContain('Open the reel on Easy Cakes (Facebook)');
+    expect(after).toContain('href="https://www.facebook.com/page-1"'); // the page itself
+    expect(after).toContain('Facebook · Easy Cakes: Sent');
     expect(after).toContain('Queued in Buffer');
     expect(after).toContain('The link appears once Buffer has posted it.');
     expect(after).toContain(`href="${POST_URL}"`); // the article itself
@@ -349,7 +351,7 @@ describe('sharing reels on the website channels', () => {
     expect(found).toBe(1);
     const linked = (await app.inject({ url: '/new-website/sharing/reels' })).body;
     expect(linked).toContain('href="https://www.pinterest.com/pin/buffer-video-1/"');
-    expect(linked).toContain('Open the post on Pinterest');
+    expect(linked).toContain('Open the reel on longlivo (Pinterest)');
     expect(after).not.toContain('Send to the ticked channels'); // nothing left to send
 
     const channel = (await app.inject({ url: `/new-website/sharing/site/${websiteId}/channel/${page1}?tab=reels` })).body;
@@ -357,6 +359,23 @@ describe('sharing reels on the website channels', () => {
     expect(channel).toContain('href="/new-website/sharing/reels?website=');
     expect(channel).not.toContain('/remake'); // no making here
     await app.close();
+  });
+
+  it('a Facebook reel sent before links were kept still links to the reel on its page', async () => {
+    setWebsiteChannels(websiteId, [fbApiPage(true)]);
+    createReelShares(madeReel());
+    await kickReelShares(deps());
+    run(`UPDATE newsite_reel_shares SET post_link = ''`); // as the older shares were saved
+    const app = Fastify();
+    await app.register(formbody);
+    registerSocialRoutes(app, { settings, encryptionKey: KEY, dataDir, ask, autoStart: false, readFlash: () => null });
+    const page = (await app.inject({ url: '/new-website/sharing/reels' })).body;
+    expect(page).toContain('href="https://www.facebook.com/reel/vid_1"');
+    expect(page).toContain('Open the reel on Easy Cakes (Facebook)');
+    await app.close();
+
+    expect(await refreshPostLinks({ encryptionKey: KEY, buffer: () => { throw new Error('no Buffer here'); } })).toBe(1);
+    expect(listPlanReelShares(planId)[0]!.post_link).toBe('https://www.facebook.com/reel/vid_1');
   });
 
   it('marks a share failed when Buffer says it could not post it', async () => {

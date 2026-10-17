@@ -1,7 +1,7 @@
 import { html, raw, type Html } from '../web/views/layout.js';
 import type { NewWebsiteRow } from './repo.js';
 import type { SeoRow } from './seo.js';
-import { PLATFORMS, channelColor, takesReels, type ChannelRow } from './channels.js';
+import { PLATFORMS, channelColor, channelPageLink, postLinkOf, takesReels, type ChannelRow } from './channels.js';
 import type { SocialPostRow } from './social.js';
 import type { PictureRow } from './pictures.js';
 import type { ReelRow } from './reels.js';
@@ -459,10 +459,15 @@ function shareState(x: ReelShareRow, ch: ChannelRow): Html {
         <form method="post" action="/new-website/reels/shares/${String(x.id)}/retry"><button class="ns-btn small primary">Try again</button></form>
         <div class="kw-seo-problems">${x.error}</div>`;
     default: {
-      return html`<span class="ns-badge ok">${x.post_link ? 'Posted' : ch.via === 'buffer' ? 'Queued in Buffer' : 'Posted'}</span>
-        ${x.post_link
-          ? html`<a href="${x.post_link}" target="_blank" rel="noopener">Open the post on ${platformLabelOf(ch.platform)} ↗</a>`
+      const link = postLinkOf(x, ch, 'reel');
+      const page = channelPageLink(ch);
+      const where = `${ch.name} (${platformLabelOf(ch.platform)})`;
+      return html`<span class="ns-badge ok">${link || ch.via !== 'buffer' ? 'Posted' : 'Queued in Buffer'}</span>
+        ${link
+          ? html`<a href="${link}" target="_blank" rel="noopener">Open the reel on ${where} ↗</a>`
           : ch.via === 'buffer' ? html`<span class="sh-reels-line">The link appears once Buffer has posted it.</span>` : raw('')}
+        ${x.sent_at ? html`<span class="sh-reels-line">${ch.via === 'buffer' ? 'Given to Buffer' : 'Posted'} ${x.sent_at} UTC</span>` : raw('')}
+        ${page ? html`<a class="sh-reels-line" href="${page}" target="_blank" rel="noopener">The ${ch.name} page ↗</a>` : raw('')}
         ${x.board_name ? html`<span class="sh-reels-line">Board: ${x.board_name}</span>` : raw('')}
         ${x.error ? html`<div class="kw-seo-problems">${x.error}</div>` : raw('')}`;
     }
@@ -511,8 +516,8 @@ function reelItem(r: ReelRow, s: SharingSite): Html {
   const needsLook = r.status === 'failed' || destinations.some((c) => shareOf(c)?.status === 'failed');
   const chips = destinations.map((c) => {
     const x = shareOf(c);
-    const [word, tone] = !x ? ['Not sent', ''] : x.status === 'sent' && !x.post_link && c.via === 'buffer' ? ['Queued in Buffer', 'ok'] : SHARE_WORD[x.status];
-    return html`<span class="rl-chip ${tone}" style="--ch-color:${channelColor(c)}"><span class="sh-dot"></span>${platformLabelOf(c.platform)}: ${word}</span>`;
+    const [word, tone] = !x ? ['Not sent', ''] : x.status === 'sent' && !postLinkOf(x, c, 'reel') && c.via === 'buffer' ? ['Queued in Buffer', 'ok'] : SHARE_WORD[x.status];
+    return html`<span class="rl-chip ${tone}" style="--ch-color:${channelColor(c)}"><span class="sh-dot"></span>${platformLabelOf(c.platform)} · ${c.name}: ${word}</span>`;
   });
   return html`<li class="acc rl ${needsLook ? 'open' : ''}" id="reel-${String(r.id)}" data-reel="${String(r.id)}">
     <button type="button" class="acc-head" aria-expanded="${needsLook ? 'true' : 'false'}">

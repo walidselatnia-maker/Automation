@@ -234,3 +234,19 @@ export function setChannelWebsites(channelId: number, websiteIds: number[]): str
   for (const w of ids) run('INSERT OR IGNORE INTO newsite_website_channels (website_id, channel_id) VALUES (?, ?)', w, channelId);
   return null;
 }
+
+/**
+ * Where a shared post is on its platform. A post sent through the Facebook
+ * API is found from its id alone; anything else only has the link it was
+ * given (Buffer's, once it has posted it).
+ */
+export function postLinkOf(p: { status: string; post_link: string; external_id: string }, channel: ChannelRow | undefined, kind: 'reel' | 'post'): string {
+  if (p.post_link) return p.post_link;
+  if (p.status !== 'sent' || !p.external_id || channel?.platform !== 'facebook' || channel.via !== 'api') return '';
+  return kind === 'reel' ? `https://www.facebook.com/reel/${p.external_id}` : `https://www.facebook.com/${p.external_id}`;
+}
+
+/** The channel's own page on its platform, when its address is known. */
+export function channelPageLink(channel: ChannelRow | undefined): string {
+  return channel?.platform === 'facebook' && channel.fb_page_id ? `https://www.facebook.com/${channel.fb_page_id}` : '';
+}
