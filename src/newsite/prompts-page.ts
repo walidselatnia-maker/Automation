@@ -27,6 +27,8 @@ export interface PromptEntry {
   about: string;
   /** A picture template is one text; an AI prompt has instructions and a request. */
   template?: boolean;
+  /** Edited on its own page instead. */
+  href?: string;
 }
 
 export interface PromptStage {
@@ -73,10 +75,7 @@ export const PROMPT_STAGES: PromptStage[] = [
     prompts: [
       { key: 'newsite-social-post', name: 'Post text', about: 'Writes the text of each post, following that platform’s rules.' },
       { key: 'newsite-pick-board', name: 'Pinterest board', about: 'Chooses which Pinterest board each pin goes to.' },
-      { key: 'newsite-pin-1.template', name: 'Pinterest pin, design 1', about: 'The picture made for a pin.', template: true },
-      { key: 'newsite-pin-2.template', name: 'Pinterest pin, design 2', about: 'The picture made for a pin.', template: true },
-      { key: 'newsite-pin-3.template', name: 'Pinterest pin, design 3', about: 'The picture made for a pin.', template: true },
-      { key: 'newsite-pin-4.template', name: 'Pinterest pin, design 4', about: 'The picture made for a pin.', template: true },
+      { key: 'pin-designs', name: 'Pinterest pin designs', about: 'The pictures made for pins. Add new designs and pick which ones pins are made from.', href: '/new-website/pin-designs' },
       { key: 'newsite-fb-1.template', name: 'Facebook picture', about: 'The picture made for a Facebook post.', template: true },
       { key: 'newsite-ig-1.template', name: 'Instagram, Threads, TikTok and YouTube picture', about: 'The tall picture made for these platforms.', template: true },
       { key: 'newsite-social-1.template', name: 'LinkedIn and X picture', about: 'The wide picture made for these platforms.', template: true },
@@ -90,7 +89,7 @@ export const PROMPT_STAGES: PromptStage[] = [
   },
 ];
 
-const ENTRIES = new Map(PROMPT_STAGES.flatMap((s) => s.prompts.map((p) => [p.key, p] as const)));
+const ENTRIES = new Map(PROMPT_STAGES.flatMap((s) => s.prompts.filter((p) => !p.href).map((p) => [p.key, p] as const)));
 
 /** One editable text of a prompt: its file and what it is called on the page. */
 interface Part {
@@ -107,7 +106,7 @@ const partsOf = (p: PromptEntry): Part[] =>
         { file: `${p.key}.user.txt`, label: 'What it is given', help: 'Sent with each request, with the words in double braces filled in for that article.' },
       ];
 
-const current = (file: string): string => getPromptOverride(file) ?? readShippedPrompt(file);
+export const current = (file: string): string => getPromptOverride(file) ?? readShippedPrompt(file);
 const isChanged = (p: PromptEntry): boolean => partsOf(p).some((part) => getPromptOverride(part.file) !== undefined);
 
 /** The {{words}} a prompt may use: the step's own list, else those its default text uses. */
@@ -166,6 +165,7 @@ const CSS = `
 
 export function promptsListPage(): Html {
   const row = (p: PromptEntry): Html => {
+    if (p.href) return html`<div class="pr-row"><div><b>${p.name}</b><span>${p.about}</span></div><a class="ns-btn quiet" href="${p.href}">Open</a></div>`;
     const changed = isChanged(p);
     return html`<div class="pr-row"><div><b>${p.name}</b><span>${p.about}</span></div>
       <span class="pr-state ${changed ? 'changed' : ''}">${changed ? 'Changed' : 'Default'}</span>
@@ -271,7 +271,7 @@ export interface PromptRouteDeps {
 }
 
 /** Keep what it replaces as a version, then store the new text (or drop the change when it is the default again). */
-function store(file: string, text: string): void {
+export function store(file: string, text: string): void {
   const before = current(file);
   if (text === before) return;
   savePromptVersion(file, before);

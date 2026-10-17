@@ -18,6 +18,7 @@ import { shareStepPage } from '../src/newsite/keywords-view.js';
 import { listPlanSeo, queuePlanSeo } from '../src/newsite/seo.js';
 import { listChannels, saveBufferChannel, saveChannelRules, saveFacebookApiChannel, saveInstagramApiChannel, saveThreadsApiChannel, setWebsiteChannels, websiteChannels } from '../src/newsite/channels.js';
 import { kickPictureMaker, resetPictureMakerState } from '../src/newsite/pictures.js';
+import { addPinDesign, pickedPinDesigns, setPinDesignPicked } from '../src/newsite/pin-designs.js';
 import { checkPlatformRules, listPlatformRules, loadPlatformRules, parseRules } from '../src/newsite/platform-rules.js';
 import {
   bufferMetadata,
@@ -302,6 +303,33 @@ describe('Sharing an article on its channels', () => {
     remakeSocialPost(listSocialPosts()[0]!.id);
     await kickSocial(deps());
     expect(listSocialPosts()[0]!.template).toBe(2);
+  });
+
+  it('makes pins only from the picked designs, an added design included, in turn', async () => {
+    const added = addPinDesign('Design 5', 'A bright pin of {{scene}} with the headline "{{headline}}" and {{domain}}.');
+    setPinDesignPicked(1, false);
+    setPinDesignPicked(4, false);
+    expect(setPinDesignPicked(2, false)).toBe(true);
+    expect(setPinDesignPicked(3, false)).toBe(true);
+    expect(setPinDesignPicked(added, false)).toBe(false); // the last picked one stays
+    setPinDesignPicked(3, true);
+    expect(pickedPinDesigns().map((d) => d.id)).toEqual([3, added]);
+
+    setWebsiteChannels(websiteId, [pinChannel()]);
+    const used: number[] = [];
+    const prompts: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      run('DELETE FROM newsite_social_posts');
+      createSocialPosts(seoId);
+      await kickSocial(deps());
+      const post = listSocialPosts()[0]!;
+      used.push(post.template);
+      prompts.push(get<{ prompt: string }>('SELECT prompt FROM newsite_pictures WHERE id = ?', post.picture_id)!.prompt);
+    }
+    expect(used).toEqual([3, added, 3]);
+    expect(prompts[1]).toContain(`the headline "${GOOD_PIN.headline}"`);
+    expect(prompts[1]).toContain('f.longlivo.com');
+    expect(prompts[0]).toContain('torn-paper banner'); // design 3
   });
 
   /* -- Facebook ------------------------------------------------------------ */

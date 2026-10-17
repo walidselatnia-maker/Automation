@@ -11,6 +11,7 @@ import { commentsThroughApi } from './first-comment.js';
 import { pictureMediaUrl } from '../core/media-links.js';
 import { channelRules, type PlatformRules } from './platform-rules.js';
 import { loadTemplate } from '../pipeline/prompts.js';
+import { pickedPinDesigns, renderDesign } from './pin-designs.js';
 import type { Settings } from '../settings.js';
 import { bufferTokenOf, fbTokenOf, getChannel, videoOnly, websiteChannels, type ChannelRow } from './channels.js';
 import type { Fetch } from './client.js';
@@ -363,9 +364,14 @@ function articleScenes(row: SeoRow): { scene: string; detail: string } {
 /** Step 2: the post's own picture, from the next of the rules' templates for this channel, in the picture queue. */
 function queuePicture(w: Work, deps: SocialDeps): void {
   const { rules } = w;
-  const index = w.channel.next_template % rules.pictureTemplates.length;
+  const context = { ...articleScenes(w.row), ...postFields(w.item), domain: w.site.domain };
+  // Pinterest: only the designs picked on the Pinterest pin designs page, in turn. Other platforms: their rules' templates.
+  const designs = rules.platform === 'pinterest' ? pickedPinDesigns() : [];
+  const count = designs.length || rules.pictureTemplates.length;
+  const index = w.channel.next_template % count;
   run('UPDATE newsite_channels SET next_template = next_template + 1 WHERE id = ?', w.channel.id);
-  const prompt = loadTemplate(rules.pictureTemplates[index]!, { ...articleScenes(w.row), ...postFields(w.item), domain: w.site.domain });
+  const design = designs[index];
+  const prompt = design ? renderDesign(design, context) : loadTemplate(rules.pictureTemplates[index]!, context);
   const slot = `social-${w.item.id}`;
   run(`DELETE FROM newsite_pictures WHERE seo_id = ? AND slot IN (?, ?, ?)`, w.row.id, slot, `pin-${w.item.id}`, `fb-${w.item.id}`);
   const pictureId = Number(
@@ -374,7 +380,7 @@ function queuePicture(w: Work, deps: SocialDeps): void {
       w.row.id, slot, prompt, w.item.alt, rules.pictureShape,
     ).lastInsertRowid,
   );
-  run(`UPDATE newsite_social_posts SET status = 'picture', picture_id = ?, template = ? WHERE id = ?`, pictureId, index + 1, w.item.id);
+  run(`UPDATE newsite_social_posts SET status = 'picture', picture_id = ?, template = ? WHERE id = ?`, pictureId, design ? design.id : index + 1, w.item.id);
   deps.startPictures?.();
 }
 

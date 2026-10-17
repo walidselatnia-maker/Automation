@@ -8,6 +8,7 @@ import { loadPrompt, readShippedPrompt } from '../src/pipeline/prompts.js';
 import { Settings } from '../src/settings.js';
 import { registerNewWebsiteRoutes } from '../src/newsite/routes.js';
 import { PROMPT_STAGES } from '../src/newsite/prompts-page.js';
+import { designText, listPinDesigns, pickedPinDesigns } from '../src/newsite/pin-designs.js';
 
 const KEY = randomBytes(32);
 const FILE = 'seo-metadata.system.txt';
@@ -32,7 +33,7 @@ describe('Prompts page', () => {
 
   it('lists only prompts that ship with the platform, grouped by step, under Set up', async () => {
     for (const stage of PROMPT_STAGES) {
-      for (const p of stage.prompts) {
+      for (const p of stage.prompts.filter((x) => !x.href)) {
         const files = p.template ? [`${p.key}.txt`] : [`${p.key}.system.txt`, `${p.key}.user.txt`];
         for (const f of files) expect(readShippedPrompt(f).trim(), f).not.toBe('');
       }
@@ -77,5 +78,30 @@ describe('Prompts page', () => {
 
     const missing = await app.inject({ method: 'GET', url: '/new-website/prompts/..%2Fpackage.json' });
     expect(missing.headers.location).toContain('/new-website/prompts?error=');
+  });
+
+  it('Pinterest pin designs: adds a design without touching the others, and picks which ones pins use', async () => {
+    const list = (await app.inject({ method: 'GET', url: '/new-website/pin-designs' })).body;
+    expect(list).toContain('<b>4 of 4</b>');
+    expect(list).toContain('href="/new-website/pin-designs/new"');
+
+    const before = listPinDesigns().map(designText);
+    const bad = await post('/new-website/pin-designs/new', { name: 'Bold', text: 'A pin with {{title}}', picked: '1' });
+    expect(bad.body).toContain('{{title}} is not one of the words');
+    await post('/new-website/pin-designs/new', { name: 'Bold', text: 'A bold pin of {{scene}}, headline "{{headline}}".', picked: '1' });
+    const designs = listPinDesigns();
+    expect(designs).toHaveLength(5);
+    expect(designs.slice(0, 4).map(designText)).toEqual(before);
+    expect(designs[4]).toMatchObject({ name: 'Bold', picked: 1 });
+
+    for (const id of [1, 2, 4]) await post(`/new-website/pin-designs/${id}/pick`, { picked: '0' });
+    expect(pickedPinDesigns().map((d) => d.name)).toEqual(['Design 3', 'Bold']);
+    await post('/new-website/pin-designs/3/pick', { picked: '0' });
+    const last = await post(`/new-website/pin-designs/${designs[4]!.id}/pick`, { picked: '0' });
+    expect(decodeURIComponent(last.headers.location as string)).toContain('at least one design');
+    expect(pickedPinDesigns().map((d) => d.name)).toEqual(['Bold']);
+
+    const shipped = await post('/new-website/pin-designs/1/remove', {});
+    expect(decodeURIComponent(shipped.headers.location as string)).toContain('stay');
   });
 });

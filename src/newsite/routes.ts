@@ -12,6 +12,7 @@ import { addStepPicture, publishWhenReady, type PublishDeps } from './publish.js
 import { createSocialPosts, kickSocial, onPinPicture, type SocialDeps } from './social.js';
 import { registerSocialRoutes } from './social-routes.js';
 import { registerPromptRoutes } from './prompts-page.js';
+import { registerPinDesignRoutes } from './pin-designs.js';
 import { describeProjectId, flowProjectFor, NEXT_STEP_KEY } from './pictures.js';
 import { platformReady, registerPlatformRoutes } from './platform-routes.js';
 import { publicBaseUrlProblem } from '../core/media-links.js';
@@ -137,6 +138,7 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
   }
 
   registerPromptRoutes(app, { readFlash });
+  registerPinDesignRoutes(app, { readFlash });
 
   registerKeywordRoutes(app, {
     encryptionKey: deps.encryptionKey,

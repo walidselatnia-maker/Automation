@@ -916,6 +916,27 @@ export const MIGRATIONS: Migration[] = [
       addColumn(db, 'newsite_reel_shares', 'comment_tries', 'INTEGER NOT NULL DEFAULT 0');
     },
   },
+  {
+    id: '041-newsite-pin-designs',
+    description: 'New websites: Pinterest pin designs (the four shipped ones and any added on the dashboard) and which ones pins are made from',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS newsite_pin_designs (
+          id         INTEGER PRIMARY KEY AUTOINCREMENT,
+          name       TEXT NOT NULL,
+          -- A shipped design reads its prompt file (edits through the Prompts store); an added one keeps its text in body.
+          file       TEXT NOT NULL DEFAULT '',
+          body       TEXT NOT NULL DEFAULT '',
+          picked     INTEGER NOT NULL DEFAULT 1,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        INSERT INTO newsite_pin_designs (name, file)
+          SELECT 'Design ' || n, 'newsite-pin-' || n || '.template.txt'
+            FROM (SELECT 1 AS n UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4)
+           WHERE NOT EXISTS (SELECT 1 FROM newsite_pin_designs);
+      `);
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */
