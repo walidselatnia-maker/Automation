@@ -32,16 +32,12 @@ window.fetch = async function (...args) {
 
 // ─── The mint Flow's 2026-09-22 build accepts ───────────────
 //
-// That build refuses a token from execute(SITE_KEY, {action}) with
-// PUBLIC_ERROR_UNUSUAL_ACTIVITY, although the site key, action, payload and
-// headers all match the UI byte for byte and the UI's own button still
-// generates. What passes is minting through a widget: ready(), render an
-// invisible widget bound to the page's site key, execute(widgetId, {action}).
-//
-// Not Flow's widget -- reusing that one without an action was tried here and
-// still refused. Our own, in a hidden div, with the action passed. Ported from
-// upstream crisng95/flowkit@1eae10b (via FlowBridge2), which verified it end
-// to end on the same build; see crisng95/flowkit#58.
+// Flow's front end wraps grecaptcha.enterprise.execute (its x2a trap) so every
+// token it mints carries action "extension_hijack_detected", which the backend
+// refuses with PUBLIC_ERROR_UNUSUAL_ACTIVITY. hijack_bypass.js runs before the
+// page and keeps the pristine execute; minting through that is the primary
+// path. The Object.assign neuter and our own widget stay as fallbacks.
+// Ported from upstream crisng95/flowkit (hijack_bypass.js, injected.js, v0.5.x).
 
 /** The site key the page is configured with, else the constant. */
 function resolveSitekey() {
@@ -95,18 +91,70 @@ function ensureWidget(sitekey) {
   return widgetPromise;
 }
 
+// Primary path: the pristine execute hijack_bypass.js captured before Flow's
+// trap could overwrite it, called with our own action.
+async function executeWithPristine(sitekey, action) {
+  const pristine = window.__fk_hijack?.pristine;
+  if (typeof pristine !== 'function') return null;
+  const token = await Promise.race([
+    pristine(sitekey, { action }),
+    new Promise((_, rej) => setTimeout(() => rej(new Error('execute_hang')), 8000)),
+  ]);
+  return token ? String(token) : null;
+}
+
+// Fallback when the capture lost the race: the trap builds its poison action
+// with Object.assign, so swap Object.assign out for the one execute call and
+// put our action back over the poison one.
+const _realObjectAssign = Object.assign;
+
+async function executeWithAssignNeuter(sitekey, action) {
+  Object.assign = function (target, ...sources) {
+    const result = _realObjectAssign.call(this, target, ...sources);
+    if (result && typeof result === 'object' &&
+        result.action === 'extension_hijack_detected') {
+      result.action = action;
+    }
+    return result;
+  };
+  try {
+    await waitReady(2500);
+    const token = await Promise.race([
+      window.grecaptcha.enterprise.execute(sitekey, { action }),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('execute_hang')), 8000)),
+    ]);
+    return token ? String(token) : null;
+  } finally {
+    Object.assign = _realObjectAssign;
+  }
+}
+
 async function executeWithRetry(sitekey, action, attempts = 2) {
   let lastError = null;
+  const hijack = window.__fk_hijack;
+  const hasPristine = typeof hijack?.pristine === 'function';
+  const knownTrapped = !!hijack?.trapped;
   for (let i = 0; i < attempts; i++) {
     try {
-      await waitReady(2500);
-      const widgetId = await ensureWidget(sitekey);
-      const token = await Promise.race([
-        window.grecaptcha.enterprise.execute(widgetId, { action }),
-        new Promise((_, rej) => setTimeout(() => rej(new Error('execute_hang')), 8000)),
-      ]);
-      if (token) return String(token);
-      lastError = new Error('empty_token');
+      if (hasPristine) {
+        const token = await executeWithPristine(sitekey, action);
+        if (token) return token;
+        lastError = new Error('pristine_empty_token');
+      } else if (knownTrapped) {
+        const token = await executeWithAssignNeuter(sitekey, action);
+        if (token) return token;
+        lastError = new Error('assign_neuter_empty_token');
+      } else {
+        // Last resort: our own widget. Flow's trap is expected to refuse it too.
+        await waitReady(2500);
+        const widgetId = await ensureWidget(sitekey);
+        const token = await Promise.race([
+          window.grecaptcha.enterprise.execute(widgetId, { action }),
+          new Promise((_, rej) => setTimeout(() => rej(new Error('execute_hang')), 8000)),
+        ]);
+        if (token) return String(token);
+        lastError = new Error('empty_token');
+      }
     } catch (e) {
       lastError = e;
     }
@@ -158,6 +206,8 @@ function waitForGrecaptcha(timeout = 15000) {
   return new Promise((resolve, reject) => {
     const start = Date.now();
     const check = () => {
+      // The pristine execute counts as ready even when Flow has wrapped the public one.
+      if (window.__fk_hijack?.pristine) return resolve();
       if (typeof window.grecaptcha?.enterprise?.execute === 'function') return resolve();
       if (Date.now() - start > timeout) {
         return reject(
