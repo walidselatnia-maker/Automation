@@ -189,10 +189,10 @@ html.dark .pf { color: color-mix(in srgb, var(--pf) 72%, #fff); }
   --mono: 'IBM Plex Mono', ui-monospace, Menlo, monospace;
 }
 :root.dark {
-  --page: #0e1217; --surface: #181e26; --raised: #212833; --line: #323b47; --line-strong: #4f5b6b;
+  --page: #050608; --surface: #0c0f13; --raised: #14181e; --line: #232930; --line-strong: #3b434e;
   --ink: #eef2f6; --soft: #c5cdd7; --faint: #9ea9b6;
   --accent: #c8323d; --accent-hover: #a82530; --accent-ink: #ffffff; --accent-text: #ff9aa3; --accent-tint: rgba(200, 50, 61, .22);
-  --idle: #1c3352; --idle-hover: #244166; --idle-line: #36577f; --idle-ink: #cfe3ff;
+  --idle: #0f1d31; --idle-hover: #172a46; --idle-line: #27426a; --idle-ink: #cfe3ff;
   --good: #5fd39a; --good-tint: rgba(95, 211, 154, .14);
   --bad: #ff8b7e; --bad-hover: #c9372b; --bad-tint: rgba(255, 139, 126, .14);
   --shadow: none;

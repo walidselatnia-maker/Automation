@@ -342,7 +342,7 @@ export function channelsPage(channels: ChannelRow[], websitesOf: Map<number, str
     <style>${raw(CSS)}</style>
     <div class="ns-head">
       <div>
-        <h1 class="ns-title">Channels</h1>
+        <h1 class="ns-title">Social channels</h1>
         <p class="ns-lede">The social media accounts your articles are shared on. Add each account here once, then choose in each website’s settings which accounts it shares on. Every channel writes its own posts, by its own rules.</p>
       </div>
       ${channels.length ? html`<a class="ns-btn primary" href="/new-website/channels/add">Add channel</a>` : raw('')}
