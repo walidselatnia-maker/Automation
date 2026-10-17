@@ -203,12 +203,13 @@ html.dark .pf { color: color-mix(in srgb, var(--pf) 72%, #fff); }
   --mono: 'IBM Plex Mono', ui-monospace, Menlo, monospace;
 }
 :root.dark {
-  --page: #050608; --surface: #0c0f13; --raised: #14181e; --line: #232930; --line-strong: #3b434e;
-  --ink: #eef2f6; --soft: #c5cdd7; --faint: #9ea9b6;
-  --accent: #c8323d; --accent-hover: #a82530; --accent-ink: #ffffff; --accent-text: #ff9aa3; --accent-tint: rgba(200, 50, 61, .22);
-  --idle: #0f1d31; --idle-hover: #172a46; --idle-line: #27426a; --idle-ink: #cfe3ff;
-  --good: #5fd39a; --good-tint: rgba(95, 211, 154, .14);
-  --bad: #ff8b7e; --bad-hover: #c9372b; --bad-tint: rgba(255, 139, 126, .14);
+  /* Dimmed slate, not black: softer contrast for long sessions (text about 10:1, not 17:1). */
+  --page: #1c2128; --surface: #22272e; --raised: #2a3039; --line: #373e47; --line-strong: #4d5663;
+  --ink: #cdd5de; --soft: #adbac7; --faint: #8b97a5;
+  --accent: #c4434e; --accent-hover: #a83540; --accent-ink: #ffffff; --accent-text: #f2a7ad; --accent-tint: rgba(196, 67, 78, .2);
+  --idle: #263449; --idle-hover: #2e3f59; --idle-line: #3f5677; --idle-ink: #c3d6f2;
+  --good: #6bc59a; --good-tint: rgba(107, 197, 154, .14);
+  --bad: #ef8f84; --bad-hover: #c9473b; --bad-tint: rgba(239, 143, 132, .14);
   --shadow: none;
 }
 * { box-sizing: border-box; }

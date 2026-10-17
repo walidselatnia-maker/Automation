@@ -176,7 +176,7 @@ export function dashboardData(days: Period, timezone: string, now = Date.now()):
 
 const CSS = `
 .db { --c-articles: #6366f1; --c-words: #8b5cf6; --c-pictures: #f59e0b; --c-posts: #14b8a6; --c-reels: #ec4899; --c-keywords: #64748b; --c-published: #22c55e; }
-html.dark .db { --c-articles: #818cf8; --c-words: #a78bfa; --c-pictures: #fbbf24; --c-posts: #2dd4bf; --c-reels: #f472b6; --c-keywords: #94a3b8; --c-published: #4ade80; }
+html.dark .db { --c-articles: #7f86dc; --c-words: #9b89d8; --c-pictures: #d6a545; --c-posts: #43b5a3; --c-reels: #d3709f; --c-keywords: #8a96a8; --c-published: #5fb784; }
 .db-periods { display: inline-flex; border: 1px solid var(--line-strong); border-radius: 999px; padding: 3px; background: var(--surface); }
 .db-periods a { padding: 6px 14px; border-radius: 999px; font: 600 13px/1 var(--body); color: var(--soft); text-decoration: none; }
 .db-periods a.on { background: var(--ink); color: var(--surface); }
