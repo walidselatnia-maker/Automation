@@ -171,6 +171,28 @@ function queueLane(seoId: number, inLane: (slot: string) => boolean, dataDir: st
   return queued;
 }
 
+/**
+ * Put failed article pictures back in the queue: one picture, one keyword's, or a whole plan's.
+ * Social post pictures are left out: their posts remake them. Step pictures go back in the slow queue.
+ */
+export function retryFailedPictures(where: { pictureId?: number; seoId?: number; planId?: number }): number {
+  const [filter, value] = where.pictureId
+    ? ['id = ?', where.pictureId]
+    : where.seoId
+      ? ['seo_id = ?', where.seoId]
+      : ['seo_id IN (SELECT id FROM keyword_seo WHERE plan_id = ?)', where.planId ?? 0];
+  const failed = all<PictureRow>(`SELECT * FROM newsite_pictures WHERE status = 'failed' AND ${filter}`, value);
+  const prompts = new Map<number, Map<string, string>>();
+  const promptOf = (seoId: number, slot: string) => {
+    if (!prompts.has(seoId)) prompts.set(seoId, new Map(currentPrompts(seoId).map((p) => [p.slot, p.prompt])));
+    return prompts.get(seoId)!.get(slot);
+  };
+  // Only article pictures made from the prompt as it is now: an old prompt is remade by Make pictures.
+  const again = failed.filter((p) => promptOf(p.seo_id, p.slot) === p.prompt);
+  for (const p of again) run(`UPDATE newsite_pictures SET status = 'queued', attempts = 0, error = '' WHERE id = ?`, p.id);
+  return again.length;
+}
+
 /** A restart mid-picture: it goes back in the queue, and the cut-off try does not count. */
 export function resetInterruptedPictures(): void {
   run(`UPDATE newsite_pictures SET status = 'queued', attempts = MAX(0, attempts - 1) WHERE status = 'making'`);

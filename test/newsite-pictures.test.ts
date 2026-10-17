@@ -17,6 +17,7 @@ import {
   queuePictures,
   resetPictureMakerState,
   queueStepPictures,
+  retryFailedPictures,
   NEXT_STEP_KEY,
 } from '../src/newsite/pictures.js';
 
@@ -154,6 +155,21 @@ describe('Pictures, made the old dashboard way', () => {
     await kickPictureMaker(deps(ok));
     expect(prompts()).toEqual(['prompt for overhead', 'prompt for closeup']);
     expect(listPictures(seoId).map((p) => p.status)).toEqual(['done', 'done', 'done']);
+  });
+
+  it('tries failed pictures again on request (one, or all of a keyword), never an old prompt or a social picture', async () => {
+    setPrompts(['feature', 'overhead']);
+    queuePictures(seoId, dataDir);
+    run(`UPDATE newsite_pictures SET status = 'failed', error = 'Image job x failed'`);
+    run(`INSERT INTO newsite_pictures (seo_id, slot, position, prompt, status) VALUES (?, 'social-9', 1000, 'pin', 'failed')`, seoId);
+    run(`INSERT INTO newsite_pictures (seo_id, slot, position, prompt, status) VALUES (?, 'closeup', 2, 'an old prompt', 'failed')`, seoId);
+    const [feature] = listPictures(seoId);
+    expect(retryFailedPictures({ pictureId: feature!.id })).toBe(1);
+    expect(listPictures(seoId).find((p) => p.slot === 'feature')).toMatchObject({ status: 'queued', error: '', attempts: 0 });
+    expect(retryFailedPictures({ seoId })).toBe(1); // overhead; not the social picture, not the old prompt
+    expect(listPictures(seoId).filter((p) => p.status === 'failed').map((p) => p.slot).sort()).toEqual(['closeup', 'social-9']);
+    await kickPictureMaker(deps(ok));
+    expect(prompts()).toEqual(['prompt for feature', 'prompt for overhead']);
   });
 
   it('makes the main pictures first; once posted, the steps go through the slow queue, 15 to 30 minutes apart', async () => {

@@ -10,6 +10,7 @@ import {
   pictureDir,
   queuePictures,
   resetInterruptedPictures,
+  retryFailedPictures,
   type PictureDeps,
 } from './pictures.js';
 
@@ -75,6 +76,36 @@ export function registerPictureRoutes(app: FastifyInstance, deps: PictureRouteDe
       imagesPage(planId, queuedMessage(queued, '')),
       303,
     );
+  });
+
+  const retried = (n: number, what: string): string =>
+    n ? `Trying ${n} failed picture${n === 1 ? '' : 's'} again${what}, one at a time.` : 'No failed picture to try again.';
+
+  /** One failed picture, made again. */
+  app.post('/new-website/pictures/:id/retry', async (request, reply) => {
+    const picture = getPicture(Number((request.params as { id: string }).id) || 0);
+    const row = picture ? getSeoRow(picture.seo_id) : undefined;
+    if (!picture || !row) return reply.redirect('/new-website/keywords', 303);
+    const n = retryFailedPictures({ pictureId: picture.id });
+    start();
+    return reply.redirect(imagesPage(row.plan_id, retried(n, ` for “${row.keyword}”`)) + `#kw-${row.id}`, 303);
+  });
+
+  /** Every failed picture of one keyword, made again. */
+  app.post('/new-website/keywords/pictures/:id/retry-failed', async (request, reply) => {
+    const row = getSeoRow(Number((request.params as { id: string }).id) || 0);
+    if (!row) return reply.redirect('/new-website/keywords', 303);
+    const n = retryFailedPictures({ seoId: row.id });
+    start();
+    return reply.redirect(imagesPage(row.plan_id, retried(n, ` for “${row.keyword}”`)), 303);
+  });
+
+  /** Every failed picture of a plan, made again. */
+  app.post('/new-website/keywords/plan/:id/pictures/retry-failed', async (request, reply) => {
+    const planId = Number((request.params as { id: string }).id) || 0;
+    const n = retryFailedPictures({ planId });
+    start();
+    return reply.redirect(imagesPage(planId, retried(n, '')), 303);
   });
 
   /** One finished picture, from the platform's data folder. */

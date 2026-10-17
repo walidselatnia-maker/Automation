@@ -148,6 +148,8 @@ export const CSS = `
 .kw-pic-empty.failed { color: var(--bad); border-color: var(--bad); }
 .kw-pic-empty small { color: var(--faint); font-size: 12px; line-height: 1.4; max-height: 5.6em; overflow: hidden; overflow-wrap: anywhere; max-width: 100%; }
 .kw-pic-empty .ns-btn { height: 30px; padding: 0 10px; font-size: 12px; }
+.kw-pic-empty form { margin: 4px 0 0; }
+.kw-failed-bar { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin: 0 0 16px; padding: 10px 16px; border: 1px solid var(--bad); border-left-width: 4px; border-radius: var(--r-ctl); background: var(--bad-tint); color: var(--ink); }
 .kw-pic-actions { gap: 8px; align-items: center; }
 .kw-pic-actions form { margin: 0; }
 .kw-project { font-size: 14px; color: var(--soft); overflow-wrap: anywhere; }
@@ -737,7 +739,10 @@ function pictureBox(picture: PictureRow | undefined, slot: string): Html {
   }
   return html`<div class="kw-pic kw-pic-empty ${picture.status}">
     <span>${PICTURE_STATE[picture.status]}</span>
-    ${picture.status === 'failed' ? html`<small>${picture.error}</small>` : raw('')}
+    ${picture.status === 'failed'
+      ? html`<small>${picture.error}</small>
+        <form method="post" action="/new-website/pictures/${picture.id}/retry"><button class="ns-btn small kw-pic-retry">Try again</button></form>`
+      : raw('')}
   </div>`;
 }
 
@@ -755,6 +760,7 @@ function imagesCard(row: SeoRow, intent: string, pictures: PictureRow[]): Html {
   const mainBusy = main.some((x) => x.p?.status === 'queued' || x.p?.status === 'making');
   const making = current.some((p) => p?.status === 'making');
   const stepsWaiting = current.some((p, i) => p?.status === 'queued' && isStepSlot(set!.images[i]!.slot));
+  const failedPics = current.filter((p) => p?.status === 'failed').length;
   const state = !ready ? 'Needs the article first' : (SKELETON_STATUS[row.images_status] ?? 'Waiting');
   const head = html`${roleLabel(row, intent)}<b>${row.keyword}</b>${promptsDone
     ? html`<span class="ns-num kw-count">${made} of ${set!.images.length} pictures</span>`
@@ -765,6 +771,11 @@ function imagesCard(row: SeoRow, intent: string, pictures: PictureRow[]): Html {
           ${promptsDone && mainLeft > 0 && !mainBusy
             ? html`<form method="post" action="/new-website/keywords/pictures/${row.id}/make">
                 <button class="ns-btn primary">Make ${mainLeft} main picture${mainLeft === 1 ? '' : 's'}</button>
+              </form>`
+            : raw('')}
+          ${failedPics
+            ? html`<form method="post" action="/new-website/keywords/pictures/${row.id}/retry-failed">
+                <button class="ns-btn primary">Try ${failedPics} failed picture${failedPics === 1 ? '' : 's'} again</button>
               </form>`
             : raw('')}
           ${row.images_status === 'failed' || !(mainBusy || making)
@@ -802,7 +813,8 @@ function imagesCard(row: SeoRow, intent: string, pictures: PictureRow[]): Html {
         : html`<p class="kw-none" style="margin:4px 0 0">${!ready
             ? 'The image prompts are written once this keyword has its article.'
             : row.images_status === 'writing' ? 'The AI is writing the image prompts now.' : 'Waiting for its turn.'}</p>`}`;
-  return card(head, body, row.images_status === 'failed');
+  // Opened when something failed, so its Try again buttons are in sight.
+  return card(head, body, row.images_status === 'failed' || failedPics > 0);
 }
 
 /** The image prompts (AI#4) of every keyword in one plan, and their pictures. */
@@ -828,6 +840,11 @@ export function imagesStepPage(
   const mainTotal = rows.reduce((n, r) => n + slotsOf(r).filter((im) => !isStepSlot(im.slot)).length, 0);
   const mainMade = pictures.filter((p) => p.status === 'done' && !isStepSlot(p.slot)).length;
   const stepsWaiting = pictures.filter((p) => p.status === 'queued' && isStepSlot(p.slot)).length;
+  // Failed pictures made from each article's prompts as they are now: what "Try again" remakes.
+  const failedAll = rows.reduce((n, r) => {
+    const prompts = new Map(slotsOf(r).map((im) => [im.slot, im.prompt]));
+    return n + picturesOf(r.id).filter((p) => p.status === 'failed' && prompts.get(p.slot) === p.prompt).length;
+  }, 0);
   const minutes = Math.max(0, Math.round((nextStepAt - now) / 60_000));
   const body = html`
     <h2>Images</h2>
@@ -841,6 +858,10 @@ export function imagesStepPage(
           : raw('')}</p>`
       : raw('')}
     ${project ? html`<p class="kw-project">Flow project: ${project}</p>` : raw('')}
+    ${failedAll
+      ? html`<div class="kw-failed-bar" role="status"><span><b class="ns-num">${failedAll} picture${failedAll === 1 ? '' : 's'}</b> failed to make.</span>
+          <form method="post" action="/new-website/keywords/plan/${plan.id}/pictures/retry-failed" style="margin:0"><button class="ns-btn primary">Try all ${failedAll} again</button></form></div>`
+      : raw('')}
     ${rows.length
       ? html`<ul class="acc-list" ${busy ? raw(`data-watch="${plan.id}"`) : raw('')}>
           ${rows.map((r) => imagesCard(r, intentOf.get(r.keyword) ?? '', picturesOf(r.id)))}
