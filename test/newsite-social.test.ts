@@ -20,6 +20,7 @@ import { listChannels, saveBufferChannel, saveChannelRules, saveFacebookApiChann
 import { kickPictureMaker, resetPictureMakerState } from '../src/newsite/pictures.js';
 import { checkPlatformRules, listPlatformRules, loadPlatformRules, parseRules } from '../src/newsite/platform-rules.js';
 import {
+  bufferMetadata,
   checkFields,
   createSocialPosts,
   getSocialPost,
@@ -388,6 +389,17 @@ describe('Sharing an article on its channels', () => {
     expect(probe).toBe('mjpeg,896,1120');
   });
 
+  it('YouTube and TikTok take reels only: never an image post, and YouTube gets the title and category Buffer needs', () => {
+    const yt = saveBufferChannel({ platform: 'youtube', name: 'Long Livo', bufferToken: 'tok', bufferChannelId: 'ch-yt', paidBuffer: false, postImage: true, postReel: true, multiWebsite: false }, KEY);
+    const tt = saveBufferChannel({ platform: 'tiktok', name: 'longlivo', bufferToken: 'tok', bufferChannelId: 'ch-tt', paidBuffer: false, postImage: true, postReel: false, multiWebsite: false }, KEY);
+    setWebsiteChannels(websiteId, [yt, tt], new Map([[yt, { image: true, reel: false }]]));
+    expect(websiteChannels(websiteId).map((c) => [c.platform, c.post_image, c.post_reel])).toEqual([['tiktok', 0, 1], ['youtube', 0, 1]]);
+    expect(createSocialPosts(seoId)).toBe(0);
+    expect(bufferMetadata('youtube', { title: 'Strawberry Cake in 10 Seconds', url: POST_URL, firstComment: '', type: 'reel' })).toBe('youtube: { title: "Strawberry Cake in 10 Seconds" categoryId: "26" }');
+    expect(bufferMetadata('tiktok', { title: 'x', url: POST_URL, firstComment: '', type: 'reel' })).toBe('');
+    for (const p of ['youtube', 'tiktok', 'threads', 'linkedin', 'x']) expect(loadPlatformRules(p).platform).toBe(p);
+  });
+
   it('makes no image post for a page set to post reels only', () => {
     setWebsiteChannels(websiteId, [fbChannel(false)]);
     expect(createSocialPosts(seoId)).toBe(0);
@@ -623,8 +635,8 @@ describe('Sharing an article on its channels', () => {
       const res = await (await app()).inject({ url: '/new-website/channels/rules/pinterest' });
       expect(res.body).toContain('This rules file is valid');
       expect(res.body).toContain('headline, cta, title, description, alt');
-      const missing = await (await app()).inject({ url: '/new-website/channels/rules/tiktok' });
-      expect(missing.body).toContain('There is no rules file for tiktok');
+      const missing = await (await app()).inject({ url: '/new-website/channels/rules/mastodon' });
+      expect(missing.body).toContain('There is no rules file for mastodon');
     });
   });
 });

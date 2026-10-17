@@ -9,7 +9,7 @@ import { pictureMediaUrl } from '../core/media-links.js';
 import { channelRules, type PlatformRules } from './platform-rules.js';
 import { loadTemplate } from '../pipeline/prompts.js';
 import type { Settings } from '../settings.js';
-import { bufferTokenOf, fbTokenOf, getChannel, websiteChannels, type ChannelRow } from './channels.js';
+import { bufferTokenOf, fbTokenOf, getChannel, videoOnly, websiteChannels, type ChannelRow } from './channels.js';
 import type { Fetch } from './client.js';
 import { parseImageSet } from './images.js';
 import { pictureDir, type PictureRow } from './pictures.js';
@@ -168,7 +168,7 @@ export function createSocialPosts(seoId: number): number {
   if (!site) return 0;
   let added = 0;
   for (const c of websiteChannels(site.id)) {
-    if (!c.post_image) continue;
+    if (!c.post_image || videoOnly(c.platform)) continue;
     added += Number(run('INSERT OR IGNORE INTO newsite_social_posts (seo_id, channel_id, kind) VALUES (?, ?, ?)', seoId, c.id, c.platform).changes);
   }
   return added;
@@ -444,6 +444,9 @@ export function bufferMetadata(
       return `facebook: { type: ${type}${comment} }`;
     case 'instagram':
       return `instagram: { type: ${type} shouldShareToFeed: true${comment} }`;
+    case 'youtube':
+      // Buffer needs a title and a category for YouTube: 26 is How-to & Style.
+      return `youtube: { title: ${q(extra.title.slice(0, 100))} categoryId: "26" }`;
     case 'linkedin':
       return comment ? `linkedin: {${comment} }` : '';
     default:

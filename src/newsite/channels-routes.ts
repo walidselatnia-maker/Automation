@@ -16,7 +16,9 @@ import {
   saveFacebookApiChannel,
   setChannelContent,
   setChannelWebsites,
+  takesImages,
   takesReels,
+  videoOnly,
   PLATFORMS,
   viasOf,
   type Platform,
@@ -108,8 +110,10 @@ const on = (v: unknown): boolean => v === '1' || v === 'on' || v === true;
 
 /** Is this Buffer channel one of the platform's? */
 const letters = (s: string): string => s.toLowerCase().replace(/[^a-z]/g, '');
+/** Buffer's service name where it differs from the platform's key. */
+const SERVICE_OF: Record<string, string> = { x: 'twitter' };
 const isOf = (platform: Platform) => (c: BufferChannel): boolean =>
-  letters(c.service) === letters(platform) || (platform === 'pinterest' && c.boards.length > 0);
+  letters(c.service) === letters(SERVICE_OF[platform] ?? platform) || letters(c.service) === letters(platform) || (platform === 'pinterest' && c.boards.length > 0);
 
 /** The platform and way in the address, when it is one we build. */
 function routeOf(request: FastifyRequest): WizardContext | null {
@@ -269,7 +273,7 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
       return send(reply, page(title(w), checkStep(ctx, results), request));
     }
     if (w.firstComment) return send(reply, page(title(w), planStep(ctx, d.paidBuffer), request));
-    if (takesReels(w.platform)) return send(reply, page(title(w), postStep(ctx, { image: d.postImage, reel: d.postReel }), request));
+    if (takesReels(w.platform) && !videoOnly(w.platform)) return send(reply, page(title(w), postStep(ctx, { image: d.postImage, reel: d.postReel }), request));
     return send(reply, page(title(w), websitesStep(ctx, websiteChoices([]), false), request));
   });
 
@@ -290,7 +294,7 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
     if (!w || !d?.picked.length) return reply.redirect(lost, 303);
     d.paidBuffer = on(b.paidBuffer);
     const ctx = { ...w, draft: String(b.draft) };
-    if (takesReels(w.platform)) return send(reply, page(title(w), postStep(ctx, { image: d.postImage, reel: d.postReel }), request));
+    if (takesReels(w.platform) && !videoOnly(w.platform)) return send(reply, page(title(w), postStep(ctx, { image: d.postImage, reel: d.postReel }), request));
     return send(reply, page(title(w), websitesStep(ctx, websiteChoices([]), false), request));
   });
 
@@ -334,8 +338,8 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
               bufferToken: d.token,
               bufferChannelId: p.id,
               paidBuffer: Boolean(w.firstComment) && d.paidBuffer,
-              postImage: !takesReels(w.platform) || d.postImage,
-              postReel: takesReels(w.platform) && d.postReel,
+              postImage: takesImages(w.platform) && (!takesReels(w.platform) || d.postImage),
+              postReel: takesReels(w.platform) && (videoOnly(w.platform) || d.postReel),
               multiWebsite: multi,
             },
             deps.encryptionKey,
@@ -403,7 +407,7 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
       case 'websites':
         return send(reply, page(title, websitesPart(c, websiteChoices(channelWebsiteIds(c.id))), request));
       case 'posts':
-        return takesReels(c.platform) ? send(reply, page(title, postsPart(c), request)) : reply.redirect(`/new-website/channels/${c.id}`, 303);
+        return takesReels(c.platform) && !videoOnly(c.platform) ? send(reply, page(title, postsPart(c), request)) : reply.redirect(`/new-website/channels/${c.id}`, 303);
       case 'plan':
         return c.via === 'buffer' ? send(reply, page(title, planPart(c), request)) : reply.redirect(`/new-website/channels/${c.id}`, 303);
       case 'rules':

@@ -8,13 +8,17 @@ import { PLATFORMS } from './channels.js';
  * gets it without each one marking its words; form fields, code and the
  * page's own scripts are left alone.
  */
-const PLATFORM_WORDS = PLATFORMS.map((p) => ({ word: p.label === 'Twitter / X' ? 'Twitter' : p.label, color: p.color }));
+const PLATFORM_WORDS = [
+  ...PLATFORMS.map((p) => ({ word: p.label, color: p.color })),
+  // "Twitter" on its own too; a lone "X" is left alone, it is too common.
+  ...PLATFORMS.filter((p) => p.label === 'Twitter / X').map((p) => ({ word: 'Twitter', color: p.color })),
+];
 const PLATFORM_SCRIPT = `<script>
 (function () {
   var words = ${JSON.stringify(PLATFORM_WORDS)};
   var colors = {};
   words.forEach(function (w) { colors[w.word] = w.color; });
-  // The names are plain words (letters and spaces), so they go in as they are.
+  // The names are plain words (letters, spaces and the slash of "Twitter / X"), so they go in as they are; the longer comes first.
   var re = new RegExp('\\\\b(' + words.map(function (w) { return w.word; }).join('|') + ')\\\\b', 'g');
   var skip = /^(SCRIPT|STYLE|TEXTAREA|INPUT|SELECT|OPTION|PRE|CODE|TITLE|NOSCRIPT)$/;
   function paint(root) {

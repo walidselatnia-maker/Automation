@@ -256,6 +256,8 @@ export interface WizardChannel {
   image: boolean;
   reel: boolean;
   takesReels: boolean;
+  /** False for YouTube and TikTok: videos only. */
+  takesImages: boolean;
 }
 
 export function newWebsiteWizardPage(existing?: NewWebsiteRow, channels: WizardChannel[] = [], section = -1): Html {
@@ -359,7 +361,7 @@ export function newWebsiteWizardPage(existing?: NewWebsiteRow, channels: WizardC
                       <label class="wz-check"><input type="checkbox" name="channelId" value="${String(c.id)}" data-name="${c.name}" ${c.checked ? raw('checked') : raw('')} />
                         <span>${c.name} <em class="wz-ch-platform">${platformName(c.platform)} · ${c.via === 'buffer' ? 'Buffer' : 'API'}</em></span></label>
                       <span class="wz-ch-what">
-                        <label><input type="checkbox" name="image-${String(c.id)}" value="1" ${c.image ? raw('checked') : raw('')} /> Image posts</label>
+                        ${c.takesImages ? html`<label><input type="checkbox" name="image-${String(c.id)}" value="1" ${c.image ? raw('checked') : raw('')} /> Image posts</label>` : raw('')}
                         ${c.takesReels ? html`<label><input type="checkbox" name="reel-${String(c.id)}" value="1" ${c.reel ? raw('checked') : raw('')} /> Reels</label>` : raw('')}
                       </span>
                     </div>`,

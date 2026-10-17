@@ -558,7 +558,7 @@ function reelItem(r: ReelRow, s: SharingSite): Html {
                       : html`<span class="ns-badge busy">${r.status === 'done' ? 'Going out shortly' : 'After the video is made'}</span>`}</span>
                 </li>`;
               })}</ul>`
-            : html`<p class="sh-reels-line">${s.site.name} has no channel that takes reels (Facebook, Instagram or Pinterest).</p>`}
+            : html`<p class="sh-reels-line">${s.site.name} has no channel that takes reels (Facebook, Instagram, Pinterest, YouTube or TikTok).</p>`}
           ${r.prompt ? html`<details><summary>The prompt</summary><pre>${r.prompt}</pre></details>` : raw('')}
         </div>
       </div>
@@ -635,7 +635,7 @@ export function reelRulesPage(text: string, isDefault: boolean, back: string, er
     <div class="wz kw-wz">
       <div class="wz-head">
         <h1>Reel rules</h1>
-        <p class="wz-id">How the AI writes the one video prompt for every reel. The same video goes to Facebook, Instagram and Pinterest. ${isDefault ? 'These are the default rules.' : 'Changed on the dashboard.'}</p>
+        <p class="wz-id">How the AI writes the one video prompt for every reel. The same video goes to every channel that takes reels: Facebook, Instagram, Pinterest, YouTube and TikTok. ${isDefault ? 'These are the default rules.' : 'Changed on the dashboard.'}</p>
       </div>
       <div class="wz-body">
         ${error ? html`<p class="kw-seo-problems" role="alert" style="margin:0 0 16px">${error}</p>` : raw('')}

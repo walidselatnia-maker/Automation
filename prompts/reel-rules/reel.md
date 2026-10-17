@@ -1,6 +1,6 @@
 # Reel rules
 
-A 10-second vertical (9:16) reel made from the article. It is made once and the same video is shared on every channel that takes reels: Facebook, Instagram and Pinterest. Viewers there scroll fast: the first two seconds decide everything, and the video must work with the sound on or off.
+A 10-second vertical (9:16) reel made from the article. It is made once and the same video is shared on every channel that takes reels: Facebook, Instagram, Pinterest, YouTube (as a Short) and TikTok. Viewers there scroll fast: the first two seconds decide everything, and the video must work with the sound on or off.
 
 ## Structure, with these exact time marks
 

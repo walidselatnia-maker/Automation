@@ -1,5 +1,5 @@
 import { html, raw, type Html } from '../web/views/layout.js';
-import { channelColor, PLATFORMS, takesReels, viasOf, viaLabel, type ChannelRow, type Platform, type Via } from './channels.js';
+import { channelColor, PLATFORMS, takesReels, videoOnly, viasOf, viaLabel, type ChannelRow, type Platform, type Via } from './channels.js';
 import type { RulesCheck } from './platform-rules.js';
 import { WIZARD_CSS, field } from './view.js';
 
@@ -111,7 +111,7 @@ export function stepsOf(platform: Platform, via: Via, firstComment = platform ==
     'Connect',
     platform === 'facebook' ? 'Pick pages' : 'Pick channels',
     ...(firstComment ? ['Buffer plan'] : []),
-    ...(takesReels(platform) ? ['What to post'] : []),
+    ...(takesReels(platform) && !videoOnly(platform) ? ['What to post'] : []),
     'Websites',
     'Check',
   ];

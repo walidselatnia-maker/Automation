@@ -25,16 +25,11 @@ export const PLATFORMS: { key: string; label: string; built: boolean; color: str
   { key: 'pinterest', label: 'Pinterest', built: true, color: '#e60023' },
   { key: 'facebook', label: 'Facebook', built: true, color: '#1877f2' },
   { key: 'instagram', label: 'Instagram', built: true, color: '#f77737' },
-  { key: 'threads', label: 'Threads', built: false, color: '#6b6b6b' },
-  { key: 'linkedin', label: 'LinkedIn', built: false, color: '#0a66c2' },
-  { key: 'bluesky', label: 'Bluesky', built: false, color: '#1185fe' },
-  { key: 'substack', label: 'Substack', built: false, color: '#ff6719' },
-  { key: 'youtube', label: 'YouTube', built: false, color: '#ff0000' },
-  { key: 'tiktok', label: 'TikTok', built: false, color: '#25c4c4' },
-  { key: 'mastodon', label: 'Mastodon', built: false, color: '#6364ff' },
-  { key: 'google-business', label: 'Google Business Profile', built: false, color: '#4285f4' },
-  { key: 'x', label: 'Twitter / X', built: false, color: '#6b6b6b' },
-  { key: 'start-page', label: 'Start Page', built: false, color: '#7c3aed' },
+  { key: 'threads', label: 'Threads', built: true, color: '#6b6b6b' },
+  { key: 'linkedin', label: 'LinkedIn', built: true, color: '#0a66c2' },
+  { key: 'youtube', label: 'YouTube', built: true, color: '#ff0000' },
+  { key: 'tiktok', label: 'TikTok', built: true, color: '#25c4c4' },
+  { key: 'x', label: 'Twitter / X', built: true, color: '#6b6b6b' },
 ];
 
 /**
@@ -85,8 +80,15 @@ export const fbTokenOf = (c: ChannelRow, key: Buffer): string => secret(c.fb_tok
 export const CATCH_UP_DAYS = 7;
 
 /** The platforms a reel (a vertical video) can be shared on. */
-export const REEL_PLATFORMS = ['facebook', 'instagram', 'pinterest'] as const;
+export const REEL_PLATFORMS = ['facebook', 'instagram', 'pinterest', 'youtube', 'tiktok'] as const;
 export const takesReels = (platform: string): boolean => (REEL_PLATFORMS as readonly string[]).includes(platform);
+
+/** The platforms that take videos only (YouTube Shorts, TikTok): reels, never an image post. */
+export const VIDEO_ONLY_PLATFORMS = ['youtube', 'tiktok'] as const;
+export const videoOnly = (platform: string): boolean => (VIDEO_ONLY_PLATFORMS as readonly string[]).includes(platform);
+
+/** What a channel on this platform may get: image posts, reels, or both. */
+export const takesImages = (platform: string): boolean => !videoOnly(platform);
 
 /** How a channel posts. Buffer and the platform's own API are kept apart. */
 export type Via = 'buffer' | 'api';
@@ -185,6 +187,8 @@ export function saveChannelRules(id: number, text: string): string[] {
  * what every website using it sends it now.
  */
 export function setChannelContent(channelId: number, what: ChannelContent): void {
+  const c = getChannel(channelId);
+  if (c && videoOnly(c.platform)) what = { image: false, reel: true };
   run('UPDATE newsite_channels SET post_image = ?, post_reel = ? WHERE id = ?', what.image ? 1 : 0, what.reel ? 1 : 0, channelId);
   run('UPDATE newsite_website_channels SET post_image = ?, post_reel = ? WHERE channel_id = ?', what.image ? 1 : 0, what.reel ? 1 : 0, channelId);
 }
@@ -232,7 +236,7 @@ export function setWebsiteChannels(websiteId: number, channelIds: number[], cont
     const what = content.get(id) ?? before.get(id) ?? { image: Boolean(c.post_image), reel: Boolean(c.post_reel) };
     run(
       'INSERT OR IGNORE INTO newsite_website_channels (website_id, channel_id, post_image, post_reel) VALUES (?, ?, ?, ?)',
-      websiteId, id, what.image || !takesReels(c.platform) ? 1 : 0, what.reel && takesReels(c.platform) ? 1 : 0,
+      websiteId, id, takesImages(c.platform) && (what.image || !takesReels(c.platform)) ? 1 : 0, (what.reel || videoOnly(c.platform)) && takesReels(c.platform) ? 1 : 0,
     );
   }
   return refused.map((id) => {

@@ -27,7 +27,7 @@ import {
 import { decrypt } from '../lib/crypto.js';
 import { newLayout, type NewFlash } from './layout.js';
 import { newWebsiteListPage, newWebsiteWizardPage, type WizardChannel } from './view.js';
-import { channelsFor, setWebsiteChannels, takesReels, websiteChannels } from './channels.js';
+import { channelsFor, setWebsiteChannels, takesImages, takesReels, websiteChannels } from './channels.js';
 import { createReels, kickReels } from './reels.js';
 import { sharingChanged } from './sharing-sync.js';
 
@@ -38,7 +38,7 @@ const wizardChannels = (websiteId: number): WizardChannel[] => {
     const used = mine.get(c.id) ?? c;
     return {
       id: c.id, name: c.name, platform: c.platform, via: c.via, checked: mine.has(c.id),
-      image: Boolean(used.post_image), reel: Boolean(used.post_reel), takesReels: takesReels(c.platform),
+      image: Boolean(used.post_image), reel: Boolean(used.post_reel), takesReels: takesReels(c.platform), takesImages: takesImages(c.platform),
     };
   });
 };
