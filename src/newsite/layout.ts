@@ -148,6 +148,12 @@ export const NAV: NavGroup[] = [
 ];
 
 /** The nav item a page belongs to: the one whose address is the longest start of the page's. */
+/** "1 · Set up" drawn as a numbered badge and the stage name. */
+function stageLabel(title: string): Html {
+  const [num, name] = title.split(' · ');
+  return name ? html`<b>${num!}</b>${name}` : html`${title}`;
+}
+
 export function activeHref(active: string): string {
   let best = '';
   for (const item of NAV.flatMap((g) => g.items)) {
@@ -212,15 +218,19 @@ input[type=checkbox], input[type=radio] { accent-color: var(--accent); }
 .ns-brand b { display: block; font: 700 18px/1.2 var(--display); letter-spacing: -.02em; }
 .ns-brand b::after { content: '.'; color: var(--brand); }
 .ns-brand small { display: block; margin-top: 2px; font-size: 13px; color: var(--faint); }
-.ns-nav { display: flex; flex-direction: column; gap: 6px; }
-.ns-group { display: flex; flex-direction: column; gap: 4px; }
-.ns-group-links { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
-.ns-group summary { list-style: none; display: flex; align-items: center; justify-content: space-between; cursor: pointer; padding: 8px 12px;
-  border-radius: var(--r-ctl); font: 600 12px/1 var(--body); letter-spacing: .06em; text-transform: uppercase; color: var(--faint); }
+.ns-nav { display: flex; flex-direction: column; }
+.ns-group { display: flex; flex-direction: column; padding: 8px 0; border-top: 1px solid var(--line); }
+.ns-group:first-child { border-top: 0; padding-top: 0; }
+.ns-group-links { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+.ns-group summary { list-style: none; display: flex; align-items: center; gap: 10px; cursor: pointer; padding: 10px 12px;
+  border-radius: var(--r-ctl); font: 650 15px/1.2 var(--body); color: var(--ink); }
 .ns-group summary::-webkit-details-marker { display: none; }
-.ns-group summary::after { content: '▸'; font-size: 13px; transition: transform .15s ease; }
-.ns-group[open] summary::after { transform: rotate(90deg); }
-.ns-group summary:hover { background: var(--raised); color: var(--ink); }
+.ns-group summary b { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; flex: none;
+  background: var(--idle); color: var(--idle-ink); font-size: 13px; font-weight: 700; }
+.ns-group summary::after { content: ''; margin-left: auto; width: 7px; height: 7px; border-right: 2px solid var(--faint); border-bottom: 2px solid var(--faint);
+  transform: rotate(-45deg); transition: transform .15s ease; }
+.ns-group[open] summary::after { transform: rotate(45deg); }
+.ns-group summary:hover { background: var(--raised); }
 .ns-nav a { display: flex; align-items: center; gap: 12px; padding: 9px 12px; border-radius: var(--r-ctl);
   border: 1px solid transparent; color: var(--soft); text-decoration: none; font-weight: 500; }
 .ns-nav a:hover { background: var(--idle); color: var(--idle-ink); }
@@ -286,8 +296,8 @@ h1, h2, h3, h4 { font-family: var(--display); letter-spacing: -.015em; margin: 0
   .ns-brand { padding: 0 8px 0 4px; }
   .ns-brand small { display: none; }
   .ns-nav { flex-direction: row; flex-wrap: wrap; gap: 4px; width: 100%; order: 3; }
-  .ns-group { flex-direction: row; flex-wrap: wrap; }
-  .ns-group summary { padding: 8px 10px; }
+  .ns-group { flex-direction: row; flex-wrap: wrap; border-top: 0; padding: 0; }
+  .ns-group summary { padding: 8px 10px; font-size: 14px; }
   .ns-group-links { flex-direction: row; flex-wrap: wrap; }
   .ns-nav a { padding: 8px 10px; }
   .ns-foot { margin: 0 0 0 auto; border: 0; padding: 0; flex-direction: row; }
@@ -324,7 +334,7 @@ export function newLayout({ title, active, body, flash }: NewLayoutOptions): str
       if (!group.title) return html`<div class="ns-group">${links}</div>`;
       // Each stage opens and closes; the one holding this page starts open.
       const here = group.items.some((item) => item.href === on);
-      return html`<details class="ns-group" data-group="${group.title}" ${raw(here ? 'open data-here="1"' : '')}><summary>${group.title}</summary><div class="ns-group-links">${links}</div></details>`;
+      return html`<details class="ns-group" data-group="${group.title}" ${raw(here ? 'open data-here="1"' : '')}><summary>${stageLabel(group.title)}</summary><div class="ns-group-links">${links}</div></details>`;
     },
   );
 
