@@ -1,4 +1,65 @@
 import { html, raw, type Html } from '../web/views/layout.js';
+import { PLATFORMS } from './channels.js';
+
+/**
+ * Every social platform's name, in the page's text, in that platform's own
+ * colour, so Facebook, Pinterest, Instagram and the rest stand out wherever
+ * they are written. Done in the page itself, after it is drawn, so every view
+ * gets it without each one marking its words; form fields, code and the
+ * page's own scripts are left alone.
+ */
+const PLATFORM_WORDS = PLATFORMS.map((p) => ({ word: p.label === 'Twitter / X' ? 'Twitter' : p.label, color: p.color }));
+const PLATFORM_SCRIPT = `<script>
+(function () {
+  var words = ${JSON.stringify(PLATFORM_WORDS)};
+  var colors = {};
+  words.forEach(function (w) { colors[w.word] = w.color; });
+  // The names are plain words (letters and spaces), so they go in as they are.
+  var re = new RegExp('\\\\b(' + words.map(function (w) { return w.word; }).join('|') + ')\\\\b', 'g');
+  var skip = /^(SCRIPT|STYLE|TEXTAREA|INPUT|SELECT|OPTION|PRE|CODE|TITLE|NOSCRIPT)$/;
+  function paint(root) {
+    var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode: function (n) {
+        for (var e = n.parentNode; e && e !== root.parentNode; e = e.parentNode) {
+          if (e.nodeType === 1 && (skip.test(e.nodeName) || e.isContentEditable || (e.classList && e.classList.contains('pf')))) return NodeFilter.FILTER_REJECT;
+        }
+        re.lastIndex = 0;
+        return re.test(n.nodeValue) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
+      }
+    });
+    var found = [];
+    while (walker.nextNode()) found.push(walker.currentNode);
+    found.forEach(function (n) {
+      var text = n.nodeValue, frag = document.createDocumentFragment(), last = 0, m;
+      re.lastIndex = 0;
+      while ((m = re.exec(text))) {
+        if (m.index > last) frag.appendChild(document.createTextNode(text.slice(last, m.index)));
+        var span = document.createElement('span');
+        span.className = 'pf';
+        span.style.setProperty('--pf', colors[m[1]]);
+        span.textContent = m[1];
+        frag.appendChild(span);
+        last = m.index + m[1].length;
+      }
+      if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+      // In a flex or grid box each new piece would be its own item, with gaps
+      // between them: the text is kept together in one span there.
+      var box = getComputedStyle(n.parentNode).display;
+      if (/flex|grid/.test(box)) {
+        var whole = document.createElement('span');
+        whole.appendChild(frag);
+        frag = whole;
+      }
+      n.parentNode.replaceChild(frag, n);
+    });
+  }
+  var main = document.querySelector('.ns-main') || document.body;
+  paint(main);
+  new MutationObserver(function (list) {
+    list.forEach(function (r) { r.addedNodes.forEach(function (n) { if (n.nodeType === 1) paint(n); else if (n.nodeType === 3 && n.parentNode) paint(n.parentNode); }); });
+  }).observe(main, { childList: true, subtree: true });
+})();
+</script>`;
 
 /**
  * The new dashboard's own page shell.
@@ -49,6 +110,9 @@ const NAV: NavItem[] = [
 ];
 
 const CSS = `
+.pf { color: var(--pf); font-weight: 600; }
+html.dark .pf { color: color-mix(in srgb, var(--pf) 72%, #fff); }
+
 /*
  * The design system. Colour has one meaning each, everywhere:
  *   red, dark red (--accent) = active or selected: the main button of an area,
@@ -222,6 +286,7 @@ ${THEME}
 ${flash ? html`<div class="ns-flash ${flash.kind}" role="status">${flash.message}</div>`.value : ''}
 ${body.value}
 </div></main>
+${PLATFORM_SCRIPT}
 <script>
 (function () {
   var button = document.getElementById('ns-theme');

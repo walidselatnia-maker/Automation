@@ -519,7 +519,7 @@ function reelItem(r: ReelRow, s: SharingSite): Html {
   const chips = destinations.filter((c) => c.post_reel || shareOf(c)).map((c) => {
     const x = shareOf(c);
     const [word, tone] = !x ? ['Not sent', ''] : x.status === 'sent' && !postLinkOf(x, c, 'reel') && c.via === 'buffer' ? ['Queued in Buffer', 'ok'] : SHARE_WORD[x.status];
-    return html`<span class="rl-chip ${tone}" style="--ch-color:${channelColor(c)}"><span class="sh-dot"></span>${platformLabelOf(c.platform)} · ${c.name}: ${word}</span>`;
+    return html`<span class="rl-chip ${tone}" style="--ch-color:${channelColor(c)}"><span class="sh-dot"></span><span>${platformLabelOf(c.platform)} · ${c.name}: ${word}</span></span>`;
   });
   return html`<li class="acc rl ${needsLook ? 'open' : ''}" id="reel-${String(r.id)}" data-reel="${String(r.id)}">
     <button type="button" class="acc-head" aria-expanded="${needsLook ? 'true' : 'false'}">
