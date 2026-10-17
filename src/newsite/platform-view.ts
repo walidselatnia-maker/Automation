@@ -38,6 +38,8 @@ const PAGE_CSS = `
 .pf-wide { grid-column: 1 / -1; }
 .pf-more summary, .pf-advanced summary { cursor: pointer; font-weight: 600; color: var(--idle-ink); padding: 4px 0; }
 .pf-more[open] summary { margin-bottom: 14px; }
+.pf-ai { margin-top: 20px; }
+.pf-keylist { display: grid; grid-template-columns: 190px 1fr; gap: 6px 16px; margin: 0; }
 .pf-advanced { margin-top: 20px; padding: 18px 32px; }
 .pf-advanced summary { list-style: none; display: flex; align-items: center; gap: 10px; color: var(--ink); font-weight: 400; }
 .pf-advanced summary::-webkit-details-marker { display: none; }
@@ -83,15 +85,6 @@ export function platformPage(v: PlatformView): Html {
       : html`<div class="pf-note" role="status"><b>Set up the platform before adding websites.</b>
           <span>Websites and keywords need at least one working AI key and a saved setup.</span></div>`}
     <div class="pf-card">
-      <section class="pf-group">
-        ${head('AI connection', 0, state(v.keys.length > 0, `${v.keys.length} key${v.keys.length === 1 ? '' : 's'}`, 'No AI key'), d)}
-        <dl>
-          <dt>Provider</dt><dd class="ns-mono">${v.value('llm_base_url')}</dd>
-          ${v.keys.length
-            ? v.keys.map((k) => html`<dt>${k.name}</dt><dd>${k.models.join(', ') || 'no models'}${k.enabled ? raw('') : html` · off`}${k.lastError ? html`<small>Last error: ${k.lastError.slice(0, 140)}</small>` : raw('')}</dd>`)
-            : html`<dt>Keys</dt><dd>None yet</dd>`}
-        </dl>
-      </section>
       <section class="pf-group" id="images">
         ${head('Images', 3, state(!v.imageProblem && Boolean(flow), 'Ready', v.imageProblem ? 'Service not answering' : 'No Flow project'), d)}
         <dl>
@@ -131,6 +124,23 @@ export function platformPage(v: PlatformView): Html {
         </dl>
       </section>
     </details>
+    <div class="pf-card pf-ai">
+      <section class="pf-group">
+        ${head('AI connection', 0, state(v.keys.length > 0, `${v.keys.length} key${v.keys.length === 1 ? '' : 's'}`, 'No AI key'), d)}
+        <dl>
+          <dt>Provider</dt><dd class="ns-mono">${v.value('llm_base_url')}</dd>
+          <dt>Keys</dt><dd>${v.keys.length
+            ? `${v.keys.length} saved, ${v.keys.filter((k) => k.enabled).length} on${v.keys.some((k) => k.lastError) ? `, ${v.keys.filter((k) => k.lastError).length} with a recent error` : ''}`
+            : 'None yet'}</dd>
+        </dl>
+        ${v.keys.length
+          ? html`<details class="pf-wide pf-more">
+              <summary>Show each key</summary>
+              <dl class="pf-keylist">${v.keys.map((k) => html`<dt>${k.name}</dt><dd>${k.models.join(', ') || 'no models'}${k.enabled ? raw('') : html` · off`}${k.lastError ? html`<small>Last error: ${k.lastError.slice(0, 140)}</small>` : raw('')}</dd>`)}</dl>
+            </details>`
+          : raw('')}
+      </section>
+    </div>
   `;
 }
 
