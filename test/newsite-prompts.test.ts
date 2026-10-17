@@ -101,7 +101,9 @@ describe('Prompts page', () => {
     expect(decodeURIComponent(last.headers.location as string)).toContain('at least one design');
     expect(pickedPinDesigns().map((d) => d.name)).toEqual(['Bold']);
 
-    const shipped = await post('/new-website/pin-designs/1/remove', {});
-    expect(decodeURIComponent(shipped.headers.location as string)).toContain('stay');
+    const only = await post(`/new-website/pin-designs/${designs[4]!.id}/remove`, {});
+    expect(decodeURIComponent(only.headers.location as string)).toContain('only design used for pins');
+    await post('/new-website/pin-designs/1/remove', {});
+    expect(listPinDesigns().map((d) => d.name)).toEqual(['Design 2', 'Design 3', 'Design 4', 'Bold']);
   });
 });

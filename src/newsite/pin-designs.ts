@@ -134,9 +134,7 @@ export function pinDesignsPage(): Html {
             </form></header>
           <p>${preview(designText(d))}</p>
           <footer><a class="ns-btn quiet" href="/new-website/pin-designs/${String(d.id)}">Edit</a>
-            ${d.file
-              ? raw('')
-              : html`<form method="post" action="/new-website/pin-designs/${String(d.id)}/remove" onsubmit="return confirm('Remove this design? Pins already made keep their picture.')"><button class="ns-btn danger">Remove</button></form>`}
+            <form method="post" action="/new-website/pin-designs/${String(d.id)}/remove" onsubmit="return confirm('Delete this design? Pins already made keep their picture.')"><button class="ns-btn danger">Delete</button></form>
           </footer>
         </article>`,
       )}
@@ -166,7 +164,10 @@ export function pinDesignEditPage(d: { id?: number; name: string; text: string; 
           ? 'Changing this design changes only this one. The others stay as they are.'
           : 'Starts from a copy of Design 1. Change it to the look you want; the existing designs stay as they are.'}</p>
       </div>
-      <div class="pd-actions"><a class="ns-btn quiet" href="/new-website/pin-designs">Cancel</a><button class="ns-btn primary" form="pd-form">Save</button></div>
+      <div class="pd-actions"><a class="ns-btn quiet" href="/new-website/pin-designs">Cancel</a>${d.id
+        ? html`<button class="ns-btn danger" form="pd-delete">Delete</button>`
+        : raw('')}<button class="ns-btn primary" form="pd-form">Save</button></div>
+      ${d.id ? html`<form id="pd-delete" method="post" action="/new-website/pin-designs/${String(d.id)}/remove" onsubmit="return confirm('Delete this design? Pins already made keep their picture.')" hidden></form>` : raw('')}
     </div>
     ${problem ? html`<p class="pd-problem" role="alert">${problem}</p>` : raw('')}
     <div class="pd-edit">
@@ -267,11 +268,11 @@ export function registerPinDesignRoutes(app: FastifyInstance, deps: { readFlash:
   app.post('/new-website/pin-designs/:id/remove', async (request, reply) => {
     const d = designOf(request);
     if (!d) return reply.redirect(list('There is no such design.', 'error'), 303);
-    if (d.file) return reply.redirect(list('The designs that came with the platform stay. Stop using one with its star instead.', 'error'), 303);
+    if (listPinDesigns().length === 1) return reply.redirect(list('This is the last design. Add another one before deleting it.', 'error'), 303);
     if (d.picked && listPinDesigns().filter((x) => x.picked && x.id !== d.id).length === 0) {
-      return reply.redirect(list('This is the only design used for pins. Pick another one first.', 'error'), 303);
+      return reply.redirect(list('This is the only design used for pins. Star another one first, then delete this one.', 'error'), 303);
     }
     run('DELETE FROM newsite_pin_designs WHERE id = ?', d.id);
-    return reply.redirect(list(`${d.name} removed.`), 303);
+    return reply.redirect(list(`${d.name} deleted.`), 303);
   });
 }
