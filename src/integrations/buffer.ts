@@ -254,11 +254,17 @@ export class BufferClient {
     channelId: string;
     videoUrl: string;
     thumbnailUrl?: string;
+    /** The service-specific part, as for createImagePost (a pin's board and link, a Facebook reel). */
+    metadata?: string;
   }): Promise<string> {
     const q = (value: string): string => JSON.stringify(value ?? '');
     const thumbnail = input.thumbnailUrl
       ? `\n              thumbnail: ${q(input.thumbnailUrl)}`
       : '';
+    const metadata = input.metadata?.trim() ? `
+      metadata: {
+        ${input.metadata.trim()}
+      }` : '';
 
     const mutation = `mutation CreateVideoPost {
   createPost(
@@ -273,7 +279,7 @@ export class BufferClient {
             url: ${q(input.videoUrl)}${thumbnail}
           }
         }
-      ]
+      ]${metadata}
     }
   ) {
     ... on PostActionSuccess {

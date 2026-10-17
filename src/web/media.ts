@@ -19,9 +19,10 @@ import { checkMediaToken } from '../core/media-links.js';
 import { getReel } from '../db/repos.js';
 import { get } from '../db/index.js';
 import { pictureDir } from '../newsite/pictures.js';
+import { reelDir } from '../newsite/reels.js';
 import { resolveDataDir } from '../config.js';
 import { createLogger } from '../lib/logger.js';
-import type { FastifyInstance, FastifyReply } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 
 const log = createLogger('media');
 
@@ -114,43 +115,7 @@ export function registerMedia(app: FastifyInstance, options: MediaOptions): void
           `(${String(request.headers['user-agent'] ?? 'no user-agent').slice(0, 80)})`,
       );
 
-      reply
-        .type('video/mp4')
-        // Nothing in between should keep a copy of a file reached by a token,
-        // and nothing should index it.
-        .header('cache-control', 'private, no-store')
-        .header('x-robots-tag', 'noindex, nofollow, noarchive')
-        .header('content-disposition', `inline; filename="reel-${id}.mp4"`)
-        // Said whether or not this request asked for a range, because it is
-        // how a fetcher decides whether it may ask for one at all.
-        .header('accept-ranges', 'bytes');
-
-      const range = rangeOf(request.headers.range, info.size);
-
-      if (range === 'unsatisfiable') {
-        return reply
-          .code(416)
-          .header('content-range', `bytes */${info.size}`)
-          .type('text/plain; charset=utf-8')
-          .send('Range not satisfiable');
-      }
-
-      if (range) {
-        // Facebook's video fetcher pulls a file in pieces, and a server that
-        // answers a range request with the whole file from byte zero hands it
-        // a video that is wrong everywhere after the first piece.
-        return reply
-          .code(206)
-          .header('content-range', `bytes ${range.start}-${range.end}/${info.size}`)
-          .header('content-length', range.end - range.start + 1)
-          .send(createReadStream(file, { start: range.start, end: range.end }));
-      }
-
-      return reply
-        // What lets a fetcher know the video arrived whole rather than
-        // stopping early and queueing a truncated one.
-        .header('content-length', info.size)
-        .send(createReadStream(file));
+      return sendVideo(request, reply, file, info.size, `reel-${id}.mp4`);
     },
   );
 
@@ -194,6 +159,84 @@ export function registerMedia(app: FastifyInstance, options: MediaOptions): void
         .send(createReadStream(path));
     },
   );
+
+  /**
+   * A new-website reel (newsite_reels), for Buffer to fetch when it posts the
+   * video. Same rules as the others: the link proves itself.
+   */
+  app.get<{ Params: { id: string; expires: string; signature: string } }>(
+    '/media/newsite-reel/:id/:expires/:signature.mp4',
+    async (request, reply) => {
+      const { id: rawId, expires: rawExpires, signature } = request.params;
+      if (!/^\d+$/.test(rawId) || !/^\d+$/.test(rawExpires)) return notFound(reply);
+      if (!signature || signature.length > MAX_SIGNATURE) return notFound(reply);
+
+      const id = Number(rawId);
+      const check = checkMediaToken({ kind: 'newsite-reel', id, expiresAt: Number(rawExpires), signature }, options.secret);
+      if (!check.ok) {
+        if (check.reason === 'expired') {
+          log.warn(`new-website reel ${id}: a media link expired before it was fetched`);
+          return reply.code(410).type('text/plain; charset=utf-8').send('Gone');
+        }
+        return notFound(reply);
+      }
+
+      const reel = get<{ file: string; status: string }>('SELECT file, status FROM newsite_reels WHERE id = ?', id);
+      if (!reel || reel.status !== 'done' || !reel.file || /[\\/]/.test(reel.file)) return notFound(reply);
+      const file = join(reelDir(options.dataDir ?? resolveDataDir()), reel.file);
+      const info = await stat(file).catch(() => null);
+      if (!info?.isFile()) {
+        log.warn(`new-website reel ${id}: a valid media link, but no video on disk at ${file}`);
+        return notFound(reply);
+      }
+      log.info(`new-website reel ${id}: serving the video to ${request.ip} (${String(request.headers['user-agent'] ?? 'no user-agent').slice(0, 80)})`);
+      return sendVideo(request, reply, file, info.size, `reel-${id}.mp4`);
+    },
+  );
+}
+
+/**
+ * A video file, whole or the one byte range asked for. Shared by the old
+ * dashboard's reels and the new websites' reels.
+ */
+function sendVideo(request: FastifyRequest, reply: FastifyReply, file: string, size: number, name: string): FastifyReply {
+  reply
+    .type('video/mp4')
+    // Nothing in between should keep a copy of a file reached by a token,
+    // and nothing should index it.
+    .header('cache-control', 'private, no-store')
+    .header('x-robots-tag', 'noindex, nofollow, noarchive')
+    .header('content-disposition', `inline; filename="${name}"`)
+    // Said whether or not this request asked for a range, because it is
+    // how a fetcher decides whether it may ask for one at all.
+    .header('accept-ranges', 'bytes');
+
+  const range = rangeOf(request.headers.range, size);
+
+  if (range === 'unsatisfiable') {
+    return reply
+      .code(416)
+      .header('content-range', `bytes */${size}`)
+      .type('text/plain; charset=utf-8')
+      .send('Range not satisfiable');
+  }
+
+  if (range) {
+    // Facebook's video fetcher pulls a file in pieces, and a server that
+    // answers a range request with the whole file from byte zero hands it
+    // a video that is wrong everywhere after the first piece.
+    return reply
+      .code(206)
+      .header('content-range', `bytes ${range.start}-${range.end}/${size}`)
+      .header('content-length', range.end - range.start + 1)
+      .send(createReadStream(file, { start: range.start, end: range.end }));
+  }
+
+  return reply
+    // What lets a fetcher know the video arrived whole rather than
+    // stopping early and queueing a truncated one.
+    .header('content-length', size)
+    .send(createReadStream(file));
 }
 
 /**

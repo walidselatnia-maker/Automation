@@ -854,6 +854,31 @@ export const MIGRATIONS: Migration[] = [
       addColumn(db, 'newsite_reels', 'closing', "TEXT NOT NULL DEFAULT ''");
     },
   },
+  {
+    id: '036-newsite-reel-shares',
+    description: 'New websites: each made reel shared on its website channels of that platform, one share per reel and channel',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS newsite_reel_shares (
+          id          INTEGER PRIMARY KEY AUTOINCREMENT,
+          reel_id     INTEGER NOT NULL REFERENCES newsite_reels(id) ON DELETE CASCADE,
+          channel_id  INTEGER NOT NULL REFERENCES newsite_channels(id) ON DELETE CASCADE,
+          -- pending -> sent | failed; waiting = a full Buffer queue, tried again at retry_at
+          status      TEXT NOT NULL DEFAULT 'pending',
+          text        TEXT NOT NULL DEFAULT '',
+          title       TEXT NOT NULL DEFAULT '',
+          board_name  TEXT NOT NULL DEFAULT '',
+          external_id TEXT NOT NULL DEFAULT '',
+          comment_id  TEXT NOT NULL DEFAULT '',
+          error       TEXT NOT NULL DEFAULT '',
+          retry_at    INTEGER,
+          created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+          sent_at     TEXT,
+          UNIQUE (reel_id, channel_id)
+        );
+      `);
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */

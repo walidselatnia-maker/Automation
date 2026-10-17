@@ -5,6 +5,7 @@ import { PLATFORMS, channelColor, type ChannelRow } from './channels.js';
 import type { SocialPostRow } from './social.js';
 import type { PictureRow } from './pictures.js';
 import type { ReelRow } from './reels.js';
+import type { ReelShareRow } from './reel-shares.js';
 import { WIZARD_CSS } from './view.js';
 import { CSS, OVERVIEW_CSS, labelOf, missingChannels, sharePostRow, sharingBusy } from './keywords-view.js';
 import { REEL_PLATFORMS } from './reels.js';
@@ -34,6 +35,8 @@ export interface SharingSite {
   /** Articles of this website not published yet. */
   unpublished: number;
   reels: ReelRow[];
+  /** Each made reel on each channel it is shared on. */
+  reelShares: ReelShareRow[];
 }
 
 const SHARING_CSS = `
@@ -131,8 +134,10 @@ function countsOf(s: SharingSite) {
     published: s.articles.length,
     shared: s.articles.filter((a) => postsOf(a.row.id).length > 0 && postsOf(a.row.id).every((p) => p.status === 'sent')).length,
     making: s.posts.filter((p) => p.status === 'pending' || p.status === 'picture' || p.status === 'waiting').length
-      + s.reels.filter((r) => r.status === 'pending' || r.status === 'making').length,
-    failed: s.posts.filter((p) => p.status === 'failed').length + s.reels.filter((r) => r.status === 'failed').length,
+      + s.reels.filter((r) => r.status === 'pending' || r.status === 'making').length
+      + s.reelShares.filter((x) => x.status === 'pending' || x.status === 'waiting').length,
+    failed: s.posts.filter((p) => p.status === 'failed').length + s.reels.filter((r) => r.status === 'failed').length
+      + s.reelShares.filter((x) => x.status === 'failed').length,
     toShare,
   };
 }
@@ -144,18 +149,23 @@ function channelData(s: SharingSite, c: ChannelRow, plan: { id: number } | null 
   const posts = s.posts.filter((p) => p.channel_id === c.id && ids.has(p.seo_id));
   const reels = REEL_PLATFORMS.includes(c.platform as (typeof REEL_PLATFORMS)[number]) ? s.reels.filter((r) => r.platform === c.platform && ids.has(r.seo_id)) : null;
   const notYet = articles.filter((a) => missingChannels(posts.filter((p) => p.seo_id === a.row.id), [c]).length);
+  const reelIds = new Set((reels ?? []).map((r) => r.id));
+  const shares = s.reelShares.filter((x) => x.channel_id === c.id && reelIds.has(x.reel_id));
   return {
     articles,
     posts,
     reels,
+    shares,
     notYet,
     sent: posts.filter((p) => p.status === 'sent').length,
     making: posts.filter((p) => p.status !== 'sent' && p.status !== 'failed').length,
-    failed: posts.filter((p) => p.status === 'failed').length + (reels ?? []).filter((r) => r.status === 'failed').length,
+    failed: posts.filter((p) => p.status === 'failed').length + (reels ?? []).filter((r) => r.status === 'failed').length
+      + shares.filter((x) => x.status === 'failed').length,
   };
 }
 
-const isBusy = (s: SharingSite): boolean => sharingBusy(s.posts) || s.reels.some((r) => r.status === 'pending' || r.status === 'making');
+const isBusy = (s: SharingSite): boolean =>
+  sharingBusy(s.posts) || s.reels.some((r) => r.status === 'pending' || r.status === 'making') || s.reelShares.some((x) => x.status === 'pending');
 const watch = (busy: boolean): Html => (busy ? raw('<span data-watch="1" hidden></span>') : raw(''));
 
 /* -- Level 1: the websites -------------------------------------------------- */
@@ -267,9 +277,10 @@ export function sharingChannelPage(s: SharingSite, ch: ChannelRow, tab: ChannelT
     });
 
   const reelCards = (reels: ReelRow[]): Html =>
-    html`<div class="sh-reel-list">${reels.map((r) => reelCard(r, s.articles.find((a) => a.row.id === r.seo_id)))}</div>`;
+    html`<div class="sh-reel-list">${reels.map((r) => reelCard(r, s.articles.find((a) => a.row.id === r.seo_id), ch, d.shares.find((x) => x.reel_id === r.id)))}</div>`;
 
-  const failedReels = (d.reels ?? []).filter((r) => r.status === 'failed');
+  const failedShare = new Set(d.shares.filter((x) => x.status === 'failed').map((x) => x.reel_id));
+  const failedReels = (d.reels ?? []).filter((r) => r.status === 'failed' || failedShare.has(r.id));
   const problems = postRows(d.articles, true);
   const body =
     tab === 'reels'
@@ -388,7 +399,33 @@ const REEL_STATUS: Record<ReelRow['status'], [string, string]> = {
   failed: ['Failed', 'bad'],
 };
 
-function reelCard(r: ReelRow, a: SharingArticle | undefined): Html {
+/** Where a made reel stands on one channel, and what to do. */
+function reelShareLine(r: ReelRow, ch: ChannelRow, share: ReelShareRow | undefined): Html {
+  if (r.status !== 'done') return raw('');
+  const label = PLATFORMS.find((p) => p.key === ch.platform)?.label ?? labelOf(ch.platform);
+  const shareButton = (text: string, primary: boolean) =>
+    html`<form method="post" action="/new-website/reels/${String(r.id)}/share"><input type="hidden" name="channel" value="${String(ch.id)}" /><button class="ns-btn small ${primary ? 'primary' : ''}">${text}</button></form>`;
+  if (!share) return html`<span class="ns-badge">Not shared on ${label} yet</span>${shareButton(`Share on ${label}`, true)}`;
+  switch (share.status) {
+    case 'pending':
+      return html`<span class="ns-badge busy">Being shared on ${label}</span>`;
+    case 'waiting':
+      return html`<span class="ns-badge busy">Waiting for room in Buffer</span>${share.error ? html`<div class="kw-seo-problems">${share.error}</div>` : raw('')}`;
+    case 'failed':
+      return html`<span class="ns-badge bad">Sharing failed</span><div class="kw-seo-problems">${share.error}</div>
+        <form method="post" action="/new-website/reels/shares/${String(share.id)}/retry"><button class="ns-btn small primary">Try sharing again</button></form>`;
+    default: {
+      const link = ch.via === 'api' && ch.platform === 'facebook' && share.external_id ? `https://www.facebook.com/reel/${share.external_id}` : '';
+      return html`<span class="ns-badge ok">${ch.via === 'buffer' ? 'Queued in Buffer' : `Shared on ${label}`}</span>
+        ${link ? html`<a class="sh-open" href="${link}" target="_blank" rel="noopener">See it on Facebook</a>` : raw('')}
+        ${share.board_name ? html`<span class="sh-reels-line">Board: ${share.board_name}</span>` : raw('')}
+        ${share.error ? html`<div class="kw-seo-problems">${share.error}</div>` : raw('')}
+        ${share.text ? html`<details><summary>Its words</summary><pre>${share.title ? `${share.title}\n\n` : ''}${share.text}</pre></details>` : raw('')}`;
+    }
+  }
+}
+
+function reelCard(r: ReelRow, a: SharingArticle | undefined, ch: ChannelRow, share: ReelShareRow | undefined): Html {
   const [status, cls] = REEL_STATUS[r.status];
   return html`<div class="sh-reel">
     <div class="sh-reel-media">
@@ -401,6 +438,7 @@ function reelCard(r: ReelRow, a: SharingArticle | undefined): Html {
       <span class="ns-badge ${cls}">${status}</span>
       ${r.hook ? html`<div class="sh-hook"><small>Hook</small>“${r.hook}”</div>` : raw('')}
       ${r.error ? html`<div class="kw-seo-problems">${r.error}</div>` : raw('')}
+      ${reelShareLine(r, ch, share)}
       ${r.prompt ? html`<details><summary>The prompt</summary><pre>${r.prompt}</pre></details>` : raw('')}
       ${r.status === 'done' || r.status === 'failed'
         ? html`<form method="post" action="/new-website/reels/${String(r.id)}/remake"><button class="ns-btn small ${r.status === 'failed' ? 'primary' : ''}">${r.status === 'failed' ? 'Try again' : 'Make again'}</button></form>`

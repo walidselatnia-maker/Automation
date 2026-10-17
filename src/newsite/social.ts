@@ -144,7 +144,7 @@ export const postFields = (p: Pick<SocialPostRow, 'fields_json'>): Record<string
 };
 
 /** The website a keyword belongs to. */
-function websiteOf(seoId: number): NewWebsiteRow | undefined {
+export function websiteOf(seoId: number): NewWebsiteRow | undefined {
   const plan = get<{ website_id: number }>(
     'SELECT k.website_id FROM keyword_seo s JOIN keyword_plans k ON k.id = s.plan_id WHERE s.id = ?',
     seoId,
@@ -265,33 +265,49 @@ const articleStart = (md: string): string => md.slice(0, 1500);
 const articleOutline = (md: string): string =>
   md.split('\n').filter((l) => /^#{1,3}\s/.test(l)).map((l) => l.replace(/^#+\s*/, '- ')).join('\n') || '- (no headings)';
 
-/** Step 1: the post's words, written from the article by the platform's rules, checked against its limits. */
-async function writeFields(w: Work, deps: SocialDeps): Promise<boolean> {
-  const { rules } = w;
+/**
+ * A post's words, written from the article by the platform's rules and
+ * checked against its limits. `note` is added to the rules (a reel says it is
+ * a video). Shared by image posts and reels.
+ */
+export async function writePostWords(
+  rules: PlatformRules,
+  row: SeoRow,
+  site: NewWebsiteRow,
+  ask: SocialDeps['ask'],
+  note = '',
+): Promise<{ answer: Record<string, string> | null; problems: string[] }> {
   const out = await correctUntilRight<Record<string, string>>({
     ask: (corrections) =>
-      deps.ask('newsite-social-post', {
+      ask('newsite-social-post', {
         label: rules.label,
-        platformRules: rules.text,
+        platformRules: note ? `${rules.text}\n\n${note}` : rules.text,
         fields: rules.fields.join(', '),
         shape: JSON.stringify(Object.fromEntries(rules.fields.map((f) => [f, '...']))),
-        title: w.row.title,
-        focusKeyword: w.row.focus_keyword,
-        keyword: w.row.keyword,
-        description: w.row.description,
-        niche: w.site.niche,
-        persona: w.site.persona,
-        articleOutline: articleOutline(w.row.article_md),
-        articleStart: articleStart(w.row.article_md),
+        title: row.title,
+        focusKeyword: row.focus_keyword,
+        keyword: row.keyword,
+        description: row.description,
+        niche: site.niche,
+        persona: site.persona,
+        articleOutline: articleOutline(row.article_md),
+        articleStart: articleStart(row.article_md),
         problemsJson: corrections,
       }),
     parse: (raw) => {
       const o = parseObject(raw);
       return o ? Object.fromEntries(rules.fields.map((f) => [f, str(o, f)])) : null;
     },
-    check: (fields) => checkFields(fields, rules, w.site.domain),
+    check: (fields) => checkFields(fields, rules, site.domain),
   });
-  if (out.technical || !out.answer) {
+  return { answer: out.technical ? null : out.answer ?? null, problems: out.problems };
+}
+
+/** Step 1: the post's words. */
+async function writeFields(w: Work, deps: SocialDeps): Promise<boolean> {
+  const { rules } = w;
+  const out = await writePostWords(rules, w.row, w.site, deps.ask);
+  if (!out.answer) {
     fail(w.item.id, out.problems.join(' '));
     return false;
   }
@@ -331,7 +347,7 @@ function queuePicture(w: Work, deps: SocialDeps): void {
 }
 
 /** The board for this keyword, from the boards on the channel's Pinterest account. */
-async function pickBoard(w: Work, boards: { serviceId: string; name: string }[], deps: SocialDeps) {
+export async function pickBoard(w: { row: SeoRow; site: NewWebsiteRow }, boards: { serviceId: string; name: string }[], deps: Pick<SocialDeps, 'ask'>) {
   const raw = await deps
     .ask('newsite-pick-board', {
       keyword: w.row.keyword,
@@ -387,17 +403,24 @@ function waitForRoom(w: Work, err: unknown, deps: SocialDeps, now: number): void
   );
 }
 
-/** The service-specific part of a Buffer post, as GraphQL. Unknown services need none. */
-function bufferMetadata(w: Work, extra: { boardServiceId?: string; firstComment: string }): string {
+/**
+ * The service-specific part of a Buffer post, as GraphQL. Unknown services
+ * need none. `type` is Buffer's post type: post for a picture, reel for a video.
+ */
+export function bufferMetadata(
+  platform: string,
+  extra: { title: string; url: string; boardServiceId?: string; firstComment: string; type?: 'post' | 'reel' },
+): string {
   const q = BufferClient.literal;
   const comment = extra.firstComment ? ` firstComment: ${q(extra.firstComment)}` : '';
-  switch (w.channel.platform) {
+  const type = extra.type ?? 'post';
+  switch (platform) {
     case 'pinterest':
-      return `pinterest: { title: ${q(postFields(w.item).title ?? w.item.title)} url: ${q(w.row.post_url)} boardServiceId: ${q(extra.boardServiceId ?? '')} }`;
+      return `pinterest: { title: ${q(extra.title)} url: ${q(extra.url)} boardServiceId: ${q(extra.boardServiceId ?? '')} }`;
     case 'facebook':
-      return `facebook: { type: post${comment} }`;
+      return `facebook: { type: ${type}${comment} }`;
     case 'instagram':
-      return `instagram: { type: post${comment} }`;
+      return `instagram: { type: ${type}${comment} }`;
     case 'linkedin':
       return comment ? `linkedin: {${comment} }` : '';
     default:
@@ -425,7 +448,12 @@ async function sendThroughBuffer(w: Work, picture: PictureRow, deps: SocialDeps,
       channelId: w.channel.buffer_channel_id,
       imageUrl: url,
       altText: w.item.alt || w.row.title,
-      metadata: bufferMetadata(w, { boardServiceId: board?.serviceId, firstComment }),
+      metadata: bufferMetadata(w.channel.platform, {
+        title: postFields(w.item).title ?? w.item.title,
+        url: w.row.post_url,
+        boardServiceId: board?.serviceId,
+        firstComment,
+      }),
     });
     const note = w.rules.link === 'first_comment' && !w.channel.paid_buffer ? 'Queued without the link: Buffer’s free plan cannot add a first comment.' : '';
     run(

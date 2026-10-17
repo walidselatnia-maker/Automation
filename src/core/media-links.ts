@@ -32,8 +32,8 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
  */
 const PURPOSE = 'media-link-v1';
 
-/** What a link may point at: a reel video, or a new-website picture (a pin, an image post). */
-export type MediaKind = 'reel' | 'picture';
+/** What a link may point at: a reel video, a new-website picture (a pin, an image post), or a new-website reel. */
+export type MediaKind = 'reel' | 'picture' | 'newsite-reel';
 
 export type MediaCheck =
   | { ok: true }
@@ -202,4 +202,18 @@ export function publicBaseUrlProblem(raw: string): string | null {
   }
 
   return null;
+}
+
+/** The absolute address of one new-website reel video (newsite_reels id), for Buffer to fetch. */
+export function newsiteReelMediaUrl(
+  baseUrl: string,
+  reelId: number,
+  days: string | number,
+  secret: Buffer,
+  now: number = Date.now(),
+): string {
+  const base = baseUrl.trim().replace(/\/+$/, '');
+  if (!base) throw new Error('No public address for this platform yet.');
+  const expiresAt = now + linkDays(days) * 86_400_000;
+  return `${base}${mediaPath('newsite-reel', reelId, expiresAt, secret)}`;
 }

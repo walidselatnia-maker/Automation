@@ -266,7 +266,7 @@ export function postStep(w: WizardContext, picks: { image: boolean; reel: boolea
         <label class="ch-option"><input type="checkbox" name="postImage" value="1" ${checked(picks.image)} />
           <div><b>Image post</b><span>The article's feature picture with a short post written for Facebook. The link goes in the first comment.</span></div></label>
         <label class="ch-option"><input type="checkbox" name="postReel" value="1" ${checked(picks.reel)} />
-          <div><b>Reel</b><span>A short video made from the article's pictures (uses Google Flow video credits). The link goes in the first comment. Reels for the new websites come next: picking it now saves the choice.</span></div></label>
+          <div><b>Reel</b><span>A short video made from the article's pictures (uses Google Flow video credits), shared as soon as it is made. The link goes in the first comment.</span></div></label>
       </div>
     </form>`,
     html`${cancel}${next()}`,
@@ -409,7 +409,7 @@ export function channelCard(c: ChannelRow, websites: string[], rules: RulesCheck
         ['Several websites', c.multi_website ? 'Yes' : 'No, one only'],
       ])}
       ${isFb
-        ? part(c, 'posts', 'What to post', [['Each article gets', [c.post_image ? 'An image post' : '', c.post_reel ? 'A reel (coming next)' : ''].filter(Boolean).join(' and ') || 'Nothing']])
+        ? part(c, 'posts', 'What to post', [['Each article gets', [c.post_image ? 'An image post' : '', c.post_reel ? 'A reel' : ''].filter(Boolean).join(' and ') || 'Nothing']])
         : raw('')}
       ${c.via === 'buffer' && firstComment ? part(c, 'plan', 'Buffer plan', [['Plan', c.paid_buffer ? 'Paid (first comment with the link)' : 'Free (posts go out with no link)']]) : raw('')}
       ${part(c, 'rules', 'Rules', [
@@ -547,7 +547,7 @@ export const postsPart = (c: ChannelRow, error = ''): Html =>
         <label class="ch-option"><input type="checkbox" name="postImage" value="1" ${checked(Boolean(c.post_image))} />
           <div><b>Image post</b><span>Its own picture and words, made from the article.</span></div></label>
         <label class="ch-option"><input type="checkbox" name="postReel" value="1" ${checked(Boolean(c.post_reel))} />
-          <div><b>Reel</b><span>Coming next: picking it now saves the choice.</span></div></label>
+          <div><b>Reel</b><span>A 10-second video made from the article, shared as soon as it is made. The link goes in the first comment.</span></div></label>
       </div>`,
     { error },
   );

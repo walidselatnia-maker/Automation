@@ -15,7 +15,8 @@ These rules decide what the sharing phase makes for a Facebook channel (a page),
 
 ## What goes out per article
 
-- One image post per article, on each Facebook page the website shares on, when the page is set to post image posts. (Reels come later.)
+- One image post per article, on each Facebook page the website shares on, when the page is set to post image posts.
+- One reel per article, on each page set to post reels, as soon as the reel's video is made. Its words follow these same rules, written for the video.
 - Through the Facebook API, or through Buffer, as the channel was set up.
 - The link to the article is never in the post. It is always the first comment.
 - Through the Facebook API: the link is posted as the first comment right after the post.

@@ -13,15 +13,30 @@ import { join } from 'node:path';
 import { readyFor } from './keywords-view.js';
 import { shareArticlesStep, sharingChannelPage, sharingSitePage, sharingSitesPage, shareWebsiteStep, reelRulesPage, type ChannelTab, type SharingSite } from './sharing-view.js';
 import { checkPlatformRules, listPlatformRules } from './platform-rules.js';
+import { createReelShares, getReelShare, kickReelShares, listPlanReelShares, retryReelShare, shareReelOn, type ReelShareDeps } from './reel-shares.js';
 import { markdownToHtml } from './markdown.js';
 
-export function registerSocialRoutes(app: FastifyInstance, deps: SocialDeps & { readFlash: (q: unknown) => NewFlash; autoStart?: boolean }): void {
+export function registerSocialRoutes(
+  app: FastifyInstance,
+  deps: SocialDeps & { readFlash: (q: unknown) => NewFlash; autoStart?: boolean; reelShares?: Partial<ReelShareDeps> },
+): void {
   // Posts left ready or waiting by a restart carry on.
-  const reels: ReelDeps = { settings: deps.settings, encryptionKey: deps.encryptionKey, dataDir: deps.dataDir, ask: deps.ask };
+  const shares: ReelShareDeps = { settings: deps.settings, encryptionKey: deps.encryptionKey, dataDir: deps.dataDir, ask: deps.ask, ...deps.reelShares };
+  const reels: ReelDeps = {
+    settings: deps.settings,
+    encryptionKey: deps.encryptionKey,
+    dataDir: deps.dataDir,
+    ask: deps.ask,
+    // A reel made is shared on its channels by itself.
+    onDone: (id) => {
+      if (createReelShares(id)) void kickReelShares(shares);
+    },
+  };
   if (deps.autoStart !== false) {
     void kickSocial(deps);
     resetInterruptedReels();
     void kickReels(reels);
+    void kickReelShares(shares);
   }
 
   /* -- The Sharing page ---------------------------------------------------- */
@@ -31,7 +46,7 @@ export function registerSocialRoutes(app: FastifyInstance, deps: SocialDeps & { 
     const plans = listKeywordPlans();
     return listNewWebsites().map((site) => {
       const own = plans.filter((p) => p.website_id === site.id).sort((x, y) => x.id - y.id);
-      const out: SharingSite = { site, channels: websiteChannels(site.id), articles: [], posts: [], pictures: [], reels: [], unpublished: 0 };
+      const out: SharingSite = { site, channels: websiteChannels(site.id), articles: [], posts: [], pictures: [], reels: [], reelShares: [], unpublished: 0 };
       for (const plan of own) {
         const rows = listPlanSeo(plan.id);
         const published = readyFor('share', site, rows);
@@ -41,6 +56,7 @@ export function registerSocialRoutes(app: FastifyInstance, deps: SocialDeps & { 
         out.posts.push(...listPlanSocialPosts(plan.id));
         out.pictures.push(...listPlanSocialPictures(plan.id));
         out.reels.push(...listPlanReels(plan.id));
+        out.reelShares.push(...listPlanReelShares(plan.id));
       }
       return out;
     });
@@ -107,7 +123,7 @@ export function registerSocialRoutes(app: FastifyInstance, deps: SocialDeps & { 
   /** What changed, for the page to reload itself while posts are being made. */
   app.get('/new-website/sharing/state', async () => ({
     key: sharingSites()
-      .flatMap((s) => [...s.posts.map((p) => `${p.id}${p.status}`), ...s.pictures.map((x) => `p${x.id}${x.status}`), ...s.articles.map((a) => `a${a.row.id}`), ...s.reels.map((r) => `r${r.id}${r.status}`)])
+      .flatMap((s) => [...s.posts.map((p) => `${p.id}${p.status}`), ...s.pictures.map((x) => `p${x.id}${x.status}`), ...s.articles.map((a) => `a${a.row.id}`), ...s.reels.map((r) => `r${r.id}${r.status}`), ...s.reelShares.map((x) => `rs${x.id}${x.status}`)])
       .join(','),
   }));
 
@@ -210,6 +226,29 @@ export function registerSocialRoutes(app: FastifyInstance, deps: SocialDeps & { 
     const ok = remakeReel(reel.id);
     void kickReels(reels);
     return reply.redirect(sharePage(request, row.plan_id, ok ? 'Making the reel again.' : 'That reel is being made right now.', ok ? 'ok' : 'error'), 303);
+  });
+
+  /** Share a made reel on one channel of its website (the reel card's button), or put a failed share back to work. */
+  app.post('/new-website/reels/:id/share', async (request, reply) => {
+    const reel = getReel(Number((request.params as { id: string }).id) || 0);
+    const row = reel ? getSeoRow(reel.seo_id) : undefined;
+    if (!reel || !row) return reply.redirect('/new-website/sharing', 303);
+    const channelId = Number((request.body as { channel?: string } | undefined)?.channel) || 0;
+    const plan = getKeywordPlan(row.plan_id);
+    const own = plan ? websiteChannels(plan.website_id).some((c) => c.id === channelId) : false;
+    const ok = own && shareReelOn(reel.id, channelId) > 0;
+    void kickReelShares(shares);
+    return reply.redirect(sharePage(request, row.plan_id, ok ? 'Sharing the reel.' : 'That reel is not made yet, or is already shared on this channel.', ok ? 'ok' : 'error'), 303);
+  });
+
+  app.post('/new-website/reels/shares/:id/retry', async (request, reply) => {
+    const share = getReelShare(Number((request.params as { id: string }).id) || 0);
+    const reel = share ? getReel(share.reel_id) : undefined;
+    const row = reel ? getSeoRow(reel.seo_id) : undefined;
+    if (!share || !row) return reply.redirect('/new-website/sharing', 303);
+    retryReelShare(share.id);
+    void kickReelShares(shares);
+    return reply.redirect(sharePage(request, row.plan_id, 'Trying it again.'), 303);
   });
   const isPublished = (r: { post_status: string; post_url: string }) => r.post_status === 'published' && Boolean(r.post_url);
 

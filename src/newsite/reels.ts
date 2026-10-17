@@ -97,6 +97,8 @@ export interface ReelDeps {
   now?: () => number;
   /** The AI that writes the video prompt. */
   ask?: (name: string, vars: Record<string, unknown>) => Promise<string>;
+  /** A reel's video is made: it is shared on its channels. */
+  onDone?: (reelId: number) => void;
 }
 
 const flowOf = (settings: Settings) =>
@@ -266,6 +268,7 @@ async function make(reel: ReelRow, deps: ReelDeps): Promise<void> {
       writeFileSync(join(dir, file), data);
       run(`UPDATE newsite_reels SET status = 'done', file = ?, error = '', done_at = datetime('now') WHERE id = ?`, file, reel.id);
       log.info(`reel ${reel.id} (${reel.platform}): video made`);
+      deps.onDone?.(reel.id);
       return;
     }
     if (FAILED.has(status)) throw new Error(`Flow could not make the video: ${job.error ?? status}`);
