@@ -212,9 +212,15 @@ input[type=checkbox], input[type=radio] { accent-color: var(--accent); }
 .ns-brand b { display: block; font: 700 18px/1.2 var(--display); letter-spacing: -.02em; }
 .ns-brand b::after { content: '.'; color: var(--brand); }
 .ns-brand small { display: block; margin-top: 2px; font-size: 13px; color: var(--faint); }
-.ns-nav { display: flex; flex-direction: column; gap: 18px; }
+.ns-nav { display: flex; flex-direction: column; gap: 6px; }
 .ns-group { display: flex; flex-direction: column; gap: 4px; }
-.ns-group h2 { font: 600 12px/1 var(--body); letter-spacing: .06em; text-transform: uppercase; color: var(--faint); margin: 0 0 6px 12px; }
+.ns-group-links { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
+.ns-group summary { list-style: none; display: flex; align-items: center; justify-content: space-between; cursor: pointer; padding: 8px 12px;
+  border-radius: var(--r-ctl); font: 600 12px/1 var(--body); letter-spacing: .06em; text-transform: uppercase; color: var(--faint); }
+.ns-group summary::-webkit-details-marker { display: none; }
+.ns-group summary::after { content: '▸'; font-size: 13px; transition: transform .15s ease; }
+.ns-group[open] summary::after { transform: rotate(90deg); }
+.ns-group summary:hover { background: var(--raised); color: var(--ink); }
 .ns-nav a { display: flex; align-items: center; gap: 12px; padding: 9px 12px; border-radius: var(--r-ctl);
   border: 1px solid transparent; color: var(--soft); text-decoration: none; font-weight: 500; }
 .ns-nav a:hover { background: var(--idle); color: var(--idle-ink); }
@@ -281,7 +287,8 @@ h1, h2, h3, h4 { font-family: var(--display); letter-spacing: -.015em; margin: 0
   .ns-brand small { display: none; }
   .ns-nav { flex-direction: row; flex-wrap: wrap; gap: 4px; width: 100%; order: 3; }
   .ns-group { flex-direction: row; flex-wrap: wrap; }
-  .ns-group h2 { display: none; }
+  .ns-group summary { padding: 8px 10px; }
+  .ns-group-links { flex-direction: row; flex-wrap: wrap; }
   .ns-nav a { padding: 8px 10px; }
   .ns-foot { margin: 0 0 0 auto; border: 0; padding: 0; flex-direction: row; }
   .ns-foot span { display: none; }
@@ -310,9 +317,15 @@ export interface NewLayoutOptions {
 export function newLayout({ title, active, body, flash }: NewLayoutOptions): string {
   const on = activeHref(active);
   const nav = NAV.map(
-    (group) => html`<div class="ns-group">${group.title ? html`<h2>${group.title}</h2>` : raw('')}${group.items.map(
-      (item) => html`<a href="${item.href}" class="${item.href === on ? 'on' : ''}" ${raw(item.href === on ? 'aria-current="page"' : '')}>${raw(item.icon)}<span>${item.label}</span></a>`,
-    )}</div>`,
+    (group) => {
+      const links = group.items.map(
+        (item) => html`<a href="${item.href}" class="${item.href === on ? 'on' : ''}" ${raw(item.href === on ? 'aria-current="page"' : '')}>${raw(item.icon)}<span>${item.label}</span></a>`,
+      );
+      if (!group.title) return html`<div class="ns-group">${links}</div>`;
+      // Each stage opens and closes; the one holding this page starts open.
+      const here = group.items.some((item) => item.href === on);
+      return html`<details class="ns-group" data-group="${group.title}" ${raw(here ? 'open data-here="1"' : '')}><summary>${group.title}</summary><div class="ns-group-links">${links}</div></details>`;
+    },
   );
 
   return `<!doctype html>
@@ -342,6 +355,16 @@ ${flash ? html`<div class="ns-flash ${flash.kind}" role="status">${flash.message
 ${body.value}
 </div></main>
 ${PLATFORM_SCRIPT}
+<script>
+(function () {
+  // A stage the owner opened or closed stays that way; the one holding this page is always open.
+  document.querySelectorAll('details.ns-group').forEach(function (d) {
+    var key = 'ns-nav:' + d.dataset.group;
+    try { var saved = localStorage.getItem(key); if (saved && !d.dataset.here) d.open = saved === '1'; } catch (e) {}
+    d.addEventListener('toggle', function () { try { localStorage.setItem(key, d.open ? '1' : '0'); } catch (e) {} });
+  });
+})();
+</script>
 <script>
 (function () {
   var button = document.getElementById('ns-theme');

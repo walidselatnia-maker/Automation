@@ -2,13 +2,13 @@ import { html, raw, type Html } from '../web/views/layout.js';
 import { CATCH_UP_DAYS, channelColor, platformName, websiteChannels } from './channels.js';
 
 
-/** A website's channels, each in its platform's colour, each opening its channel. */
-const channelChips = (websiteId: number): Html => {
+/** A website's channels: each name in its platform's colour, linked to its channel. */
+const channelLinks = (websiteId: number): Html => {
   const list = websiteChannels(websiteId);
-  if (!list.length) return html`<span class="nl-none">No social channel yet. <a href="/new-website/${String(websiteId)}/edit?section=4">Pick channels</a></span>`;
-  return html`<span class="nl-chips">${list.map(
-    (c) => html`<a class="nl-chip" style="--ch:${channelColor(c)}" href="/new-website/channels/${String(c.id)}"><i></i><b>${c.name}</b><small>${platformName(c.platform)}</small></a>`,
-  )}</span>`;
+  if (!list.length) return html`No social channel yet`;
+  return html`${list.map(
+    (c, i) => html`${i ? ', ' : ''}<a class="nl-ch" style="--ch:${channelColor(c)}" href="/new-website/channels/${String(c.id)}">${c.name}</a>`,
+  )}`;
 };
 
 /** The Flow project in one line: its short id, linked; the full address on hover. */
@@ -59,20 +59,13 @@ const LIST_CSS = `
 .nl-state.active { color: var(--good); }
 .nl-actions { display: flex; gap: 4px; flex: none; }
 .nl-top form { margin: 0; }
-.nl-sum { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 20px 0 0; border-top: 1px solid var(--line); }
-.nl-sum > div { padding: 14px 20px; border-bottom: 1px solid var(--line); }
-.nl-sum > div:not(.nl-sum-wide) + div:not(.nl-sum-wide) { border-left: 1px solid var(--line); }
+.nl-sum { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 20px 0 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.nl-sum > div { padding: 14px 20px; }
+.nl-sum > div + div { border-left: 1px solid var(--line); }
 .nl-sum > div:first-child { padding-left: 0; }
-.nl-sum-wide { grid-column: 1 / -1; padding-left: 0 !important; }
-.nl-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
-.nl-chip { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px; text-decoration: none; color: var(--ink);
-  background: color-mix(in srgb, var(--ch) 12%, var(--surface)); border: 1px solid color-mix(in srgb, var(--ch) 45%, var(--line)); }
-.nl-chip:hover { border-color: var(--ch); }
-.nl-chip i { width: 9px; height: 9px; border-radius: 50%; background: var(--ch); flex: none; }
-.nl-chip b { font-weight: 600; font-size: 14px; }
-.nl-chip small { font-size: 12px; font-weight: 600; color: var(--ch); }
-:root.dark .nl-chip small { color: color-mix(in srgb, var(--ch) 72%, #fff); }
-.nl-none { color: var(--soft); font-weight: 400; }
+.nl-ch { color: var(--ch); font-weight: 600; text-decoration: none; }
+.nl-ch:hover { text-decoration: underline; }
+:root.dark .nl-ch { color: color-mix(in srgb, var(--ch) 72%, #fff); }
 .nl-oneline { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 .nl-sum dt { color: var(--faint); font-size: 13px; margin-bottom: 2px; }
 .nl-sum dd { margin: 0; font-weight: 500; overflow-wrap: anywhere; }
@@ -93,7 +86,7 @@ const LIST_CSS = `
 .nl-facts div { display: grid; grid-template-columns: 128px 1fr; gap: 16px; padding: 8px 0; align-items: baseline; }
 .nl-facts dt { color: var(--soft); font-size: 14px; }
 .nl-facts dd { margin: 0; font-weight: 500; overflow-wrap: anywhere; }
-@media (max-width: 980px) { .nl-sum { grid-template-columns: 1fr; } .nl-sum > div { padding-left: 0; border-left: 0 !important; } }
+@media (max-width: 980px) { .nl-sum { grid-template-columns: 1fr; } .nl-sum > div { padding-left: 0; border-left: 0 !important; border-top: 1px solid var(--line); } .nl-sum > div:first-child { border-top: 0; } }
 @media (max-width: 680px) {
   .nl-site { padding: 22px 20px; }
   .nl-meta { flex-direction: column; align-items: flex-start; gap: 2px; }
@@ -145,7 +138,7 @@ export function newWebsiteListPage(rows: NewWebsiteRow[], platformReady = true):
                   <div><dt>Topic</dt><dd>${r.niche}</dd></div>
                   <div><dt>Voice</dt><dd>${r.persona}</dd></div>
                   <div><dt>Publishing</dt><dd>${r.status === 'active' ? (r.auto_publish ? 'By itself' : 'After your approval') : 'Paused'}${r.daily_target ? `, up to ${r.daily_target} a day` : ''}</dd></div>
-                  <div class="nl-sum-wide"><dt>Shares on</dt><dd>${channelChips(r.id)}</dd></div>
+                  <div><dt>Shares on</dt><dd>${channelLinks(r.id)}</dd></div>
                 </dl>
                 <div class="nl-links">
                   <a class="ns-btn small" href="/new-website/keywords#website-${String(r.id)}">Keywords &amp; articles</a>
@@ -172,7 +165,7 @@ export function newWebsiteListPage(rows: NewWebsiteRow[], platformReady = true):
                     ['Gap between posts', gap(r.interval_minutes)],
                   ])}
                   ${part(r.id, 4, 'Channels and pictures', [
-                    ['Social channels', websiteChannels(r.id).length ? `${websiteChannels(r.id).length} (shown at the top)` : 'None yet'],
+                    ['Social channels', websiteChannels(r.id).length ? `${websiteChannels(r.id).length} (listed above, under Shares on)` : 'None yet'],
                     ['Google Flow project', flowProject(r.project_id)],
                   ])}
                 </div>
