@@ -98,6 +98,10 @@ describe('Autopilot', () => {
     await flush();
     expect(publishState(c)).toBe('');
 
+    // Still being written: the line says which step each one is at.
+    run(`UPDATE keyword_seo SET images_status = '', skeleton_status = 'done', article_status = 'writing' WHERE id = ?`, c);
+    run(`UPDATE keyword_seo SET images_status = '', article_status = '', skeleton_status = 'pending' WHERE id = ?`, d);
+    expect(autopilotState(getNewWebsite(1)!, 'UTC', NOW).next).toBe('Writing 2 articles: 1 article being written, 1 in line for the skeleton');
     run(`UPDATE keyword_seo SET post_status = 'published' WHERE id IN (?, ?)`, c, d);
     expect(autopilotState(getNewWebsite(1)!, 'UTC', NOW).next).toBe('No keywords left: add keywords');
   });

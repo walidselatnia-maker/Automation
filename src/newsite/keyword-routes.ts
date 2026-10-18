@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { autopilotState } from './autopilot.js';
+import { get } from '../db/index.js';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { checkImport, importRows, kickSubFinder, planStats, type ImportRow } from './keyword-import.js';
 import type { SitePost } from './client.js';
@@ -106,10 +107,15 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
     const settings = deps.settings;
     if (settings) {
       setInterval(() => {
-        if (sweepRetries(settings)) startSeo();
+        // A pending step with the writer idle (a missed kick) starts it too: kicking a busy writer does nothing.
+        if (sweepRetries(settings) || hasPendingWriting()) startSeo();
       }, 60_000).unref();
     }
   }
+
+  /** Is any keyword waiting for one of its writing steps? */
+  const hasPendingWriting = (): boolean =>
+    Boolean(get(`SELECT 1 AS x FROM keyword_seo WHERE 'pending' IN (status, recipe_status, skeleton_status, article_status, images_status) LIMIT 1`));
 
   /** The Keywords page: a card per website, each with a table of its keyword plans. */
   app.get('/new-website/keywords', async (request, reply) => {
