@@ -73,7 +73,7 @@ describe('Autopilot', () => {
     // Two articles a day: the main pictures (not the steps) of the first two, and only on the active website.
     expect(queuedFor()).toEqual([a, a, b, b].map((seo_id, i) => ({ seo_id, slot: i % 2 ? 'overhead' : 'feature' })));
     expect(started).toBe(1);
-    expect(autopilotState(getNewWebsite(1)!, 'UTC', NOW).next).toBe('Next article is being prepared');
+    expect(autopilotState(getNewWebsite(1)!, 'UTC', NOW).next).toBe('Making the pictures of 2 articles');
 
     run(`UPDATE newsite_pictures SET status = 'done'`);
     run(`UPDATE keyword_seo SET post_status = 'published', posted_at = ? WHERE id = ?`, sql(NOW - 30 * 60_000), a);

@@ -145,14 +145,28 @@ export function autopilotTick(deps: PublishDeps, now = Date.now()): void {
 /** Where a website's Autopilot stands, for the dashboard and the Keywords page. */
 export function autopilotState(site: NewWebsiteRow, tz: string, now = Date.now()): AutopilotState {
   const s = look(site, siteWork(site.id), now, tz);
-  const preparing = s.waiting.filter((r) => !s.stuck(r) && !s.ready.includes(r)).length;
-  const base = { ready: s.ready.length, preparing, today: s.today };
+  const textFailed = (r: SeoRow) =>
+    [r.status, r.recipe_status, r.skeleton_status, r.article_status, r.images_status].includes('failed');
+  const stopped = s.waiting.filter((r) => s.stuck(r) || textFailed(r));
+  const going = s.waiting.filter((r) => !stopped.includes(r) && !s.ready.includes(r));
+  const writing = going.filter((r) => r.images_status !== 'done');
+  const picturing = going.filter((r) => r.images_status === 'done' && s.started(r));
+  // Written, pictures not started yet: they start on the next minute, one day's worth at a time.
+  const queued = going.filter((r) => r.images_status === 'done' && !s.started(r));
+  const base = { ready: s.ready.length, preparing: going.length, today: s.today };
+  const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`;
+  const stoppedNote = stopped.length ? ` · ${plural(stopped.length, 'article')} stopped` : '';
   let next: string;
   if (site.status !== 'active') next = 'Paused';
   else if (!site.auto_publish) next = s.ready.length ? `${s.ready.length} waiting for your approval` : 'Pictures are made, then each article waits for your approval';
-  else if (!s.ready.length) next = preparing ? 'Next article is being prepared' : 'No keywords left: add keywords';
-  else if (s.full) next = 'Next article tomorrow';
-  else if (s.due > now) next = `Next article at ${clock(s.due, tz)}`;
-  else next = 'Next article in a minute';
+  else if (!s.ready.length) {
+    if (picturing.length) next = `Making the pictures of ${plural(picturing.length, 'article')}${stoppedNote}`;
+    else if (queued.length) next = `Pictures start within a minute${stoppedNote}`;
+    else if (writing.length) next = `Writing ${plural(writing.length, 'article')}${stoppedNote}`;
+    else if (stopped.length) next = `${plural(stopped.length, 'article')} stopped: open Keywords & articles`;
+    else next = 'No keywords left: add keywords';
+  } else if (s.full) next = `Next article tomorrow${stoppedNote}`;
+  else if (s.due > now) next = `Next article at ${clock(s.due, tz)}${stoppedNote}`;
+  else next = `Next article in a minute${stoppedNote}`;
   return { ...base, next };
 }
