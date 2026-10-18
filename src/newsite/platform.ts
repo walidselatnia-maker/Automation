@@ -26,28 +26,14 @@ export const AI_MODELS: string[] = KNOWN_MODELS;
 
 /** Whole-number settings and the range each may take. */
 export const NUMBER_RANGES: Record<string, [number, number]> = {
-  tick_minutes: [1, 1440],
-  retention_days: [1, 3650],
   auto_retry_max: [0, 10],
   auto_retry_delay_minutes: [0, 1440],
-  pair_failure_limit: [0, 100],
-  run_step_timeout_minutes: [1, 240],
-  run_timeout_minutes: [1, 1440],
   image_gap_seconds: [0, 600],
 };
 
 const SWITCHES = ['auto_retry_enabled', 'telegram_enabled'];
 
-export const AUTOMATION_KEYS = [
-  'tick_minutes',
-  'auto_retry_enabled',
-  'auto_retry_max',
-  'auto_retry_delay_minutes',
-  'pair_failure_limit',
-  'run_step_timeout_minutes',
-  'run_timeout_minutes',
-  'retention_days',
-];
+export const AUTOMATION_KEYS = ['auto_retry_enabled', 'auto_retry_max', 'auto_retry_delay_minutes'];
 
 /** The fields on each step. The AI step's key list is handled on its own. */
 export const PLATFORM_STEPS: string[][] = [
@@ -180,12 +166,6 @@ export function validatePlatform(
     if (!/^\d{1,5}$/.test(v) || Number(v) < min || Number(v) > max) {
       errors[key] = `Enter a whole number from ${min} to ${max}.`;
     } else clean.settings[key] = String(Number(v));
-  }
-
-  if (want('run_timeout_minutes') && !errors.run_timeout_minutes && !errors.run_step_timeout_minutes) {
-    if (Number(clean.settings.run_timeout_minutes) < Number(clean.settings.run_step_timeout_minutes)) {
-      errors.run_timeout_minutes = 'A whole run cannot be shorter than one of its steps.';
-    }
   }
 
   if (want('public_base_url')) {

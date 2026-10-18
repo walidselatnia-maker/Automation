@@ -19,14 +19,9 @@ const FORM: Record<string, string> = {
   newKeyModels: 'gpt-oss:120b',
   removeKeys: '',
   timezone: 'Africa/Algiers',
-  tick_minutes: '15',
   auto_retry_enabled: 'true',
   auto_retry_max: '1',
   auto_retry_delay_minutes: '15',
-  pair_failure_limit: '3',
-  run_step_timeout_minutes: '8',
-  run_timeout_minutes: '10',
-  retention_days: '30',
   flow_project_id: '',
   image_model: 'auto',
   image_gap_seconds: '30',
@@ -42,7 +37,7 @@ describe('platform rules', () => {
     const { errors, clean } = validatePlatform(FORM, none);
     expect(errors).toEqual({});
     expect(clean.newKey).toEqual({ name: 'Main key', apiKey: 'abc123secretkey', models: ['gpt-oss:120b'] });
-    expect(clean.settings.tick_minutes).toBe('15');
+    expect(clean.settings.auto_retry_max).toBe('1');
   });
 
   it('needs at least one AI key', () => {
@@ -62,17 +57,12 @@ describe('platform rules', () => {
   });
 
   it.each([
-    ['tick_minutes', '0'],
-    ['tick_minutes', 'abc'],
+    ['auto_retry_max', 'abc'],
     ['auto_retry_max', '11'],
-    ['retention_days', '-5'],
+    ['auto_retry_delay_minutes', '-5'],
     ['image_gap_seconds', '1.5'],
   ])('refuses %s = %s', (key, value) => {
     expect(validatePlatform({ ...FORM, [key]: value }, none).errors[key]).toBeTruthy();
-  });
-
-  it('refuses a run shorter than one of its steps', () => {
-    expect(validatePlatform({ ...FORM, run_step_timeout_minutes: '20', run_timeout_minutes: '10' }, none).errors.run_timeout_minutes).toBeTruthy();
   });
 
   it('checks the timezone, image model, Flow project and switches', () => {
@@ -158,9 +148,9 @@ describe('platform routes', () => {
   });
 
   it('saves everything, adds the key, and unlocks websites', async () => {
-    const r = (await post('/new-website/platform/save', { ...FORM, tick_minutes: '20', timezone: 'Europe/Paris' })).json();
+    const r = (await post('/new-website/platform/save', { ...FORM, auto_retry_max: '3', timezone: 'Europe/Paris' })).json();
     expect(r.saved).toBe(true);
-    expect(settings.get('tick_minutes')).toBe('20');
+    expect(settings.get('auto_retry_max')).toBe('3');
     expect(settings.get('timezone')).toBe('Europe/Paris');
     expect(settings.get(SETUP_DONE_KEY)).toBe('true');
     expect(listEndpointRows().map((e) => e.name)).toEqual(['Main key']);
@@ -170,7 +160,7 @@ describe('platform routes', () => {
   });
 
   it('does not save, and points at the step, when something is wrong', async () => {
-    const r = (await post('/new-website/platform/save', { ...FORM, retention_days: '0' })).json();
+    const r = (await post('/new-website/platform/save', { ...FORM, auto_retry_max: '99' })).json();
     expect(r.step).toBe(2);
     expect(settings.get(SETUP_DONE_KEY)).not.toBe('true');
     expect(listEndpointRows()).toEqual([]);
@@ -227,7 +217,7 @@ describe('platform routes', () => {
     for (const n of [0, 1, 2, 3, 4]) expect(page.body).toContain(`/new-website/platform/setup?section=${n}`);
     expect(page.body.indexOf('<h2>AI connection</h2>')).toBeGreaterThan(page.body.indexOf('<b>Advanced</b>')); // at the bottom
     expect(page.body.indexOf('aria-label="Automation"')).toBeLessThan(page.body.indexOf('<b>Advanced</b>')); // the switch first
-    expect(page.body.indexOf('<h2>Checks and retries</h2>')).toBeGreaterThan(page.body.indexOf('<b>Advanced</b>')); // the timings tucked away
+    expect(page.body.indexOf('<h2>Retries</h2>')).toBeGreaterThan(page.body.indexOf('<b>Advanced</b>')); // the timings tucked away
     expect(page.body).toContain('class="im-grid"'); // the image model cards live here now
 
     const one = await app.inject({ method: 'GET', url: '/new-website/platform/setup?section=3' });

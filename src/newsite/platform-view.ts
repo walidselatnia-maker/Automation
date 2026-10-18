@@ -126,15 +126,11 @@ export function platformPage(v: PlatformView, automation: Html = raw('')): Html 
         : raw('')}
     </div>
     <details class="pf-card pf-advanced">
-      <summary><span><b>Advanced</b> How often the platform checks for work, retries, time limits and logs. The defaults suit most people.</span></summary>
+      <summary><span><b>Advanced</b> What the platform does when a step fails. The defaults suit most people.</span></summary>
       <section class="pf-group" id="automation">
-        ${head('Checks and retries', 2, raw(''), d)}
+        ${head('Retries', 2, raw(''), d)}
         <dl>
-          <dt>Check every</dt><dd class="ns-num">${v.value('tick_minutes')} minutes</dd>
           <dt>Automatic retries</dt><dd>${v.value('auto_retry_enabled') === 'true' ? `${v.value('auto_retry_max')} attempt(s), ${v.value('auto_retry_delay_minutes')} minutes apart` : 'Off'}</dd>
-          <dt>Hold a keyword after</dt><dd class="ns-num">${v.value('pair_failure_limit')} failures on one site</dd>
-          <dt>Time limits</dt><dd class="ns-num">${v.value('run_step_timeout_minutes')} min per step, ${v.value('run_timeout_minutes')} min per run</dd>
-          <dt>Keep logs for</dt><dd class="ns-num">${v.value('retention_days')} days</dd>
         </dl>
       </section>
     </details>
@@ -245,14 +241,10 @@ export function platformWizardPage(v: PlatformView, section = -1): Html {
           </div>
 
           <div class="wz-step">
-            <h2>Checks and retries</h2>
-            <p>How often the platform checks for work, and what it does when something fails.</p>
+            <h2>Retries</h2>
+            <p>When a step fails (writing, pictures), the platform can try it again on its own.</p>
             <div class="wz-two">
-              ${numberField(v, 'tick_minutes', 'Check for work every', 'Minutes')}
-              ${numberField(v, 'retention_days', 'Keep logs for', 'Days')}
-            </div>
-            <div class="wz-two">
-              ${field('auto_retry_enabled', 'Retry failed runs', select('auto_retry_enabled', v.value('auto_retry_enabled'), [
+              ${field('auto_retry_enabled', 'Retry failed steps', select('auto_retry_enabled', v.value('auto_retry_enabled'), [
                 { value: 'true', label: 'Yes, automatically' },
                 { value: 'false', label: 'No' },
               ]))}
@@ -260,11 +252,6 @@ export function platformWizardPage(v: PlatformView, section = -1): Html {
             </div>
             <div class="wz-two">
               ${numberField(v, 'auto_retry_delay_minutes', 'Wait before retrying', 'Minutes')}
-              ${numberField(v, 'pair_failure_limit', 'Hold a keyword after', 'Failures on one site, 0 never holds')}
-            </div>
-            <div class="wz-two">
-              ${numberField(v, 'run_step_timeout_minutes', 'Stop a stuck step after', 'Minutes')}
-              ${numberField(v, 'run_timeout_minutes', 'Stop a whole run after', 'Minutes')}
             </div>
           </div>
 
@@ -380,10 +367,7 @@ const script = (v: PlatformView, section: number): string => `<script>
     var groups = [
       [0, 'AI connection', [['Provider', val('llm_base_url')], ['Keys', kept.join(', ') || '—']]],
       [1, 'Timezone', [['Timezone', val('timezone')]]],
-      [2, 'Checks and retries', [['Check every', val('tick_minutes') + ' minutes'],
-        ['Retries', val('auto_retry_enabled') === 'true' ? val('auto_retry_max') + ' attempt(s), ' + val('auto_retry_delay_minutes') + ' minutes apart' : 'Off'],
-        ['Hold a keyword after', val('pair_failure_limit') + ' failures'], ['Time limits', val('run_step_timeout_minutes') + ' min per step, ' + val('run_timeout_minutes') + ' min per run'],
-        ['Keep logs for', val('retention_days') + ' days']]],
+      [2, 'Retries', [['Retries', val('auto_retry_enabled') === 'true' ? val('auto_retry_max') + ' attempt(s), ' + val('auto_retry_delay_minutes') + ' minutes apart' : 'Off']]],
       [3, 'Images', [['Shared Flow project', val('flow_project_id') || 'Not set'], ['Image model', opt('image_model')], ['Pause between images', val('image_gap_seconds') + ' seconds'], ['Public address', val('public_base_url') || 'Not set']]],
       [4, 'Notifications', [['Telegram', opt('telegram_enabled')], ['Bot token', val('telegram_bot_token') ? 'New token' : (HAS_TG ? 'Saved token kept' : 'Not set')], ['Chat ID', val('telegram_chat_id') || '—']]]
     ];

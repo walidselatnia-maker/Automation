@@ -62,35 +62,10 @@ export const SETTING_SPECS: SettingSpec[] = [
       'You can still run one article by hand from Home.',
   },
 
-  // -- Schedule ------------------------------------------------------------
-  {
-    key: 'tick_minutes',
-    label: 'Check every (minutes)',
-    group: 'schedule',
-    secret: false,
-    default: '15',
-    type: 'number',
-    help:
-      'How often the platform looks for something to publish. 1 to 5 minutes is ' +
-      'fine. A site never posts more often than its own gap between posts, ' +
-      'whatever you put here.',
-  },
-  {
-    key: 'retention_days',
-    label: 'Keep logs for (days)',
-    group: 'schedule',
-    secret: false,
-    default: '30',
-    type: 'number',
-    help:
-      'How long to keep the decision and event history before old entries are ' +
-      'deleted. This never affects what gets published.',
-  },
-
   // -- Retries -------------------------------------------------------------
   {
     key: 'auto_retry_enabled',
-    label: 'Retry failed runs automatically',
+    label: 'Retry failed steps automatically',
     group: 'retry',
     secret: false,
     default: 'true',
@@ -119,22 +94,9 @@ export const SETTING_SPECS: SettingSpec[] = [
     default: '15',
     type: 'number',
     help:
-      'How long to wait before the first retry. Each further retry waits twice as ' +
-      'long.',
+      'How long to wait before each retry.',
   },
 
-  {
-    key: 'pair_failure_limit',
-    label: 'Hold a keyword back after (failures on one site)',
-    group: 'retry',
-    secret: false,
-    default: '3',
-    type: 'number',
-    help:
-      'If the same keyword keeps failing on the same site, stop offering it after ' +
-      'this many failures and flag it on the keyword page for you. Temporary ' +
-      'problems do not count. 0 never holds anything back.',
-  },
 
   // -- LLM -----------------------------------------------------------------
   {
@@ -215,30 +177,6 @@ export const SETTING_SPECS: SettingSpec[] = [
     help: 'Bounds the polling loop. 40 attempts at 15s is a 10 minute ceiling.',
   },
 
-  {
-    key: 'run_step_timeout_minutes',
-    label: 'Step timeout (minutes)',
-    group: 'schedule',
-    secret: false,
-    default: '8',
-    type: 'number',
-    help:
-      'If one step (writing the article, generating an image, posting) makes no ' +
-      'progress for this long, the run is stopped and marked failed so it does ' +
-      'not block everything else. 8 minutes is enough for the slowest normal ' +
-      'step.',
-  },
-  {
-    key: 'run_timeout_minutes',
-    label: 'Run timeout (minutes)',
-    group: 'schedule',
-    secret: false,
-    default: '10',
-    type: 'number',
-    help:
-      'The longest a whole run may take before it is stopped. Normal runs take 4 ' +
-      'to 6 minutes.',
-  },
 
   // -- Buffer --------------------------------------------------------------
   {
