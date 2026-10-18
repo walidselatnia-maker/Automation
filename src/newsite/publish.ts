@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { automationOn } from './autopilot.js';
 import { join } from 'node:path';
 import { get, run } from '../db/index.js';
 import { resolveDataDir } from '../config.js';
@@ -272,7 +273,7 @@ export function queuePublish(seoId: number, deps: PublishDeps): Promise<void> {
  */
 export function publishWhenReady(seoId: number, deps: PublishDeps): Promise<void> {
   const t = target(seoId, deps.encryptionKey);
-  if (!t || !t.site.auto_publish || deps.settings.getBool('automation_enabled') || t.row.post_status === 'published' || t.row.post_status === 'publishing') return Promise.resolve();
+  if (!t || !t.site.auto_publish || automationOn(deps.settings) || t.row.post_status === 'published' || t.row.post_status === 'publishing') return Promise.resolve();
   if (notReadyReason(t.row, listPictures(seoId))) return Promise.resolve();
   log.info(`Main pictures of "${t.row.keyword}" are made: publishing it automatically.`);
   return queuePublish(seoId, deps);

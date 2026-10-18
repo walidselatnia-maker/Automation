@@ -18,7 +18,7 @@ describe('dashboard', () => {
     const d = dashboardData(30, 'UTC', NOW);
     expect(d.kpis.map((k) => k.value)).toEqual([0, 0, 0, 0, 0]);
     const page = dashboardPage(d, NOW).value;
-    expect(page).toContain('Nothing stopped');
+    expect(page).not.toContain('class="db-problems"');
     expect(page).toContain('Nothing was published or shared in this period.');
   });
 

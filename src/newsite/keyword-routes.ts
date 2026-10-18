@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { autopilotState, automationOnAt } from './autopilot.js';
+import { autopilotState, automationOn, automationOnAt } from './autopilot.js';
 import { get } from '../db/index.js';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { checkImport, importRows, kickSubFinder, planStats, type ImportRow } from './keyword-import.js';
@@ -33,7 +33,7 @@ import { clearPictures, isMainSlot, listPictures, listPlanPictures, listPlanSoci
 import { sweepRetries } from './retries.js';
 import type { Settings } from '../settings.js';
 import { asPage } from './keywords.js';
-import { getSeoRow, kickSeoWriter, listPlanSeo, queuePlanSeo, requeueArticle, requeueImages, requeueRecipe, requeueSeo, requeueSkeleton, resetInterruptedSeo } from './seo.js';
+import { getSeoRow, kickSeoWriter, listPlanSeo, queuePlanSeo, requeueArticle, requeueImages, requeueRecipe, requeueSeo, requeueSkeleton, resetInterruptedSeo, queueNotStartedSteps } from './seo.js';
 
 export interface KeywordRouteDeps extends FindDeps {
   encryptionKey: Buffer;
@@ -100,6 +100,7 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
   // Anything a restart interrupted goes back in the queue and carries on.
   if (deps.autoSeo !== false) {
     resetInterruptedSeo();
+    queueNotStartedSteps();
     startSeo();
     startFinder();
     // Failed AI steps are tried again by themselves, as the platform's retry
@@ -108,7 +109,7 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
     if (settings) {
       setInterval(() => {
         // A pending step with the writer idle (a missed kick) starts it too: kicking a busy writer does nothing.
-        if (sweepRetries(settings) || hasPendingWriting()) startSeo();
+        if (queueNotStartedSteps() || sweepRetries(settings) || hasPendingWriting()) startSeo();
       }, 60_000).unref();
     }
   }
@@ -128,7 +129,7 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
     const sites = listNewWebsites().map((site) => ({
       site,
       plans: plans.filter((p) => p.website_id === site.id),
-      autopilot: deps.settings?.getBool('automation_enabled') && site.status === 'active' ? autopilotState(site, tz, Date.now(), automationOnAt(deps.settings)).next : '',
+      autopilot: deps.settings && automationOn(deps.settings) && site.status === 'active' ? autopilotState(site, tz, Date.now(), automationOnAt(deps.settings)).next : '',
     }));
     return reply.type('text/html; charset=utf-8').send(
       newLayout({ title: 'Keywords', active: '/new-website/keywords', body: keywordsOverview(sites, planStats()), flash: deps.readFlash(request.query) }),

@@ -3,7 +3,7 @@ import { autopilotState } from './autopilot.js';
 import type { NewWebsiteRow } from './repo.js';
 
 /**
- * The platform's Automation switch (setting automation_enabled), the first
+ * The new dashboard's Automation switch (setting newsite_automation_enabled), the first
  * thing on the Dashboard and on Platform settings: ON or OFF, one switch,
  * and while it is on, what each active website does next.
  */
@@ -18,7 +18,7 @@ const CSS = `
 .ap.on .ap-state { background: var(--good-tint); color: var(--good); }
 .ap.off .ap-state { background: var(--raised); color: var(--faint); }
 .ap-says { flex: 1 1 320px; color: var(--soft); font-size: 14px; line-height: 1.5; }
-.ap-sites { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 4px 0 0; padding: 0; list-style: none; }
+.ap-sites { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 0; padding: 0; list-style: none; }
 .ap-sites li b { color: var(--ink); font-weight: 600; }
 .ap-sites li.bad { color: var(--bad); }
 .ap form { margin: 0; }
@@ -38,20 +38,18 @@ export function automationBar(on: boolean, sites: NewWebsiteRow[], tz: string, b
       <div class="ap-title"><h2>Automation</h2><span class="ap-state">${on ? 'ON' : 'OFF'}</span></div>
       <div class="ap-says">
         ${on
-          ? html`Every active website makes its pictures and publishes by its posts per day and gap, then shares.
-              ${active.length
-                ? html`<ul class="ap-sites">${active.map((s) => {
-                    const next = autopilotState(s, tz, now, onAt).next;
-                    return html`<li class="${next.startsWith('No keywords') ? 'bad' : ''}"><b>${s.name}:</b> ${next}</li>`;
-                  })}</ul>`
-                : html`<ul class="ap-sites"><li>No active website yet.</li></ul>`}`
-          : html`Nothing runs on its own. Pictures and publishing wait for your buttons.`}
+          ? active.length
+            ? html`<ul class="ap-sites">${active.map((s) => {
+                const next = autopilotState(s, tz, now, onAt).next;
+                return html`<li class="${next.startsWith('No keywords') || next.includes('stopped') ? 'bad' : ''}"><b>${s.name}:</b> ${next}</li>`;
+              })}</ul>`
+            : html`No active website.`
+          : raw('')}
       </div>
       <form method="post" action="/new-website/platform/automation">
         <input type="hidden" name="on" value="${on ? '0' : '1'}" />
         <input type="hidden" name="back" value="${back}" />
-        <button class="ap-switch" role="switch" aria-checked="${on ? 'true' : 'false'}" aria-label="Automation"
-          ${raw(on ? '' : `onclick="return confirm('Turn automation on? It runs the whole platform, the old dashboard\\'s sites too.')"`)}><i></i>${on ? 'Turn off' : 'Turn on'}</button>
+        <button class="ap-switch" role="switch" aria-checked="${on ? 'true' : 'false'}" aria-label="Automation"><i></i>${on ? 'Turn off' : 'Turn on'}</button>
       </form>
     </section>`;
 }

@@ -10,7 +10,7 @@ import { registerImageModelRoutes } from './image-model.js';
 import { registerChannelRoutes, type ChannelLookups } from './channels-routes.js';
 import { registerPublishRoutes } from './publish-routes.js';
 import { addStepPicture, publishWhenReady, type PublishDeps } from './publish.js';
-import { AUTOMATION_ON_AT, automationOnAt, autopilotTick, START_DELAY_MS } from './autopilot.js';
+import { AUTOMATION_KEY, AUTOMATION_ON_AT, automationOn, automationOnAt, autopilotTick, START_DELAY_MS } from './autopilot.js';
 import { createSocialPosts, kickSocial, onPinPicture, type SocialDeps } from './social.js';
 import { registerSocialRoutes } from './social-routes.js';
 import { registerPromptRoutes } from './prompts-page.js';
@@ -221,7 +221,7 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
     const asked = Number((request.query as { days?: string }).days);
     const days: Period = (PERIODS as readonly number[]).includes(asked) ? (asked as Period) : 30;
     const tz = deps.settings?.get('timezone') || 'UTC';
-    const body = dashboardPage(dashboardData(days, tz), Date.now(), automationBar(Boolean(deps.settings?.getBool('automation_enabled')), listNewWebsites(), tz, '/new-website/dashboard', Date.now(), deps.settings ? automationOnAt(deps.settings) : 0));
+    const body = dashboardPage(dashboardData(days, tz), Date.now(), automationBar(automationOn(deps.settings), listNewWebsites(), tz, '/new-website/dashboard', Date.now(), deps.settings ? automationOnAt(deps.settings) : 0));
     return send(reply, newLayout({ title: 'Dashboard', active: '/new-website/dashboard', body, flash: readFlash(request.query) }));
   });
 
@@ -306,7 +306,7 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
     const back = form.back === '/new-website/platform' ? '/new-website/platform' : '/new-website/dashboard';
     if (!deps.settings) return reply.redirect(back, 303);
     const on = form.on === '1';
-    deps.settings.set('automation_enabled', on ? 'true' : 'false');
+    deps.settings.set(AUTOMATION_KEY, on ? 'true' : 'false');
     if (on) {
       deps.settings.set(AUTOMATION_ON_AT, String(Date.now()));
       automationStarted();

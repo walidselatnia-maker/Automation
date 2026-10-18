@@ -36,10 +36,9 @@ export const NUMBER_RANGES: Record<string, [number, number]> = {
   image_gap_seconds: [0, 600],
 };
 
-const SWITCHES = ['automation_enabled', 'auto_retry_enabled', 'telegram_enabled'];
+const SWITCHES = ['auto_retry_enabled', 'telegram_enabled'];
 
 export const AUTOMATION_KEYS = [
-  'automation_enabled',
   'tick_minutes',
   'auto_retry_enabled',
   'auto_retry_max',

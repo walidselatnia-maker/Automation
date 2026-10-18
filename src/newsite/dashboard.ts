@@ -193,8 +193,7 @@ html.dark .db { --c-articles: #7f86dc; --c-words: #9b89d8; --c-pictures: #d6a545
 .db-kpi small em { display: block; font-style: normal; font-weight: 500; color: var(--faint); margin-top: 2px; }
 .db-grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 18px; margin-bottom: 18px; }
 .db-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); box-shadow: var(--shadow); padding: 18px 20px; min-width: 0; }
-.db-card h2 { font-size: 16px; margin: 0; }
-.db-card .db-sub { margin: 2px 0 14px; color: var(--soft); font-size: 13px; }
+.db-card h2 { font-size: 16px; margin: 0 0 14px; }
 .db-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 0 0 10px; padding: 0; list-style: none; font-size: 13px; color: var(--soft); }
 .db-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; background: var(--k); }
 .db-chart { width: 100%; height: auto; display: block; }
@@ -234,7 +233,6 @@ html.dark .db { --c-articles: #7f86dc; --c-words: #9b89d8; --c-pictures: #d6a545
 .db-problems b { margin-right: 4px; }
 .db-problems a { color: var(--bad); font-weight: 600; text-decoration: none; }
 .db-problems a:hover { text-decoration: underline; }
-.db-calm { margin: 0 0 18px; padding: 12px 16px; border: 1px solid var(--line); border-left: 4px solid var(--good); border-radius: var(--r-ctl); background: var(--surface); color: var(--soft); }
 .db-empty { color: var(--faint); font-size: 14px; padding: 20px 0; text-align: center; }
 @media (max-width: 1100px) { .db-grid { grid-template-columns: 1fr; } }
 @media (max-width: 560px) { .db-donut { grid-template-columns: 1fr; justify-items: center; } .db-funnel div { grid-template-columns: 96px minmax(0, 1fr) 36px; } }
@@ -242,13 +240,13 @@ html.dark .db { --c-articles: #7f86dc; --c-words: #9b89d8; --c-pictures: #d6a545
 
 const fmt = (n: number): string => n.toLocaleString('en-US');
 
+/** The change against the period before, as a small arrow and percentage; the period is already chosen at the top. */
 function change(k: Kpi, days: number): Html {
-  const span = html`<em>vs the ${String(days)} days before</em>`;
-  if (!k.before && !k.value) return html`<small>Nothing yet</small>`;
-  if (!k.before) return html`<small class="up">New ${span}</small>`;
+  const title = `vs the ${String(days)} days before`;
+  if (!k.before) return raw('');
   const pct = Math.round(((k.value - k.before) / k.before) * 100);
-  if (pct === 0) return html`<small>Same ${span}</small>`;
-  return html`<small class="${pct > 0 ? 'up' : 'down'}">${pct > 0 ? '▲' : '▼'} ${String(Math.abs(pct))}% ${span}</small>`;
+  if (pct === 0) return raw('');
+  return html`<small class="${pct > 0 ? 'up' : 'down'}" title="${title}">${pct > 0 ? '▲' : '▼'} ${String(Math.abs(pct))}%</small>`;
 }
 
 /** Articles a day as bars; social posts and reels as lines over them. */
@@ -311,7 +309,6 @@ export function dashboardPage(d: DashboardData, now = Date.now(), autopilot: Htm
     <div class="ns-head">
       <div>
         <h1 class="ns-title">Dashboard</h1>
-        <p class="ns-lede">What the platform wrote, published and shared in the last ${String(d.days)} days.</p>
       </div>
       <nav class="db-periods" aria-label="Period">${PERIODS.map((p) => html`<a href="/new-website/dashboard?days=${String(p)}" class="${p === d.days ? 'on' : ''}">${String(p)} days</a>`)}</nav>
     </div>
@@ -320,7 +317,7 @@ export function dashboardPage(d: DashboardData, now = Date.now(), autopilot: Htm
 
     ${d.problems.length
       ? html`<div class="db-problems" role="status"><b>Needs your attention:</b>${d.problems.map((p, i) => html`${i ? ' · ' : ''}<a href="${p.href}">${String(p.count)} ${p.label.split('|')[p.count === 1 ? 0 : 1]!}</a>`)}</div>`
-      : html`<p class="db-calm">Nothing stopped. Everything that started is running or done.</p>`}
+      : raw('')}
 
     <div class="db-kpis">
       ${d.kpis.map((k) => html`<a class="db-kpi" href="${k.href}" style="--tone:var(--${k.tone})"><span>${k.label}</span><b>${fmt(k.value)}</b>${change(k, d.days)}</a>`)}
@@ -329,13 +326,11 @@ export function dashboardPage(d: DashboardData, now = Date.now(), autopilot: Htm
     <div class="db-grid">
       <section class="db-card">
         <h2>Activity per day</h2>
-        <p class="db-sub">Articles published, social posts sent and reels made each day.</p>
         <ul class="db-legend"><li><i style="--k:var(--c-articles)"></i>Articles</li><li><i style="--k:var(--c-posts)"></i>Social posts</li><li><i style="--k:var(--c-reels)"></i>Reels</li></ul>
         ${totalActivity ? activityChart(d.daily) : html`<p class="db-empty">Nothing was published or shared in this period.</p>`}
       </section>
       <section class="db-card">
         <h2>Where the articles are</h2>
-        <p class="db-sub">Every keyword so far, by how far it got.</p>
         <div class="db-funnel">${d.funnel.map(
           (f) => html`<div><span>${f.label}</span><em><i style="--tone:var(--${f.tone});width:${String(Math.round((f.count / top) * 100))}%"></i></em><b>${fmt(f.count)}</b></div>`,
         )}</div>
@@ -345,7 +340,6 @@ export function dashboardPage(d: DashboardData, now = Date.now(), autopilot: Htm
     <div class="db-grid">
       <section class="db-card">
         <h2>Websites</h2>
-        <p class="db-sub">Published articles and social posts per website.</p>
         ${d.websites.length
           ? html`<table class="db-sites"><thead><tr><th>Website</th><th class="num">Published</th><th class="num">Last ${String(d.days)} days</th><th class="num">On the way</th><th class="num">Posts sent</th></tr></thead>
               <tbody>${d.websites.map((w) => html`<tr><td>${w.name}<small>${w.domain}</small></td><td class="num">${fmt(w.published)}</td><td class="num">${fmt(w.inPeriod)}</td><td class="num">${fmt(w.working)}</td><td class="num">${fmt(w.posts)}</td></tr>`)}</tbody></table>`
@@ -353,7 +347,6 @@ export function dashboardPage(d: DashboardData, now = Date.now(), autopilot: Htm
       </section>
       <section class="db-card">
         <h2>Social posts by platform</h2>
-        <p class="db-sub">Sent in the last ${String(d.days)} days.</p>
         ${d.platforms.length
           ? html`<div class="db-donut">${donut(d.platforms)}<ul class="db-plat">${d.platforms.map(
               (p) => html`<li><i style="--k:${p.color}"></i><span>${p.label}${p.failed ? html`<small>${String(p.failed)} not sent</small>` : raw('')}</span><b>${fmt(p.sent)}</b></li>`,
@@ -364,7 +357,6 @@ export function dashboardPage(d: DashboardData, now = Date.now(), autopilot: Htm
 
     <section class="db-card">
       <h2>Latest</h2>
-      <p class="db-sub">The most recent things the platform did.</p>
       ${d.recent.length
         ? html`<ul class="db-recent">${d.recent.map((r) => {
             const k = KIND[r.kind];

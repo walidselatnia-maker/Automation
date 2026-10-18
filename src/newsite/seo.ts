@@ -211,6 +211,29 @@ export function requeueSeo(id: number): void {
   );
 }
 
+/**
+ * A step whose previous step is done but that never got queued (left blank,
+ * for example by an older version or a step run by hand) is queued now, so
+ * an article never sits half-written. Published articles are left alone.
+ * Returns how many steps were queued.
+ */
+export function queueNotStartedSteps(): number {
+  const open = `COALESCE(s.post_status, '') NOT IN ('published', 'publishing')`;
+  let n = 0;
+  // After the metadata: the recipe on a recipe page of a recipe website, else the skeleton.
+  for (const r of all<{ id: number; page: string; niche: string }>(
+    `SELECT s.id, s.page, w.niche FROM keyword_seo s JOIN keyword_plans p ON p.id = s.plan_id JOIN new_websites w ON w.id = p.website_id
+      WHERE s.status = 'done' AND COALESCE(s.recipe_status, '') = '' AND COALESCE(s.skeleton_status, '') = '' AND ${open}`,
+  )) {
+    const recipe = articleTypeFor(r.niche) === 'recipe' && r.page !== 'article';
+    n += run(`UPDATE keyword_seo SET ${recipe ? 'recipe_status' : 'skeleton_status'} = 'pending' WHERE id = ?`, r.id).changes;
+  }
+  n += run(`UPDATE keyword_seo AS s SET skeleton_status = 'pending' WHERE recipe_status = 'done' AND COALESCE(skeleton_status, '') = '' AND ${open}`).changes;
+  n += run(`UPDATE keyword_seo AS s SET article_status = 'pending' WHERE skeleton_status = 'done' AND COALESCE(article_status, '') = '' AND ${open}`).changes;
+  n += run(`UPDATE keyword_seo AS s SET images_status = 'pending' WHERE article_status = 'done' AND COALESCE(images_status, '') = '' AND ${open}`).changes;
+  return Number(n);
+}
+
 /** A restart mid-write leaves rows marked writing: they go back in the queue. */
 export function resetInterruptedSeo(): void {
   run(`UPDATE keyword_seo SET status = 'pending' WHERE status = 'writing'`);

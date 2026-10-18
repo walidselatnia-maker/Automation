@@ -245,13 +245,8 @@ export function platformWizardPage(v: PlatformView, section = -1): Html {
           </div>
 
           <div class="wz-step">
-            <h2>Automation</h2>
-            <p>When the platform works on its own, and what it does when something fails.</p>
-            ${field('automation_enabled', 'Automation', select('automation_enabled', v.value('automation_enabled'), [
-              { value: 'false', label: 'Off: nothing runs on its own' },
-              { value: 'true', label: 'On: publish on schedule' },
-            ]))}
-            <div class="pf-warn">This is one switch for the whole platform, so it also starts or stops the old sites.</div>
+            <h2>Checks and retries</h2>
+            <p>How often the platform checks for work, and what it does when something fails.</p>
             <div class="wz-two">
               ${numberField(v, 'tick_minutes', 'Check for work every', 'Minutes')}
               ${numberField(v, 'retention_days', 'Keep logs for', 'Days')}
@@ -385,7 +380,7 @@ const script = (v: PlatformView, section: number): string => `<script>
     var groups = [
       [0, 'AI connection', [['Provider', val('llm_base_url')], ['Keys', kept.join(', ') || '—']]],
       [1, 'Timezone', [['Timezone', val('timezone')]]],
-      [2, 'Automation', [['Automation', opt('automation_enabled')], ['Check every', val('tick_minutes') + ' minutes'],
+      [2, 'Checks and retries', [['Check every', val('tick_minutes') + ' minutes'],
         ['Retries', val('auto_retry_enabled') === 'true' ? val('auto_retry_max') + ' attempt(s), ' + val('auto_retry_delay_minutes') + ' minutes apart' : 'Off'],
         ['Hold a keyword after', val('pair_failure_limit') + ' failures'], ['Time limits', val('run_step_timeout_minutes') + ' min per step, ' + val('run_timeout_minutes') + ' min per run'],
         ['Keep logs for', val('retention_days') + ' days']]],

@@ -19,7 +19,6 @@ const FORM: Record<string, string> = {
   newKeyModels: 'gpt-oss:120b',
   removeKeys: '',
   timezone: 'Africa/Algiers',
-  automation_enabled: 'false',
   tick_minutes: '15',
   auto_retry_enabled: 'true',
   auto_retry_max: '1',
@@ -77,8 +76,8 @@ describe('platform rules', () => {
   });
 
   it('checks the timezone, image model, Flow project and switches', () => {
-    const bad = validatePlatform({ ...FORM, timezone: 'Mars/Base', image_model: 'x', flow_project_id: 'no', automation_enabled: 'yes' }, none);
-    expect(Object.keys(bad.errors).sort()).toEqual(['automation_enabled', 'flow_project_id', 'image_model', 'timezone']);
+    const bad = validatePlatform({ ...FORM, timezone: 'Mars/Base', image_model: 'x', flow_project_id: 'no' }, none);
+    expect(Object.keys(bad.errors).sort()).toEqual(['flow_project_id', 'image_model', 'timezone']);
   });
 
   it('needs a token and chat ID only when Telegram is on', () => {

@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { all, closeDatabase, get, openDatabase, run } from '../src/db/index.js';
 import { Settings } from '../src/settings.js';
 import { createNewWebsite, getNewWebsite, saveKeywordPlan } from '../src/newsite/repo.js';
-import { listPlanSeo, queuePlanSeo } from '../src/newsite/seo.js';
+import { listPlanSeo, queueNotStartedSteps, queuePlanSeo } from '../src/newsite/seo.js';
 import { autopilotState, autopilotTick } from '../src/newsite/autopilot.js';
 import { publishWhenReady } from '../src/newsite/publish.js';
 
@@ -55,7 +55,7 @@ describe('Autopilot', () => {
     openDatabase(':memory:');
     settings = new Settings(KEY);
     settings.set('timezone', 'UTC');
-    settings.set('automation_enabled', 'true');
+    settings.set('newsite_automation_enabled', 'true');
     started = 0;
     ids = keywords(site(true));
     keywords(site(false));
@@ -65,10 +65,10 @@ describe('Autopilot', () => {
   it('makes main pictures one day ahead, publishes by posts per day and the gap, and stops when keywords run out', async () => {
     const [a, b, c, d] = ids as [number, number, number, number];
     // The platform's Automation switch off: nothing happens.
-    settings.set('automation_enabled', 'false');
+    settings.set('newsite_automation_enabled', 'false');
     autopilotTick(deps(), NOW);
     expect(queuedFor()).toEqual([]);
-    settings.set('automation_enabled', 'true');
+    settings.set('newsite_automation_enabled', 'true');
     autopilotTick(deps(), NOW);
     // Two articles a day: the main pictures (not the steps) of the first two, and only on the active website.
     expect(queuedFor()).toEqual([a, a, b, b].map((seo_id, i) => ({ seo_id, slot: i % 2 ? 'overhead' : 'feature' })));
@@ -109,7 +109,12 @@ describe('Autopilot', () => {
     // Still being written: the line says which step each one is at.
     run(`UPDATE keyword_seo SET images_status = '', skeleton_status = 'done', article_status = 'writing' WHERE id = ?`, c);
     run(`UPDATE keyword_seo SET images_status = '', article_status = '', skeleton_status = 'pending' WHERE id = ?`, d);
-    expect(autopilotState(getNewWebsite(1)!, 'UTC', NOW).next).toBe('Writing 2 articles: 1 article being written, 1 in line for the skeleton');
+    expect(autopilotState(getNewWebsite(1)!, 'UTC', NOW).next).toBe('Writing 2 articles');
+    // A step left blank after a done one (never queued) is queued, never left half-written.
+    run(`UPDATE keyword_seo SET skeleton_status = 'done', article_status = '' WHERE id = ?`, d);
+    queueNotStartedSteps();
+    expect(publishState(c)).toBe('');
+    expect(get<{ article_status: string }>('SELECT article_status FROM keyword_seo WHERE id = ?', d)!.article_status).toBe('pending');
     run(`UPDATE keyword_seo SET post_status = 'published' WHERE id IN (?, ?)`, c, d);
     expect(autopilotState(getNewWebsite(1)!, 'UTC', NOW).next).toBe('No keywords left: add keywords');
   });
@@ -133,18 +138,18 @@ describe('Automation switch', () => {
         { name: 'Long Livo', domain: 'f.longlivo.com', apiKey: 'sk_test_ABCDEFGHIJKLMNOP', niche: 'Recipes', nicheContext: '', persona: 'Storyteller', status: 'active', autoPublish: true, dailyTarget: 3, intervalMinutes: 480, bufferToken: '', pinUsername: '', projectId: '' },
         KEY,
       );
-      settings.set('automation_enabled', 'false');
+      settings.set('newsite_automation_enabled', 'false');
       const dash = (await app.inject({ method: 'GET', url: '/new-website/dashboard' })).body;
       expect(dash.indexOf('aria-label="Automation"')).toBeLessThan(dash.indexOf('class="db-kpis"'));
       expect(dash).toContain('<span class="ap-state">OFF</span>');
       const on = await post('on=1&back=%2Fnew-website%2Fplatform');
       expect(on.headers.location).toMatch(/^\/new-website\/platform\?ok=Automation%20is%20on/);
-      expect(settings.getBool('automation_enabled')).toBe(true);
+      expect(settings.get('newsite_automation_enabled') === 'true').toBe(true);
       const page = (await app.inject({ method: 'GET', url: '/new-website/platform' })).body;
       expect(page).toContain('<span class="ap-state">ON</span>');
       expect(page).toContain('<b>Long Livo:</b> No keywords left: add keywords');
       await post('on=0');
-      expect(settings.getBool('automation_enabled')).toBe(false);
+      expect(settings.get('newsite_automation_enabled') === 'true').toBe(false);
     } finally {
       await app.close();
       closeDatabase();

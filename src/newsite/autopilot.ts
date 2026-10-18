@@ -37,6 +37,9 @@ export const START_DELAY_MS = 30_000;
 /** When Automation was last turned on (ms), kept across restarts. */
 export const AUTOMATION_ON_AT = 'newsite_automation_on_at';
 export const automationOnAt = (settings: Settings): number => Number(settings.get(AUTOMATION_ON_AT) || 0);
+/** The new dashboard's own Automation switch: separate from the old dashboard's automation_enabled. */
+export const AUTOMATION_KEY = 'newsite_automation_enabled';
+export const automationOn = (settings: Settings | undefined): boolean => settings?.get(AUTOMATION_KEY) === 'true';
 
 export interface AutopilotState {
   /** Articles with every main picture made, waiting to be published. */
@@ -119,7 +122,7 @@ function look(site: NewWebsiteRow, work: SiteWork, now: number, tz: string, onAt
 
 /** One minute of automation for every active website, while the platform's Automation switch is on. */
 export function autopilotTick(deps: PublishDeps, now = Date.now()): void {
-  if (!deps.settings.getBool('automation_enabled')) return;
+  if (!automationOn(deps.settings)) return;
   const tz = deps.settings.get('timezone') || 'UTC';
   let queued = 0;
   for (const site of listNewWebsites()) {
@@ -151,27 +154,6 @@ export function autopilotTick(deps: PublishDeps, now = Date.now()): void {
   if (queued) deps.startPictures?.();
 }
 
-/** Which writing step an article is at, and whether that step is running, in line, or not started at all. */
-function stepOf(r: SeoRow): { name: string; state: string } {
-  if (r.status !== 'done') return { name: 'SEO', state: r.status };
-  if (r.recipe_status && r.recipe_status !== 'done') return { name: 'recipe', state: r.recipe_status };
-  if (r.skeleton_status !== 'done') return { name: 'skeleton', state: r.skeleton_status };
-  if (r.article_status !== 'done') return { name: 'article', state: r.article_status };
-  return { name: 'image prompts', state: r.images_status };
-}
-
-/** "Writing 3 articles: 1 article being written, 2 in line for the skeleton". */
-function writingLine(rows: SeoRow[]): string {
-  const groups = new Map<string, number>();
-  for (const r of rows) {
-    const { name, state } = stepOf(r);
-    const key = state === 'writing' ? `${name} being written` : state === 'pending' ? `in line for the ${name}` : `not started at the ${name}`;
-    groups.set(key, (groups.get(key) ?? 0) + 1);
-  }
-  const parts = [...groups].map(([key, n]) => `${n} ${key}`);
-  return `Writing ${rows.length} article${rows.length === 1 ? '' : 's'}: ${parts.join(', ')}`;
-}
-
 /** Where a website's Autopilot stands, for the dashboard and the Keywords page. */
 export function autopilotState(site: NewWebsiteRow, tz: string, now = Date.now(), onAt = 0): AutopilotState {
   const s = look(site, siteWork(site.id), now, tz, onAt);
@@ -192,7 +174,7 @@ export function autopilotState(site: NewWebsiteRow, tz: string, now = Date.now()
   else if (!s.ready.length) {
     if (picturing.length) next = `Making the pictures of ${plural(picturing.length, 'article')}${stoppedNote}`;
     else if (queued.length) next = `Pictures start within a minute${stoppedNote}`;
-    else if (writing.length) next = `${writingLine(writing)}${stoppedNote}`;
+    else if (writing.length) next = `Writing ${plural(writing.length, 'article')}${stoppedNote}`;
     else if (stopped.length) next = `${plural(stopped.length, 'article')} stopped: open Keywords & articles`;
     else next = 'No keywords left: add keywords';
   } else if (s.full) next = `Next article tomorrow${stoppedNote}`;
