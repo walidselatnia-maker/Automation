@@ -69,7 +69,7 @@ const codeOr = (value: string): Html => (value ? html`<dd class="ns-mono">${valu
 const head = (title: string, step: number, st: Html, done: boolean): Html =>
   html`<div><h2>${title}</h2>${st}${done ? html`<a class="ns-btn small pf-change" href="/new-website/platform/setup?section=${String(step)}">Change</a>` : raw('')}</div>`;
 
-export function platformPage(v: PlatformView): Html {
+export function platformPage(v: PlatformView, automation: Html = raw('')): Html {
   const flow = v.value('flow_project_id');
   const d = v.done;
   return html`
@@ -82,6 +82,7 @@ export function platformPage(v: PlatformView): Html {
       </div>
       ${d ? raw('') : html`<a class="ns-btn primary" href="/new-website/platform/setup">Set up the platform</a>`}
     </div>
+    ${automation}
     ${v.ready
       ? raw('')
       : html`<div class="pf-note" role="status"><b>Set up the platform before adding websites.</b>
@@ -127,7 +128,7 @@ export function platformPage(v: PlatformView): Html {
     <details class="pf-card pf-advanced">
       <summary><span><b>Advanced</b> How often the platform checks for work, retries, time limits and logs. The defaults suit most people.</span></summary>
       <section class="pf-group" id="automation">
-        ${head('Automation', 2, switchState(v.value('automation_enabled') === 'true'), d)}
+        ${head('Checks and retries', 2, raw(''), d)}
         <dl>
           <dt>Check every</dt><dd class="ns-num">${v.value('tick_minutes')} minutes</dd>
           <dt>Automatic retries</dt><dd>${v.value('auto_retry_enabled') === 'true' ? `${v.value('auto_retry_max')} attempt(s), ${v.value('auto_retry_delay_minutes')} minutes apart` : 'Off'}</dd>

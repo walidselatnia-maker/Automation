@@ -122,7 +122,7 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
     const sites = listNewWebsites().map((site) => ({
       site,
       plans: plans.filter((p) => p.website_id === site.id),
-      autopilot: site.autopilot ? autopilotState(site, tz).next : '',
+      autopilot: deps.settings?.getBool('automation_enabled') && site.status === 'active' ? autopilotState(site, tz).next : '',
     }));
     return reply.type('text/html; charset=utf-8').send(
       newLayout({ title: 'Keywords', active: '/new-website/keywords', body: keywordsOverview(sites, planStats()), flash: deps.readFlash(request.query) }),

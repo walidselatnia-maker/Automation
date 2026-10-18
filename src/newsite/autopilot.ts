@@ -7,7 +7,9 @@ import { listNewWebsites, type NewWebsiteRow } from './repo.js';
 import type { SeoRow } from './seo.js';
 
 /**
- * Autopilot: a website that has it on needs nobody to press a button.
+ * Automation for the new websites: with the platform's Automation switch on
+ * (Platform settings, also shown at the top of the Dashboard), every active
+ * website runs without anyone pressing a button.
  *
  * Its articles are already written as soon as keywords are added (the AI
  * steps run by themselves). Autopilot does the rest, checked every minute:
@@ -106,12 +108,13 @@ function look(site: NewWebsiteRow, work: SiteWork, now: number, tz: string) {
   };
 }
 
-/** One minute of Autopilot for every website that has it on. */
+/** One minute of automation for every active website, while the platform's Automation switch is on. */
 export function autopilotTick(deps: PublishDeps, now = Date.now()): void {
+  if (!deps.settings.getBool('automation_enabled')) return;
   const tz = deps.settings.get('timezone') || 'UTC';
   let queued = 0;
   for (const site of listNewWebsites()) {
-    if (!site.autopilot || site.status !== 'active') continue;
+    if (site.status !== 'active') continue;
     const work = siteWork(site.id);
     const s = look(site, work, now, tz);
 

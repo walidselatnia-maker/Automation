@@ -13,6 +13,8 @@ import {
   type PlatformContext,
 } from './platform.js';
 import { imageCatalogue } from './image-model.js';
+import { automationBar } from './autopilot-view.js';
+import { listNewWebsites } from './repo.js';
 import { passwordPage, platformPage, platformWizardPage, type PlatformView } from './platform-view.js';
 import { rejectionReason, storePassword, storedPasswordHash } from '../web/password.js';
 
@@ -82,7 +84,10 @@ export function registerPlatformRoutes(app: FastifyInstance, deps: PlatformRoute
       newLayout({
         title: 'Platform settings',
         active: '/new-website/platform',
-        body: platformPage(await view()),
+        body: platformPage(
+          await view(),
+          automationBar(deps.settings.getBool('automation_enabled'), listNewWebsites(), deps.settings.get('timezone') || 'UTC', '/new-website/platform'),
+        ),
         flash: deps.readFlash(request.query),
       }),
     ),

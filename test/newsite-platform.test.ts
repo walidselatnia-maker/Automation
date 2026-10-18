@@ -227,7 +227,8 @@ describe('platform routes', () => {
     expect(page.body).toContain('Platform settings');
     for (const n of [0, 1, 2, 3, 4]) expect(page.body).toContain(`/new-website/platform/setup?section=${n}`);
     expect(page.body.indexOf('<h2>AI connection</h2>')).toBeGreaterThan(page.body.indexOf('<b>Advanced</b>')); // at the bottom
-    expect(page.body.indexOf('<h2>Automation</h2>')).toBeGreaterThan(page.body.indexOf('<b>Advanced</b>')); // tucked away
+    expect(page.body.indexOf('aria-label="Automation"')).toBeLessThan(page.body.indexOf('<b>Advanced</b>')); // the switch first
+    expect(page.body.indexOf('<h2>Checks and retries</h2>')).toBeGreaterThan(page.body.indexOf('<b>Advanced</b>')); // the timings tucked away
     expect(page.body).toContain('class="im-grid"'); // the image model cards live here now
 
     const one = await app.inject({ method: 'GET', url: '/new-website/platform/setup?section=3' });

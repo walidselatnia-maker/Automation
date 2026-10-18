@@ -31,11 +31,11 @@ describe('Autopilot', () => {
       started += 1;
     },
   });
-  const site = (autopilot: boolean) =>
+  const site = (active: boolean) =>
     createNewWebsite(
       {
-        name: 'Site', domain: autopilot ? 'a.example.com' : 'b.example.com', apiKey: 'sk_test_ABCDEFGHIJKLMNOP', niche: 'Baking recipes', nicheContext: '',
-        persona: 'Storyteller', status: 'active', autoPublish: true, autopilot, dailyTarget: 2, intervalMinutes: 60,
+        name: 'Site', domain: active ? 'a.example.com' : 'b.example.com', apiKey: 'sk_test_ABCDEFGHIJKLMNOP', niche: 'Baking recipes', nicheContext: '',
+        persona: 'Storyteller', status: active ? 'active' : 'paused', autoPublish: true, dailyTarget: 2, intervalMinutes: 60,
         bufferToken: '', pinUsername: '', projectId: '',
       },
       KEY,
@@ -55,6 +55,7 @@ describe('Autopilot', () => {
     openDatabase(':memory:');
     settings = new Settings(KEY);
     settings.set('timezone', 'UTC');
+    settings.set('automation_enabled', 'true');
     started = 0;
     ids = keywords(site(true));
     keywords(site(false));
@@ -63,15 +64,20 @@ describe('Autopilot', () => {
 
   it('makes main pictures one day ahead, publishes by posts per day and the gap, and stops when keywords run out', async () => {
     const [a, b, c, d] = ids as [number, number, number, number];
+    // The platform's Automation switch off: nothing happens.
+    settings.set('automation_enabled', 'false');
     autopilotTick(deps(), NOW);
-    // Two articles a day: the main pictures (not the steps) of the first two, and only on the Autopilot website.
+    expect(queuedFor()).toEqual([]);
+    settings.set('automation_enabled', 'true');
+    autopilotTick(deps(), NOW);
+    // Two articles a day: the main pictures (not the steps) of the first two, and only on the active website.
     expect(queuedFor()).toEqual([a, a, b, b].map((seo_id, i) => ({ seo_id, slot: i % 2 ? 'overhead' : 'feature' })));
     expect(started).toBe(1);
     expect(autopilotState(getNewWebsite(1)!, 'UTC', NOW).next).toBe('Next article is being prepared');
 
     run(`UPDATE newsite_pictures SET status = 'done'`);
     run(`UPDATE keyword_seo SET post_status = 'published', posted_at = ? WHERE id = ?`, sql(NOW - 30 * 60_000), a);
-    // Publishing right when pictures are made is Autopilot's job, not the picture maker's.
+    // With Automation on, publishing right when pictures are made is the schedule's job, not the picture maker's.
     await publishWhenReady(b, deps());
     expect(publishState(b)).toBe('');
 
@@ -97,32 +103,36 @@ describe('Autopilot', () => {
   });
 });
 
-describe('Autopilot switch', () => {
-  it('turns Autopilot on and off from the top of the Dashboard and the Websites page', async () => {
+describe('Automation switch', () => {
+  it('shows ON or OFF at the top of the Dashboard and Platform settings, and turns the whole platform on and off', async () => {
     const Fastify = (await import('fastify')).default;
     const formbody = (await import('@fastify/formbody')).default;
     const { registerNewWebsiteRoutes } = await import('../src/newsite/routes.js');
     openDatabase(':memory:');
+    const settings = new Settings(KEY);
     const app = Fastify();
     await app.register(formbody);
-    registerNewWebsiteRoutes(app, { encryptionKey: KEY, settings: new Settings(KEY), autoSeo: false, autoPictures: false });
+    registerNewWebsiteRoutes(app, { encryptionKey: KEY, settings, autoSeo: false, autoPictures: false });
     await app.ready();
+    const post = (payload: string) =>
+      app.inject({ method: 'POST', url: '/new-website/platform/automation', payload, headers: { 'content-type': 'application/x-www-form-urlencoded' } });
     try {
-      const id = createNewWebsite(
+      createNewWebsite(
         { name: 'Long Livo', domain: 'f.longlivo.com', apiKey: 'sk_test_ABCDEFGHIJKLMNOP', niche: 'Recipes', nicheContext: '', persona: 'Storyteller', status: 'active', autoPublish: true, dailyTarget: 3, intervalMinutes: 480, bufferToken: '', pinUsername: '', projectId: '' },
         KEY,
       );
+      settings.set('automation_enabled', 'false');
       const dash = (await app.inject({ method: 'GET', url: '/new-website/dashboard' })).body;
-      expect(dash.indexOf('aria-label="Autopilot"')).toBeLessThan(dash.indexOf('class="db-kpis"'));
-      expect(dash).toContain('<span class="ap-state off">OFF</span>');
-      const on = await app.inject({ method: 'POST', url: `/new-website/${id}/autopilot`, payload: 'on=1&back=%2Fnew-website', headers: { 'content-type': 'application/x-www-form-urlencoded' } });
-      expect(on.headers.location).toMatch(/^\/new-website\?ok=Autopilot%20is%20on/);
-      expect(getNewWebsite(id)!.autopilot).toBe(1);
-      const list = (await app.inject({ method: 'GET', url: '/new-website' })).body;
-      expect(list).toContain('<span class="ap-state on">ON</span>');
-      expect(list).toContain('No keywords left: add keywords');
-      await app.inject({ method: 'POST', url: `/new-website/${id}/autopilot`, payload: 'on=0', headers: { 'content-type': 'application/x-www-form-urlencoded' } });
-      expect(getNewWebsite(id)!.autopilot).toBe(0);
+      expect(dash.indexOf('aria-label="Automation"')).toBeLessThan(dash.indexOf('class="db-kpis"'));
+      expect(dash).toContain('<span class="ap-state">OFF</span>');
+      const on = await post('on=1&back=%2Fnew-website%2Fplatform');
+      expect(on.headers.location).toBe('/new-website/platform?ok=Automation%20is%20on.');
+      expect(settings.getBool('automation_enabled')).toBe(true);
+      const page = (await app.inject({ method: 'GET', url: '/new-website/platform' })).body;
+      expect(page).toContain('<span class="ap-state">ON</span>');
+      expect(page).toContain('<b>Long Livo:</b> No keywords left: add keywords');
+      await post('on=0');
+      expect(settings.getBool('automation_enabled')).toBe(false);
     } finally {
       await app.close();
       closeDatabase();

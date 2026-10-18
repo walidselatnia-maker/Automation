@@ -267,12 +267,12 @@ export function queuePublish(seoId: number, deps: PublishDeps): Promise<void> {
 /**
  * An article's main pictures are all made. On a website set to "Publish
  * automatically" it goes out now; on "Wait for my approval" it waits for the
- * Publish button. A website on Autopilot publishes by its posts per day and
- * gap instead (autopilot.ts), so nothing goes out here.
+ * Publish button. With the platform's Automation on, websites publish by
+ * their posts per day and gap instead (autopilot.ts), so nothing goes out here.
  */
 export function publishWhenReady(seoId: number, deps: PublishDeps): Promise<void> {
   const t = target(seoId, deps.encryptionKey);
-  if (!t || !t.site.auto_publish || t.site.autopilot || t.row.post_status === 'published' || t.row.post_status === 'publishing') return Promise.resolve();
+  if (!t || !t.site.auto_publish || deps.settings.getBool('automation_enabled') || t.row.post_status === 'published' || t.row.post_status === 'publishing') return Promise.resolve();
   if (notReadyReason(t.row, listPictures(seoId))) return Promise.resolve();
   log.info(`Main pictures of "${t.row.keyword}" are made: publishing it automatically.`);
   return queuePublish(seoId, deps);

@@ -1306,7 +1306,7 @@ export function keywordsOverview(sites: OverviewSite[], stats: Map<number, PlanS
                 <span><b>${String(plans.length)}</b> main keyword${plans.length === 1 ? '' : 's'}</span>
                 <span><b>${String(subs)}</b> sub-keyword${subs === 1 ? '' : 's'}</span>
                 <span><b>${String(published)}</b> published</span>
-                ${autopilot ? html`<span class="ns-badge ${autopilot.startsWith('No keywords') ? 'bad' : 'ok'}">Autopilot · ${autopilot}</span>` : raw('')}
+                ${autopilot ? html`<span class="ns-badge ${autopilot.startsWith('No keywords') ? 'bad' : 'ok'}">${autopilot}</span>` : raw('')}
                 ${findingCount ? html`<span class="ns-badge busy">Finding sub-keywords for ${String(findingCount)}</span>` : raw('')}
               </span>
               ${raw(CHEV)}

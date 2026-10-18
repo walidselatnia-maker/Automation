@@ -12,7 +12,6 @@ export interface NewWebsiteRow {
   persona: string;
   status: 'active' | 'paused';
   auto_publish: number;
-  autopilot: number;
   daily_target: number;
   interval_minutes: number;
   pin_username: string;
@@ -43,9 +42,9 @@ export const getNewWebsiteByDomain = (domain: string): NewWebsiteRow | undefined
 export function createNewWebsite(site: CleanWebsite, key: Buffer): number {
   return run(
     `INSERT INTO new_websites (name, domain, niche, niche_context, persona, status,
-       auto_publish, autopilot, daily_target, interval_minutes, pin_username, project_id,
+       auto_publish, daily_target, interval_minutes, pin_username, project_id,
        api_key_encrypted, buffer_token_encrypted)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     site.name,
     site.domain,
     site.niche,
@@ -53,7 +52,6 @@ export function createNewWebsite(site: CleanWebsite, key: Buffer): number {
     site.persona,
     site.status,
     fromBool(site.autoPublish),
-    fromBool(site.autopilot ?? false),
     site.dailyTarget,
     site.intervalMinutes,
     site.pinUsername,
@@ -67,7 +65,7 @@ export function createNewWebsite(site: CleanWebsite, key: Buffer): number {
 export function updateNewWebsite(id: number, site: CleanWebsite, key: Buffer): void {
   run(
     `UPDATE new_websites SET name = ?, domain = ?, niche = ?, niche_context = ?, persona = ?, status = ?,
-       auto_publish = ?, autopilot = ?, daily_target = ?, interval_minutes = ?, pin_username = ?, project_id = ?,
+       auto_publish = ?, daily_target = ?, interval_minutes = ?, pin_username = ?, project_id = ?,
        api_key_encrypted = ?, buffer_token_encrypted = ?
      WHERE id = ?`,
     site.name,
@@ -77,7 +75,6 @@ export function updateNewWebsite(id: number, site: CleanWebsite, key: Buffer): v
     site.persona,
     site.status,
     fromBool(site.autoPublish),
-    fromBool(site.autopilot ?? false),
     site.dailyTarget,
     site.intervalMinutes,
     site.pinUsername,
@@ -87,10 +84,6 @@ export function updateNewWebsite(id: number, site: CleanWebsite, key: Buffer): v
     id,
   );
 }
-
-export const setAutopilot = (id: number, on: boolean): void => {
-  run('UPDATE new_websites SET autopilot = ? WHERE id = ?', on ? 1 : 0, id);
-};
 
 export const deleteNewWebsite = (id: number): void => {
   run('DELETE FROM new_websites WHERE id = ?', id);

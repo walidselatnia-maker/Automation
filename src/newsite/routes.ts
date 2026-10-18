@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { autopilotPanel } from './autopilot-view.js';
+import { automationBar } from './autopilot-view.js';
 import { askPrompt } from '../llm/ask.js';
 import { expandSeeds } from '../integrations/google-suggest.js';
 import type { Settings } from '../settings.js';
@@ -23,7 +23,6 @@ import {
   deleteNewWebsite,
   getNewWebsite,
   getNewWebsiteByDomain,
-  setAutopilot,
   listNewWebsites,
   updateNewWebsite,
   websiteApiKey,
@@ -216,7 +215,7 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
     const asked = Number((request.query as { days?: string }).days);
     const days: Period = (PERIODS as readonly number[]).includes(asked) ? (asked as Period) : 30;
     const tz = deps.settings?.get('timezone') || 'UTC';
-    const body = dashboardPage(dashboardData(days, tz), Date.now(), autopilotPanel(listNewWebsites(), tz, '/new-website/dashboard'));
+    const body = dashboardPage(dashboardData(days, tz), Date.now(), automationBar(Boolean(deps.settings?.getBool('automation_enabled')), listNewWebsites(), tz, '/new-website/dashboard'));
     return send(reply, newLayout({ title: 'Dashboard', active: '/new-website/dashboard', body, flash: readFlash(request.query) }));
   });
 
@@ -228,7 +227,7 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
     send(reply, newLayout({
       title: 'Websites',
       active: '/new-website',
-      body: newWebsiteListPage(listNewWebsites(), ready(), autopilotPanel(listNewWebsites(), deps.settings?.get('timezone') || 'UTC', '/new-website')),
+      body: newWebsiteListPage(listNewWebsites(), ready()),
       flash: readFlash(request.query),
     })),
   );
@@ -295,17 +294,14 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
     });
   });
 
-  /** Autopilot on or off, from the switch on the Dashboard or the Websites page. */
-  app.post('/new-website/:id/autopilot', async (request, reply) => {
+  /** The platform's Automation switch, from the top of the Dashboard or Platform settings. */
+  app.post('/new-website/platform/automation', async (request, reply) => {
     const form = body(request);
-    const site = getNewWebsite(Number((request.params as { id: string }).id) || 0);
-    const back = form.back === '/new-website' ? '/new-website' : '/new-website/dashboard';
-    if (!site) return reply.redirect(`${back}?error=${encodeURIComponent('That website no longer exists.')}`, 303);
+    const back = form.back === '/new-website/platform' ? '/new-website/platform' : '/new-website/dashboard';
+    if (!deps.settings) return reply.redirect(back, 303);
     const on = form.on === '1';
-    setAutopilot(site.id, on);
-    const note = on
-      ? site.status === 'active' ? `Autopilot is on for ${site.name}.` : `Autopilot is on for ${site.name}, but the website is paused: set it to Active to run.`
-      : `Autopilot is off for ${site.name}. Nothing runs by itself there now.`;
+    deps.settings.set('automation_enabled', on ? 'true' : 'false');
+    const note = on ? 'Automation is on.' : 'Automation is off. Nothing new starts on its own until it is on again.';
     return reply.redirect(`${back}?ok=${encodeURIComponent(note)}`, 303);
   });
 
