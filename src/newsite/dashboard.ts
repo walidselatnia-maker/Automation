@@ -1,4 +1,5 @@
 import { all } from '../db/index.js';
+import { failedArticlePictures } from './pictures.js';
 import { autopilotState } from './autopilot.js';
 import { html, raw, type Html } from '../web/views/layout.js';
 import { PLATFORMS } from './channels.js';
@@ -156,7 +157,7 @@ export function dashboardData(days: Period, timezone: string, now = Date.now()):
       count: n(`SELECT COUNT(*) AS n FROM keyword_seo WHERE status = 'failed' OR recipe_status = 'failed' OR skeleton_status = 'failed' OR article_status = 'failed' OR images_status = 'failed' OR post_status = 'failed'`),
       href: '/new-website/keywords',
     },
-    { label: 'picture failed|pictures failed', count: n(`SELECT COUNT(*) AS n FROM newsite_pictures WHERE status = 'failed'`), href: '/new-website/keywords' },
+    { label: 'picture failed|pictures failed', count: failedArticlePictures().length, href: '/new-website/keywords' },
     { label: 'social post not sent|social posts not sent', count: posts.filter((p) => p.status === 'failed').length, href: '/new-website/sharing' },
     { label: 'reel not made|reels not made', count: reels.filter((r) => r.status === 'failed').length, href: '/new-website/sharing/reels' },
   ].filter((p) => p.count);

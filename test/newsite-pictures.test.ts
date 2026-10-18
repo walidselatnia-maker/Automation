@@ -18,6 +18,7 @@ import {
   resetPictureMakerState,
   queueStepPictures,
   retryFailedPictures,
+  failedArticlePictures,
   shapeOf,
   NEXT_STEP_KEY,
 } from '../src/newsite/pictures.js';
@@ -165,6 +166,8 @@ describe('Pictures, made the old dashboard way', () => {
     run(`UPDATE newsite_pictures SET status = 'failed', error = 'Image job x failed'`);
     run(`INSERT INTO newsite_pictures (seo_id, slot, position, prompt, status) VALUES (?, 'social-9', 1000, 'pin', 'failed')`, seoId);
     run(`INSERT INTO newsite_pictures (seo_id, slot, position, prompt, status) VALUES (?, 'closeup', 2, 'an old prompt', 'failed')`, seoId);
+    // What the dashboard counts as needing attention: the same two the Images step shows.
+    expect(failedArticlePictures().map((p) => p.slot)).toEqual(['feature', 'overhead']);
     const [feature] = listPictures(seoId);
     expect(retryFailedPictures({ pictureId: feature!.id })).toBe(1);
     expect(listPictures(seoId).find((p) => p.slot === 'feature')).toMatchObject({ status: 'queued', error: '', attempts: 0 });

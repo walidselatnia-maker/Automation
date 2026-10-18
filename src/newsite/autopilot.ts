@@ -1,5 +1,6 @@
 import { all } from '../db/index.js';
 import { createLogger } from '../lib/logger.js';
+import { parseImageSet } from './images.js';
 import { notReadyReason, queuePublish, type PublishDeps } from './publish.js';
 import { isMainSlot, queuePictures, type PictureRow } from './pictures.js';
 import { listNewWebsites, type NewWebsiteRow } from './repo.js';
@@ -49,12 +50,14 @@ function siteWork(siteId: number): SiteWork {
     `SELECT s.* FROM keyword_seo s JOIN keyword_plans p ON p.id = s.plan_id WHERE p.website_id = ? ORDER BY s.plan_id, s.position`,
     siteId,
   );
+  // Only pictures of each article's prompts as they are now: one left from an older prompt counts for nothing.
+  const current = new Map(rows.map((r) => [r.id, new Map((r.images_status === 'done' ? parseImageSet(r.images_json)?.images ?? [] : []).map((im) => [im.slot, im.prompt]))]));
   const pictures = new Map<number, PictureRow[]>();
   for (const p of all<PictureRow>(
     `SELECT * FROM newsite_pictures WHERE seo_id IN (SELECT s.id FROM keyword_seo s JOIN keyword_plans p ON p.id = s.plan_id WHERE p.website_id = ?)`,
     siteId,
   )) {
-    if (!isMainSlot(p.slot)) continue;
+    if (!isMainSlot(p.slot) || current.get(p.seo_id)?.get(p.slot) !== p.prompt) continue;
     pictures.set(p.seo_id, [...(pictures.get(p.seo_id) ?? []), p]);
   }
   return { rows, pictures };
