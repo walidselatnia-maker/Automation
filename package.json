@@ -16,8 +16,7 @@
     "watch:css": "tailwindcss -i ./src/web/styles/input.css -o ./src/web/public/style.css --watch",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit",
-    "import:sheets": "tsx src/scripts/import-sheets.ts"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@fastify/formbody": "^8.0.1",

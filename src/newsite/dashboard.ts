@@ -370,5 +370,5 @@ export function dashboardPage(d: DashboardData, now = Date.now(), autopilot: Htm
         : html`<p class="db-empty">Nothing yet. Add keywords and the platform starts writing.</p>`}
     </section>
     </div>
-    <script>setInterval(() => { if (document.visibilityState === 'visible') location.reload(); }, 60000);</script>`;
+    <script>setInterval(() => { if (document.visibilityState === 'visible' && !document.querySelector('dialog[open]')) location.reload(); }, 60000);</script>`;
 }

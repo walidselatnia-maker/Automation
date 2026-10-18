@@ -64,7 +64,8 @@ function pillarInputProblem(pillar: string): string | null {
   return null;
 }
 
-export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDeps): void {
+/** Returns what starts the writer, for Generate now on the Dashboard. */
+export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDeps): () => void {
   /**
    * What a new keyword must not repeat: every post on the website (any
    * status) and every keyword already saved in a plan for it.
@@ -438,6 +439,7 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
     deleteKeywordPlan(planId);
     return reply.redirect(`/new-website/keywords?ok=${encodeURIComponent('Keyword plan deleted.')}#website-${website}`, 303);
   });
+  return startSeo;
 }
 
 /** A JSON array sent as one form field. Anything else is an empty list. */

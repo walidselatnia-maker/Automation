@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { automationBar } from './autopilot-view.js';
+import { automationBar, generateBox } from './autopilot-view.js';
+import { html } from '../web/views/layout.js';
 import { askPrompt } from '../llm/ask.js';
 import { expandSeeds } from '../integrations/google-suggest.js';
 import type { Settings } from '../settings.js';
@@ -10,6 +11,7 @@ import { registerImageModelRoutes } from './image-model.js';
 import { registerChannelRoutes, type ChannelLookups } from './channels-routes.js';
 import { registerPublishRoutes } from './publish-routes.js';
 import { addStepPicture, publishWhenReady, type PublishDeps } from './publish.js';
+import { generateChoices, generateNowLines, generateNowTick, startGenerateNow } from './generate-now.js';
 import { AUTOMATION_KEY, AUTOMATION_ON_AT, automationOn, automationOnAt, autopilotTick, START_DELAY_MS } from './autopilot.js';
 import { createSocialPosts, kickSocial, onPinPicture, type SocialDeps } from './social.js';
 import { registerSocialRoutes } from './social-routes.js';
@@ -98,6 +100,8 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
 
   /** Runs the first Automation check 30 seconds after the switch is turned on. */
   let automationStarted: () => void = () => {};
+  /** Carries Generate now keywords on, once the picture maker is wired up. */
+  let generateTick: () => void = () => {};
 
   const ask =
     deps.ask ??
@@ -142,8 +146,12 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
       afterPin: (pictureId, ok) => onPinPicture(pictureId, ok, social),
     });
     social.startPictures = publish.startPictures;
+    generateTick = () => generateNowTick(publish);
     if (deps.autoPictures !== false) {
-      setInterval(() => autopilotTick(publish), 60_000).unref();
+      setInterval(() => {
+        autopilotTick(publish);
+        generateTick();
+      }, 60_000).unref();
       automationStarted = () => setTimeout(() => autopilotTick(publish), START_DELAY_MS + 1000).unref();
     }
     registerSocialRoutes(app, { ...social, readFlash, autoStart: deps.autoPictures });
@@ -152,7 +160,7 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
   registerPromptRoutes(app, { readFlash });
   registerPinDesignRoutes(app, { readFlash });
 
-  registerKeywordRoutes(app, {
+  const startWriter = registerKeywordRoutes(app, {
     encryptionKey: deps.encryptionKey,
     readFlash,
     isPlatformReady: ready,
@@ -221,7 +229,7 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
     const asked = Number((request.query as { days?: string }).days);
     const days: Period = (PERIODS as readonly number[]).includes(asked) ? (asked as Period) : 30;
     const tz = deps.settings?.get('timezone') || 'UTC';
-    const body = dashboardPage(dashboardData(days, tz), Date.now(), automationBar(automationOn(deps.settings), listNewWebsites(), tz, '/new-website/dashboard', Date.now(), deps.settings ? automationOnAt(deps.settings) : 0));
+    const body = dashboardPage(dashboardData(days, tz), Date.now(), html`${automationBar(automationOn(deps.settings), listNewWebsites(), tz, '/new-website/dashboard', Date.now(), deps.settings ? automationOnAt(deps.settings) : 0)}${generateBox(generateChoices(), generateNowLines())}`);
     return send(reply, newLayout({ title: 'Dashboard', active: '/new-website/dashboard', body, flash: readFlash(request.query) }));
   });
 
@@ -298,6 +306,15 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
       saved: true,
       redirect: refused.length ? `/new-website?error=${encodeURIComponent(refused.join(' '))}` : '/new-website',
     });
+  });
+
+  /** Generate now, from the Dashboard: one keyword written, pictured and published ahead of the rest. */
+  app.post('/new-website/generate-now', async (request, reply) => {
+    const row = startGenerateNow(Number(body(request).seo) || 0);
+    if (!row) return reply.redirect(`/new-website/dashboard?error=${encodeURIComponent('Pick a keyword that is not published yet.')}`, 303);
+    startWriter();
+    generateTick();
+    return reply.redirect(`/new-website/dashboard?ok=${encodeURIComponent(`Generating "${row.keyword}". It is published as soon as it is ready.`)}`, 303);
   });
 
   /** The platform's Automation switch, from the top of the Dashboard or Platform settings. */

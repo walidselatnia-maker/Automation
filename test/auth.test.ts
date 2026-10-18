@@ -156,7 +156,7 @@ describe('authentication', () => {
 
     it('grants access to every page once signed in', async () => {
       const cookie = await sessionCookie();
-      for (const path of ['/', '/runs', '/sites', '/keywords', '/settings']) {
+      for (const path of ['/new-website/dashboard', '/new-website/home', '/new-website/platform']) {
         const response = await app.inject({ method: 'GET', url: path, headers: { cookie } });
         expect(response.statusCode, `${path} should be reachable`).toBe(200);
       }

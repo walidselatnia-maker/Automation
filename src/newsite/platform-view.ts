@@ -2,7 +2,7 @@ import { html, raw, type Html } from '../web/views/layout.js';
 import { AI_MODELS, IMAGE_MODELS, NUMBER_RANGES, TIMEZONES } from './platform.js';
 import { field, WIZARD_CSS } from './view.js';
 import { imageModelCards } from './image-model.js';
-import type { ImageModelCatalogue } from '../web/views/pages.js';
+import type { ImageModelCatalogue } from './image-model.js';
 
 export interface PlatformView {
   ready: boolean;
@@ -78,7 +78,7 @@ export function platformPage(v: PlatformView, automation: Html = raw('')): Html 
       <div>
         <h1 class="ns-title">Platform settings</h1>
         <p class="ns-lede">What the whole platform needs to work: the AI that writes, the service that makes pictures, your time zone and where to send notifications.
-          Each part has its own Change button. These settings are shared with the old dashboard.</p>
+          Each part has its own Change button.</p>
       </div>
       ${d ? raw('') : html`<a class="ns-btn primary" href="/new-website/platform/setup">Set up the platform</a>`}
     </div>
@@ -199,7 +199,7 @@ export function platformWizardPage(v: PlatformView, section = -1): Html {
     <div class="wz">
       <div class="wz-head">
         <h1>${one ? `Change: ${STEP_NAMES[section]}` : v.done ? 'Platform settings' : 'Set up the platform'}</h1>
-        <p class="wz-id">${one ? 'Shared with the old dashboard. Only this part changes.' : 'Shared with the old dashboard. Nothing is saved until the last step.'}</p>
+        <p class="wz-id">${one ? 'Only this part changes.' : 'Nothing is saved until the last step.'}</p>
         <div class="wz-bar" id="wz-bar" ${raw(one ? 'style="display:none"' : '')}>${STEP_NAMES.map(() => html`<i></i>`)}</div>
         <div class="wz-stepname" id="wz-stepname" ${raw(one ? 'style="display:none"' : '')}></div>
       </div>

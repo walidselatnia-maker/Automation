@@ -181,6 +181,8 @@ export interface SeoRow {
   retries_json: string;
   retry_step: string;
   retry_at: number | null;
+  /** 1 while "Generate now" carries this keyword through to publishing, ahead of the rest. */
+  generate_now: number;
 }
 
 /** One waiting row per keyword: the pillar first, then the sub-keywords in order. */
@@ -385,7 +387,7 @@ export function kickSeoWriter(deps: WriterDeps): Promise<void> {
       for (;;) {
         // AI#1 first, so every keyword of a plan has its title before any
         // skeleton is made; then AI#2 on the keywords whose metadata is done.
-        const next = get<SeoRow>(`SELECT * FROM keyword_seo WHERE status = 'pending' ORDER BY plan_id, position LIMIT 1`);
+        const next = get<SeoRow>(`SELECT * FROM keyword_seo WHERE status = 'pending' ORDER BY generate_now DESC, plan_id, position LIMIT 1`);
         if (next) {
           try {
             await writeOne(next, deps);
@@ -396,7 +398,7 @@ export function kickSeoWriter(deps: WriterDeps): Promise<void> {
           continue;
         }
         const dish = get<SeoRow>(
-          `SELECT * FROM keyword_seo WHERE status = 'done' AND recipe_status = 'pending' ORDER BY plan_id, position LIMIT 1`,
+          `SELECT * FROM keyword_seo WHERE status = 'done' AND recipe_status = 'pending' ORDER BY generate_now DESC, plan_id, position LIMIT 1`,
         );
         if (dish) {
           try {
@@ -408,7 +410,7 @@ export function kickSeoWriter(deps: WriterDeps): Promise<void> {
           continue;
         }
         const outline = get<SeoRow>(
-          `SELECT * FROM keyword_seo WHERE status = 'done' AND skeleton_status = 'pending' ORDER BY plan_id, position LIMIT 1`,
+          `SELECT * FROM keyword_seo WHERE status = 'done' AND skeleton_status = 'pending' ORDER BY generate_now DESC, plan_id, position LIMIT 1`,
         );
         if (outline) {
           try {
@@ -420,7 +422,7 @@ export function kickSeoWriter(deps: WriterDeps): Promise<void> {
           continue;
         }
         const piece = get<SeoRow>(
-          `SELECT * FROM keyword_seo WHERE skeleton_status = 'done' AND article_status = 'pending' ORDER BY plan_id, position LIMIT 1`,
+          `SELECT * FROM keyword_seo WHERE skeleton_status = 'done' AND article_status = 'pending' ORDER BY generate_now DESC, plan_id, position LIMIT 1`,
         );
         if (piece) {
           try {
@@ -432,7 +434,7 @@ export function kickSeoWriter(deps: WriterDeps): Promise<void> {
           continue;
         }
         const pictures = get<SeoRow>(
-          `SELECT * FROM keyword_seo WHERE article_status = 'done' AND images_status = 'pending' ORDER BY plan_id, position LIMIT 1`,
+          `SELECT * FROM keyword_seo WHERE article_status = 'done' AND images_status = 'pending' ORDER BY generate_now DESC, plan_id, position LIMIT 1`,
         );
         if (!pictures) break;
         try {

@@ -270,10 +270,11 @@ export function queuePublish(seoId: number, deps: PublishDeps): Promise<void> {
  * automatically" it goes out now; on "Wait for my approval" it waits for the
  * Publish button. With the platform's Automation on, websites publish by
  * their posts per day and gap instead (autopilot.ts), so nothing goes out here.
+ * An article started with Generate now always goes out as soon as it is ready.
  */
 export function publishWhenReady(seoId: number, deps: PublishDeps): Promise<void> {
   const t = target(seoId, deps.encryptionKey);
-  if (!t || !t.site.auto_publish || automationOn(deps.settings) || t.row.post_status === 'published' || t.row.post_status === 'publishing') return Promise.resolve();
+  if (!t || (!t.row.generate_now && (!t.site.auto_publish || automationOn(deps.settings))) || t.row.post_status === 'published' || t.row.post_status === 'publishing') return Promise.resolve();
   if (notReadyReason(t.row, listPictures(seoId))) return Promise.resolve();
   log.info(`Main pictures of "${t.row.keyword}" are made: publishing it automatically.`);
   return queuePublish(seoId, deps);

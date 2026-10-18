@@ -289,7 +289,7 @@ export function kickPictureMaker(deps: PictureDeps): Promise<void> {
          JOIN keyword_seo s ON s.id = p.seo_id
          JOIN keyword_plans k ON k.id = s.plan_id
          JOIN new_websites w ON w.id = k.website_id
-        WHERE p.status = 'queued' AND (p.slot LIKE 'step-%') = ? ORDER BY p.id LIMIT 1`,
+        WHERE p.status = 'queued' AND (p.slot LIKE 'step-%') = ? ORDER BY s.generate_now DESC, p.id LIMIT 1`,
       stepLane ? 1 : 0,
     );
 

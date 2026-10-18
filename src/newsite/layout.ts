@@ -367,7 +367,6 @@ ${THEME}
   <div class="ns-foot">
     <button type="button" id="ns-theme">${raw(ICON('<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>'))}<span>Dark mode</span></button>
     <a href="/browser" target="_blank" rel="noopener" title="The live Chrome session used to make pictures">${raw(ICON('<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M7 6.5h.01M10 6.5h.01"/>'))}<span>Browser</span></a>
-    <a href="/">${raw(ICON('<path d="M15 18l-6-6 6-6"/>'))}<span>Back to old dashboard</span></a>
   </div>
 </aside>
 <main class="ns-main"><div class="ns-wrap">

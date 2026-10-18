@@ -944,6 +944,13 @@ export const MIGRATIONS: Migration[] = [
       addColumn(db, 'new_websites', 'autopilot', 'INTEGER NOT NULL DEFAULT 0');
     },
   },
+  {
+    id: '043-newsite-generate-now',
+    description: 'New websites: Generate now, one chosen keyword written, pictured and published ahead of the rest',
+    up(db) {
+      addColumn(db, 'keyword_seo', 'generate_now', 'INTEGER NOT NULL DEFAULT 0');
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */

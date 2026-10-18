@@ -1,9 +1,34 @@
 import type { FastifyInstance } from 'fastify';
 import { html, raw, type Html } from '../web/views/layout.js';
-import type { ImageModelCatalogue } from '../web/views/pages.js';
 import type { Settings } from '../settings.js';
 import { IMAGE_MODELS } from './platform.js';
 import type { Fetch } from './platform.js';
+
+/** What the image service knows about each picture model, for the picker. */
+export interface ImageModelCatalogue {
+  models: {
+    key: string;
+    label: string;
+    wire: string | null;
+    discovered: boolean;
+    outcome: 'untried' | 'accepted' | 'refused' | 'rejected' | 'unknown';
+    at: string | null;
+    error: string | null;
+  }[];
+  discovered: boolean;
+  /** What the last scan of the Flow page looked at and found. */
+  scan?: {
+    at?: string;
+    error?: string;
+    page?: string;
+    inline_scripts?: number;
+    fetched?: string[];
+    failed?: string[];
+    anchor_hits?: Record<string, number>;
+    candidates?: string[];
+    near?: Record<string, string[]>;
+  };
+}
 
 /**
  * The image model setting, shown as cards in the Images part of the

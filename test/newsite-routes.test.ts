@@ -71,7 +71,7 @@ describe('new website routes', () => {
     expect(wizard.statusCode).toBe(200);
     expect(wizard.body).toContain('Add a website');
     // Its own dashboard: not the old layout or stylesheet.
-    expect(wizard.body).toContain('Back to old dashboard');
+    expect(wizard.body).not.toContain('Back to old dashboard');
     expect(wizard.body).not.toContain('/static/style.css');
     const list = await app.inject({ method: 'GET', url: '/new-website' });
     expect(list.body).toContain('No websites yet');

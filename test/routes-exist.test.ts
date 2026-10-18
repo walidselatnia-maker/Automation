@@ -2,13 +2,8 @@ import { randomBytes } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { closeDatabase, openDatabase } from '../src/db/index.js';
-import {
-  createRun,
-  insertKeyword,
-  markRunHeld,
-  setLink,
-  upsertSite,
-} from '../src/db/repos.js';
+import { createNewWebsite, saveKeywordPlan } from '../src/newsite/repo.js';
+import { queuePlanSeo } from '../src/newsite/seo.js';
 import { Settings } from '../src/settings.js';
 import { buildServer } from '../src/web/server.js';
 import { setLogLevel } from '../src/lib/logger.js';
@@ -18,7 +13,7 @@ import { SETUP_DONE_KEY } from '../src/newsite/platform.js';
 /**
  * Every form on every page must post somewhere that exists.
  *
- * Written after `POST /keywords/import` was deleted by a block removal that
+ * Written (for the old dashboard) after `POST /keywords/import` was deleted by a block removal that
  * was aiming at the routes either side of it. Nothing failed: it typechecked,
  * 447 tests passed, and the button stayed on the page. The only symptom was a
  * 404 in someone's face days later, on the one page you cannot use the app
@@ -36,23 +31,18 @@ const PASSWORD = 'correct-horse-battery-staple';
 
 /** Pages worth crawling: everything with a form on it. */
 const PAGES = [
-  '/',
-  '/runs',
-  '/sites',
+  '/new-website/dashboard',
+  '/new-website/home',
   '/new-website',
   '/new-website/add',
+  '/new-website/channels',
   '/new-website/keywords',
+  '/new-website/prompts',
+  '/new-website/pin-designs',
+  '/new-website/sharing',
+  '/new-website/sharing/reels',
   '/new-website/platform',
   '/new-website/platform/setup',
-  '/keywords',
-  '/keywords/add',
-  '/reels',
-  '/settings/facebook',
-  '/events',
-  '/settings',
-  '/settings/keys',
-  '/settings/prompts',
-  '/settings/account',
 ];
 
 describe('every control points at a route that exists', () => {
@@ -66,29 +56,14 @@ describe('every control points at a route that exists', () => {
 
     // Enough rows that the per-record pages render with real ids in their
     // form actions rather than collapsing to empty states.
-    const siteId = upsertSite(
-      {
-        name: 'bitespoon',
-        domain: 'bitespoon.com',
-        status: 'active',
-        pin_username: '',
-        project_id: '',
-        daily_target: 3,
-        interval_minutes: 60,
-      },
+    const siteId = createNewWebsite(
+      { name: 'Long Livo', domain: 'f.longlivo.com', apiKey: 'sk_test_ABCDEFGHIJKLMNOP', niche: 'Recipes', nicheContext: '', persona: 'Storyteller', status: 'active', autoPublish: true, dailyTarget: 3, intervalMinutes: 60, bufferToken: '', pinUsername: '', projectId: '' },
       KEY,
     );
-    const keywordId = insertKeyword({
-      seed_keyword: 'chicken thighs',
-      spy_title: 'Honey Soy Chicken Thighs',
-      status: 'go',
-    });
-    setLink(keywordId, siteId, 'go');
+    const planId = saveKeywordPlan(siteId, 'cakes', [], 'recipe');
+    queuePlanSeo(planId, 'cakes', ['lemon cake'], 'recipe');
 
-    const runId = createRun(keywordId, siteId);
-    markRunHeld(runId, 'awaiting', 'Honey Soy Chicken Thighs');
-
-    extra = [`/sites/${siteId}`, `/keywords/${keywordId}`, `/runs/${runId}`];
+    extra = [`/new-website/${siteId}/edit`, `/new-website/keywords/plan/${planId}/seo`];
 
     // The new dashboard sends everything to Platform until it is set up;
     // set it up so its pages render rather than redirect.
@@ -134,6 +109,8 @@ describe('every control points at a route that exists', () => {
   };
 
   it('crawls every page and finds no dead control', async () => {
+    // The old dashboard's address opens the Dashboard.
+    expect((await app.inject({ method: 'GET', url: '/', headers: { cookie } })).headers.location).toBe('/new-website/dashboard');
     const posts = new Set<string>();
     const gets = new Set<string>();
 
@@ -145,7 +122,7 @@ describe('every control points at a route that exists', () => {
 
     // Sanity: the crawl has to have actually found things, or this test would
     // pass by finding nothing and checking nothing.
-    expect(posts.size).toBeGreaterThan(15);
+    expect(posts.size).toBeGreaterThan(10);
     expect(gets.size).toBeGreaterThan(15);
 
     const dead: string[] = [];
@@ -175,17 +152,4 @@ describe('every control points at a route that exists', () => {
     // alongside. The slowness is the point of the test, not a symptom.
   }, 30_000);
 
-  it('serves the import endpoints the CSV buttons post to', async () => {
-    // Named explicitly as well as crawled: these two are the whole of bulk
-    // entry, and losing one is losing the ability to load the app with work.
-    for (const url of ['/keywords/import', '/sites/import']) {
-      const res = await app.inject({
-        method: 'POST',
-        url,
-        payload: '',
-        headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
-      });
-      expect(res.statusCode, `POST ${url}`).not.toBe(404);
-    }
-  });
 });
