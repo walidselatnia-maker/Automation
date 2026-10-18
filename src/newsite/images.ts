@@ -1,4 +1,4 @@
-import { all, get, run } from '../db/index.js';
+import { get, run } from '../db/index.js';
 import { createLogger, errorMessage } from '../lib/logger.js';
 import { similarity, words } from '../seo/rules.js';
 import { inventedIngredients } from './article.js';
@@ -35,6 +35,12 @@ export interface ImageTheme {
   palette: string;
   style: string;
   mood: string;
+  /**
+   * Recipe pages only: how this page's finished dish looks (shape, layers, colours, topping),
+   * repeated in every prompt. Google Flow makes each picture on its own, without seeing the
+   * others, so without one shared description every picture invents its own version of the dish.
+   */
+  dish: string;
 }
 
 export interface ImagePrompt {
@@ -82,7 +88,13 @@ export function imageSlots(keyword: string, skeleton: Skeleton, recipe: Recipe |
       { slot: 'ingredients', shows: 'WIDE 16:9 the raw ingredients from the recipe laid out before cooking, each one recognisable, arranged with care in bowls, spoons and their packaging.' },
       { slot: 'process', shows: 'WIDE 16:9 a key moment while making it, half-way through, with hands at work (whisking, spreading, piping): the "before" of before-and-after.' },
       { slot: 'serving', shows: `WIDE 16:9 one portion of the ${keyword} served (cut, scooped or poured) at a set table, ready to eat, someone about to enjoy it: the "after".` },
-      ...recipe.steps.map((s, i) => ({ slot: `step-${i + 1}`, shows: `WIDE 16:9 photo of step ${i + 1} of the recipe, the moment it describes, with hands at work: ${s.text}` })),
+      ...recipe.steps.map((s, i, steps) => ({
+        slot: `step-${i + 1}`,
+        shows:
+          `WIDE 16:9 photo of step ${i + 1} of ${steps.length} of making the ${keyword}, the moment it describes, with hands at work: ${s.text} ` +
+          `Show only what exists at this moment: the ingredients and tools this step uses and what the earlier steps made, in the same bowls and pans as the other steps.` +
+          (i < steps.length - 1 ? ` The finished ${keyword} is not in this picture yet.` : ''),
+      })),
     ];
   }
   const middle = skeleton.sections.slice(1, -1).slice(0, ARTICLE_SECTION_IMAGES);
@@ -122,6 +134,7 @@ export function parseImageSet(raw: string): ImageSet | null {
       palette: clean(t.palette, 200),
       style: clean(t.style, 200),
       mood: clean(t.mood, 200),
+      dish: clean(t.dish, 300),
     },
     images: o.images.map((im) => {
       const i = (im ?? {}) as Record<string, unknown>;
@@ -149,6 +162,9 @@ export function checkImageSet(set: ImageSet, ctx: ImageContext): string[] {
   for (const field of ['surface', 'lighting', 'palette', 'style', 'mood'] as const) {
     if (!set.theme[field]) problems.push(`The theme needs its ${field}.`);
   }
+  // A recipe page: every picture is the same dish, so every prompt carries its description.
+  const recipePage = ctx.allowedText !== undefined;
+  if (recipePage && !set.theme.dish) problems.push('The theme needs its dish: how this recipe\'s finished dish looks (shape, layers, colours, topping), from the recipe.');
 
   const got = set.images.map((i) => i.slot);
   const wanted = ctx.slots.map((s) => s.slot);
@@ -168,6 +184,9 @@ export function checkImageSet(set: ImageSet, ctx: ImageContext): string[] {
     }
     if (set.theme.lighting && !hasAllWords(im.prompt, set.theme.lighting)) {
       problems.push(`${name}: repeat the theme's lighting word for word ("${set.theme.lighting}").`);
+    }
+    if (recipePage && set.theme.dish && !hasAllWords(im.prompt, set.theme.dish)) {
+      problems.push(`${name}: repeat the theme's dish word for word ("${set.theme.dish}"), so the picture shows this recipe and not another version of it.`);
     }
     if (!/\b\d{2,3}\s?mm\b|\bmacro lens\b/i.test(im.prompt)) problems.push(`${name}: give the lens (for example "50mm").`);
     if (!/\bf\/\d+(\.\d)?\b/i.test(im.prompt)) problems.push(`${name}: give the aperture (for example "f/4").`);
@@ -228,16 +247,10 @@ export async function makeImagePrompts(row: SeoRow, deps: ImageDeps): Promise<vo
 
   const recipe = row.recipe_json ? parseRecipe(row.recipe_json) : null;
   const slots = imageSlots(row.keyword, skeleton, recipe);
-  let allowedText: string | undefined;
-  if (recipe) {
-    allowedText = recipeText(recipe) + '\n' + recipe.notes;
-    if (row.role === 'pillar') {
-      for (const r of all<{ recipe_json: string }>(`SELECT recipe_json FROM keyword_seo WHERE plan_id = ? AND role = 'sub' AND recipe_json != ''`, row.plan_id)) {
-        const sub = parseRecipe(r.recipe_json);
-        if (sub) allowedText += '\n' + recipeText(sub);
-      }
-    }
-  }
+  // The pictures show this page's own recipe only. (A main page's article may talk about its
+  // sub-recipes, but letting their ingredients into the pictures is how a strawberry cake got
+  // blueberries in its step photos.)
+  const allowedText = recipe ? recipeText(recipe) + '\n' + recipe.notes : undefined;
 
   const outcome = await correctUntilRight<ImageSet>({
     ask: (corrections) =>

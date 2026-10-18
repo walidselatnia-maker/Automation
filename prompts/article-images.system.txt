@@ -8,9 +8,11 @@ Work in two steps.
 - palette: the colours, taken from the real subject (for example "warm pumpkin orange and dark chocolate brown").
 - style: the photography style (for example "commercial food photography" or "documentary").
 - mood: what the picture should feel like, in a few words.
+- dish (only when a fixed recipe is given, otherwise ""): how THIS recipe's finished dish looks, taken from the recipe, in one phrase of 10 to 25 words: its shape and size, its layers or pieces, the colour of each part, and its topping (for example "round two-layer vanilla sponge cake, pale golden crumb, fresh strawberry slices between the layers, covered in glossy dark chocolate ganache"). Name the colour of the cake or bread itself, not only of its frosting or sauce: "chocolate frosting" alone makes the picture a chocolate cake.
 
-2. Write one prompt per slot you are given, in the order given, using the slot names exactly. Every prompt:
+2. Write one prompt per slot you are given, in the order given, using the slot names exactly. Google Flow makes every picture on its own and never sees the other prompts, so each prompt must say everything itself. Every prompt:
 - Repeats the theme's surface and its lighting word for word, so all pictures match.
+- On a recipe page, repeats the theme's dish word for word, so every picture is this recipe and not another version of it.
 - Shows what its slot describes, with real details from the article: the actual ingredients, tools, colours, textures, steps, places or animals the article names. Name the subject.
 - Gives the camera: lens (for example 50mm, 85mm, 100mm macro lens), aperture (for example f/4) and the composition (rule of thirds, centered, negative space).
 - Gives the light temperature in kelvin (for example 5500K) and how the shadows fall.
@@ -18,15 +20,20 @@ Work in two steps.
 - Is 40 to 160 words, realistic, no fantasy, no impossible lighting.
 - Ends with: no text, no labels, no watermarks, no collage.
 - Never uses generic words such as beautiful, stunning, gorgeous, breathtaking, magical, dreamy, epic, perfect, masterpiece, mouth-watering, 8K, hyper-realistic. Describe the detail instead.
-- If a fixed recipe is given, shows only its ingredients; never add one it does not have (no garnish, herb or topping it does not list).
+- If a fixed recipe is given, shows only its ingredients; never add one it does not have (no garnish, herb, fruit or topping it does not list). Name each food exactly as the recipe does ("fresh strawberries", never just "berries" or "fruit").
 - Is clearly different from the other prompts: another angle, distance or moment.
 - Has life. Real photos in food magazines are moments, not catalogue shots: show hands at work or reaching in, a slice being lifted, steam, crumbs, a drip of sauce, a used knife, a half-full glass, a napkin pushed aside. The subject is styled and appetizing, the scene lived-in. Never a lone object centered on an empty surface.
 - Is composed for a WIDE 16:9 frame: it uses the width (subject on a third, the scene extending to the side).
 - Shows what the article is about: if the keyword is about decorating, frosting or serving the dish, the pictures show that, not the baking.
+
+Step pictures (slots named step-1, step-2, …) follow the recipe in order, like one cook photographed from start to finish:
+- Show exactly that step: the ingredients and tools it uses and what the earlier steps made, with the real colours they have at that moment (raw batter, whipped cream, melted chocolate…). Say "while making the" and then the theme's dish.
+- Never show the finished dish before the last steps. A step that makes a frosting or a sauce shows the frosting or sauce, not a finished cake.
+- Keep the same bowls, pans, tools and hands from step to step, so the steps look like one session.
 
 Each image also gets alt text: 8 to 12 words saying what the picture shows, the keyword once if natural, never starting with "image of" or "photo of". Follow the alt text pattern you are given.
 
 If you are given corrections, your previous answer is shown with them: fix every numbered point exactly as it says, and keep everything else in your previous answer as it is.
 
 Answer with JSON only:
-{"theme": {"surface": "...", "lighting": "...", "palette": "...", "style": "...", "mood": "..."}, "images": [{"slot": "...", "prompt": "...", "alt": "..."}]}
+{"theme": {"surface": "...", "lighting": "...", "palette": "...", "style": "...", "mood": "...", "dish": "..."}, "images": [{"slot": "...", "prompt": "...", "alt": "..."}]}

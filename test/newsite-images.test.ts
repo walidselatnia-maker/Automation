@@ -31,16 +31,17 @@ const THEME = {
   palette: 'pumpkin orange and dark chocolate brown',
   style: 'commercial food photography',
   mood: 'warm and homemade',
+  dish: 'thick round pumpkin cookies, orange crumb, dotted with melted chocolate chips',
 };
 
 /** A prompt that passes every rule, for one slot. */
 const good = (slot: ImageSlot, i: number): { slot: string; prompt: string; alt: string } => ({
   slot: slot.slot,
   prompt:
-    `Commercial food photo number ${i + 1} of ${KEYWORD} for ${slot.slot}, on a ${THEME.surface}, ${THEME.lighting}. ` +
+    `Commercial food photo number ${i + 1} of ${KEYWORD} for ${slot.slot}, ${THEME.dish}, on a ${THEME.surface}, ${THEME.lighting}. ` +
     `${['Five', 'Three', 'Two', 'Seven', 'Four', 'Six', 'Eight', 'Nine', 'Ten'][i % 9]} cookies seen from angle ${i * 10} degrees, ` +
     `orange edges and melted chocolate chips in sharp focus, background softly blurred. Shot on a 50mm lens at f/4, 5500K, ` +
-    `short shadows falling right. Variation ${'abcdefghij'.slice(0, (i % 9) + 1)} ${slot.shows.split(' ').slice(0, 6).join(' ')}. No text, no labels, no watermarks, no collage.`,
+    `short shadows falling right. Variation ${'abcdefghij'.slice(0, (i % 9) + 1)} ${slot.shows.replace(/WIDE 16:9|\bperfect\b|mouth-catching/g, '')}. No text, no labels, no watermarks, no collage.`,
   alt: 'Soft pumpkin chocolate chip cookies cooling on a white ceramic plate',
 });
 
@@ -78,6 +79,30 @@ describe('AI#4 checks', () => {
     const problems = checkImageSet(set, ctx).join(' ');
     expect(problems).toMatch(/Image "overhead": repeat the theme's surface/);
     expect(problems).toMatch(/Image "overhead": repeat the theme's lighting/);
+  });
+
+  it('holds every prompt of a recipe page to the same dish, and needs the dish described', () => {
+    const set = goodSet(slots);
+    set.images[7]!.prompt = set.images[7]!.prompt.replace(THEME.dish, 'blueberry muffins');
+    expect(checkImageSet(set, ctx).join(' ')).toMatch(/Image "step-2": repeat the theme's dish word for word/);
+    const noDish = goodSet(slots);
+    noDish.theme = { ...THEME, dish: '' };
+    expect(checkImageSet(noDish, ctx).join(' ')).toMatch(/The theme needs its dish/);
+  });
+
+  it('asks no dish of a page without a recipe', () => {
+    const articleSlots = imageSlots(KEYWORD, SKELETON, null);
+    const set = goodSet(articleSlots);
+    set.theme = { ...THEME, dish: '' };
+    set.images.forEach((im) => (im.prompt = im.prompt.replace(`${THEME.dish}, `, '')));
+    expect(checkImageSet(set, { keyword: KEYWORD, slots: articleSlots })).toEqual([]);
+  });
+
+  it('tells each step picture which step it is and to leave the finished dish out until the end', () => {
+    const steps = imageSlots(KEYWORD, SKELETON, RECIPE).filter((s) => s.slot.startsWith('step-'));
+    expect(steps[0]!.shows).toMatch(/step 1 of 3 of making the pumpkin chocolate chip cookies/);
+    expect(steps[0]!.shows).toMatch(/is not in this picture yet/);
+    expect(steps[2]!.shows).not.toMatch(/is not in this picture yet/);
   });
 
   it('needs the camera, the light and no text', () => {
