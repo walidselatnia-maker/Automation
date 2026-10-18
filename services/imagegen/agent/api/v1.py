@@ -42,7 +42,7 @@ def _expires_at(url: Optional[str]) -> Optional[int]:
 
 class GenerateRequest(BaseModel):
     prompt: str = Field(..., min_length=1, max_length=5000)
-    orientation: Literal["VERTICAL", "HORIZONTAL", "PORTRAIT_3_4"] = "VERTICAL"
+    orientation: Literal["VERTICAL", "HORIZONTAL", "PORTRAIT_3_4", "SQUARE"] = "VERTICAL"
 
     # The Flow project to generate into, sent per request: one image service
     # serves every site and each site has its own project, so a value fixed on

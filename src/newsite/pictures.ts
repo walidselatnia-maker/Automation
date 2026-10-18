@@ -15,9 +15,9 @@ import { parseImageSet } from './images.js';
  * - the same ImageClient, built from the same settings;
  * - the same Flow project, from resolveProjectId (the website's own, else the
  *   shared one from Settings, else the old placeholder);
- * - the same call, generate(prompt, shape): every article picture wide
- *   (HORIZONTAL, 16:9), as the new websites want, where the old dashboard
- *   used VERTICAL; a Pinterest pin 3:4 (PORTRAIT_3_4);
+ * - the same call, generate(prompt, shape): every article picture 3:4
+ *   portrait (PORTRAIT_3_4), as the websites' home pages want, and every
+ *   recipe step picture square (SQUARE); a Pinterest pin 3:4 too;
  * - the same pause between images (image_gap_seconds), counted from when the
  *   previous image came back;
  * - one image at a time, and a failed image stops its article there, like a
@@ -67,9 +67,9 @@ export const isPinSlot = (slot: string): boolean => /^(pin|fb|social)-/.test(slo
 /** One of the article's main pictures (not a step, not a pin). */
 export const isMainSlot = (slot: string): boolean => !isStepSlot(slot) && !isPinSlot(slot);
 
-/** The shape Flow is asked for. */
-export type PictureShape = 'HORIZONTAL' | 'PORTRAIT_3_4';
-export const shapeOf = (slot: string): PictureShape => (isPinSlot(slot) ? 'PORTRAIT_3_4' : 'HORIZONTAL');
+/** The shape Flow is asked for: recipe steps square, every other picture 3:4 portrait. */
+export type PictureShape = 'HORIZONTAL' | 'PORTRAIT_3_4' | 'SQUARE';
+export const shapeOf = (slot: string): PictureShape => (isStepSlot(slot) ? 'SQUARE' : 'PORTRAIT_3_4');
 
 /** Minutes between two step pictures: a random wait in this range. */
 export const STEP_GAP_MINUTES = [15, 30] as const;

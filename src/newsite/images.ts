@@ -75,23 +75,23 @@ export function imageSlots(keyword: string, skeleton: Skeleton, recipe: Recipe |
     return [
       {
         slot: 'feature',
-        shows: `WIDE 16:9 hero image at the top of the article, showing "${keyword}" exactly as the article is about it. A styled, lived-in scene that makes people stop scrolling: the dish as the star, a slice cut or a serving lifted out, a hand reaching in or a fork mid-bite, crumbs and drips, props from the recipe, depth with a soft foreground and background. Never a plain product shot on an empty table.`,
+        shows: `PORTRAIT 3:4 hero image at the top of the article, showing "${keyword}" exactly as the article is about it. A styled, lived-in scene that makes people stop scrolling: the dish as the star, a slice cut or a serving lifted out, a hand reaching in or a fork mid-bite, crumbs and drips, props from the recipe, depth with a soft foreground and background. Never a plain product shot on an empty table.`,
       },
-      { slot: 'overhead', shows: `WIDE 16:9 top-down shot of the ${keyword} on its table, the scene around it: plates, a cake server, scattered ingredients from the recipe, a linen napkin, hands at the edge of the frame.` },
-      { slot: 'closeup', shows: `WIDE 16:9 macro close-up of the most mouth-catching detail of the ${keyword} (crumb, layers, glaze, frosting swirl, juice), shallow depth of field.` },
-      { slot: 'ingredients', shows: 'WIDE 16:9 the raw ingredients from the recipe laid out before cooking, each one recognisable, arranged with care in bowls, spoons and their packaging.' },
-      { slot: 'process', shows: 'WIDE 16:9 a key moment while making it, half-way through, with hands at work (whisking, spreading, piping): the "before" of before-and-after.' },
-      { slot: 'serving', shows: `WIDE 16:9 one portion of the ${keyword} served (cut, scooped or poured) at a set table, ready to eat, someone about to enjoy it: the "after".` },
-      ...recipe.steps.map((s, i) => ({ slot: `step-${i + 1}`, shows: `WIDE 16:9 photo of step ${i + 1} of the recipe, the moment it describes, with hands at work: ${s.text}` })),
+      { slot: 'overhead', shows: `PORTRAIT 3:4 top-down shot of the ${keyword} on its table, the scene around it: plates, a cake server, scattered ingredients from the recipe, a linen napkin, hands at the edge of the frame.` },
+      { slot: 'closeup', shows: `PORTRAIT 3:4 macro close-up of the most mouth-catching detail of the ${keyword} (crumb, layers, glaze, frosting swirl, juice), shallow depth of field.` },
+      { slot: 'ingredients', shows: 'PORTRAIT 3:4 the raw ingredients from the recipe laid out before cooking, each one recognisable, arranged with care in bowls, spoons and their packaging.' },
+      { slot: 'process', shows: 'PORTRAIT 3:4 a key moment while making it, half-way through, with hands at work (whisking, spreading, piping): the "before" of before-and-after.' },
+      { slot: 'serving', shows: `PORTRAIT 3:4 one portion of the ${keyword} served (cut, scooped or poured) at a set table, ready to eat, someone about to enjoy it: the "after".` },
+      ...recipe.steps.map((s, i) => ({ slot: `step-${i + 1}`, shows: `SQUARE 1:1 photo of step ${i + 1} of the recipe, the moment it describes, with hands at work: ${s.text}` })),
     ];
   }
   const middle = skeleton.sections.slice(1, -1).slice(0, ARTICLE_SECTION_IMAGES);
   return [
     {
       slot: 'feature',
-      shows: `WIDE 16:9 hero image at the top of the article, showing "${keyword}" exactly as the article is about it. A styled, lived-in scene with people's hands, the moment of doing it, props and depth. Never a plain object on an empty table.`,
+      shows: `PORTRAIT 3:4 hero image at the top of the article, showing "${keyword}" exactly as the article is about it. A styled, lived-in scene with people's hands, the moment of doing it, props and depth. Never a plain object on an empty table.`,
     },
-    ...middle.map((s, i) => ({ slot: `section-${i + 1}`, shows: `WIDE 16:9 photo for the section "${s.h2}": ${s.covers}` })),
+    ...middle.map((s, i) => ({ slot: `section-${i + 1}`, shows: `PORTRAIT 3:4 photo for the section "${s.h2}": ${s.covers}` })),
   ];
 }
 

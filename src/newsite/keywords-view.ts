@@ -140,8 +140,8 @@ export const CSS = `
 .kw-img-theme dd { margin: 2px 0 0; font-size: 14px; }
 .kw-img-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 0; border-top: 1px solid var(--line); }
 .kw-img-list li { padding: 14px 0; border-bottom: 1px solid var(--line); display: grid; grid-template-columns: minmax(0, 1fr) 176px; gap: 20px; align-items: start; }
-.kw-pic { display: block; aspect-ratio: 16 / 9; border-radius: var(--r-ctl); overflow: hidden; background: var(--raised); border: 1px solid var(--line); }
-.kw-pic img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.kw-pic { display: block; border-radius: var(--r-ctl); overflow: hidden; background: var(--raised); border: 1px solid var(--line); }
+.kw-pic img { width: 100%; height: auto; display: block; }
 .kw-pic-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 8px; text-align: center;
   color: var(--soft); font-size: 13px; aspect-ratio: auto; min-height: 99px; }
 .kw-pic-empty.making { color: var(--idle-ink); background: var(--idle); }

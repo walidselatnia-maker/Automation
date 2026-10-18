@@ -21,7 +21,7 @@ Work in two steps.
 - If a fixed recipe is given, shows only its ingredients; never add one it does not have (no garnish, herb or topping it does not list).
 - Is clearly different from the other prompts: another angle, distance or moment.
 - Has life. Real photos in food magazines are moments, not catalogue shots: show hands at work or reaching in, a slice being lifted, steam, crumbs, a drip of sauce, a used knife, a half-full glass, a napkin pushed aside. The subject is styled and appetizing, the scene lived-in. Never a lone object centered on an empty surface.
-- Is composed for a WIDE 16:9 frame: it uses the width (subject on a third, the scene extending to the side).
+- Is composed for a PORTRAIT 3:4 frame (a recipe step: a SQUARE 1:1 frame): the subject fills the height, close and tall, with the scene above and below it rather than to the sides.
 - Shows what the article is about: if the keyword is about decorating, frosting or serving the dish, the pictures show that, not the baking.
 
 Each image also gets alt text: 8 to 12 words saying what the picture shows, the keyword once if natural, never starting with "image of" or "photo of". Follow the alt text pattern you are given.

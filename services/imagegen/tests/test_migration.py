@@ -120,6 +120,8 @@ def test_a_table_that_only_allowed_two_orientations_takes_the_pin_shape(tmp_path
         assert old["prompt"] == "a pie" and old["orientation"] == "HORIZONTAL" and old["project_id"] == "proj-7"
         pin = asyncio.run(jobs.create("a pin", "PORTRAIT_3_4", "proj-7"))
         assert pin["orientation"] == "PORTRAIT_3_4"
+        step = asyncio.run(jobs.create("a step", "SQUARE", "proj-7"))
+        assert step["orientation"] == "SQUARE"
         # Opening again leaves the rebuilt table alone.
         asyncio.run(schema.init_db())
         assert asyncio.run(jobs.get("old-2"))["status"] == "COMPLETED"

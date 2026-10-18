@@ -18,6 +18,7 @@ import {
   resetPictureMakerState,
   queueStepPictures,
   retryFailedPictures,
+  shapeOf,
   NEXT_STEP_KEY,
 } from '../src/newsite/pictures.js';
 
@@ -123,7 +124,7 @@ describe('Pictures, made the old dashboard way', () => {
     expect(sent[2]!.projectId).toBe('site-project');
   });
 
-  it('calls the old image client with the same settings, for wide pictures', async () => {
+  it('calls the old image client with the same settings, 3:4 for article pictures and square for recipe steps', async () => {
     settings.set('image_base_url', 'http://imagegen:8100');
     settings.set('flow_project_id', 'shared-project');
     const generate = vi
@@ -132,7 +133,8 @@ describe('Pictures, made the old dashboard way', () => {
     setPrompts(['feature']);
     queuePictures(seoId, dataDir);
     await kickPictureMaker({ settings, dataDir, now: () => clock, sleep: async () => {} });
-    expect(generate).toHaveBeenCalledWith('prompt for feature', 'HORIZONTAL');
+    expect(generate).toHaveBeenCalledWith('prompt for feature', 'PORTRAIT_3_4');
+    expect([shapeOf('feature'), shapeOf('section-2'), shapeOf('step-3'), shapeOf('pin-4')]).toEqual(['PORTRAIT_3_4', 'PORTRAIT_3_4', 'SQUARE', 'PORTRAIT_3_4']);
     expect(listPictures(seoId)[0]).toMatchObject({ status: 'done' });
   });
 

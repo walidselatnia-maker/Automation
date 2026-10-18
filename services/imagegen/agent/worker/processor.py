@@ -55,6 +55,8 @@ ASPECT_RATIOS = {
     # Pinterest pins on the new websites: 3:4 (896 x 1200), the closest Flow
     # gets to Pinterest's 2:3.
     "PORTRAIT_3_4": "IMAGE_ASPECT_RATIO_PORTRAIT_FOUR_THREE",
+    # Recipe step pictures on the new websites: 1:1 (1024 x 1024).
+    "SQUARE": "IMAGE_ASPECT_RATIO_SQUARE",
 }
 
 VIDEO_ASPECT_RATIOS = {

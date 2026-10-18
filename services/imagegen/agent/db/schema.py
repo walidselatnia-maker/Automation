@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS job (
     id            TEXT PRIMARY KEY,
     prompt        TEXT NOT NULL,
     orientation   TEXT NOT NULL DEFAULT 'VERTICAL'
-                  CHECK(orientation IN ('VERTICAL','HORIZONTAL','PORTRAIT_3_4')),
+                  CHECK(orientation IN ('VERTICAL','HORIZONTAL','PORTRAIT_3_4','SQUARE')),
 
     -- Sent to Google as clientContext.projectId. Per job, not per container:
     -- one image service serves every site and each site has its own Flow
@@ -123,7 +123,7 @@ async def _add_missing_columns(db) -> None:
 
 
 async def _widen_orientation(db) -> None:
-    """Let an existing job table take the PORTRAIT_3_4 orientation.
+    """Let an existing job table take the PORTRAIT_3_4 and SQUARE orientations.
 
     The orientation CHECK is part of the table's definition, and SQLite cannot
     change a CHECK in place: the table is rebuilt instead, every row copied
@@ -132,7 +132,7 @@ async def _widen_orientation(db) -> None:
     """
     async with db.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'job'") as cursor:
         row = await cursor.fetchone()
-    if not row or "PORTRAIT_3_4" in row["sql"]:
+    if not row or "'SQUARE'" in row["sql"]:
         return
     async with db.execute("PRAGMA table_info(job)") as cursor:
         old_columns = [r["name"] for r in await cursor.fetchall()]
@@ -158,7 +158,7 @@ async def _widen_orientation(db) -> None:
     except Exception:
         await db.execute("ROLLBACK")
         raise
-    logger.info("job table rebuilt to allow the PORTRAIT_3_4 orientation")
+    logger.info("job table rebuilt to allow the PORTRAIT_3_4 and SQUARE orientations")
 
 
 async def init_db() -> None:
