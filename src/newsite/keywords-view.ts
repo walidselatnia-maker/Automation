@@ -5,7 +5,7 @@ import { articleTypeFor, parseSkeleton, totalWords, type Skeleton } from './skel
 import { parseRecipe } from './recipe.js';
 import { markdownToHtml } from './markdown.js';
 import { parseImageSet } from './images.js';
-import { isStepSlot, STEP_GAP_MINUTES, type PictureRow } from './pictures.js';
+import { isStepSlot, type PictureRow } from './pictures.js';
 import { notReadyReason } from './publish.js';
 import { WIZARD_CSS } from './view.js';
 import { postLinkOf, type ChannelRow } from './channels.js';
@@ -152,7 +152,6 @@ export const CSS = `
 .kw-failed-bar { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin: 0 0 16px; padding: 10px 16px; border: 1px solid var(--bad); border-left-width: 4px; border-radius: var(--r-ctl); background: var(--bad-tint); color: var(--ink); }
 .kw-pic-actions { gap: 8px; align-items: center; }
 .kw-pic-actions form { margin: 0; }
-.kw-project { font-size: 14px; color: var(--soft); overflow-wrap: anywhere; }
 .kw-img-slot { text-transform: capitalize; display: inline-block; padding: 2px 8px; border-radius: 5px; background: var(--raised); border: 1px solid var(--line); color: var(--soft); font: 600 13px/1.5 var(--body); white-space: nowrap; }
 .kw-img-prompt { margin: 6px 0 8px; font-size: 14px; line-height: 1.6; max-width: 72ch; }
 .kw-img-alt { color: var(--soft); font-size: 13px; }
@@ -358,8 +357,6 @@ export function keywordsPage(
   }
 
   const body = html`
-    <h2>Website and keyword</h2>
-    <p>One main keyword and up to six sub-keywords, each answering a different search. Only real Google searches are used, and nothing already on the website is repeated.</p>
     <div class="wz-field">
       <label for="kw-website">Website</label>
       <select id="kw-website" name="websiteId" onchange="location.href='/new-website/keywords/new?website='+this.value">
@@ -545,8 +542,6 @@ export function seoStepPage(site: NewWebsiteRow, plan: KeywordPlan, rows: SeoRow
   const intentOf = new Map(plan.items.map((i) => [i.keyword, i.intent]));
   const done = rows.filter((r) => r.status === 'done').length;
   const body = html`
-    <h2>SEO metadata</h2>
-    <p>Title, description, focus keyword and alt text for each keyword, written by the AI from real Google searches and checked by code. Click a keyword to open it.</p>
     ${rows.length
       ? html`<ul class="acc-list" ${busyRows(rows) ? raw(`data-watch="${plan.id}"`) : raw('')}>
           ${rows.map((r) => seoCard(r, intentOf.get(r.keyword) ?? ''))}
@@ -574,8 +569,6 @@ export function skeletonStepPage(site: NewWebsiteRow, plan: KeywordPlan, rows: S
   const intentOf = new Map(plan.items.map((i) => [i.keyword, i.intent]));
   const done = rows.filter((r) => r.skeleton_status === 'done').length;
   const body = html`
-    <h2>Article skeletons</h2>
-    <p>The outline the AI designed for each article: headings, what each part covers, key points and word targets. Click a keyword to open it.</p>
     ${rows.length
       ? html`<ul class="acc-list" ${busyRows(rows) ? raw(`data-watch="${plan.id}"`) : raw('')}>
           ${rows.map((r) => skeletonCard(r, intentOf.get(r.keyword) ?? ''))}
@@ -648,8 +641,6 @@ export function recipeStepPage(site: NewWebsiteRow, plan: KeywordPlan, rows: Seo
   const intentOf = new Map(plan.items.map((i) => [i.keyword, i.intent]));
   const done = rows.filter((r) => r.recipe_status === 'done').length;
   const body = html`
-    <h2>Recipes</h2>
-    <p>The real recipe for each keyword: exact ingredients, steps, times and nutrition. The skeleton and the article are written from it and cannot change it. When the pillar is one dish, its recipe is also added near the end of the pillar article. Article pages have no recipe. Click a keyword to open it.</p>
     ${rows.length
       ? html`<ul class="acc-list" ${busyRows(rows) ? raw(`data-watch="${plan.id}"`) : raw('')}>
           ${rows.map((r) => recipeCard(r, intentOf.get(r.keyword) ?? ''))}
@@ -703,8 +694,6 @@ export function articleStepPage(site: NewWebsiteRow, plan: KeywordPlan, rows: Se
   const done = rows.filter((r) => r.article_status === 'done').length;
   const names = stepNames(site.niche);
   const body = html`
-    <h2>Articles</h2>
-    <p>Each article, written section by section from its skeleton${articleTypeFor(site.niche) === 'recipe' ? ' and, for recipe pages, from its fixed recipe' : ''}. Code checked every section: headings, length, plain language, no generic AI phrases${articleTypeFor(site.niche) === 'recipe' ? ', and nothing that is not in the recipe' : ''}. Click a keyword to read it.</p>
     ${rows.length
       ? html`<ul class="acc-list" ${busyRows(rows) ? raw(`data-watch="${plan.id}"`) : raw('')}>
           ${rows.map((r) => articleCard(r, intentOf.get(r.keyword) ?? ''))}
@@ -823,7 +812,6 @@ export function imagesStepPage(
   plan: KeywordPlan,
   rows: SeoRow[],
   pictures: PictureRow[] = [],
-  project = '',
   nextStepAt = 0,
   now = Date.now(),
 ): Html {
@@ -847,17 +835,9 @@ export function imagesStepPage(
   }, 0);
   const minutes = Math.max(0, Math.round((nextStepAt - now) / 60_000));
   const body = html`
-    <h2>Images</h2>
-    <p>For each article the AI first sets one look (surface, lighting, palette, style, mood), then writes a prompt per picture that follows it, so all of an article's pictures look like one photoshoot. ${recipeSite
-      ? 'Recipe pages get six photos of the dish and one per recipe step; article pages get a feature image and one per main section.'
-      : 'Each article gets a feature image and one per main section.'}</p>
-    <p>The main pictures are made when you press <b>Make pictures</b>, the same way the old dashboard makes article images: one at a time, with the platform's pause between them. If one fails, that article stops there; pressing Make pictures again carries on from it.</p>
-    ${recipeSite
-      ? html`<p>Recipe step pictures are not made all at once. Once an article's main pictures are done, its steps join a slow queue: one picture at a time, ${STEP_GAP_MINUTES[0]} to ${STEP_GAP_MINUTES[1]} minutes apart, so Google Flow is never asked for a burst.${stepsWaiting
-          ? html` <b class="ns-num">${stepsWaiting} step picture${stepsWaiting === 1 ? '' : 's'} waiting; the next ${minutes ? `in about ${minutes} minute${minutes === 1 ? '' : 's'}` : 'any moment now'}.</b>`
-          : raw('')}</p>`
+    ${recipeSite && stepsWaiting
+      ? html`<p class="kw-hint ns-num">${stepsWaiting} step picture${stepsWaiting === 1 ? '' : 's'} waiting; the next ${minutes ? `in about ${minutes} minute${minutes === 1 ? '' : 's'}` : 'any moment now'}.</p>`
       : raw('')}
-    ${project ? html`<p class="kw-project">Flow project: ${project}</p>` : raw('')}
     ${failedAll
       ? html`<div class="kw-failed-bar" role="status"><span><b class="ns-num">${failedAll} picture${failedAll === 1 ? '' : 's'}</b> failed to make.</span>
           <form method="post" action="/new-website/keywords/plan/${plan.id}/pictures/retry-failed" style="margin:0"><button class="ns-btn primary">Try all ${failedAll} again</button></form></div>`
@@ -921,13 +901,6 @@ export function publishStepPage(site: NewWebsiteRow, plan: KeywordPlan, rows: Se
   const posted = rows.filter((r) => r.post_status === 'published').length;
   const ready = rows.filter((r) => r.post_status !== 'published' && r.post_status !== 'publishing' && !notReadyReason(r, picturesOf(r.id))).length;
   const body = html`
-    <h2>Publish</h2>
-    <p>Each article goes to ${site.domain} with its SEO title and description, the feature picture as its cover and the other main pictures spread through the text${articleTypeFor(site.niche) === 'recipe' ? ', and its recipe card on recipe pages' : ''}. ${site.auto_publish
-      ? html`This website is set to <b>Publish automatically</b>: an article goes out by itself as soon as its main pictures are made.`
-      : html`This website is set to <b>Wait for my approval</b>: an article goes out only when you press Publish.`} Publishing again updates the same post; it never makes a copy.</p>
-    ${articleTypeFor(site.niche) === 'recipe'
-      ? html`<p>Once a recipe is posted, its step pictures join the slow queue (${STEP_GAP_MINUTES[0]} to ${STEP_GAP_MINUTES[1]} minutes apart), and each one is added to its step of the recipe card on the website as it is made.</p>`
-      : raw('')}
     ${rows.length
       ? html`<ul class="acc-list" ${busyRows(rows) ? raw(`data-watch="${plan.id}"`) : raw('')}>
           ${rows.map((r) => publishCard(r, intentOf.get(r.keyword) ?? '', picturesOf(r.id)))}

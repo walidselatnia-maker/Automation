@@ -13,7 +13,7 @@ import { createSocialPosts, kickSocial, onPinPicture, type SocialDeps } from './
 import { registerSocialRoutes } from './social-routes.js';
 import { registerPromptRoutes } from './prompts-page.js';
 import { registerPinDesignRoutes } from './pin-designs.js';
-import { describeProjectId, flowProjectFor, NEXT_STEP_KEY } from './pictures.js';
+import { NEXT_STEP_KEY } from './pictures.js';
 import { platformReady, registerPlatformRoutes, type PasswordAccount } from './platform-routes.js';
 import { publicBaseUrlProblem } from '../core/media-links.js';
 import {
@@ -150,7 +150,6 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
     autoSeo: deps.autoSeo,
     settings: deps.settings,
     nextStepAt: () => Number(deps.settings?.get(NEXT_STEP_KEY) || 0),
-    flowProject: (site) => (deps.settings ? describeProjectId(flowProjectFor(site.project_id, site.domain, deps.settings), site.domain) : ''),
     dataDir: deps.dataDir,
     listPosts: deps.listPosts ?? ((domain, apiKey) => realListPosts(domain, apiKey)),
     suggest: deps.suggest ?? ((pillar) => expandSeeds([pillar])),

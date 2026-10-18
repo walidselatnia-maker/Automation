@@ -207,7 +207,7 @@ describe('saving a plan starts AI#1', () => {
     const page = await app.inject({ method: 'GET', url: `/new-website/keywords/plan/${planId}/seo` });
     const skeletons = await app.inject({ method: 'GET', url: `/new-website/keywords/plan/${planId}/skeleton` });
     expect(skeletons.statusCode).toBe(200);
-    expect(skeletons.body).toContain('Article skeletons');
+    expect(skeletons.body).toContain('<title>pumpkin chocolate chip cookies · Skeletons');
     expect(page.body).toContain(GOOD.title);
     expect(page.body).toContain('Pumpkin Chocolate Chip Cookies: Soft, Easy and Spiced');
 

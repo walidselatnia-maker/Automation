@@ -43,8 +43,6 @@ export interface KeywordRouteDeps extends FindDeps {
   /** Why picture making is paused, or '' when it is not. */
   /** The platform settings, for automatic retries of the AI steps. */
   settings?: Settings;
-  /** Which Flow project a website's pictures go into, in the old dashboard's words. */
-  flowProject?: (site: NewWebsiteRow) => string;
   /** When the slow queue makes its next step picture (ms since 1970). */
   nextStepAt?: () => number;
   dataDir?: string;
@@ -338,7 +336,7 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
                     ? articleStepPage(site, plan, rows)
                     : step === 'publish'
                       ? publishStepPage(site, plan, rows, listPlanPictures(plan.id))
-                      : imagesStepPage(site, plan, rows, listPlanPictures(plan.id), deps.flowProject?.(site) ?? '', deps.nextStepAt?.() ?? 0),
+                      : imagesStepPage(site, plan, rows, listPlanPictures(plan.id), deps.nextStepAt?.() ?? 0),
           flash: deps.readFlash(request.query),
         }),
       );
