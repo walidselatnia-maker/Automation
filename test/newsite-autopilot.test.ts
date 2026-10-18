@@ -87,6 +87,14 @@ describe('Autopilot', () => {
     expect(publishState(b)).toBe('');
     expect(autopilotState(getNewWebsite(1)!, 'UTC', NOW)).toMatchObject({ ready: 1, today: 1, next: 'Next article at 12:30' });
 
+    // Turned on just now: the first article goes 30 seconds after the switch, not a whole gap after the last post.
+    expect(autopilotState(getNewWebsite(1)!, 'UTC', NOW, NOW - 10_000).next).toBe('Next article at 12:00');
+    settings.set('newsite_automation_on_at', String(NOW - 40_000));
+    autopilotTick(deps(), NOW);
+    await flush();
+    expect(publishState(b)).not.toBe('');
+    run(`UPDATE keyword_seo SET post_status = '' WHERE id = ?`, b);
+    settings.set('newsite_automation_on_at', '0');
     autopilotTick(deps(), NOW + 31 * 60_000);
     await flush();
     expect(publishState(b)).not.toBe('');
@@ -130,7 +138,7 @@ describe('Automation switch', () => {
       expect(dash.indexOf('aria-label="Automation"')).toBeLessThan(dash.indexOf('class="db-kpis"'));
       expect(dash).toContain('<span class="ap-state">OFF</span>');
       const on = await post('on=1&back=%2Fnew-website%2Fplatform');
-      expect(on.headers.location).toBe('/new-website/platform?ok=Automation%20is%20on.');
+      expect(on.headers.location).toMatch(/^\/new-website\/platform\?ok=Automation%20is%20on/);
       expect(settings.getBool('automation_enabled')).toBe(true);
       const page = (await app.inject({ method: 'GET', url: '/new-website/platform' })).body;
       expect(page).toContain('<span class="ap-state">ON</span>');

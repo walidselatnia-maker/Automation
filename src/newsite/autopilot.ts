@@ -1,5 +1,6 @@
 import { all } from '../db/index.js';
 import { createLogger } from '../lib/logger.js';
+import type { Settings } from '../settings.js';
 import { parseImageSet } from './images.js';
 import { notReadyReason, queuePublish, type PublishDeps } from './publish.js';
 import { isMainSlot, queuePictures, type PictureRow } from './pictures.js';
@@ -30,6 +31,12 @@ import type { SeoRow } from './seo.js';
 const log = createLogger('newsite-autopilot');
 
 const AHEAD_WITHOUT_TARGET = 3;
+
+/** How long after Automation is turned on the first check runs. */
+export const START_DELAY_MS = 30_000;
+/** When Automation was last turned on (ms), kept across restarts. */
+export const AUTOMATION_ON_AT = 'newsite_automation_on_at';
+export const automationOnAt = (settings: Settings): number => Number(settings.get(AUTOMATION_ON_AT) || 0);
 
 export interface AutopilotState {
   /** Articles with every main picture made, waiting to be published. */
@@ -84,7 +91,7 @@ const clock = (ms: number, tz: string): string => {
   }
 };
 
-function look(site: NewWebsiteRow, work: SiteWork, now: number, tz: string) {
+function look(site: NewWebsiteRow, work: SiteWork, now: number, tz: string, onAt = 0) {
   const pics = (r: SeoRow) => work.pictures.get(r.id) ?? [];
   const waiting = work.rows.filter((r) => r.post_status !== 'published');
   const stuck = (r: SeoRow) => pics(r).some((p) => p.status === 'failed') || r.post_status === 'failed';
@@ -93,7 +100,9 @@ function look(site: NewWebsiteRow, work: SiteWork, now: number, tz: string) {
   const posted = work.rows.filter((r) => r.post_status === 'published' && r.posted_at).map((r) => sqlTime(r.posted_at));
   const today = posted.filter((t) => dayKey(t, tz) === dayKey(now, tz)).length;
   const last = posted.length ? Math.max(...posted) : 0;
-  const due = last + site.interval_minutes * 60_000;
+  // Turning Automation on starts at once (30 seconds later), not a whole gap after the last post.
+  const gapDue = last + site.interval_minutes * 60_000;
+  const due = onAt > last ? Math.min(gapDue, onAt + START_DELAY_MS) : gapDue;
   return {
     pics,
     stuck,
@@ -116,7 +125,7 @@ export function autopilotTick(deps: PublishDeps, now = Date.now()): void {
   for (const site of listNewWebsites()) {
     if (site.status !== 'active') continue;
     const work = siteWork(site.id);
-    const s = look(site, work, now, tz);
+    const s = look(site, work, now, tz, automationOnAt(deps.settings));
 
     // Pictures, one day's worth ahead of publishing.
     let lane = s.waiting.filter((r) => s.started(r) && !s.stuck(r)).length;
@@ -164,8 +173,8 @@ function writingLine(rows: SeoRow[]): string {
 }
 
 /** Where a website's Autopilot stands, for the dashboard and the Keywords page. */
-export function autopilotState(site: NewWebsiteRow, tz: string, now = Date.now()): AutopilotState {
-  const s = look(site, siteWork(site.id), now, tz);
+export function autopilotState(site: NewWebsiteRow, tz: string, now = Date.now(), onAt = 0): AutopilotState {
+  const s = look(site, siteWork(site.id), now, tz, onAt);
   const textFailed = (r: SeoRow) =>
     [r.status, r.recipe_status, r.skeleton_status, r.article_status, r.images_status].includes('failed');
   const stopped = s.waiting.filter((r) => s.stuck(r) || textFailed(r));

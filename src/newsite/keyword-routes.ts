@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { autopilotState } from './autopilot.js';
+import { autopilotState, automationOnAt } from './autopilot.js';
 import { get } from '../db/index.js';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { checkImport, importRows, kickSubFinder, planStats, type ImportRow } from './keyword-import.js';
@@ -128,7 +128,7 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
     const sites = listNewWebsites().map((site) => ({
       site,
       plans: plans.filter((p) => p.website_id === site.id),
-      autopilot: deps.settings?.getBool('automation_enabled') && site.status === 'active' ? autopilotState(site, tz).next : '',
+      autopilot: deps.settings?.getBool('automation_enabled') && site.status === 'active' ? autopilotState(site, tz, Date.now(), automationOnAt(deps.settings)).next : '',
     }));
     return reply.type('text/html; charset=utf-8').send(
       newLayout({ title: 'Keywords', active: '/new-website/keywords', body: keywordsOverview(sites, planStats()), flash: deps.readFlash(request.query) }),

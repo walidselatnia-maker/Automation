@@ -30,7 +30,7 @@ const CSS = `
 .ap-switch:hover { border-color: var(--ink); }
 `;
 
-export function automationBar(on: boolean, sites: NewWebsiteRow[], tz: string, back: string, now = Date.now()): Html {
+export function automationBar(on: boolean, sites: NewWebsiteRow[], tz: string, back: string, now = Date.now(), onAt = 0): Html {
   const active = sites.filter((s) => s.status === 'active');
   return html`
     <style>${raw(CSS)}</style>
@@ -41,7 +41,7 @@ export function automationBar(on: boolean, sites: NewWebsiteRow[], tz: string, b
           ? html`Every active website makes its pictures and publishes by its posts per day and gap, then shares.
               ${active.length
                 ? html`<ul class="ap-sites">${active.map((s) => {
-                    const next = autopilotState(s, tz, now).next;
+                    const next = autopilotState(s, tz, now, onAt).next;
                     return html`<li class="${next.startsWith('No keywords') ? 'bad' : ''}"><b>${s.name}:</b> ${next}</li>`;
                   })}</ul>`
                 : html`<ul class="ap-sites"><li>No active website yet.</li></ul>`}`
