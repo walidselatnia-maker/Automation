@@ -96,3 +96,36 @@ describe('Autopilot', () => {
     expect(autopilotState(getNewWebsite(1)!, 'UTC', NOW).next).toBe('No keywords left: add keywords');
   });
 });
+
+describe('Autopilot switch', () => {
+  it('turns Autopilot on and off from the top of the Dashboard and the Websites page', async () => {
+    const Fastify = (await import('fastify')).default;
+    const formbody = (await import('@fastify/formbody')).default;
+    const { registerNewWebsiteRoutes } = await import('../src/newsite/routes.js');
+    openDatabase(':memory:');
+    const app = Fastify();
+    await app.register(formbody);
+    registerNewWebsiteRoutes(app, { encryptionKey: KEY, settings: new Settings(KEY), autoSeo: false, autoPictures: false });
+    await app.ready();
+    try {
+      const id = createNewWebsite(
+        { name: 'Long Livo', domain: 'f.longlivo.com', apiKey: 'sk_test_ABCDEFGHIJKLMNOP', niche: 'Recipes', nicheContext: '', persona: 'Storyteller', status: 'active', autoPublish: true, dailyTarget: 3, intervalMinutes: 480, bufferToken: '', pinUsername: '', projectId: '' },
+        KEY,
+      );
+      const dash = (await app.inject({ method: 'GET', url: '/new-website/dashboard' })).body;
+      expect(dash.indexOf('aria-label="Autopilot"')).toBeLessThan(dash.indexOf('class="db-kpis"'));
+      expect(dash).toContain('<span class="ap-state off">OFF</span>');
+      const on = await app.inject({ method: 'POST', url: `/new-website/${id}/autopilot`, payload: 'on=1&back=%2Fnew-website', headers: { 'content-type': 'application/x-www-form-urlencoded' } });
+      expect(on.headers.location).toMatch(/^\/new-website\?ok=Autopilot%20is%20on/);
+      expect(getNewWebsite(id)!.autopilot).toBe(1);
+      const list = (await app.inject({ method: 'GET', url: '/new-website' })).body;
+      expect(list).toContain('<span class="ap-state on">ON</span>');
+      expect(list).toContain('No keywords left: add keywords');
+      await app.inject({ method: 'POST', url: `/new-website/${id}/autopilot`, payload: 'on=0', headers: { 'content-type': 'application/x-www-form-urlencoded' } });
+      expect(getNewWebsite(id)!.autopilot).toBe(0);
+    } finally {
+      await app.close();
+      closeDatabase();
+    }
+  });
+});

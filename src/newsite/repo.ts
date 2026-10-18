@@ -88,6 +88,10 @@ export function updateNewWebsite(id: number, site: CleanWebsite, key: Buffer): v
   );
 }
 
+export const setAutopilot = (id: number, on: boolean): void => {
+  run('UPDATE new_websites SET autopilot = ? WHERE id = ?', on ? 1 : 0, id);
+};
+
 export const deleteNewWebsite = (id: number): void => {
   run('DELETE FROM new_websites WHERE id = ?', id);
 };

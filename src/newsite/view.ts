@@ -103,7 +103,7 @@ const part = (id: number, step: number, title: string, rows: [string, string | H
     <dl>${rows.map(([k, v]) => html`<div><dt>${k}</dt><dd>${v}</dd></div>`)}</dl>
   </section>`;
 
-export function newWebsiteListPage(rows: NewWebsiteRow[], platformReady = true): Html {
+export function newWebsiteListPage(rows: NewWebsiteRow[], platformReady = true, top: Html = raw('')): Html {
   return html`
     <style>${raw(LIST_CSS)}</style>
     <div class="ns-head">
@@ -113,6 +113,7 @@ export function newWebsiteListPage(rows: NewWebsiteRow[], platformReady = true):
       </div>
       ${rows.length && platformReady ? html`<a class="ns-btn primary" href="/new-website/add">Add website</a>` : raw('')}
     </div>
+    ${rows.length ? top : raw('')}
     ${rows.length
       ? html`<div class="nl-list">
           ${rows.map(
