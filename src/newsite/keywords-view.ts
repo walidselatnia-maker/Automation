@@ -1269,6 +1269,8 @@ export const OVERVIEW_CSS = `
 export interface OverviewSite {
   site: NewWebsiteRow;
   plans: KeywordPlan[];
+  /** What Autopilot does next, when it is on. */
+  autopilot?: string;
 }
 
 export const CHEV = '<svg class="ko-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>';
@@ -1293,7 +1295,7 @@ export function keywordsOverview(sites: OverviewSite[], stats: Map<number, PlanS
     </div>
     ${!ready
       ? html`<div class="ko-empty"><h2>Add a website first</h2><p>Keywords are planned for a website, and published there.</p><a class="ns-btn primary" href="/new-website/add">Add website</a></div>`
-      : html`<div class="ko-cards">${sites.map(({ site, plans }) => {
+      : html`<div class="ko-cards">${sites.map(({ site, plans, autopilot }) => {
           const subs = plans.reduce((n, p) => n + p.items.length, 0);
           const published = plans.reduce((n, p) => n + (stats.get(p.id)?.published ?? 0), 0);
           const findingCount = plans.filter((p) => p.subs_status === 'finding').length;
@@ -1304,6 +1306,7 @@ export function keywordsOverview(sites: OverviewSite[], stats: Map<number, PlanS
                 <span><b>${String(plans.length)}</b> main keyword${plans.length === 1 ? '' : 's'}</span>
                 <span><b>${String(subs)}</b> sub-keyword${subs === 1 ? '' : 's'}</span>
                 <span><b>${String(published)}</b> published</span>
+                ${autopilot ? html`<span class="ns-badge ${autopilot.startsWith('No keywords') ? 'bad' : 'ok'}">Autopilot · ${autopilot}</span>` : raw('')}
                 ${findingCount ? html`<span class="ns-badge busy">Finding sub-keywords for ${String(findingCount)}</span>` : raw('')}
               </span>
               ${raw(CHEV)}

@@ -24,6 +24,7 @@ export type FieldName =
   | 'persona'
   | 'customPersona'
   | 'status'
+  | 'autopilot'
   | 'autoPublish'
   | 'dailyTarget'
   | 'gapAmount'
@@ -37,7 +38,7 @@ export const STEP_FIELDS: FieldName[][] = [
   ['name', 'domain', 'apiKey'],
   ['niche', 'nicheContext'],
   ['persona', 'customPersona'],
-  ['status', 'autoPublish', 'dailyTarget', 'gapAmount', 'gapUnit'],
+  ['status', 'autopilot', 'autoPublish', 'dailyTarget', 'gapAmount', 'gapUnit'],
   ['bufferToken', 'pinUsername', 'projectId'],
   [],
 ];
@@ -51,6 +52,8 @@ export interface CleanWebsite {
   nicheContext: string;
   persona: string;
   status: 'active' | 'paused';
+  /** Makes pictures and publishes on the schedule by itself. Off when left out. */
+  autopilot?: boolean;
   autoPublish: boolean;
   dailyTarget: number;
   intervalMinutes: number;
@@ -167,6 +170,12 @@ function fieldCheck(field: FieldName, raw: Raw, clean: Partial<CleanWebsite>): s
       const value = text(raw, field);
       if (value !== 'active' && value !== 'paused') return 'Choose active or paused.';
       clean.status = value;
+      return null;
+    }
+    case 'autopilot': {
+      const value = text(raw, field) || '0';
+      if (value !== '1' && value !== '0') return 'Choose on or off.';
+      clean.autopilot = value === '1';
       return null;
     }
     case 'autoPublish': {

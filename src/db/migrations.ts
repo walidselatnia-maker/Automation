@@ -937,6 +937,13 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    id: '042-newsite-autopilot',
+    description: 'New websites: Autopilot, which makes pictures and publishes by the posts per day and gap without anyone pressing a button',
+    up(db) {
+      addColumn(db, 'new_websites', 'autopilot', 'INTEGER NOT NULL DEFAULT 0');
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */

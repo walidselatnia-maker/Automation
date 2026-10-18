@@ -1,4 +1,5 @@
 import { all } from '../db/index.js';
+import { autopilotState } from './autopilot.js';
 import { html, raw, type Html } from '../web/views/layout.js';
 import { PLATFORMS } from './channels.js';
 import { listNewWebsites } from './repo.js';
@@ -36,7 +37,7 @@ export interface DashboardData {
   daily: Day[];
   funnel: { label: string; count: number; tone: string }[];
   platforms: { label: string; color: string; sent: number; failed: number }[];
-  websites: { name: string; domain: string; published: number; working: number; posts: number; inPeriod: number }[];
+  websites: { name: string; domain: string; published: number; working: number; posts: number; inPeriod: number; autopilot: string }[];
   problems: { label: string; count: number; href: string }[];
   recent: { when: number; kind: 'article' | 'post' | 'reel'; title: string; where: string; color?: string; href?: string }[];
 }
@@ -145,6 +146,7 @@ export function dashboardData(days: Period, timezone: string, now = Date.now()):
     inPeriod: articles.filter((a) => a.website_id === w.id && inPeriod(a.t)).length,
     working: working.find((x) => x.website_id === w.id)?.n ?? 0,
     posts: sent.filter((p) => p.website_id === w.id && inPeriod(p.t)).length,
+    autopilot: w.autopilot ? autopilotState(w, timezone, now).next : 'Off',
   }));
 
   const n = (sql: string): number => all<{ n: number }>(sql)[0]?.n ?? 0;
@@ -220,6 +222,7 @@ html.dark .db { --c-articles: #7f86dc; --c-words: #9b89d8; --c-pictures: #d6a545
 .db-sites td { padding: 10px 8px; border-bottom: 1px solid var(--line); }
 .db-sites tr:last-child td { border-bottom: 0; }
 .db-sites td small { display: block; color: var(--faint); font: 12px var(--mono); }
+.db-auto { color: var(--good); font-size: 13px; } .db-auto.off { color: var(--faint); } .db-auto.bad { color: var(--bad); }
 .db-sites .num { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
 .db-recent { list-style: none; margin: 0; padding: 0; }
 .db-recent li { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 9px 0; border-top: 1px solid var(--line); font-size: 14px; }
@@ -344,8 +347,8 @@ export function dashboardPage(d: DashboardData, now = Date.now()): Html {
         <h2>Websites</h2>
         <p class="db-sub">Published articles and social posts per website.</p>
         ${d.websites.length
-          ? html`<table class="db-sites"><thead><tr><th>Website</th><th class="num">Published</th><th class="num">Last ${String(d.days)} days</th><th class="num">On the way</th><th class="num">Posts sent</th></tr></thead>
-              <tbody>${d.websites.map((w) => html`<tr><td>${w.name}<small>${w.domain}</small></td><td class="num">${fmt(w.published)}</td><td class="num">${fmt(w.inPeriod)}</td><td class="num">${fmt(w.working)}</td><td class="num">${fmt(w.posts)}</td></tr>`)}</tbody></table>`
+          ? html`<table class="db-sites"><thead><tr><th>Website</th><th class="num">Published</th><th class="num">Last ${String(d.days)} days</th><th class="num">On the way</th><th class="num">Posts sent</th><th>Autopilot</th></tr></thead>
+              <tbody>${d.websites.map((w) => html`<tr><td>${w.name}<small>${w.domain}</small></td><td class="num">${fmt(w.published)}</td><td class="num">${fmt(w.inPeriod)}</td><td class="num">${fmt(w.working)}</td><td class="num">${fmt(w.posts)}</td><td class="db-auto${w.autopilot.startsWith('No keywords') ? ' bad' : w.autopilot === 'Off' ? ' off' : ''}">${w.autopilot}</td></tr>`)}</tbody></table>`
           : html`<p class="db-empty">No website yet. <a href="/new-website/add">Add one</a>.</p>`}
       </section>
       <section class="db-card">

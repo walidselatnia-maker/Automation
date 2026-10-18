@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { autopilotState } from './autopilot.js';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { checkImport, importRows, kickSubFinder, planStats, type ImportRow } from './keyword-import.js';
 import type { SitePost } from './client.js';
@@ -117,7 +118,12 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
     const wanted = Number((request.query as { website?: string }).website) || 0;
     if (wanted) return reply.redirect(`/new-website/keywords#website-${wanted}`, 303);
     const plans = listKeywordPlans();
-    const sites = listNewWebsites().map((site) => ({ site, plans: plans.filter((p) => p.website_id === site.id) }));
+    const tz = deps.settings?.get('timezone') || 'UTC';
+    const sites = listNewWebsites().map((site) => ({
+      site,
+      plans: plans.filter((p) => p.website_id === site.id),
+      autopilot: site.autopilot ? autopilotState(site, tz).next : '',
+    }));
     return reply.type('text/html; charset=utf-8').send(
       newLayout({ title: 'Keywords', active: '/new-website/keywords', body: keywordsOverview(sites, planStats()), flash: deps.readFlash(request.query) }),
     );

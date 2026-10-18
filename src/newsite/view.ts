@@ -137,7 +137,7 @@ export function newWebsiteListPage(rows: NewWebsiteRow[], platformReady = true):
                 <dl class="nl-sum">
                   <div><dt>Topic</dt><dd>${r.niche}</dd></div>
                   <div><dt>Voice</dt><dd>${r.persona}</dd></div>
-                  <div><dt>Publishing</dt><dd>${r.status === 'active' ? (r.auto_publish ? 'By itself' : 'After your approval') : 'Paused'}${r.daily_target ? `, up to ${r.daily_target} a day` : ''}</dd></div>
+                  <div><dt>Publishing</dt><dd>${r.status === 'active' ? (r.autopilot ? 'Autopilot' : r.auto_publish ? 'By itself' : 'After your approval') : 'Paused'}${r.daily_target ? `, up to ${r.daily_target} a day` : ''}</dd></div>
                   <div><dt>Shares on</dt><dd>${channelLinks(r.id)}</dd></div>
                 </dl>
                 <div class="nl-links">
@@ -160,6 +160,7 @@ export function newWebsiteListPage(rows: NewWebsiteRow[], platformReady = true):
                   ${part(r.id, 2, 'Voice', [['Persona', r.persona]])}
                   ${part(r.id, 3, 'Publishing', [
                     ['Status', r.status === 'active' ? 'Active' : 'Paused'],
+                    ['Autopilot', r.autopilot ? 'On' : 'Off'],
                     ['Approval', r.auto_publish ? 'Publishes automatically' : 'Waits for my approval'],
                     ['Posts per day', String(r.daily_target || 'No target')],
                     ['Gap between posts', gap(r.interval_minutes)],
@@ -372,6 +373,10 @@ export function newWebsiteWizardPage(existing?: NewWebsiteRow, channels: WizardC
           <div class="wz-step">
             <h2>Publishing</h2>
             <p>How often this website publishes, and whether you approve each article first.</p>
+            ${field('autopilot', 'Autopilot', html`<select id="wz-autopilot" name="autopilot">
+                <option value="0">Off: I press the buttons</option><option value="1" ${selected(e?.autopilot === 1)}>On: make pictures and publish by the schedule below</option></select>`, {
+              hint: 'Articles are written as soon as you add keywords. Autopilot makes their pictures one day ahead and publishes them by Posts per day and the gap. Social posts and reels follow each one.',
+            })}
             <div class="wz-two">
               ${field('status', 'Status', html`<select id="wz-status" name="status">
                 <option value="active">Active</option><option value="paused" ${selected(e?.status === 'paused')}>Paused</option></select>`)}
@@ -507,7 +512,7 @@ const SCRIPT = `<script>
         ['API key', val('apiKey') ? 'New key, checked with the website' : (EDIT ? 'Saved key kept, checked with the website' : 'Checked with the website')]]],
       [1, 'Niche', [['Niche', val('niche')], ['More detail', val('nicheContext') || '—']]],
       [2, 'Voice', [['Persona', persona()]]],
-      [3, 'Publishing', [['Status', f('status').selectedOptions[0].text], ['Approval', f('autoPublish').selectedOptions[0].text],
+      [3, 'Publishing', [['Status', f('status').selectedOptions[0].text], ['Autopilot', f('autopilot').value === '1' ? 'On' : 'Off'], ['Approval', f('autoPublish').selectedOptions[0].text],
         ['Posts per day', val('dailyTarget')], ['Gap between posts', val('gapAmount') + ' ' + val('gapUnit')]]],
       [4, 'Channels and images', [['Shares on', channelsText()],
         ['Google Flow project', val('projectId') || 'Shared project from Platform settings']]]

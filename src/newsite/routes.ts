@@ -9,6 +9,7 @@ import { registerImageModelRoutes } from './image-model.js';
 import { registerChannelRoutes, type ChannelLookups } from './channels-routes.js';
 import { registerPublishRoutes } from './publish-routes.js';
 import { addStepPicture, publishWhenReady, type PublishDeps } from './publish.js';
+import { autopilotTick } from './autopilot.js';
 import { createSocialPosts, kickSocial, onPinPicture, type SocialDeps } from './social.js';
 import { registerSocialRoutes } from './social-routes.js';
 import { registerPromptRoutes } from './prompts-page.js';
@@ -137,6 +138,7 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
       afterPin: (pictureId, ok) => onPinPicture(pictureId, ok, social),
     });
     social.startPictures = publish.startPictures;
+    if (deps.autoPictures !== false) setInterval(() => autopilotTick(publish), 60_000).unref();
     registerSocialRoutes(app, { ...social, readFlash, autoStart: deps.autoPictures });
   }
 
