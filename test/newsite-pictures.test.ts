@@ -132,7 +132,7 @@ describe('Pictures, made the old dashboard way', () => {
     setPrompts(['feature']);
     queuePictures(seoId, dataDir);
     await kickPictureMaker({ settings, dataDir, now: () => clock, sleep: async () => {} });
-    expect(generate).toHaveBeenCalledWith('prompt for feature', 'HORIZONTAL');
+    expect(generate).toHaveBeenCalledWith('prompt for feature', 'PORTRAIT_3_4');
     expect(listPictures(seoId)[0]).toMatchObject({ status: 'done' });
   });
 

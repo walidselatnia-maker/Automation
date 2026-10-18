@@ -41,7 +41,7 @@ const good = (slot: ImageSlot, i: number): { slot: string; prompt: string; alt: 
     `Commercial food photo number ${i + 1} of ${KEYWORD} for ${slot.slot}, ${THEME.dish}, on a ${THEME.surface}, ${THEME.lighting}. ` +
     `${['Five', 'Three', 'Two', 'Seven', 'Four', 'Six', 'Eight', 'Nine', 'Ten'][i % 9]} cookies seen from angle ${i * 10} degrees, ` +
     `orange edges and melted chocolate chips in sharp focus, background softly blurred. Shot on a 50mm lens at f/4, 5500K, ` +
-    `short shadows falling right. Variation ${'abcdefghij'.slice(0, (i % 9) + 1)} ${slot.shows.replace(/WIDE 16:9|\bperfect\b|mouth-catching/g, '')}. No text, no labels, no watermarks, no collage.`,
+    `short shadows falling right. Variation ${'abcdefghij'.slice(0, (i % 9) + 1)} ${slot.shows.replace(/TALL 3:4 portrait|\bperfect\b|mouth-catching/g, '')}. No text, no labels, no watermarks, no collage.`,
   alt: 'Soft pumpkin chocolate chip cookies cooling on a white ceramic plate',
 });
 

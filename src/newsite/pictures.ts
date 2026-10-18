@@ -15,9 +15,10 @@ import { parseImageSet } from './images.js';
  * - the same ImageClient, built from the same settings;
  * - the same Flow project, from resolveProjectId (the website's own, else the
  *   shared one from Settings, else the old placeholder);
- * - the same call, generate(prompt, shape): every article picture wide
- *   (HORIZONTAL, 16:9), as the new websites want, where the old dashboard
- *   used VERTICAL; a Pinterest pin 3:4 (PORTRAIT_3_4);
+ * - the same call, generate(prompt, shape): every article picture 3:4
+ *   portrait (PORTRAIT_3_4), which the websites' home page and post cards
+ *   show without cutting the dish off (a wide 16:9 picture lost its sides
+ *   there); a Pinterest pin 3:4 too;
  * - the same pause between images (image_gap_seconds), counted from when the
  *   previous image came back;
  * - one image at a time, and a failed image stops its article there, like a
@@ -69,7 +70,8 @@ export const isMainSlot = (slot: string): boolean => !isStepSlot(slot) && !isPin
 
 /** The shape Flow is asked for. */
 export type PictureShape = 'HORIZONTAL' | 'PORTRAIT_3_4';
-export const shapeOf = (slot: string): PictureShape => (isPinSlot(slot) ? 'PORTRAIT_3_4' : 'HORIZONTAL');
+// every picture of an article, its steps included, is 3:4 portrait; a social picture's own rules file can say otherwise (its row's shape)
+export const shapeOf = (_slot: string): PictureShape => 'PORTRAIT_3_4';
 
 /** Minutes between two step pictures: a random wait in this range. */
 export const STEP_GAP_MINUTES = [15, 30] as const;
