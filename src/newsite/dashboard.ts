@@ -19,6 +19,7 @@ interface Day {
   key: string;
   label: string;
   articles: number;
+  pictures: number;
   posts: number;
   reels: number;
 }
@@ -98,11 +99,12 @@ export function dashboardData(days: Period, timezone: string, now = Date.now()):
     const key = dayOf(t);
     if (index.has(key)) continue;
     const d = new Date(t);
-    const day: Day = { key, label: d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: timezone || 'UTC' }), articles: 0, posts: 0, reels: 0 };
+    const day: Day = { key, label: d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: timezone || 'UTC' }), articles: 0, pictures: 0, posts: 0, reels: 0 };
     index.set(key, day);
     daily.push(day);
   }
   for (const a of articles) if (inPeriod(a.t)) index.get(dayOf(a.t)) && index.get(dayOf(a.t))!.articles++;
+  for (const t of pictures) if (inPeriod(t)) index.get(dayOf(t)) && index.get(dayOf(t))!.pictures++;
   for (const p of sent) if (inPeriod(p.t)) index.get(dayOf(p.t)) && index.get(dayOf(p.t))!.posts++;
   for (const r of madeReels) if (inPeriod(r.t)) index.get(dayOf(r.t)) && index.get(dayOf(r.t))!.reels++;
 
@@ -249,24 +251,25 @@ function change(k: Kpi, days: number): Html {
   return html`<small class="${pct > 0 ? 'up' : 'down'}" title="${title}">${pct > 0 ? '▲' : '▼'} ${String(Math.abs(pct))}%</small>`;
 }
 
-/** Articles a day as bars; social posts and reels as lines over them. */
+/** Articles a day as bars; pictures, social posts and reels as lines over them. */
 function activityChart(daily: Day[]): Html {
   const W = 760, H = 240, L = 34, R = 10, T = 10, B = 26;
-  const max = Math.max(1, ...daily.flatMap((d) => [d.articles, d.posts, d.reels]));
+  const max = Math.max(1, ...daily.flatMap((d) => [d.articles, d.pictures, d.posts, d.reels]));
   const top = max <= 4 ? max : Math.ceil(max / 4) * 4;
   const x = (i: number) => L + ((i + 0.5) * (W - L - R)) / daily.length;
   const y = (v: number) => T + (H - T - B) * (1 - v / top);
   const bw = Math.max(2, Math.min(22, ((W - L - R) / daily.length) * 0.6));
   const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => Math.round(top * f)).filter((v, i, a) => a.indexOf(v) === i);
   const every = Math.ceil(daily.length / 8);
-  const line = (key: 'posts' | 'reels') => daily.map((d, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(d[key]).toFixed(1)}`).join(' ');
+  const line = (key: 'pictures' | 'posts' | 'reels') => daily.map((d, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(d[key]).toFixed(1)}`).join(' ');
   const svg = `<svg class="db-chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Activity per day">
     ${ticks.map((v) => `<line class="grid" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/><text x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${v}</text>`).join('')}
     ${daily.map((d, i) => (d.articles ? `<rect x="${(x(i) - bw / 2).toFixed(1)}" y="${y(d.articles).toFixed(1)}" width="${bw.toFixed(1)}" height="${(y(0) - y(d.articles)).toFixed(1)}" rx="3" fill="var(--c-articles)"><title>${d.label}: ${d.articles} articles</title></rect>` : '')).join('')}
+    <path d="${line('pictures')}" fill="none" stroke="var(--c-pictures)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
     <path d="${line('posts')}" fill="none" stroke="var(--c-posts)" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
     <path d="${line('reels')}" fill="none" stroke="var(--c-reels)" stroke-width="2" stroke-dasharray="5 4" stroke-linejoin="round"/>
     ${daily.map((d, i) => (d.posts ? `<circle cx="${x(i).toFixed(1)}" cy="${y(d.posts).toFixed(1)}" r="3" fill="var(--c-posts)"><title>${d.label}: ${d.posts} social posts</title></circle>` : '')).join('')}
-    ${daily.map((d, i) => (i % every === (daily.length - 1) % every ? `<text x="${x(i).toFixed(1)}" y="${H - 6}" text-anchor="middle">${d.label}</text>` : '')).join('')}
+    ${daily.map((d, i) => (i % every === (daily.length - 1) % every ? `<text x="${x(i).toFixed(1)}" y="${H - 6}" text-anchor="${i === daily.length - 1 ? 'end' : 'middle'}">${i === daily.length - 1 ? 'Today' : d.label}</text>` : '')).join('')}
   </svg>`;
   return raw(svg);
 }
@@ -301,7 +304,7 @@ const ago = (t: number, now: number): string => {
 
 export function dashboardPage(d: DashboardData, now = Date.now(), autopilot: Html = raw('')): Html {
   const top = Math.max(1, ...d.funnel.map((f) => f.count));
-  const totalActivity = d.daily.reduce((n, x) => n + x.articles + x.posts + x.reels, 0);
+  const totalActivity = d.daily.reduce((n, x) => n + x.articles + x.pictures + x.posts + x.reels, 0);
   const KIND = { article: { letter: 'A', k: 'var(--c-articles)', verb: 'Article published' }, post: { letter: 'P', k: 'var(--c-posts)', verb: 'Posted on' }, reel: { letter: 'R', k: 'var(--c-reels)', verb: '' } };
   return html`
     <style>${raw(CSS)}</style>
@@ -326,8 +329,8 @@ export function dashboardPage(d: DashboardData, now = Date.now(), autopilot: Htm
     <div class="db-grid">
       <section class="db-card">
         <h2>Activity per day</h2>
-        <ul class="db-legend"><li><i style="--k:var(--c-articles)"></i>Articles</li><li><i style="--k:var(--c-posts)"></i>Social posts</li><li><i style="--k:var(--c-reels)"></i>Reels</li></ul>
-        ${totalActivity ? activityChart(d.daily) : html`<p class="db-empty">Nothing was published or shared in this period.</p>`}
+        <ul class="db-legend"><li><i style="--k:var(--c-articles)"></i>Articles</li><li><i style="--k:var(--c-pictures)"></i>Pictures</li><li><i style="--k:var(--c-posts)"></i>Social posts</li><li><i style="--k:var(--c-reels)"></i>Reels</li></ul>
+        ${totalActivity ? activityChart(d.daily) : html`<p class="db-empty">Nothing was made, published or shared in this period.</p>`}
       </section>
       <section class="db-card">
         <h2>Where the articles are</h2>
@@ -366,5 +369,6 @@ export function dashboardPage(d: DashboardData, now = Date.now(), autopilot: Htm
           })}</ul>`
         : html`<p class="db-empty">Nothing yet. Add keywords and the platform starts writing.</p>`}
     </section>
-    </div>`;
+    </div>
+    <script>setInterval(() => { if (document.visibilityState === 'visible') location.reload(); }, 60000);</script>`;
 }

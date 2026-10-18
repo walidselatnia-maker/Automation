@@ -19,7 +19,7 @@ describe('dashboard', () => {
     expect(d.kpis.map((k) => k.value)).toEqual([0, 0, 0, 0, 0]);
     const page = dashboardPage(d, NOW).value;
     expect(page).not.toContain('class="db-problems"');
-    expect(page).toContain('Nothing was published or shared in this period.');
+    expect(page).toContain('Nothing was made, published or shared in this period.');
   });
 
   it('counts what was published, made and sent in the period, against the period before, per day, website and platform', () => {
