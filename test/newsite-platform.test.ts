@@ -204,16 +204,35 @@ describe('platform routes', () => {
     calls = [];
     const pastedAgain = (await post('/new-website/platform/save', { ...FORM, newKeyName: '', newKeyValue: '', bulkKeys: 'sk-aaaaaaaa1\nsk-cccccccc3' })).json();
     expect(pastedAgain.saved).toBe(true);
-    expect(pastedAgain.message).toMatch(/1 pasted key was already saved, so it was skipped/);
+    expect(pastedAgain.message).toMatch(/1 pasted key added\. 1 already saved, so skipped\./);
     expect(calls.filter((c) => c.url.includes('/api/chat'))).toHaveLength(1);
     expect(listEndpointRows()).toHaveLength(3);
   });
 
-  it('names the pasted keys that fail and saves nothing', async () => {
-    aiAnswer = 401;
-    const r = (await post('/new-website/platform/check', { ...FORM, newKeyName: '', newKeyValue: '', bulkKeys: 'sk-aaaaaaaa1', step: '0' })).json();
-    expect(r.errors.bulkKeys).toMatch(/1 of 1 keys failed.*Key 01 \(…aaa1\): The AI provider rejected this key/);
-    expect(listEndpointRows()).toEqual([]);
+  it('adds the pasted keys that work and keeps a refused one off, in red', async () => {
+    let n = 0;
+    await app.close();
+    app = Fastify();
+    await app.register(formbody);
+    registerNewWebsiteRoutes(app, {
+      encryptionKey: KEY,
+      settings,
+      fetchImpl: (async (url: string, init?: RequestInit) => {
+        const bad = String(init?.headers && (init.headers as Record<string, string>).Authorization).endsWith('bbbbbbb2');
+        n++;
+        return new Response(JSON.stringify({ message: { content: 'OK' } }), { status: bad ? 401 : 200 });
+      }) as unknown as typeof fetch,
+    });
+    await app.ready();
+    const r = (await post('/new-website/platform/save', { ...FORM, bulkKeys: 'sk-aaaaaaaa1\nsk-bbbbbbbb2\nsk-cccccccc3' })).json();
+    expect(r.saved).toBe(true);
+    expect(r.message).toMatch(/2 pasted keys added\. 1 not accepted, shown in red: Key 02\./);
+    expect(n).toBe(4);
+    const rows = listEndpointRows();
+    expect(rows.find((e) => e.name === 'Key 02')).toMatchObject({ enabled: 0, last_error: 'The AI provider rejected this key.' });
+    expect(rows.filter((e) => e.enabled === 1).map((e) => e.name).sort()).toEqual(['Key 01', 'Key 03', 'Main key']);
+    const page = await app.inject({ method: 'GET', url: '/new-website/platform/setup?section=0' });
+    expect(page.body).toContain('Not accepted: The AI provider rejected this key.');
   });
 
   it('removes a saved key and keeps the Telegram token when the field is empty', async () => {

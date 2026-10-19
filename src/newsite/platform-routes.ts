@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
-import { deleteEndpoint, listEndpointRows, listEndpoints, upsertEndpoint } from '../llm/pool.js';
+import { deleteEndpoint, listEndpointRows, listEndpoints, markRejected, upsertEndpoint } from '../llm/pool.js';
 import type { Settings } from '../settings.js';
 import { newLayout, type NewFlash } from './layout.js';
 import {
@@ -10,6 +10,7 @@ import {
   testTelegram,
   validatePlatform,
   type Fetch,
+  type NewKey,
   type PlatformContext,
 } from './platform.js';
 import { imageCatalogue } from './image-model.js';
@@ -77,22 +78,25 @@ export function registerPlatformRoutes(app: FastifyInstance, deps: PlatformRoute
   const testNewKey = async (raw: Record<string, unknown>) => {
     const { errors, clean } = validatePlatform(raw, context(), [0]);
     if (Object.keys(errors).length) return errors;
-    const out: Record<string, string> = {};
-    if (clean.newKey) {
-      const problem = await testAiKey(clean.settings.llm_base_url!, clean.newKey.apiKey, clean.newKey.models, fetchImpl);
-      if (problem) out.newKeyValue = problem;
-    }
-    // Pasted keys: one tiny request each, with the first ticked model, four at a time.
-    const failed: string[] = [];
-    const queue = [...clean.bulkKeys];
+    if (!clean.newKey) return {};
+    const problem = await testAiKey(clean.settings.llm_base_url!, clean.newKey.apiKey, clean.newKey.models, fetchImpl);
+    return problem ? { newKeyValue: problem } : {};
+  };
+
+  /**
+   * Pasted keys: one tiny request each, with the first ticked model, four at a
+   * time. A refused key never stops the others; it comes back with its reason.
+   */
+  const testPastedKeys = async (baseUrl: string, keys: NewKey[]): Promise<Map<string, string>> => {
+    const refused = new Map<string, string>();
+    const queue = [...keys];
     await Promise.all(Array.from({ length: Math.min(4, queue.length) }, async () => {
       for (let k = queue.shift(); k; k = queue.shift()) {
-        const problem = await testAiKey(clean.settings.llm_base_url!, k.apiKey, k.models.slice(0, 1), fetchImpl);
-        if (problem) failed.push(`${k.name} (…${k.apiKey.slice(-4)}): ${problem}`);
+        const problem = await testAiKey(baseUrl, k.apiKey, k.models.slice(0, 1), fetchImpl);
+        if (problem) refused.set(k.name, problem);
       }
     }));
-    if (failed.length) out.bulkKeys = `${failed.length} of ${clean.bulkKeys.length} keys failed. Remove them and try again. ${failed.join(' ')}`;
-    return out;
+    return refused;
   };
 
   app.get('/new-website/platform', async (request, reply) =>
@@ -172,10 +176,11 @@ export function registerPlatformRoutes(app: FastifyInstance, deps: PlatformRoute
       return reply.send({ errors, step });
     }
     const skipped = clean.skippedKeys;
-    if (clean.newKey || clean.bulkKeys.length) {
+    if (clean.newKey) {
       const keyErrors = await testNewKey(raw);
       if (Object.keys(keyErrors).length) return reply.send({ errors: keyErrors, step: 0 });
     }
+    const refused = clean.bulkKeys.length ? await testPastedKeys(clean.settings.llm_base_url!, clean.bulkKeys) : new Map<string, string>();
 
     for (const [key, value] of Object.entries(clean.settings)) settings.set(key, value);
     for (const id of clean.removeKeyIds) deleteEndpoint(id);
@@ -183,9 +188,17 @@ export function registerPlatformRoutes(app: FastifyInstance, deps: PlatformRoute
       // Blank base URL: the key uses the provider address saved above.
       upsertEndpoint({ name: clean.newKey.name, baseUrl: '', apiKey: clean.newKey.apiKey, models: clean.newKey.models, enabled: true }, deps.encryptionKey);
     }
-    for (const k of clean.bulkKeys) upsertEndpoint({ name: k.name, baseUrl: '', apiKey: k.apiKey, models: k.models, enabled: true }, deps.encryptionKey);
+    for (const k of clean.bulkKeys) {
+      upsertEndpoint({ name: k.name, baseUrl: '', apiKey: k.apiKey, models: k.models, enabled: !refused.has(k.name) }, deps.encryptionKey);
+      if (refused.has(k.name)) markRejected(k.name, refused.get(k.name)!);
+    }
     settings.set(SETUP_DONE_KEY, 'true');
-    const note = skipped ? ` ${skipped} pasted key${skipped > 1 ? 's were' : ' was'} already saved, so ${skipped > 1 ? 'they were' : 'it was'} skipped.` : '';
+    const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
+    const added = clean.bulkKeys.length - refused.size;
+    const note =
+      (clean.bulkKeys.length ? ` ${added} pasted ${plural(added, 'key', 'keys')} added.` : '') +
+      (refused.size ? ` ${refused.size} not accepted, shown in red: ${[...refused.keys()].join(', ')}.` : '') +
+      (skipped ? ` ${skipped} already saved, so skipped.` : '');
     return reply.send({ saved: true, redirect: '/new-website/platform', message: 'Platform settings saved.' + note });
   });
 }

@@ -131,6 +131,11 @@ export const deleteEndpoint = (id: number): void => {
   run('DELETE FROM llm_endpoints WHERE id = ?', id);
 };
 
+/** A key the provider refused when it was added: kept, switched off, with the reason shown. */
+export function markRejected(name: string, error: string): void {
+  run('UPDATE llm_endpoints SET enabled = 0, healthy = 0, last_error = ? WHERE name = ?', error.slice(0, 500), name);
+}
+
 /* -- Health bookkeeping -------------------------------------------------- */
 
 export function markSuccess(id: number): void {

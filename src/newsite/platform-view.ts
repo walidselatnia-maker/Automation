@@ -146,7 +146,7 @@ export function platformPage(v: PlatformView, automation: Html = raw('')): Html 
         ${v.keys.length
           ? html`<details class="pf-wide pf-more">
               <summary>Show each key</summary>
-              <dl class="pf-keylist">${v.keys.map((k) => html`<dt>${k.name}</dt><dd>${k.models.join(', ') || 'no models'}${k.enabled ? raw('') : html` · off`}${k.lastError ? html`<small>Last error: ${k.lastError.slice(0, 140)}</small>` : raw('')}</dd>`)}</dl>
+              <dl class="pf-keylist">${v.keys.map((k) => html`<dt>${k.name}</dt><dd>${k.models.join(', ') || 'no models'}${k.enabled ? raw('') : html` · off`}${!k.enabled && k.lastError ? html`<small class="pf-refused">Not accepted: ${k.lastError.slice(0, 140)}</small>` : k.lastError ? html`<small>Last error: ${k.lastError.slice(0, 140)}</small>` : raw('')}</dd>`)}</dl>
             </details>`
           : raw('')}
       </section>
@@ -161,6 +161,7 @@ const EXTRA_CSS = `
 .pf-keys li { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--line); }
 .pf-keys li.gone b, .pf-keys li.gone span { text-decoration: line-through; color: var(--faint); }
 .pf-keys span { display: block; color: var(--faint); font-size: 13px; }
+.pf-keys .pf-refused, .pf-refused { color: var(--bad); font-weight: 600; }
 .pf-keys button { height: 32px; padding: 0 12px; font-size: 13px; }
 .pf-models { display: flex; flex-wrap: wrap; gap: 8px 20px; }
 .pf-models label { display: flex; align-items: center; gap: 8px; font-weight: 500; font-size: 14px; margin: 0; cursor: pointer; }
@@ -218,7 +219,7 @@ export function platformWizardPage(v: PlatformView, section = -1): Html {
             ${v.keys.length
               ? html`<div class="pf-sub">Saved keys</div>
                 <ul class="pf-keys">${v.keys.map(
-                  (k) => html`<li data-key="${k.id}"><div><b>${k.name}</b><span>${k.models.join(', ')}</span></div>
+                  (k) => html`<li data-key="${k.id}"><div><b>${k.name}</b><span>${k.models.join(', ')}</span>${!k.enabled && k.lastError ? html`<span class="pf-refused">Not accepted: ${k.lastError.slice(0, 140)}</span>` : raw('')}</div>
                     <button type="button" class="ns-btn danger small" data-remove="${k.id}">Remove</button></li>`,
                 )}</ul>`
               : raw('')}
@@ -240,7 +241,7 @@ export function platformWizardPage(v: PlatformView, section = -1): Html {
             <details class="pf-bulk">
               <summary>Paste many keys at once</summary>
               ${field('bulkKeys', 'Keys, one per line', html`<textarea id="wz-bulkKeys" name="bulkKeys" rows="6" spellcheck="false" placeholder="sk-first-key&#10;sk-second-key&#10;Backup = sk-third-key"></textarea>`, {
-                hint: 'A bare key gets a name like Key 01. Write "name = key" to choose one. They all run the models ticked above; each gets one tiny test request.',
+                hint: 'A bare key gets a name like Key 01. Write "name = key" to choose one. They all run the models ticked above. Each is tested when you save; a key that is not accepted is kept in red and the others are added.',
               })}
             </details>
           </div>
@@ -433,7 +434,7 @@ const script = (v: PlatformView, section: number): string => `<script>
     if (busy) return;
     $('wz-saveerr').textContent = '';
     if (cur === NAMES.length - 1 || SECTION >= 0) {
-      setBusy(true, 'Saving…');
+      setBusy(true, val('bulkKeys') ? 'Testing the keys and saving…' : 'Saving…');
       post('/new-website/platform/save').then(function (r) {
         if (r.saved) { location.href = r.redirect + '?ok=' + encodeURIComponent(r.message || 'Platform settings saved.'); return; }
         busy = false;
@@ -443,7 +444,7 @@ const script = (v: PlatformView, section: number): string => `<script>
       }).catch(function () { busy = false; $('wz-saveerr').textContent = 'Could not save. Try again.'; setBusy(false); });
       return;
     }
-    setBusy(true, cur === 0 && val('bulkKeys') ? 'Testing the keys…' : cur === 0 && val('newKeyValue') ? 'Testing the key…' : 'Checking…');
+    setBusy(true, cur === 0 && val('newKeyValue') ? 'Testing the key…' : 'Checking…');
     post('/new-website/platform/check', { step: cur }).then(function (r) {
       showErrors(r.errors);
       if (!Object.keys(r.errors || {}).length) cur++;
