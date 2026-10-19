@@ -951,6 +951,13 @@ export const MIGRATIONS: Migration[] = [
       addColumn(db, 'keyword_seo', 'generate_now', 'INTEGER NOT NULL DEFAULT 0');
     },
   },
+  {
+    id: '044-newsite-language',
+    description: 'New websites: the language each website writes in',
+    up(db) {
+      addColumn(db, 'new_websites', 'language', "TEXT NOT NULL DEFAULT 'English'");
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */

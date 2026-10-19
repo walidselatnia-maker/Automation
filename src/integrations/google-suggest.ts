@@ -23,11 +23,13 @@ export function parseSuggestResponse(body: unknown): string[] {
 export interface SuggestOptions {
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
+  /** The interface language Google answers for (en, fr, es…). */
+  hl?: string;
 }
 
 export async function suggest(query: string, options: SuggestOptions = {}): Promise<string[]> {
   const doFetch = options.fetchImpl ?? fetch;
-  const url = `${ENDPOINT}?client=firefox&hl=en&q=${encodeURIComponent(query)}`;
+  const url = `${ENDPOINT}?client=firefox&hl=${encodeURIComponent(options.hl || 'en')}&q=${encodeURIComponent(query)}`;
   try {
     const response = await doFetch(url, { signal: AbortSignal.timeout(options.timeoutMs ?? 5_000) });
     if (!response.ok) return [];
@@ -56,7 +58,8 @@ export async function expandSeeds(seeds: string[], options: ExpandOptions = {}):
   for (const raw of seeds) {
     const seed = raw.trim();
     if (!seed) continue;
-    for (const modifier of SUGGEST_MODIFIERS) queries.push(modifier ? `${seed} ${modifier}` : seed);
+    // The modifiers are English words: other languages ask the seed alone.
+    for (const modifier of options.hl && options.hl !== 'en' ? [''] : SUGGEST_MODIFIERS) queries.push(modifier ? `${seed} ${modifier}` : seed);
   }
 
   const seen = new Set<string>();

@@ -10,6 +10,7 @@ export interface NewWebsiteRow {
   niche: string;
   niche_context: string;
   persona: string;
+  language: string;
   status: 'active' | 'paused';
   auto_publish: number;
   daily_target: number;
@@ -43,8 +44,8 @@ export function createNewWebsite(site: CleanWebsite, key: Buffer): number {
   return run(
     `INSERT INTO new_websites (name, domain, niche, niche_context, persona, status,
        auto_publish, daily_target, interval_minutes, pin_username, project_id,
-       api_key_encrypted, buffer_token_encrypted)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       api_key_encrypted, buffer_token_encrypted, language)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     site.name,
     site.domain,
     site.niche,
@@ -58,6 +59,7 @@ export function createNewWebsite(site: CleanWebsite, key: Buffer): number {
     site.projectId,
     encrypt(site.apiKey, key),
     encrypt(site.bufferToken, key),
+    site.language || 'English',
   ).lastInsertRowid;
 }
 
@@ -66,7 +68,7 @@ export function updateNewWebsite(id: number, site: CleanWebsite, key: Buffer): v
   run(
     `UPDATE new_websites SET name = ?, domain = ?, niche = ?, niche_context = ?, persona = ?, status = ?,
        auto_publish = ?, daily_target = ?, interval_minutes = ?, pin_username = ?, project_id = ?,
-       api_key_encrypted = ?, buffer_token_encrypted = ?
+       api_key_encrypted = ?, buffer_token_encrypted = ?, language = ?
      WHERE id = ?`,
     site.name,
     site.domain,
@@ -81,9 +83,14 @@ export function updateNewWebsite(id: number, site: CleanWebsite, key: Buffer): v
     site.projectId,
     encrypt(site.apiKey, key),
     encrypt(site.bufferToken, key),
+    site.language || 'English',
     id,
   );
 }
+
+/** The language a keyword plan's website writes in. */
+export const planLanguage = (planId: number): string =>
+  get<{ language: string }>('SELECT w.language FROM keyword_plans p JOIN new_websites w ON w.id = p.website_id WHERE p.id = ?', planId)?.language || 'English';
 
 export const deleteNewWebsite = (id: number): void => {
   run('DELETE FROM new_websites WHERE id = ?', id);

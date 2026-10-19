@@ -1,4 +1,5 @@
 import { all, get, run } from '../db/index.js';
+import { planLanguage } from './repo.js';
 import { createLogger, errorMessage } from '../lib/logger.js';
 import { words } from '../seo/rules.js';
 import type { SeoRow } from './seo.js';
@@ -50,7 +51,7 @@ export type ArticleType = 'recipe' | 'guide';
 
 /** A food website writes recipes; everything else writes guides. */
 export const articleTypeFor = (niche: string): ArticleType =>
-  /recipe|food|cook|bak|kitchen|meal|dessert|dinner|drink|cuisine/i.test(niche) ? 'recipe' : 'guide';
+  /recipe|food|cook|bak|kitchen|meal|dessert|dinner|drink|cuisine|recett|recet|ricett|rezept|receit|cocin|cucin|küche|koch|pâtiss|patiss|gâteau|gateau|postre|dolci|طبخ|وصف|حلو|مطبخ/i.test(niche) ? 'recipe' : 'guide';
 
 const text = (v: unknown, max = 300): string =>
   (typeof v === 'string' ? v : '').replace(/\s+/g, ' ').trim().slice(0, max);
@@ -268,6 +269,7 @@ export async function makeSkeleton(row: SeoRow, deps: SkeletonDeps): Promise<voi
   const outcome = await correctUntilRight<Skeleton>({
     ask: (corrections) =>
       deps.ask('article-skeleton', {
+        language: planLanguage(row.plan_id),
         keyword: row.keyword,
         role: row.role === 'pillar' ? 'the pillar page' : 'a sub-page of the pillar',
         pillar: ctx.pillar,

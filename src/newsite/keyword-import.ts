@@ -287,7 +287,7 @@ export async function findSubsForPlan(plan: KeywordPlan, deps: FinderDeps): Prom
   let error = '';
   try {
     const found = await findSubKeywords(
-      { pillar: plan.pillar, niche: plan.niche || site.niche, nicheContext: site.niche_context, existing: await existingKeywords(site, deps, plan.id) },
+      { pillar: plan.pillar, niche: plan.niche || site.niche, nicheContext: site.niche_context, existing: await existingKeywords(site, deps, plan.id), language: site.language },
       { suggest: deps.suggest, ask: deps.ask },
     );
     if (found.ok) {

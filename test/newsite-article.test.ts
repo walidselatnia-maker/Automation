@@ -142,6 +142,7 @@ describe('AI#3 follows the skeleton', () => {
     });
     expect(asked).toHaveLength(2);
     expect(String(asked[0]!.position)).toMatch(/FIRST/);
+    expect(asked[0]!.language).toBe('English');
     expect(String(asked[1]!.previousEnding)).not.toBe('(this is the first section)');
     const [row] = listPlanSeo(planId);
     expect(row).toMatchObject({ article_status: 'done' });

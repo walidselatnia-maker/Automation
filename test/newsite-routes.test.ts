@@ -102,6 +102,14 @@ describe('new website routes', () => {
     expect(asked).toEqual([]);
   });
 
+  it('saves the language a website writes in, English when not given', async () => {
+    expect((await post('/new-website/save', { ...GOOD, language: 'French' })).json().saved).toBe(true);
+    expect(all<NewWebsiteRow>('SELECT * FROM new_websites')[0]!.language).toBe('French');
+    expect((await post('/new-website/check', { step: '1', niche: 'Recipes', language: 'Klingon' })).json().errors.language).toMatch(/Pick a language/);
+    const page = await app.inject({ method: 'GET', url: '/new-website/add' });
+    expect(page.body).toContain('<select id="wz-language" name="language">');
+  });
+
   it('saves a good website with its secrets encrypted', async () => {
     const r = (await post('/new-website/save', { ...GOOD, bufferToken: 'buffer-token-123' })).json();
     expect(r.saved).toBe(true);

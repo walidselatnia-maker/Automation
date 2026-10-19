@@ -50,7 +50,7 @@ const wizardChannels = (websiteId: number): WizardChannel[] => {
     };
   });
 };
-import { STEP_FIELDS, stepOf, validate, type CleanWebsite, type Errors } from './validate.js';
+import { LANGUAGE_CODES, STEP_FIELDS, stepOf, validate, type CleanWebsite, type Errors } from './validate.js';
 
 /** What the new dashboard needs from the server that hosts it. */
 export interface NewWebsiteDeps {
@@ -60,7 +60,7 @@ export interface NewWebsiteDeps {
   /* Replaceable so tests call no real website, Google or AI. */
   checkSite?: (domain: string, apiKey: string) => Promise<SiteCheck>;
   listPosts?: (domain: string, apiKey: string) => Promise<SitePost[]>;
-  suggest?: (pillar: string) => Promise<string[]>;
+  suggest?: (pillar: string, language?: string) => Promise<string[]>;
   ask?: (promptName: string, variables: Record<string, unknown>) => Promise<string>;
   /** Whether websites may be added yet. Defaults to the saved platform setup. */
   isPlatformReady?: () => boolean;
@@ -169,7 +169,7 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
     nextStepAt: () => Number(deps.settings?.get(NEXT_STEP_KEY) || 0),
     dataDir: deps.dataDir,
     listPosts: deps.listPosts ?? ((domain, apiKey) => realListPosts(domain, apiKey)),
-    suggest: deps.suggest ?? ((pillar) => expandSeeds([pillar])),
+    suggest: deps.suggest ?? ((pillar, language) => expandSeeds([pillar], { hl: LANGUAGE_CODES[language || 'English'] })),
     ask,
   });
 

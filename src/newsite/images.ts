@@ -1,4 +1,5 @@
 import { get, run } from '../db/index.js';
+import { planLanguage } from './repo.js';
 import { createLogger, errorMessage } from '../lib/logger.js';
 import { similarity, words } from '../seo/rules.js';
 import { inventedIngredients } from './article.js';
@@ -154,6 +155,8 @@ export interface ImageContext {
   slots: ImageSlot[];
   /** The recipe's own text, when the page has a fixed recipe. */
   allowedText?: string;
+  /** The website's language. Picture prompts are English, so the recipe can be held to them only when it is too. */
+  language?: string;
 }
 
 /** What is wrong with the set, in words the AI can act on. Empty when it passes. */
@@ -199,7 +202,7 @@ export function checkImageSet(set: ImageSet, ctx: ImageContext): string[] {
       const hit = im.prompt.match(pattern);
       if (hit) problems.push(`${name}: replace the generic word "${hit[0]}" with a specific detail.`);
     }
-    if (ctx.allowedText !== undefined) {
+    if (ctx.allowedText !== undefined && (!ctx.language || ctx.language === 'English')) {
       // The theme's own words count too: "pumpkin orange" in the palette is a colour.
       const themeText = Object.values(set.theme).join('\n');
       const invented = inventedIngredients(im.prompt, [ctx.allowedText, ctx.keyword, themeText].join('\n'));
@@ -255,6 +258,7 @@ export async function makeImagePrompts(row: SeoRow, deps: ImageDeps): Promise<vo
   const outcome = await correctUntilRight<ImageSet>({
     ask: (corrections) =>
       deps.ask('article-images', {
+        language: planLanguage(row.plan_id),
         keyword: row.keyword,
         title: row.title,
         niche: ctx.niche,
@@ -266,7 +270,7 @@ export async function makeImagePrompts(row: SeoRow, deps: ImageDeps): Promise<vo
         problemsJson: corrections,
       }),
     parse: parseImageSet,
-    check: (set) => checkImageSet(set, { keyword: row.keyword, slots, allowedText }),
+    check: (set) => checkImageSet(set, { keyword: row.keyword, slots, allowedText, language: planLanguage(row.plan_id) }),
     onError: (err) => log.warn(`AI#4 could not reach the AI for "${row.keyword}": ${errorMessage(err)}`),
   });
   const { problems, technical } = outcome;

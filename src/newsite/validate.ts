@@ -15,12 +15,28 @@ export const PERSONAS = [
   'Storyteller',
 ] as const;
 
+/** The languages a website can write in. Picture prompts stay in English whatever is picked. */
+export const LANGUAGES = [
+  'English', 'Spanish', 'French', 'German', 'Italian', 'Portuguese', 'Dutch', 'Polish', 'Swedish', 'Danish',
+  'Norwegian', 'Finnish', 'Romanian', 'Czech', 'Greek', 'Turkish', 'Russian', 'Ukrainian', 'Arabic', 'Hebrew',
+  'Persian', 'Hindi', 'Indonesian', 'Malay', 'Vietnamese', 'Thai', 'Filipino', 'Japanese', 'Korean', 'Chinese (Simplified)',
+] as const;
+
+/** Each language's code, for Google autocomplete. */
+export const LANGUAGE_CODES: Record<string, string> = {
+  English: 'en', Spanish: 'es', French: 'fr', German: 'de', Italian: 'it', Portuguese: 'pt', Dutch: 'nl', Polish: 'pl',
+  Swedish: 'sv', Danish: 'da', Norwegian: 'no', Finnish: 'fi', Romanian: 'ro', Czech: 'cs', Greek: 'el', Turkish: 'tr',
+  Russian: 'ru', Ukrainian: 'uk', Arabic: 'ar', Hebrew: 'iw', Persian: 'fa', Hindi: 'hi', Indonesian: 'id', Malay: 'ms',
+  Vietnamese: 'vi', Thai: 'th', Filipino: 'tl', Japanese: 'ja', Korean: 'ko', 'Chinese (Simplified)': 'zh-CN',
+};
+
 export type FieldName =
   | 'name'
   | 'domain'
   | 'apiKey'
   | 'niche'
   | 'nicheContext'
+  | 'language'
   | 'persona'
   | 'customPersona'
   | 'status'
@@ -35,7 +51,7 @@ export type FieldName =
 /** The fields on each wizard step, in order. The last step is only a review. */
 export const STEP_FIELDS: FieldName[][] = [
   ['name', 'domain', 'apiKey'],
-  ['niche', 'nicheContext'],
+  ['niche', 'nicheContext', 'language'],
   ['persona', 'customPersona'],
   ['status', 'autoPublish', 'dailyTarget', 'gapAmount', 'gapUnit'],
   ['bufferToken', 'pinUsername', 'projectId'],
@@ -49,6 +65,8 @@ export interface CleanWebsite {
   apiKey: string;
   niche: string;
   nicheContext: string;
+  /** What every reader-facing word is written in; English when not given. */
+  language?: string;
   persona: string;
   status: 'active' | 'paused';
   autoPublish: boolean;
@@ -139,6 +157,12 @@ function fieldCheck(field: FieldName, raw: Raw, clean: Partial<CleanWebsite>): s
       if (value.length > 500) return 'Keep the detail under 500 characters.';
       if (BAD_TEXT.test(value)) return 'The detail must be plain text.';
       clean.nicheContext = value;
+      return null;
+    }
+    case 'language': {
+      const value = text(raw, field) || 'English';
+      if (!(LANGUAGES as readonly string[]).includes(value)) return 'Pick a language from the list.';
+      clean.language = value;
       return null;
     }
     case 'persona': {

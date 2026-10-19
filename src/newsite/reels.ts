@@ -226,6 +226,7 @@ async function writeScript(reel: ReelRow, row: SeoRow, site: NewWebsiteRow, desc
   const out = await correctUntilRight<ReelScript>({
     ask: (corrections) =>
       ask('newsite-reel-prompt', {
+        language: site.language,
         label,
         reelRules: rules,
         title: row.title || row.keyword,

@@ -168,7 +168,7 @@ export function parsePicks(raw: string): unknown[] {
 
 export interface FindDeps {
   /** Real Google searches for the pillar, with the plan's modifiers. Empty when Google is unreachable. */
-  suggest: (pillar: string) => Promise<string[]>;
+  suggest: (pillar: string, language?: string) => Promise<string[]>;
   ask: (promptName: string, variables: Record<string, unknown>) => Promise<string>;
 }
 
@@ -177,6 +177,8 @@ export interface FindInput {
   niche: string;
   nicheContext: string;
   existing: Existing[];
+  /** The website's language; English when not given. */
+  language?: string;
 }
 
 /** What the AI says about the pillar itself: one dish (gets its recipe) or a broad topic. */
@@ -209,7 +211,7 @@ export async function findSubKeywords(input: FindInput, deps: FindDeps): Promise
   const blocked = pillarProblem(pillar, input.existing);
   if (blocked) return { ok: false, error: blocked };
 
-  const searches = (await deps.suggest(pillar)).filter(
+  const searches = (await deps.suggest(pillar, input.language)).filter(
     (s) => s.trim().toLowerCase() !== pillar.toLowerCase(),
   );
   if (searches.length === 0) {
@@ -222,6 +224,7 @@ export async function findSubKeywords(input: FindInput, deps: FindDeps): Promise
   let raw: string;
   try {
     raw = await deps.ask('keyword-cluster', {
+      language: input.language || 'English',
       pillar,
       niche: input.niche,
       nicheContext: input.nicheContext || '(none)',

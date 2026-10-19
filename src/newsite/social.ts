@@ -228,7 +228,7 @@ const count = {
   chars: (s: string) => s.length,
   words: (s: string) => s.split(/\s+/).filter(Boolean).length,
   emoji: (s: string) => (s.match(EMOJI) ?? []).length,
-  hashtags: (s: string) => (s.match(/#\w/g) ?? []).length,
+  hashtags: (s: string) => (s.match(/#[\p{L}\p{N}_]/gu) ?? []).length,
   exclamations: (s: string) => (s.match(/!/g) ?? []).length,
 };
 const UNIT: Record<keyof typeof count, string> = { chars: 'characters', words: 'words', emoji: 'emoji', hashtags: 'hashtags', exclamations: 'exclamation marks' };
@@ -313,6 +313,7 @@ export async function writePostWords(
   const out = await correctUntilRight<Record<string, string>>({
     ask: (corrections) =>
       ask('newsite-social-post', {
+        language: site.language,
         label: rules.label,
         platformRules: note ? `${rules.text}\n\n${note}` : rules.text,
         fields: rules.fields.join(', '),

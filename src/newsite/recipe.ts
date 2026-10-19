@@ -1,4 +1,5 @@
 import { get, run } from '../db/index.js';
+import { planLanguage } from './repo.js';
 import { createLogger, errorMessage } from '../lib/logger.js';
 import type { SeoRow } from './seo.js';
 import { correctUntilRight, keptNote } from './rounds.js';
@@ -107,7 +108,7 @@ const DIETS: { when: RegExp; label: string; banned: RegExp; unless: RegExp }[] =
 ];
 
 /** What is wrong with a recipe, in words the AI can act on. Empty when it passes. */
-export function checkRecipe(r: Recipe, keyword: string): string[] {
+export function checkRecipe(r: Recipe, keyword: string, language = 'English'): string[] {
   const problems: string[] = [];
   if (r.prepMinutes < 0 || r.prepMinutes > 1440) problems.push('Prep minutes must be a whole number from 0 to 1440.');
   if (r.cookMinutes < 0 || r.cookMinutes > 1440) problems.push('Cook minutes must be a whole number from 0 to 1440.');
@@ -121,7 +122,8 @@ export function checkRecipe(r: Recipe, keyword: string): string[] {
   if (r.ingredients.length === 0 || items.length < 3) problems.push('List at least 3 ingredients, grouped.');
   if (items.length > 40) problems.push('List at most 40 ingredients.');
   if (r.ingredients.some((g) => g.items.length === 0)) problems.push('Every ingredient group needs at least one ingredient.');
-  const vague = items.filter((i) => !HAS_AMOUNT.test(i));
+  // The amount words ("a pinch", "to taste") are English, so other languages are not held to them.
+  const vague = language === 'English' ? items.filter((i) => !HAS_AMOUNT.test(i)) : [];
   if (vague.length) problems.push(`Give an exact amount for: ${vague.slice(0, 5).join('; ')}.`);
 
   if (r.steps.length < 3 || r.steps.length > 25) problems.push(`There are ${r.steps.length} steps; use 3 to 25.`);
@@ -173,6 +175,7 @@ export async function makeRecipe(row: SeoRow, deps: RecipeDeps): Promise<void> {
   const outcome = await correctUntilRight<Recipe>({
     ask: (corrections) =>
       deps.ask('recipe-card', {
+        language: planLanguage(row.plan_id),
         keyword: row.keyword,
         role:
           row.role === 'pillar'
@@ -187,7 +190,7 @@ export async function makeRecipe(row: SeoRow, deps: RecipeDeps): Promise<void> {
         problemsJson: corrections,
       }),
     parse: parseRecipe,
-    check: (r) => checkRecipe(r, row.keyword),
+    check: (r) => checkRecipe(r, row.keyword, planLanguage(row.plan_id)),
     onError: (err) => log.warn(`Recipe step could not reach the AI for "${row.keyword}": ${errorMessage(err)}`),
   });
   const { problems, technical } = outcome;

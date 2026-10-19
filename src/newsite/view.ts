@@ -21,7 +21,7 @@ const flowProject = (value: string): Html => {
     : html`<span class="nl-oneline" title="${value}">Flow project ${short}</span>`;
 };
 import type { NewWebsiteRow } from './repo.js';
-import { PERSONAS } from './validate.js';
+import { LANGUAGES, PERSONAS } from './validate.js';
 
 const PERSONA_TEXT: Record<(typeof PERSONAS)[number], string> = {
   'Expert / Professional': 'Deep knowledge and credentials. “I have 20+ years of experience…”',
@@ -156,6 +156,7 @@ export function newWebsiteListPage(rows: NewWebsiteRow[], platformReady = true):
                   ${part(r.id, 1, 'Topic', [
                     ['Topic', r.niche],
                     ['More detail', r.niche_context || '—'],
+                    ['Language', r.language || 'English'],
                   ])}
                   ${part(r.id, 2, 'Voice', [['Persona', r.persona]])}
                   ${part(r.id, 3, 'Publishing', [
@@ -344,13 +345,18 @@ export function newWebsiteWizardPage(existing?: NewWebsiteRow, channels: WizardC
 
           <div class="wz-step">
             <h2>The niche</h2>
-            <p>What this website writes about. Every article is planned around it.</p>
+            <p>What this website writes about, and in which language. Every article is planned around it.</p>
             ${field('niche', 'Niche', html`<input id="wz-niche" name="niche" maxlength="60" placeholder="Recipes" value="${e?.niche ?? ''}" />`, {
               hint: 'One or two words: Recipes, Gardening, Travel, Pets…',
             })}
             ${field('nicheContext', 'More detail', html`<textarea id="wz-nicheContext" name="nicheContext" maxlength="500" placeholder="Easy family dinners for busy parents. No fancy ingredients.">${e?.niche_context ?? ''}</textarea>`, {
               optional: 'optional',
               hint: 'Two or three sentences that steer the writing.',
+            })}
+            ${field('language', 'Language', html`<select id="wz-language" name="language">${LANGUAGES.map(
+              (l) => html`<option ${selected(l === (e?.language || 'English'))}>${l}</option>`,
+            )}</select>`, {
+              hint: 'Articles, recipes, SEO, alt text and social posts are written in it.',
             })}
           </div>
 
@@ -505,7 +511,7 @@ const SCRIPT = `<script>
     var groups = [
       [0, 'Website', [['Name', val('name')], ['Address', host(val('domain'))],
         ['API key', val('apiKey') ? 'New key, checked with the website' : (EDIT ? 'Saved key kept, checked with the website' : 'Checked with the website')]]],
-      [1, 'Niche', [['Niche', val('niche')], ['More detail', val('nicheContext') || '—']]],
+      [1, 'Niche', [['Niche', val('niche')], ['More detail', val('nicheContext') || '—'], ['Language', val('language')]]],
       [2, 'Voice', [['Persona', persona()]]],
       [3, 'Publishing', [['Status', f('status').selectedOptions[0].text], ['Approval', f('autoPublish').selectedOptions[0].text],
         ['Posts per day', val('dailyTarget')], ['Gap between posts', val('gapAmount') + ' ' + val('gapUnit')]]],

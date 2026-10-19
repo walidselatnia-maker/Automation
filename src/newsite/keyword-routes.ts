@@ -235,7 +235,7 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
       return fail(reply, `${(err as Error).message} The duplicate check needs the full list, so nothing was searched.`);
     }
     const found = await findSubKeywords(
-      { pillar, niche: site.niche, nicheContext: site.niche_context, existing },
+      { pillar, niche: site.niche, nicheContext: site.niche_context, existing, language: site.language },
       { suggest: deps.suggest, ask: deps.ask },
     );
     // Only recipe websites have recipe pages.

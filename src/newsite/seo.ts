@@ -1,4 +1,5 @@
 import { all, get, run } from '../db/index.js';
+import { planLanguage } from './repo.js';
 import { createLogger, errorMessage } from '../lib/logger.js';
 import { similarity, words } from '../seo/rules.js';
 import { articleTypeFor, makeSkeleton } from './skeleton.js';
@@ -291,7 +292,7 @@ export function requeueSkeleton(id: number): void {
 export interface WriterDeps {
   ask: (promptName: string, variables: Record<string, unknown>) => Promise<string>;
   /** Real autocomplete searches for one keyword. */
-  suggest: (keyword: string) => Promise<string[]>;
+  suggest: (keyword: string, language?: string) => Promise<string[]>;
 }
 
 interface PlanContext {
@@ -318,7 +319,7 @@ export async function writeOne(row: SeoRow, deps: WriterDeps): Promise<void> {
   }
   run(`UPDATE keyword_seo SET status = 'writing', updated_at = datetime('now') WHERE id = ?`, row.id);
 
-  const searches = (await deps.suggest(row.keyword).catch(() => [])).slice(0, 40);
+  const searches = (await deps.suggest(row.keyword, planLanguage(row.plan_id)).catch(() => [])).slice(0, 40);
   const otherTitles = listPlanSeo(row.plan_id)
     .filter((r) => r.id !== row.id && r.title)
     .map((r) => r.title);
@@ -327,6 +328,7 @@ export async function writeOne(row: SeoRow, deps: WriterDeps): Promise<void> {
   const outcome = await correctUntilRight<SeoAnswer>({
     ask: (corrections) =>
       deps.ask('seo-metadata', {
+        language: planLanguage(row.plan_id),
         keyword: row.keyword,
         role: row.role === 'pillar' ? 'the pillar page' : 'a sub-page of the pillar',
         pillar: plan.pillar,

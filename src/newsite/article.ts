@@ -1,4 +1,5 @@
 import { all, get, run } from '../db/index.js';
+import { planLanguage } from './repo.js';
 import { createLogger, errorMessage } from '../lib/logger.js';
 import { words } from '../seo/rules.js';
 import { parseRecipe, recipeText, type Recipe } from './recipe.js';
@@ -100,6 +101,8 @@ export interface SectionContext {
    */
   allowedText?: string;
   keyword: string;
+  /** The website's language; the reading-level score only knows English. */
+  language?: string;
 }
 
 /** Problems that may stay in the best attempt after the last round. */
@@ -135,7 +138,7 @@ export function checkSection(md: string, ctx: SectionContext): string[] {
   }
 
   const prose = lines.filter((l) => l && !/^#{1,6}\s/.test(l)).join(' ');
-  const grade = readingGrade(prose);
+  const grade = !ctx.language || ctx.language === 'English' ? readingGrade(prose) : 0;
   if (grade > READING_GRADE_MAX) {
     problems.push(`The writing is too hard to read (about grade ${Math.round(grade)}); use shorter sentences and simpler words.`);
   }
@@ -240,6 +243,7 @@ export async function writeArticle(row: SeoRow, deps: ArticleDeps): Promise<void
     const outcome = await correctUntilRight<string>({
       ask: (corrections) =>
         deps.ask('article-section', {
+          language: planLanguage(row.plan_id),
           keyword: row.keyword,
           role: row.role === 'pillar' ? 'the pillar page' : 'a sub-page of the pillar',
           pillar: ctx.pillar,
@@ -262,7 +266,7 @@ export async function writeArticle(row: SeoRow, deps: ArticleDeps): Promise<void
           problemsJson: corrections,
         }),
       parse: cleanMarkdown,
-      check: (text) => checkSection(text, { section, first: i === 0, focusKeyword: row.focus_keyword, allowedText, keyword: row.keyword }),
+      check: (text) => checkSection(text, { section, first: i === 0, focusKeyword: row.focus_keyword, allowedText, keyword: row.keyword, language: planLanguage(row.plan_id) }),
       // A hard problem (wrong heading, invented ingredient) weighs more than a soft one (length, reading level).
       rank: (problems) => hardCount(problems) * 100 + problems.length,
       onError: (err) => log.warn(`AI#3 could not reach the AI for "${row.keyword}": ${errorMessage(err)}`),
