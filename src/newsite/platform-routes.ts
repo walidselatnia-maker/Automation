@@ -75,9 +75,23 @@ export function registerPlatformRoutes(app: FastifyInstance, deps: PlatformRoute
   /** The AI step's live part: a new key must answer before it is accepted. */
   const testNewKey = async (raw: Record<string, unknown>) => {
     const { errors, clean } = validatePlatform(raw, context(), [0]);
-    if (Object.keys(errors).length || !clean.newKey) return errors;
-    const problem = await testAiKey(clean.settings.llm_base_url!, clean.newKey.apiKey, clean.newKey.models, fetchImpl);
-    return problem ? { newKeyValue: problem } : {};
+    if (Object.keys(errors).length) return errors;
+    const out: Record<string, string> = {};
+    if (clean.newKey) {
+      const problem = await testAiKey(clean.settings.llm_base_url!, clean.newKey.apiKey, clean.newKey.models, fetchImpl);
+      if (problem) out.newKeyValue = problem;
+    }
+    // Pasted keys: one tiny request each, with the first ticked model, four at a time.
+    const failed: string[] = [];
+    const queue = [...clean.bulkKeys];
+    await Promise.all(Array.from({ length: Math.min(4, queue.length) }, async () => {
+      for (let k = queue.shift(); k; k = queue.shift()) {
+        const problem = await testAiKey(clean.settings.llm_base_url!, k.apiKey, k.models.slice(0, 1), fetchImpl);
+        if (problem) failed.push(`${k.name} (…${k.apiKey.slice(-4)}): ${problem}`);
+      }
+    }));
+    if (failed.length) out.bulkKeys = `${failed.length} of ${clean.bulkKeys.length} keys failed. Remove them and try again. ${failed.join(' ')}`;
+    return out;
   };
 
   app.get('/new-website/platform', async (request, reply) =>
@@ -156,7 +170,7 @@ export function registerPlatformRoutes(app: FastifyInstance, deps: PlatformRoute
       const step = Math.min(...failed.map((f) => PLATFORM_STEPS.findIndex((s) => s.includes(f))));
       return reply.send({ errors, step });
     }
-    if (clean.newKey) {
+    if (clean.newKey || clean.bulkKeys.length) {
       const keyErrors = await testNewKey(raw);
       if (Object.keys(keyErrors).length) return reply.send({ errors: keyErrors, step: 0 });
     }
@@ -167,6 +181,7 @@ export function registerPlatformRoutes(app: FastifyInstance, deps: PlatformRoute
       // Blank base URL: the key uses the provider address saved above.
       upsertEndpoint({ name: clean.newKey.name, baseUrl: '', apiKey: clean.newKey.apiKey, models: clean.newKey.models, enabled: true }, deps.encryptionKey);
     }
+    for (const k of clean.bulkKeys) upsertEndpoint({ name: k.name, baseUrl: '', apiKey: k.apiKey, models: k.models, enabled: true }, deps.encryptionKey);
     settings.set(SETUP_DONE_KEY, 'true');
     return reply.send({ saved: true, redirect: '/new-website/platform' });
   });

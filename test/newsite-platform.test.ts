@@ -6,7 +6,7 @@ import { closeDatabase, openDatabase } from '../src/db/index.js';
 import { Settings } from '../src/settings.js';
 import { listEndpointRows, upsertEndpoint } from '../src/llm/pool.js';
 import { registerNewWebsiteRoutes } from '../src/newsite/routes.js';
-import { normalizeBaseUrl, SETUP_DONE_KEY, validatePlatform } from '../src/newsite/platform.js';
+import { normalizeBaseUrl, parseBulkKeys, SETUP_DONE_KEY, validatePlatform } from '../src/newsite/platform.js';
 
 const KEY = randomBytes(32);
 const TG_TOKEN = '123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw1';
@@ -63,6 +63,26 @@ describe('platform rules', () => {
     ['image_gap_seconds', '1.5'],
   ])('refuses %s = %s', (key, value) => {
     expect(validatePlatform({ ...FORM, [key]: value }, none).errors[key]).toBeTruthy();
+  });
+
+  it('reads pasted keys: bare or named, numbered after taken names, duplicates once', () => {
+    const r = parseBulkKeys('sk-aaaaaaaa1\n\n# note\nBackup = sk-bbbbbbbb2\nsk-aaaaaaaa1\nsk-cccccccc3', ['Key 01']);
+    expect(r.problems).toEqual([]);
+    expect(r.keys).toEqual([
+      { name: 'Backup', apiKey: 'sk-bbbbbbbb2' },
+      { name: 'Key 02', apiKey: 'sk-aaaaaaaa1' },
+      { name: 'Key 03', apiKey: 'sk-cccccccc3' },
+    ]);
+    expect(parseBulkKeys('short\nMain key = sk-dddddddd4', ['main key']).problems).toEqual([
+      'Line 1 does not look like an API key (no spaces, at least 8 characters).',
+      'Line 2: a key named "Main key" already exists.',
+    ]);
+  });
+
+  it('accepts pasted keys instead of a single one', () => {
+    const { errors, clean } = validatePlatform({ ...FORM, newKeyName: '', newKeyValue: '', bulkKeys: 'sk-aaaaaaaa1\nsk-bbbbbbbb2' }, none);
+    expect(errors).toEqual({});
+    expect(clean.bulkKeys.map((k) => [k.name, k.models])).toEqual([['Key 01', ['gpt-oss:120b']], ['Key 02', ['gpt-oss:120b']]]);
   });
 
   it('checks the timezone, image model, Flow project and switches', () => {
@@ -163,6 +183,20 @@ describe('platform routes', () => {
     const r = (await post('/new-website/platform/save', { ...FORM, auto_retry_max: '99' })).json();
     expect(r.step).toBe(2);
     expect(settings.get(SETUP_DONE_KEY)).not.toBe('true');
+    expect(listEndpointRows()).toEqual([]);
+  });
+
+  it('tests every pasted key, then saves them all', async () => {
+    const r = (await post('/new-website/platform/save', { ...FORM, bulkKeys: 'sk-aaaaaaaa1\nSpare = sk-bbbbbbbb2' })).json();
+    expect(r.saved).toBe(true);
+    expect(calls.filter((c) => c.url.includes('/api/chat'))).toHaveLength(3);
+    expect(listEndpointRows().map((e) => e.name).sort()).toEqual(['Key 01', 'Main key', 'Spare']);
+  });
+
+  it('names the pasted keys that fail and saves nothing', async () => {
+    aiAnswer = 401;
+    const r = (await post('/new-website/platform/check', { ...FORM, newKeyName: '', newKeyValue: '', bulkKeys: 'sk-aaaaaaaa1', step: '0' })).json();
+    expect(r.errors.bulkKeys).toMatch(/1 of 1 keys failed.*Key 01 \(…aaa1\): The AI provider rejected this key/);
     expect(listEndpointRows()).toEqual([]);
   });
 

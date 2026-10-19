@@ -37,7 +37,7 @@ export const AUTOMATION_KEYS = ['auto_retry_enabled', 'auto_retry_max', 'auto_re
 
 /** The fields on each step. The AI step's key list is handled on its own. */
 export const PLATFORM_STEPS: string[][] = [
-  ['llm_base_url', 'newKeyName', 'newKeyValue', 'newKeyModels', 'removeKeys'],
+  ['llm_base_url', 'newKeyName', 'newKeyValue', 'newKeyModels', 'removeKeys', 'bulkKeys'],
   ['timezone'],
   AUTOMATION_KEYS,
   ['flow_project_id', 'image_model', 'image_gap_seconds', 'public_base_url'],
@@ -79,6 +79,8 @@ export interface NewKey {
 export interface PlatformClean {
   settings: Record<string, string>;
   newKey?: NewKey;
+  /** Keys pasted many at once, named, sharing the ticked models. */
+  bulkKeys: NewKey[];
   removeKeyIds: number[];
 }
 
@@ -111,7 +113,7 @@ export function validatePlatform(
 ): { errors: PlatformErrors; clean: PlatformClean } {
   const fields = (steps ?? PLATFORM_STEPS.map((_, i) => i)).flatMap((i) => PLATFORM_STEPS[i] ?? []);
   const errors: PlatformErrors = {};
-  const clean: PlatformClean = { settings: {}, removeKeyIds: [] };
+  const clean: PlatformClean = { settings: {}, bulkKeys: [], removeKeyIds: [] };
   const want = (f: string) => fields.includes(f);
 
   if (want('llm_base_url')) {
@@ -141,7 +143,17 @@ export function validatePlatform(
       if (!errors.newKeyName && !errors.newKeyValue && !errors.newKeyModels) clean.newKey = { name, apiKey, models };
     }
 
-    const remaining = ctx.keys.length - clean.removeKeyIds.length + (clean.newKey || errors.newKeyValue ? 1 : 0);
+    const pasted = parseBulkKeys(str(raw, 'bulkKeys'), [
+      ...ctx.keys.filter((k) => !clean.removeKeyIds.includes(k.id)).map((k) => k.name),
+      ...(name ? [name] : []),
+    ]);
+    if (pasted.problems.length) errors.bulkKeys = pasted.problems.join(' ');
+    else if (pasted.keys.length) {
+      if (models.length === 0 || models.some((m) => !AI_MODELS.includes(m))) errors.newKeyModels = 'Tick at least one model these keys can run.';
+      else clean.bulkKeys = pasted.keys.map((k) => ({ ...k, models }));
+    }
+
+    const remaining = ctx.keys.length - clean.removeKeyIds.length + (clean.newKey || errors.newKeyValue ? 1 : 0) + pasted.keys.length;
     if (remaining <= 0 && !errors.newKeyValue && !errors.newKeyName && !errors.newKeyModels) {
       errors.newKeyValue = 'Add at least one AI key. Nothing can be written without it.';
     }
@@ -205,6 +217,43 @@ export function validatePlatform(
   }
 
   return { errors, clean };
+}
+
+/**
+ * Keys pasted many at once, one per line: a bare key, or "name = key" (a comma
+ * works too). Unnamed keys get "Key 01", "Key 02"…, carrying on after names
+ * already taken; a key pasted twice is kept once.
+ */
+export function parseBulkKeys(text: string, taken: string[]): { keys: { name: string; apiKey: string }[]; problems: string[] } {
+  const names = new Set(taken.map((n) => n.toLowerCase()));
+  const seen = new Set<string>();
+  const keys: { name: string; apiKey: string }[] = [];
+  const problems: string[] = [];
+  const pending: { line: number; apiKey: string }[] = [];
+  text.split('\n').forEach((rawLine, i) => {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) return;
+    const named = /^(.+?)\s*[=,]\s*(\S+)$/.exec(line);
+    const name = named ? named[1]!.trim().replace(/\s+/g, ' ') : '';
+    const apiKey = named ? named[2]! : line;
+    if (!/^\S{8,300}$/.test(apiKey)) return void problems.push(`Line ${i + 1} does not look like an API key (no spaces, at least 8 characters).`);
+    if (seen.has(apiKey)) return;
+    seen.add(apiKey);
+    if (!name) return void pending.push({ line: i + 1, apiKey });
+    if (name.length > 40 || /[<>{}\u0000-\u001f]/.test(name)) return void problems.push(`Line ${i + 1}: keep the name under 40 characters.`);
+    if (names.has(name.toLowerCase())) return void problems.push(`Line ${i + 1}: a key named "${name}" already exists.`);
+    names.add(name.toLowerCase());
+    keys.push({ name, apiKey });
+  });
+  let n = 0;
+  for (const p of pending) {
+    let name: string;
+    do name = `Key ${String(++n).padStart(2, '0')}`;
+    while (names.has(name.toLowerCase()));
+    names.add(name.toLowerCase());
+    keys.push({ name, apiKey: p.apiKey });
+  }
+  return { keys, problems };
 }
 
 /* -- Live checks ----------------------------------------------------------- */

@@ -164,7 +164,12 @@ const EXTRA_CSS = `
 .pf-keys button { height: 32px; padding: 0 12px; font-size: 13px; }
 .pf-models { display: flex; flex-wrap: wrap; gap: 8px 20px; }
 .pf-models label { display: flex; align-items: center; gap: 8px; font-weight: 500; font-size: 14px; margin: 0; cursor: pointer; }
+.pf-models input { width: 18px; height: 18px; flex: none; margin: 0; padding: 0; }
+.pf-models label { white-space: nowrap; }
 .pf-sub { font: 600 16px var(--display); margin: 8px 0 14px; }
+.pf-bulk { margin-top: 20px; border-top: 1px solid var(--line); padding-top: 16px; }
+.pf-bulk summary { cursor: pointer; font-weight: 600; font-size: 15px; color: var(--accent); }
+.pf-bulk[open] summary { margin-bottom: 14px; }
 .pf-warn { margin: -4px 0 20px; font-size: 14px; border-color: var(--bad); background: var(--bad-tint); padding: 12px 16px; border-radius: var(--r-ctl); border: 1px solid; border-left-width: 4px; color: var(--ink); font-weight: 500; }
 .pf-status { font-size: 14px; margin: 0 0 20px; border-color: var(--good); background: var(--good-tint); padding: 12px 16px; border-radius: var(--r-ctl); border: 1px solid; border-left-width: 4px; color: var(--ink); font-weight: 500; }
 .pf-status.bad { border-color: var(--bad); background: var(--bad-tint); }
@@ -232,6 +237,12 @@ export function platformWizardPage(v: PlatformView, section = -1): Html {
               <div class="wz-hint">Each ticked model gets one tiny test request, so this can take a minute.</div>
               <div class="wz-err" data-err="newKeyModels"></div>
             </div>
+            <details class="pf-bulk">
+              <summary>Paste many keys at once</summary>
+              ${field('bulkKeys', 'Keys, one per line', html`<textarea id="wz-bulkKeys" name="bulkKeys" rows="6" spellcheck="false" placeholder="sk-first-key&#10;sk-second-key&#10;Backup = sk-third-key"></textarea>`, {
+                hint: 'A bare key gets a name like Key 01. Write "name = key" to choose one. They all run the models ticked above; each gets one tiny test request.',
+              })}
+            </details>
           </div>
 
           <div class="wz-step">
@@ -364,6 +375,8 @@ const script = (v: PlatformView, section: number): string => `<script>
   function summary() {
     var kept = KEYS.filter(function (k) { return removed.indexOf(k.id) < 0; }).map(function (k) { return k.name; });
     if (val('newKeyName')) kept.push(val('newKeyName') + ' (new, tested)');
+    var pasted = val('bulkKeys').split('\\n').filter(function (l) { l = l.trim(); return l && l.charAt(0) !== '#'; }).length;
+    if (pasted) kept.push(pasted + ' pasted key' + (pasted > 1 ? 's' : '') + ' (new, tested)');
     var groups = [
       [0, 'AI connection', [['Provider', val('llm_base_url')], ['Keys', kept.join(', ') || '—']]],
       [1, 'Timezone', [['Timezone', val('timezone')]]],
@@ -388,6 +401,10 @@ const script = (v: PlatformView, section: number): string => `<script>
       sec.appendChild(dl); box.appendChild(sec);
     });
   }
+
+  // A problem in the pasted keys must be seen, so their box opens.
+  var shownErrors = showErrors;
+  showErrors = function (errors) { if (errors && errors.bulkKeys) form.querySelector('.pf-bulk').open = true; shownErrors(errors); };
 
   function setBusy(on, label) {
     busy = on;
@@ -426,7 +443,7 @@ const script = (v: PlatformView, section: number): string => `<script>
       }).catch(function () { busy = false; $('wz-saveerr').textContent = 'Could not save. Try again.'; setBusy(false); });
       return;
     }
-    setBusy(true, cur === 0 && val('newKeyValue') ? 'Testing the key…' : 'Checking…');
+    setBusy(true, cur === 0 && val('bulkKeys') ? 'Testing the keys…' : cur === 0 && val('newKeyValue') ? 'Testing the key…' : 'Checking…');
     post('/new-website/platform/check', { step: cur }).then(function (r) {
       showErrors(r.errors);
       if (!Object.keys(r.errors || {}).length) cur++;
