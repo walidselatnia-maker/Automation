@@ -193,6 +193,22 @@ describe('platform routes', () => {
     expect(listEndpointRows().map((e) => e.name).sort()).toEqual(['Key 01', 'Main key', 'Spare']);
   });
 
+  it('adds a key only once, whether pasted twice, typed and pasted, or already saved', async () => {
+    const first = (await post('/new-website/platform/save', { ...FORM, newKeyValue: 'sk-aaaaaaaa1', bulkKeys: 'sk-aaaaaaaa1\nsk-bbbbbbbb2\nsk-bbbbbbbb2' })).json();
+    expect(first.saved).toBe(true);
+    expect(listEndpointRows().map((e) => e.name).sort()).toEqual(['Key 01', 'Main key']);
+
+    const typedAgain = (await post('/new-website/platform/check', { ...FORM, newKeyName: 'Other', newKeyValue: 'sk-bbbbbbbb2', step: '0' })).json();
+    expect(typedAgain.errors.newKeyValue).toBe('This key is already saved as "Key 01".');
+
+    calls = [];
+    const pastedAgain = (await post('/new-website/platform/save', { ...FORM, newKeyName: '', newKeyValue: '', bulkKeys: 'sk-aaaaaaaa1\nsk-cccccccc3' })).json();
+    expect(pastedAgain.saved).toBe(true);
+    expect(pastedAgain.message).toMatch(/1 pasted key was already saved, so it was skipped/);
+    expect(calls.filter((c) => c.url.includes('/api/chat'))).toHaveLength(1);
+    expect(listEndpointRows()).toHaveLength(3);
+  });
+
   it('names the pasted keys that fail and saves nothing', async () => {
     aiAnswer = 401;
     const r = (await post('/new-website/platform/check', { ...FORM, newKeyName: '', newKeyValue: '', bulkKeys: 'sk-aaaaaaaa1', step: '0' })).json();

@@ -435,7 +435,7 @@ const script = (v: PlatformView, section: number): string => `<script>
     if (cur === NAMES.length - 1 || SECTION >= 0) {
       setBusy(true, 'Saving…');
       post('/new-website/platform/save').then(function (r) {
-        if (r.saved) { location.href = r.redirect + '?ok=' + encodeURIComponent('Platform settings saved.'); return; }
+        if (r.saved) { location.href = r.redirect + '?ok=' + encodeURIComponent(r.message || 'Platform settings saved.'); return; }
         busy = false;
         if (SECTION < 0) cur = r.step || 0;
         else if ((r.step || 0) !== SECTION) $('wz-saveerr').textContent = Object.keys(r.errors || {}).map(function (k) { return r.errors[k]; }).join(' ');

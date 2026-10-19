@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
-import { deleteEndpoint, listEndpointRows, upsertEndpoint } from '../llm/pool.js';
+import { deleteEndpoint, listEndpointRows, listEndpoints, upsertEndpoint } from '../llm/pool.js';
 import type { Settings } from '../settings.js';
 import { newLayout, type NewFlash } from './layout.js';
 import {
@@ -51,6 +51,7 @@ export function registerPlatformRoutes(app: FastifyInstance, deps: PlatformRoute
   const context = (): PlatformContext => ({
     keys: listEndpointRows().map((r) => ({ id: r.id, name: r.name })),
     hasTelegramToken: settings.has('telegram_bot_token'),
+    savedApiKeys: new Map(listEndpoints(deps.encryptionKey).map((e) => [e.id, e.apiKey])),
   });
 
   const view = async (): Promise<PlatformView> => ({
@@ -170,6 +171,7 @@ export function registerPlatformRoutes(app: FastifyInstance, deps: PlatformRoute
       const step = Math.min(...failed.map((f) => PLATFORM_STEPS.findIndex((s) => s.includes(f))));
       return reply.send({ errors, step });
     }
+    const skipped = clean.skippedKeys;
     if (clean.newKey || clean.bulkKeys.length) {
       const keyErrors = await testNewKey(raw);
       if (Object.keys(keyErrors).length) return reply.send({ errors: keyErrors, step: 0 });
@@ -183,6 +185,7 @@ export function registerPlatformRoutes(app: FastifyInstance, deps: PlatformRoute
     }
     for (const k of clean.bulkKeys) upsertEndpoint({ name: k.name, baseUrl: '', apiKey: k.apiKey, models: k.models, enabled: true }, deps.encryptionKey);
     settings.set(SETUP_DONE_KEY, 'true');
-    return reply.send({ saved: true, redirect: '/new-website/platform' });
+    const note = skipped ? ` ${skipped} pasted key${skipped > 1 ? 's were' : ' was'} already saved, so ${skipped > 1 ? 'they were' : 'it was'} skipped.` : '';
+    return reply.send({ saved: true, redirect: '/new-website/platform', message: 'Platform settings saved.' + note });
   });
 }

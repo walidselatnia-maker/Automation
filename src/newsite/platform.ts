@@ -66,6 +66,8 @@ export interface PlatformContext {
   keys: KeySummary[];
   /** A Telegram token is already saved, so an empty field keeps it. */
   hasTelegramToken: boolean;
+  /** The saved keys' values by key id, so a key already saved is not added again. */
+  savedApiKeys?: Map<number, string>;
 }
 
 export type PlatformErrors = Record<string, string>;
@@ -81,6 +83,8 @@ export interface PlatformClean {
   newKey?: NewKey;
   /** Keys pasted many at once, named, sharing the ticked models. */
   bulkKeys: NewKey[];
+  /** Pasted keys left out because they are already saved or typed above. */
+  skippedKeys: number;
   removeKeyIds: number[];
 }
 
@@ -113,7 +117,7 @@ export function validatePlatform(
 ): { errors: PlatformErrors; clean: PlatformClean } {
   const fields = (steps ?? PLATFORM_STEPS.map((_, i) => i)).flatMap((i) => PLATFORM_STEPS[i] ?? []);
   const errors: PlatformErrors = {};
-  const clean: PlatformClean = { settings: {}, bulkKeys: [], removeKeyIds: [] };
+  const clean: PlatformClean = { settings: {}, bulkKeys: [], skippedKeys: 0, removeKeyIds: [] };
   const want = (f: string) => fields.includes(f);
 
   if (want('llm_base_url')) {
@@ -129,6 +133,12 @@ export function validatePlatform(
     const apiKey = str(raw, 'newKeyValue');
     const models = str(raw, 'newKeyModels').split(',').map((m) => m.trim()).filter(Boolean);
 
+    // A key goes in once: one already saved (and not being removed) is refused
+    // when typed and skipped when pasted; a paste also skips the typed key.
+    const saved = new Map<string, string>();
+    for (const [id, value] of ctx.savedApiKeys ?? []) {
+      if (!clean.removeKeyIds.includes(id)) saved.set(value, ctx.keys.find((k) => k.id === id)?.name ?? '');
+    }
     if (name || apiKey) {
       const kept = ctx.keys.filter((k) => !clean.removeKeyIds.includes(k.id));
       if (!name || name.length > 40 || /[<>{}\u0000-\u001f]/.test(name)) {
@@ -138,6 +148,7 @@ export function validatePlatform(
       }
       if (!apiKey) errors.newKeyValue = 'Paste the API key.';
       else if (!/^\S{8,300}$/.test(apiKey)) errors.newKeyValue = 'That does not look like an API key: no spaces, at least 8 characters.';
+      else if (saved.has(apiKey)) errors.newKeyValue = `This key is already saved as "${saved.get(apiKey)}".`;
       const unknown = models.filter((m) => !AI_MODELS.includes(m));
       if (models.length === 0 || unknown.length) errors.newKeyModels = 'Tick at least one model this key can run.';
       if (!errors.newKeyName && !errors.newKeyValue && !errors.newKeyModels) clean.newKey = { name, apiKey, models };
@@ -146,7 +157,8 @@ export function validatePlatform(
     const pasted = parseBulkKeys(str(raw, 'bulkKeys'), [
       ...ctx.keys.filter((k) => !clean.removeKeyIds.includes(k.id)).map((k) => k.name),
       ...(name ? [name] : []),
-    ]);
+    ], [...saved.keys(), ...(apiKey ? [apiKey] : [])]);
+    clean.skippedKeys = pasted.skipped;
     if (pasted.problems.length) errors.bulkKeys = pasted.problems.join(' ');
     else if (pasted.keys.length) {
       if (models.length === 0 || models.some((m) => !AI_MODELS.includes(m))) errors.newKeyModels = 'Tick at least one model these keys can run.';
@@ -222,11 +234,18 @@ export function validatePlatform(
 /**
  * Keys pasted many at once, one per line: a bare key, or "name = key" (a comma
  * works too). Unnamed keys get "Key 01", "Key 02"…, carrying on after names
- * already taken; a key pasted twice is kept once.
+ * already taken; a key pasted twice is kept once, and one in existingKeys is
+ * skipped and counted.
  */
-export function parseBulkKeys(text: string, taken: string[]): { keys: { name: string; apiKey: string }[]; problems: string[] } {
+export function parseBulkKeys(
+  text: string,
+  taken: string[],
+  existingKeys: string[] = [],
+): { keys: { name: string; apiKey: string }[]; problems: string[]; skipped: number } {
   const names = new Set(taken.map((n) => n.toLowerCase()));
+  const existing = new Set(existingKeys);
   const seen = new Set<string>();
+  let skipped = 0;
   const keys: { name: string; apiKey: string }[] = [];
   const problems: string[] = [];
   const pending: { line: number; apiKey: string }[] = [];
@@ -239,6 +258,7 @@ export function parseBulkKeys(text: string, taken: string[]): { keys: { name: st
     if (!/^\S{8,300}$/.test(apiKey)) return void problems.push(`Line ${i + 1} does not look like an API key (no spaces, at least 8 characters).`);
     if (seen.has(apiKey)) return;
     seen.add(apiKey);
+    if (existing.has(apiKey)) return void skipped++;
     if (!name) return void pending.push({ line: i + 1, apiKey });
     if (name.length > 40 || /[<>{}\u0000-\u001f]/.test(name)) return void problems.push(`Line ${i + 1}: keep the name under 40 characters.`);
     if (names.has(name.toLowerCase())) return void problems.push(`Line ${i + 1}: a key named "${name}" already exists.`);
@@ -253,7 +273,7 @@ export function parseBulkKeys(text: string, taken: string[]): { keys: { name: st
     names.add(name.toLowerCase());
     keys.push({ name, apiKey: p.apiKey });
   }
-  return { keys, problems };
+  return { keys, problems, skipped };
 }
 
 /* -- Live checks ----------------------------------------------------------- */
