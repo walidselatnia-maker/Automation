@@ -783,6 +783,7 @@ function imagesCard(row: SeoRow, intent: string, pictures: PictureRow[]): Html {
             <div><dt>Palette</dt><dd>${set!.theme.palette}</dd></div>
             <div><dt>Style</dt><dd>${set!.theme.style}</dd></div>
             <div><dt>Mood</dt><dd>${set!.theme.mood}</dd></div>
+            ${set!.theme.dish ? html`<div><dt>Dish</dt><dd>${set!.theme.dish}</dd></div>` : raw('')}
           </dl>
           <ol class="kw-img-list">
             ${set!.images.map(
