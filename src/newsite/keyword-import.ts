@@ -1,6 +1,6 @@
 import { createLogger, errorMessage } from '../lib/logger.js';
 import type { SitePost } from './client.js';
-import { findSubKeywords, pillarProblem, type Existing, type FindDeps } from './keywords.js';
+import { findSubKeywords, MAX_SUBS, pillarProblem, type Existing, type FindDeps } from './keywords.js';
 import {
   addPlanItems,
   getKeywordPlan,
@@ -14,7 +14,7 @@ import {
   type PlanItem,
 } from './repo.js';
 import { get, all } from '../db/index.js';
-import { queuePlanSeo } from './seo.js';
+import { listPlanSeo, queueMissingSeo, queuePlanSeo } from './seo.js';
 import { articleTypeFor } from './skeleton.js';
 
 /**
@@ -25,9 +25,10 @@ import { articleTypeFor } from './skeleton.js';
  * domain). A niche and sub-keywords may be given too. Each row becomes a
  * keyword plan of its website, exactly like one made by hand, so the whole
  * pipeline (SEO, recipe, skeleton, article, images, publish, share) runs on
- * it and publishes to that website. A row without sub-keywords has them found
- * by the platform's own finder (Google + the AI), one plan at a time, and then
- * goes on like any other.
+ * it and publishes to that website. A row with fewer than six sub-keywords
+ * keeps them and has the rest found by the platform's own finder (Google + the
+ * AI, shown the given ones as examples), one plan at a time, and then goes on
+ * like any other.
  */
 
 const log = createLogger('newsite-import');
@@ -78,7 +79,7 @@ const HEADERS: Record<Column, string[]> = {
   keyword: ['main keyword', 'mainkeyword', 'main_keyword', 'keyword', 'pillar', 'pillar keyword', 'main'],
   website: ['target website', 'targetwebsite', 'target_website', 'website', 'domain', 'site', 'target', 'target domain'],
   niche: ['niche', 'topic', 'category'],
-  subs: ['subkeywords', 'sub keywords', 'sub-keywords', 'sub_keywords', 'subkeyword', 'sub keyword', 'related keywords', 'secondary keywords'],
+  subs: ['subkeywords', 'sub keywords', 'sub-keywords', 'sub_keywords', 'subkeyword', 'sub keyword', 'related keywords', 'secondary keywords', 'other keywords', 'other keyword', 'otherkeywords', 'other_keywords', 'other-keywords'],
 };
 
 const norm = (s: string): string => s.toLowerCase().replace(/\s+/g, ' ').trim();
@@ -195,6 +196,9 @@ export async function checkImport(csv: string, deps: CheckDeps): Promise<ImportC
     row.subs = subs;
     if (dropped) row.notes.push(`${dropped} repeated sub-keyword${dropped === 1 ? '' : 's'} left out.`);
     if (!subs.length && !row.errors.length) row.notes.push('No sub-keywords: the platform finds them.');
+    else if (subs.length < MAX_SUBS && !row.errors.length) {
+      row.notes.push(`${subs.length} sub-keyword${subs.length === 1 ? '' : 's'} kept: the platform adds up to ${MAX_SUBS - subs.length} more like them.`);
+    }
 
     if (site && keyword) {
       const key = `${site.id}|${norm(keyword)}`;
@@ -232,7 +236,8 @@ export async function checkImport(csv: string, deps: CheckDeps): Promise<ImportC
 
 /**
  * Save every row without errors as a keyword plan of its website. Rows with
- * sub-keywords go straight to the SEO step; the others wait for the finder.
+ * six or more sub-keywords go straight to the SEO step; the others keep theirs
+ * and wait for the finder to add more.
  */
 export function importRows(rows: ImportRow[]): { plans: number; finding: number } {
   let plans = 0;
@@ -245,8 +250,9 @@ export function importRows(rows: ImportRow[]): { plans: number; finding: number 
     const page: 'recipe' | 'article' = recipeSite ? 'recipe' : 'article';
     const items: PlanItem[] = r.subs.map((k) => ({ keyword: k, intent: 'yours', reason: 'From your CSV file', page }));
     const planId = saveKeywordPlan(site.id, r.keyword, items, page);
-    setPlanImport(planId, { niche: r.niche, source: 'csv', subsStatus: items.length ? '' : 'finding' });
-    if (items.length) queuePlanSeo(planId, r.keyword, items, page);
+    const full = items.length >= MAX_SUBS;
+    setPlanImport(planId, { niche: r.niche, source: 'csv', subsStatus: full ? '' : 'finding' });
+    if (full) queuePlanSeo(planId, r.keyword, items, page);
     else finding++;
     plans++;
   }
@@ -276,32 +282,41 @@ export async function existingKeywords(site: NewWebsiteRow, deps: Pick<FinderDep
 
 /**
  * One plan's sub-keywords, found with the same finder as a plan made by hand,
- * using the plan's own niche when it has one. Whatever happens, the main
- * keyword goes on to the SEO step: missing sub-keywords never stop it.
+ * using the plan's own niche when it has one. Sub-keywords already in the plan
+ * (from the CSV file) stay, and the finder only adds more like them. Whatever
+ * happens, the main keyword goes on to the SEO step: missing sub-keywords
+ * never stop it.
  */
 export async function findSubsForPlan(plan: KeywordPlan, deps: FinderDeps): Promise<void> {
   const site = getNewWebsite(plan.website_id);
   if (!site) return;
+  const given = plan.items;
+  // A plan imported before sub-keywords were topped up may be written already: its pillar page stays as it is.
+  const started = listPlanSeo(plan.id).some((r) => r.role === 'pillar');
   let items: PlanItem[] = [];
   let pillarPage = plan.pillar_page;
   let error = '';
   try {
     const found = await findSubKeywords(
-      { pillar: plan.pillar, niche: plan.niche || site.niche, nicheContext: site.niche_context, existing: await existingKeywords(site, deps, plan.id), language: site.language },
+      { pillar: plan.pillar, niche: plan.niche || site.niche, nicheContext: site.niche_context, existing: await existingKeywords(site, deps, plan.id), language: site.language, given: given.map((i) => i.keyword) },
       { suggest: deps.suggest, ask: deps.ask },
     );
     if (found.ok) {
       const recipeSite = articleTypeFor(site.niche) === 'recipe';
       pillarPage = recipeSite ? found.pillarPage : 'article';
       items = found.kept.map((k) => ({ keyword: k.keyword, intent: k.intent, reason: k.reason, page: recipeSite ? k.page : 'article' }));
-      if (!items.length) error = 'The finder kept no sub-keyword for it.';
+      if (!items.length && !given.length) error = 'The finder kept no sub-keyword for it.';
     } else error = found.error;
   } catch (err) {
     error = errorMessage(err);
   }
+  if (started) pillarPage = plan.pillar_page;
   if (items.length) addPlanItems(plan.id, items, pillarPage);
-  setPlanImport(plan.id, { subsStatus: items.length ? '' : 'failed', subsError: items.length ? '' : error.slice(0, 400) });
-  queuePlanSeo(plan.id, plan.pillar, items, pillarPage);
+  // With the owner's own sub-keywords the plan is never empty, so it is not a failure.
+  const ok = items.length > 0 || given.length > 0;
+  setPlanImport(plan.id, { subsStatus: ok ? '' : 'failed', subsError: ok ? '' : error.slice(0, 400) });
+  if (error && given.length) log.warn(`No extra sub-keywords for plan ${plan.id}, kept its ${given.length}: ${error}`);
+  queueMissingSeo(plan.id, plan.pillar, [...given, ...items], pillarPage);
   deps.startSeo();
 }
 

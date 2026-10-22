@@ -2,9 +2,11 @@ import { randomBytes } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
 import formbody from '@fastify/formbody';
-import { all, closeDatabase, openDatabase } from '../src/db/index.js';
+import { all, closeDatabase, getDb, openDatabase, run } from '../src/db/index.js';
+import { runMigrations } from '../src/db/migrations.js';
+import { queuePlanSeo } from '../src/newsite/seo.js';
 import { registerNewWebsiteRoutes } from '../src/newsite/routes.js';
-import { createNewWebsite, deleteNewWebsite, listKeywordPlans } from '../src/newsite/repo.js';
+import { createNewWebsite, deleteNewWebsite, getKeywordPlan, listKeywordPlans, saveKeywordPlan, setPlanImport } from '../src/newsite/repo.js';
 import type { SitePost } from '../src/newsite/client.js';
 import { listPosts } from '../src/newsite/client.js';
 import { kickSubFinder } from '../src/newsite/keyword-import.js';
@@ -133,17 +135,117 @@ describe('keyword routes', () => {
       expect(plans.find((p) => p.pillar === 'banana bread')).toMatchObject({ website_id: second, subs_status: 'finding' });
     });
 
-    it('keeps a niche and sub-keywords when they are given, and sends the keyword straight on', async () => {
-      const csv = 'main keyword;target website;niche;subkeywords\n"lemon tart";f.longlivo.com;Baking;"lemon tart filling | mini lemon tarts | lemon tart"\n';
+    it('keeps a niche and the sub-keywords given, and has the finder add more like them', async () => {
+      const csv = 'main keyword;target website;niche;other keywords\n"lemon tart";f.longlivo.com;Baking;"lemon tart filling | mini lemon tarts | lemon tart"\n';
       const check = await post('/new-website/keywords/import/check', { csv });
       expect(check.body).toContain('1 ready');
       expect(check.body).toContain('1 repeated sub-keyword left out.');
+      expect(check.body).toContain('2 sub-keywords kept: the platform adds up to 4 more like them.');
       await post('/new-website/keywords/import/save', { draft: draftIn(check.body) });
-      const plan = listKeywordPlans(websiteId).find((p) => p.pillar === 'lemon tart')!;
-      expect(plan).toMatchObject({ niche: 'Baking', subs_status: '' });
+      let plan = listKeywordPlans(websiteId).find((p) => p.pillar === 'lemon tart')!;
+      expect(plan).toMatchObject({ niche: 'Baking', subs_status: 'finding' });
       expect(plan.items.map((i) => i.keyword)).toEqual(['lemon tart filling', 'mini lemon tarts']);
-      // Into the pipeline at once: the pillar and both sub-keywords wait for their SEO.
-      expect(all('SELECT keyword FROM keyword_seo WHERE plan_id = ?', plan.id)).toHaveLength(3);
+      expect(all('SELECT keyword FROM keyword_seo WHERE plan_id = ?', plan.id)).toHaveLength(0); // waits for the finder
+      const page = await app.inject({ method: 'GET', url: '/new-website/keywords' });
+      expect(page.body).toContain('lemon tart filling, mini lemon tarts <span class="ns-badge busy">Finding more</span>');
+
+      const seeds: string[] = [];
+      let sent: Record<string, unknown> = {};
+      await kickSubFinder({
+        suggest: async (q) => {
+          seeds.push(q);
+          return q === 'lemon tart' ? ['vegan lemon tart', 'lemon tart filling'] : ['lemon tart with condensed milk', 'mini lemon tarts'];
+        },
+        ask: async (_name, vars) => {
+          sent = vars;
+          return JSON.stringify({
+            picks: [
+              { keyword: 'vegan lemon tart', intent: 'diet', reason: 'No butter.' },
+              { keyword: 'lemon tart with condensed milk', intent: 'ingredient', reason: 'Shortcut.' },
+              { keyword: 'lemon tart filling', intent: 'info', reason: 'A repeat.' },
+            ],
+          });
+        },
+        listPosts: async () => [],
+        encryptionKey: KEY,
+        startSeo: () => {},
+      });
+      // The given ones seed Google too, go to the AI as examples, and are never picked again.
+      expect(seeds).toEqual(['lemon tart', 'lemon tart filling', 'mini lemon tarts']);
+      expect(JSON.parse(String(sent.givenJson))).toEqual(['lemon tart filling', 'mini lemon tarts']);
+      expect(JSON.parse(String(sent.searchesJson))).toEqual(['vegan lemon tart', 'lemon tart with condensed milk']);
+      plan = listKeywordPlans(websiteId).find((p) => p.pillar === 'lemon tart')!;
+      expect(plan.subs_status).toBe('');
+      expect(plan.items.map((i) => i.keyword)).toEqual(['lemon tart filling', 'mini lemon tarts', 'vegan lemon tart', 'lemon tart with condensed milk']);
+      expect(plan.items[0]!.intent).toBe('yours');
+      expect(all('SELECT keyword FROM keyword_seo WHERE plan_id = ? ORDER BY position', plan.id).map((r) => (r as { keyword: string }).keyword))
+        .toEqual(['lemon tart', 'lemon tart filling', 'mini lemon tarts', 'vegan lemon tart', 'lemon tart with condensed milk']);
+    });
+
+    it('keeps the given sub-keywords and goes on when the finder adds nothing', async () => {
+      const csv = 'Main Keyword,Target Website,Subkeywords\nlemon tart,f.longlivo.com,mini lemon tarts\n';
+      const check = await post('/new-website/keywords/import/check', { csv });
+      await post('/new-website/keywords/import/save', { draft: draftIn(check.body) });
+      await kickSubFinder({ suggest: async () => [], ask: async () => '{}', listPosts: async () => [], encryptionKey: KEY, startSeo: () => {} });
+      const plan = listKeywordPlans(websiteId)[0]!;
+      expect(plan).toMatchObject({ subs_status: '', subs_error: '' });
+      expect(plan.items.map((i) => i.keyword)).toEqual(['mini lemon tarts']);
+      expect(all('SELECT keyword FROM keyword_seo WHERE plan_id = ?', plan.id)).toHaveLength(2);
+    });
+
+    it('tops up keywords imported before, without writing what is already written again', async () => {
+      // As an older import left it: two sub-keywords, the pillar and both already in the SEO step.
+      const planId = saveKeywordPlan(websiteId, 'lemon tart', [
+        { keyword: 'mini lemon tarts', intent: 'yours', reason: 'From your CSV file', page: 'recipe' },
+        { keyword: 'lemon tart filling', intent: 'yours', reason: 'From your CSV file', page: 'recipe' },
+      ], 'recipe');
+      setPlanImport(planId, { source: 'csv', subsStatus: '' });
+      queuePlanSeo(planId, 'lemon tart', ['mini lemon tarts', 'lemon tart filling'], 'recipe');
+      run(`UPDATE keyword_seo SET status = 'done' WHERE plan_id = ?`, planId);
+      const full = saveKeywordPlan(websiteId, 'apple pie', ['a', 'b', 'c', 'd', 'e', 'f'].map((k) => ({ keyword: `apple pie ${k}`, intent: 'yours' as const, reason: '', page: 'recipe' as const })));
+      setPlanImport(full, { source: 'csv', subsStatus: '' });
+
+      // The one-time migration sends it back to the finder.
+      run(`DELETE FROM schema_migrations WHERE id = '046-newsite-csv-subs-topup'`);
+      runMigrations(getDb());
+      expect(getKeywordPlan(planId)!.subs_status).toBe('finding');
+      expect(getKeywordPlan(full)!.subs_status).toBe(''); // already has six
+
+      await kickSubFinder({
+        suggest: async () => ['vegan lemon tart', 'lemon tart with condensed milk'],
+        ask: async () => JSON.stringify({
+          pillarPage: 'article',
+          picks: [
+            { keyword: 'vegan lemon tart', intent: 'diet', reason: 'r' },
+            { keyword: 'lemon tart with condensed milk', intent: 'ingredient', reason: 'r' },
+          ],
+        }),
+        listPosts: async () => [],
+        encryptionKey: KEY,
+        startSeo: () => {},
+      });
+      const plan = getKeywordPlan(planId)!;
+      expect(plan).toMatchObject({ subs_status: '', pillar_page: 'recipe' }); // the written pillar is left alone
+      expect(plan.items).toHaveLength(4);
+      const rows = all<{ keyword: string; role: string; position: number; status: string }>('SELECT keyword, role, position, status FROM keyword_seo WHERE plan_id = ? ORDER BY position', planId);
+      expect(rows.map((r) => [r.keyword, r.position, r.status])).toEqual([
+        ['lemon tart', 0, 'done'],
+        ['mini lemon tarts', 1, 'done'],
+        ['lemon tart filling', 2, 'done'],
+        ['vegan lemon tart', 3, 'pending'],
+        ['lemon tart with condensed milk', 4, 'pending'],
+      ]);
+    });
+
+    it('sends the keyword straight on when six or more sub-keywords are given', async () => {
+      const subs = ['mini lemon tarts', 'vegan lemon tart', 'lemon tart filling', 'french lemon tart', 'lemon meringue tart', 'lemon tart with condensed milk'];
+      const csv = `Main Keyword,Target Website,Subkeywords\nlemon tart,f.longlivo.com,"${subs.join('; ')}"\n`;
+      const check = await post('/new-website/keywords/import/check', { csv });
+      expect(check.body).not.toContain('more like them');
+      await post('/new-website/keywords/import/save', { draft: draftIn(check.body) });
+      const plan = listKeywordPlans(websiteId)[0]!;
+      expect(plan.subs_status).toBe('');
+      expect(all('SELECT keyword FROM keyword_seo WHERE plan_id = ?', plan.id)).toHaveLength(7);
     });
 
     it('says what is wrong with each row before anything is saved', async () => {

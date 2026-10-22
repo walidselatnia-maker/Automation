@@ -116,7 +116,7 @@ export interface KeywordPlan {
   niche: string;
   /** 'csv' when it came from an import. */
   source: string;
-  /** '' = has its sub-keywords; 'finding' = being found; 'failed' = could not be found. */
+  /** '' = has its sub-keywords; 'finding' = being found (or more added to the CSV's own); 'failed' = could not be found. */
   subs_status: '' | 'finding' | 'failed';
   subs_error: string;
   items: PlanItem[];

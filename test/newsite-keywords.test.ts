@@ -136,6 +136,22 @@ describe('the whole search', () => {
     expect(searched).toBe(false);
   });
 
+  it('only adds picks like the given ones, up to six in all, never repeating them', async () => {
+    const given = ['vegan pumpkin chocolate chip cookies', 'pumpkin chocolate chip cookie bars', 'pumpkin oatmeal chocolate chip cookies', 'brown butter pumpkin chocolate chip cookies'];
+    const result = await findSubKeywords({ ...input, given }, {
+      suggest: async () => SEARCHES,
+      ask: async () => JSON.stringify({
+        picks: [
+          { keyword: 'vegan pumpkin chocolate chip cookies', intent: 'diet', reason: 'r' },
+          { keyword: 'gluten free pumpkin chocolate chip cookies', intent: 'diet', reason: 'r' },
+          { keyword: 'pumpkin chocolate chip cookies with cake mix', intent: 'method', reason: 'r' },
+          { keyword: 'chewy pumpkin chocolate chip cookies', intent: 'method', reason: 'r' },
+        ],
+      }),
+    });
+    expect(result.ok && result.kept.map((k) => k.keyword)).toEqual(['gluten free pumpkin chocolate chip cookies', 'pumpkin chocolate chip cookies with cake mix']);
+  });
+
   it('says so when the AI is down', async () => {
     const result = await findSubKeywords(input, {
       suggest: async () => SEARCHES,

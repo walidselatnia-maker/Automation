@@ -974,6 +974,17 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    id: '046-newsite-csv-subs-topup',
+    description: 'New websites: CSV keywords saved with fewer than six sub-keywords go back to the finder, which adds similar ones up to six',
+    up(db) {
+      db.exec(`
+        UPDATE keyword_plans SET subs_status = 'finding', subs_error = ''
+         WHERE source = 'csv' AND subs_status IN ('', 'failed')
+           AND (SELECT COUNT(*) FROM keyword_plan_items i WHERE i.plan_id = keyword_plans.id) < 6
+      `);
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */

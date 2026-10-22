@@ -100,14 +100,17 @@ const asIntent = (value: unknown): Intent => {
 };
 
 /**
- * Keep the AI's good picks, at most six, and say why every other one went.
+ * Keep the AI's good picks, at most `limit` (six), and say why every other one went.
  * `searches` is what Google really suggested; a pick must be one of them.
+ * `given` are sub-keywords the owner already chose: a pick must not repeat them.
  */
 export function filterPicks(
   raw: unknown[],
   pillar: string,
   searches: string[],
   existing: Existing[],
+  given: string[] = [],
+  limit = MAX_SUBS,
 ): { kept: Pick[]; dropped: Dropped[] } {
   const real = new Map(searches.map((s) => [s.trim().toLowerCase(), s.trim()]));
   const kept: Pick[] = [];
@@ -124,13 +127,13 @@ export function filterPicks(
       dropped.push({ keyword: typed, reason: 'Not a real Google search, so demand is unproven.' });
       continue;
     }
-    const problem = subProblem(exact, pillar, existing, kept.map((k) => k.keyword));
+    const problem = subProblem(exact, pillar, existing, [...given, ...kept.map((k) => k.keyword)]);
     if (problem) {
       dropped.push({ keyword: exact, reason: problem });
       continue;
     }
-    if (kept.length >= MAX_SUBS) {
-      dropped.push({ keyword: exact, reason: `Only the best ${MAX_SUBS} are kept.` });
+    if (kept.length >= limit) {
+      dropped.push({ keyword: exact, reason: given.length ? `The plan already has ${MAX_SUBS} sub-keywords.` : `Only the best ${MAX_SUBS} are kept.` });
       continue;
     }
     kept.push({
@@ -179,7 +182,15 @@ export interface FindInput {
   existing: Existing[];
   /** The website's language; English when not given. */
   language?: string;
+  /**
+   * Sub-keywords the owner already chose (from a CSV file). They stay; the AI
+   * sees them as examples and only adds similar ones, up to MAX_SUBS in all.
+   */
+  given?: string[];
 }
+
+/** How many of the given sub-keywords also seed the Google searches. */
+const GIVEN_SEEDS = 2;
 
 /** What the AI says about the pillar itself: one dish (gets its recipe) or a broad topic. */
 export function parsePillarPage(raw: string): { page: PageKind; reason: string } {
@@ -211,9 +222,12 @@ export async function findSubKeywords(input: FindInput, deps: FindDeps): Promise
   const blocked = pillarProblem(pillar, input.existing);
   if (blocked) return { ok: false, error: blocked };
 
-  const searches = (await deps.suggest(pillar, input.language)).filter(
-    (s) => s.trim().toLowerCase() !== pillar.toLowerCase(),
-  );
+  const given = input.given ?? [];
+  const lists = [await deps.suggest(pillar, input.language)];
+  // The owner's own picks widen the Google list, so similar searches show up.
+  for (const g of given.slice(0, GIVEN_SEEDS)) lists.push(await deps.suggest(g, input.language));
+  const isTaken = (s: string): boolean => [pillar, ...given].some((t) => t.toLowerCase() === s.trim().toLowerCase());
+  const searches = [...new Map(lists.flat().filter((s) => !isTaken(s)).map((s) => [s.trim().toLowerCase(), s])).values()];
   if (searches.length === 0) {
     return {
       ok: false,
@@ -229,12 +243,13 @@ export async function findSubKeywords(input: FindInput, deps: FindDeps): Promise
       niche: input.niche,
       nicheContext: input.nicheContext || '(none)',
       searchesJson: JSON.stringify(searches),
+      givenJson: JSON.stringify(given),
     });
   } catch {
     return { ok: false, error: 'The AI could not be reached. Check the AI keys in Settings, then try again.' };
   }
 
-  const { kept, dropped } = filterPicks(parsePicks(raw), pillar, searches, input.existing);
+  const { kept, dropped } = filterPicks(parsePicks(raw), pillar, searches, input.existing, given, Math.max(0, MAX_SUBS - given.length));
   if (kept.length === 0 && dropped.length === 0) {
     return { ok: false, error: 'The AI answer could not be read. Try again.' };
   }

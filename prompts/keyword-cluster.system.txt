@@ -17,6 +17,8 @@ Never pick:
 
 A bigger need to KNOW something can be its own page when the searcher needs more than one line: comparing two things, choosing the right ingredient or tool, fixing a problem, or a list of ideas. Use intent "info" for these.
 
+When the owner already chose some sub-keywords, they are kept as they are. Use them as examples of what the owner wants: pick more searches of the same kind, with a need that is still different from the pillar, from each other, and from the owner's own picks.
+
 Rules for your answer:
 - Copy every keyword EXACTLY as written in the searches list. Never invent or rewrite a keyword.
 - Pick between 0 and 8. Fewer strong picks are better than padding. Order them best first.

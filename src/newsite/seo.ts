@@ -203,6 +203,31 @@ export function queuePlanSeo(
   });
 }
 
+/**
+ * Queue only what a plan does not have yet: the pillar when it is missing, and
+ * each sub-keyword not already queued, after the ones that are. Used when
+ * sub-keywords are added to a plan whose SEO may have started already.
+ */
+export function queueMissingSeo(
+  planId: number,
+  pillar: string,
+  subs: { keyword: string; page?: 'recipe' | 'article' }[],
+  pillarPage: 'recipe' | 'article' = 'recipe',
+): void {
+  const rows = listPlanSeo(planId);
+  if (!rows.some((r) => r.role === 'pillar')) {
+    run(`INSERT INTO keyword_seo (plan_id, keyword, role, position, page) VALUES (?, ?, 'pillar', 0, ?)`, planId, pillar, pillarPage);
+  }
+  const queued = new Set(rows.map((r) => r.keyword.trim().toLowerCase()));
+  let position = rows.reduce((max, r) => Math.max(max, r.position), 0);
+  for (const sub of subs) {
+    const key = sub.keyword.trim().toLowerCase();
+    if (queued.has(key)) continue;
+    queued.add(key);
+    run(`INSERT INTO keyword_seo (plan_id, keyword, role, position, page) VALUES (?, ?, 'sub', ?, ?)`, planId, sub.keyword, ++position, sub.page ?? 'recipe');
+  }
+}
+
 export const listPlanSeo = (planId: number): SeoRow[] =>
   all<SeoRow>('SELECT * FROM keyword_seo WHERE plan_id = ? ORDER BY position', planId);
 

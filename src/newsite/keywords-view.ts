@@ -1320,7 +1320,9 @@ export function keywordsOverview(sites: OverviewSite[], stats: Map<number, PlanS
                       (p) => html`<tr>
                         <td class="ko-kw"><a href="${planHref(p.id, 'seo')}">${p.pillar}</a>${p.source === 'csv' ? html`<span class="ko-from">From a CSV file</span>` : raw('')}</td>
                         <td class="ko-subs">${p.subs_status === 'finding'
-                          ? html`<span class="ns-badge busy">Being found</span>`
+                          ? p.items.length
+                            ? html`${p.items.map((i) => i.keyword).join(', ')} <span class="ns-badge busy">Finding more</span>`
+                            : html`<span class="ns-badge busy">Being found</span>`
                           : p.items.length
                             ? p.items.map((i) => i.keyword).join(', ')
                             : html`None${p.subs_status === 'failed' ? html`<span class="ko-err">Not found: ${p.subs_error.replace(/[.\s]+$/, '')}. The main keyword goes on alone.</span>` : raw('')}`}</td>
@@ -1389,7 +1391,7 @@ export function addKeywordsStep(): Html {
         <label class="ch-option"><input type="radio" name="how" value="one" checked />
           <div><b>One main keyword</b><span>For one website. The platform finds its sub-keywords from Google and you choose which to keep.</span></div></label>
         <label class="ch-option"><input type="radio" name="how" value="csv" />
-          <div><b>A CSV file</b><span>Many main keywords, each with its target website. Niche and sub-keywords are optional: missing sub-keywords are found by the platform.</span></div></label>
+          <div><b>A CSV file</b><span>Many main keywords, each with its target website. Niche and sub-keywords are optional: the platform keeps yours and finds more like them, up to 6.</span></div></label>
       </div>
     </form>`,
     html`<a class="ns-btn quiet" href="/new-website/keywords">Cancel</a><button class="ns-btn primary" form="ki-form">Next</button>`,
@@ -1409,7 +1411,7 @@ export function importFileStep(websites: NewWebsiteRow[], csv = '', error = ''):
     'Import keywords',
     html`<form id="ki-form" method="post" action="/new-website/keywords/import/check">
       <h2>The file</h2>
-      <p>A CSV file with a first line naming the columns. <b>Main Keyword</b> and <b>Target Website</b> are needed; <b>Niche</b> and <b>Subkeywords</b> are optional. Put several sub-keywords in one cell, separated by <code>;</code>.</p>
+      <p>A CSV file with a first line naming the columns. <b>Main Keyword</b> and <b>Target Website</b> are needed; <b>Niche</b> and <b>Subkeywords</b> are optional. Put several sub-keywords in one cell, separated by <code>;</code>. Yours are always kept; with fewer than 6, the platform adds similar ones from Google until there are 6.</p>
       <div class="ki-format">
         <b>How the file looks in a spreadsheet</b>
         <div class="ki-table"><table>
@@ -1418,7 +1420,7 @@ export function importFileStep(websites: NewWebsiteRow[], csv = '', error = ''):
         </table></div>
         <ul class="ki-notes">
           <li><b>Row 1</b> has only what is needed. The platform finds the sub-keywords itself and uses the website’s own niche.</li>
-          <li><b>Row 2</b> gives a niche and two sub-keywords, separated by <code>;</code> in one cell.</li>
+          <li><b>Row 2</b> gives a niche and two sub-keywords, separated by <code>;</code> in one cell. Both are kept, and the platform adds up to 4 more like them.</li>
           <li><b>Target Website</b> is the address of one of your websites, as shown on the Websites page.</li>
         </ul>
         <details class="ki-raw"><summary>The same, as text in the CSV file</summary><pre>${example}</pre></details>

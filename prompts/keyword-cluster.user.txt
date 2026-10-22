@@ -3,6 +3,9 @@ About the website: {{nicheContext}}
 
 Pillar keyword: {{pillar}}
 
+Sub-keywords the owner already chose (they are kept; never pick them again, pick more like them):
+{{givenJson}}
+
 Real Google searches (pick only from these, copied exactly):
 {{searchesJson}}
 

@@ -116,6 +116,7 @@ export const STEP_CONTEXTS: Record<string, Record<string, unknown>> = {
     niche: 'n',
     nicheContext: 'c',
     searchesJson: '[]',
+    givenJson: '[]',
   },
   'seo-metadata': {
     keyword: 'k',
