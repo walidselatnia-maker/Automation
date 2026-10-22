@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { autopilotState, automationOn, automationOnAt } from './autopilot.js';
 import { get } from '../db/index.js';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { checkImport, importRows, kickSubFinder, planStats, type ImportRow } from './keyword-import.js';
+import { checkImport, importRows, kickSubFinder, planStats, recheckSubs, type ImportRow } from './keyword-import.js';
 import type { SitePost } from './client.js';
 import {
   findSubKeywords,
@@ -220,6 +220,18 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
     startFinder();
     const msg = `Imported ${plans} keyword${plans === 1 ? '' : 's'}.${finding ? ` The platform is finding sub-keywords for ${finding} of them; each goes on to the SEO step as soon as they are found.` : ''}`;
     return reply.redirect(`/new-website/keywords?ok=${encodeURIComponent(msg)}`, 303);
+  });
+
+  /** Recheck: a website's main keywords with fewer than six sub-keywords get the missing ones found. */
+  app.post('/new-website/keywords/website/:id/recheck-subs', async (request, reply) => {
+    const site = getNewWebsite(Number((request.params as { id: string }).id) || 0);
+    if (!site) return reply.redirect(`/new-website/keywords?error=${encodeURIComponent('That website no longer exists.')}`, 303);
+    const n = recheckSubs(site.id);
+    startFinder();
+    const msg = n
+      ? `Rechecking ${n} main keyword${n === 1 ? '' : 's'} of ${site.name} with fewer than ${MAX_SUBS} sub-keywords. The missing ones are found one main keyword at a time and join the line.`
+      : `Every main keyword of ${site.name} already has ${MAX_SUBS} sub-keywords.`;
+    return reply.redirect(`/new-website/keywords?ok=${encodeURIComponent(msg)}#website-${site.id}`, 303);
   });
 
   /** Search: pillar check, Google, the AI, the filters. */

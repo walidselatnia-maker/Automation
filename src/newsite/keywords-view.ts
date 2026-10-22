@@ -11,6 +11,7 @@ import { WIZARD_CSS } from './view.js';
 import { postLinkOf, type ChannelRow } from './channels.js';
 import type { SocialPostRow } from './social.js';
 import type { ImportCheck, PlanStats } from './keyword-import.js';
+import { MAX_SUBS } from './keywords.js';
 
 const INTENT_LABEL: Record<string, string> = {
   diet: 'Diet',
@@ -1220,6 +1221,10 @@ export const OVERVIEW_CSS = `
 .ko-table th { text-align: left; font-weight: 600; color: var(--faint); font-size: 13px; padding: 12px 10px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
 .ko-table td { padding: 12px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
 .ko-table tr:last-child td { border-bottom: 0; }
+/* Every other keyword a shade darker, so each line is easy to follow. */
+.ko-table tbody tr:nth-child(even) td { background: var(--raised); }
+.ko-recheck { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: 14px 0 0; color: var(--soft); font-size: 14px; }
+.ko-recheck form { margin: 0; }
 .ko-table td.ko-kw a { font-weight: 600; color: var(--ink); text-decoration: none; }
 .ko-table td.ko-kw a:hover { color: var(--accent-text); text-decoration: underline; }
 .ko-subs { color: var(--soft); max-width: 46ch; }
@@ -1300,6 +1305,7 @@ export function keywordsOverview(sites: OverviewSite[], stats: Map<number, PlanS
           const subs = plans.reduce((n, p) => n + p.items.length, 0);
           const published = plans.reduce((n, p) => n + (stats.get(p.id)?.published ?? 0), 0);
           const findingCount = plans.filter((p) => p.subs_status === 'finding').length;
+          const short = plans.filter((p) => p.subs_status !== 'finding' && p.items.length < MAX_SUBS).length;
           return html`<article class="ko-site ${sites.length === 1 ? 'open' : ''}" id="website-${String(site.id)}" data-id="${String(site.id)}">
             <button type="button" class="ko-head" aria-expanded="${sites.length === 1 ? 'true' : 'false'}">
               <span class="ko-title"><span class="ko-name">${site.name}</span><span class="ko-domain">${site.domain}</span></span>
@@ -1334,6 +1340,10 @@ export function keywordsOverview(sites: OverviewSite[], stats: Map<number, PlanS
                     )}</tbody>
                   </table>`
                 : html`<p class="ko-none">No keywords for this website yet.</p>`}
+              ${short
+                ? html`<div class="ko-recheck"><span>${String(short)} main keyword${short === 1 ? ' has' : 's have'} fewer than ${String(MAX_SUBS)} sub-keywords.</span>
+                    <form method="post" action="/new-website/keywords/website/${String(site.id)}/recheck-subs"><button class="ns-btn small">Recheck sub-keywords</button></form></div>`
+                : raw('')}
             </div>
           </article>`;
         })}</div>`}

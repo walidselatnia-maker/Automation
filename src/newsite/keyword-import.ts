@@ -13,7 +13,7 @@ import {
   type NewWebsiteRow,
   type PlanItem,
 } from './repo.js';
-import { get, all } from '../db/index.js';
+import { get, all, run } from '../db/index.js';
 import { listPlanSeo, queueMissingSeo, queuePlanSeo } from './seo.js';
 import { articleTypeFor } from './skeleton.js';
 
@@ -318,6 +318,26 @@ export async function findSubsForPlan(plan: KeywordPlan, deps: FinderDeps): Prom
   if (error && given.length) log.warn(`No extra sub-keywords for plan ${plan.id}, kept its ${given.length}: ${error}`);
   queueMissingSeo(plan.id, plan.pillar, [...given, ...items], pillarPage);
   deps.startSeo();
+}
+
+/**
+ * Recheck, pressed on a website's card of the Keywords page (never by
+ * itself): every main keyword of the website with fewer than six
+ * sub-keywords goes back to the finder, which keeps the ones it has and adds
+ * similar ones up to six. What is already written stays as it is; the new
+ * sub-keywords join the line after the plan's others. Returns how many main
+ * keywords were sent back.
+ */
+export function recheckSubs(websiteId: number): number {
+  return Number(
+    run(
+      `UPDATE keyword_plans SET subs_status = 'finding', subs_error = ''
+        WHERE website_id = ? AND subs_status IN ('', 'failed')
+          AND (SELECT COUNT(*) FROM keyword_plan_items i WHERE i.plan_id = keyword_plans.id) < ?`,
+      websiteId,
+      MAX_SUBS,
+    ).changes,
+  );
 }
 
 let finding: Promise<void> | null = null;
