@@ -36,6 +36,7 @@ export type FieldName =
   | 'apiKey'
   | 'niche'
   | 'nicheContext'
+  | 'pictureStyle'
   | 'language'
   | 'persona'
   | 'customPersona'
@@ -51,7 +52,7 @@ export type FieldName =
 /** The fields on each wizard step, in order. The last step is only a review. */
 export const STEP_FIELDS: FieldName[][] = [
   ['name', 'domain', 'apiKey'],
-  ['niche', 'nicheContext', 'language'],
+  ['niche', 'nicheContext', 'pictureStyle', 'language'],
   ['persona', 'customPersona'],
   ['status', 'autoPublish', 'dailyTarget', 'gapAmount', 'gapUnit'],
   ['bufferToken', 'pinUsername', 'projectId'],
@@ -65,6 +66,8 @@ export interface CleanWebsite {
   apiKey: string;
   niche: string;
   nicheContext: string;
+  /** How this niche's photos look (settings, subjects, what never to show); empty means the platform decides from the niche. */
+  pictureStyle?: string;
   /** What every reader-facing word is written in; English when not given. */
   language?: string;
   persona: string;
@@ -157,6 +160,13 @@ function fieldCheck(field: FieldName, raw: Raw, clean: Partial<CleanWebsite>): s
       if (value.length > 500) return 'Keep the detail under 500 characters.';
       if (BAD_TEXT.test(value)) return 'The detail must be plain text.';
       clean.nicheContext = value;
+      return null;
+    }
+    case 'pictureStyle': {
+      const value = text(raw, field);
+      if (value.length > 600) return 'Keep the picture style under 600 characters.';
+      if (BAD_TEXT.test(value)) return 'The picture style must be plain text.';
+      clean.pictureStyle = value;
       return null;
     }
     case 'language': {

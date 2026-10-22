@@ -208,6 +208,7 @@ export const STEP_CONTEXTS: Record<string, Record<string, unknown>> = {
     title: 't',
     niche: 'n',
     nicheContext: 'c',
+    pictureStyle: 's',
     altPattern: 'a',
     recipeJson: '{}',
     article: 'a',

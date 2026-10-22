@@ -156,6 +156,7 @@ export function newWebsiteListPage(rows: NewWebsiteRow[], platformReady = true):
                   ${part(r.id, 1, 'Topic', [
                     ['Topic', r.niche],
                     ['More detail', r.niche_context || '—'],
+                    ['Picture style', r.picture_style || 'Decided from the niche'],
                     ['Language', r.language || 'English'],
                   ])}
                   ${part(r.id, 2, 'Voice', [['Persona', r.persona]])}
@@ -353,6 +354,10 @@ export function newWebsiteWizardPage(existing?: NewWebsiteRow, channels: WizardC
               optional: 'optional',
               hint: 'Two or three sentences that steer the writing.',
             })}
+            ${field('pictureStyle', 'Picture style', html`<textarea id="wz-pictureStyle" name="pictureStyle" maxlength="600" placeholder="Dogs and cats at home, in the garden and at the vet, on the floor, a sofa or the grass. Real owners' hands. Never on a dining table, never with plates or food styling.">${e?.picture_style ?? ''}</textarea>`, {
+              optional: 'optional',
+              hint: 'How the photos of this niche look: where they are taken, who and what is in them, and what never to show. Left empty, the platform decides from the niche.',
+            })}
             ${field('language', 'Language', html`<select id="wz-language" name="language">${LANGUAGES.map(
               (l) => html`<option ${selected(l === (e?.language || 'English'))}>${l}</option>`,
             )}</select>`, {
@@ -511,7 +516,7 @@ const SCRIPT = `<script>
     var groups = [
       [0, 'Website', [['Name', val('name')], ['Address', host(val('domain'))],
         ['API key', val('apiKey') ? 'New key, checked with the website' : (EDIT ? 'Saved key kept, checked with the website' : 'Checked with the website')]]],
-      [1, 'Niche', [['Niche', val('niche')], ['More detail', val('nicheContext') || '—'], ['Language', val('language')]]],
+      [1, 'Niche', [['Niche', val('niche')], ['More detail', val('nicheContext') || '—'], ['Picture style', val('pictureStyle') || 'Decided from the niche'], ['Language', val('language')]]],
       [2, 'Voice', [['Persona', persona()]]],
       [3, 'Publishing', [['Status', f('status').selectedOptions[0].text], ['Approval', f('autoPublish').selectedOptions[0].text],
         ['Posts per day', val('dailyTarget')], ['Gap between posts', val('gapAmount') + ' ' + val('gapUnit')]]],

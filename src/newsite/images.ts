@@ -102,7 +102,7 @@ export function imageSlots(keyword: string, skeleton: Skeleton, recipe: Recipe |
   return [
     {
       slot: 'feature',
-      shows: `PORTRAIT 3:4 hero image at the top of the article, showing "${keyword}" exactly as the article is about it. A styled, lived-in scene with people's hands, the moment of doing it, props and depth. Never a plain object on an empty table.`,
+      shows: `PORTRAIT 3:4 hero image at the top of the article, showing "${keyword}" exactly as the article is about it, in the real place where it happens in this niche (not a table, unless the article is about one). A lived-in moment with depth: people, animals or things doing what the article describes.`,
     },
     ...middle.map((s, i) => ({ slot: `section-${i + 1}`, shows: `PORTRAIT 3:4 photo for the section "${s.h2}": ${s.covers}` })),
   ];
@@ -144,6 +144,38 @@ export function parseImageSet(raw: string): ImageSet | null {
   };
 }
 
+/**
+ * How this website's photos look, for the AI. The website's own Picture style
+ * when it has one. Otherwise: food photography for a recipe page, and for
+ * every other page real-life photography of the subject where it belongs in
+ * the niche, never styled like food.
+ */
+export function pictureStyleFor(site: { niche: string; picture_style?: string }, recipePage: boolean): string {
+  const own = (site.picture_style ?? '').trim();
+  if (own) return own;
+  if (recipePage) {
+    return 'Food photography of this recipe: the dish as the star, styled and appetizing, on a table or counter with the props of the recipe, hands at work or reaching in.';
+  }
+  return (
+    `Real-life photography for a website about ${site.niche || 'this topic'}. Decide from the niche and the article where these photos are really taken ` +
+    '(a home, a garden, a park, a workshop, a clinic, a street, outdoors…) and show the subject there, the way an expert in this niche would photograph it. ' +
+    'Never style it like food photography: no plates, cutlery, dining tables, garnish or serving, unless the article is about exactly that. ' +
+    'Animals stand, sit, lie or play where animals really are (the floor, a bed, a sofa, the grass, a car, a vet’s examination table), never on a dining table or a plate.'
+  );
+}
+
+/** Food styling words: on a page that is not a recipe, a prompt may use them only when the article itself does. */
+const FOOD_STYLING: [RegExp, string][] = [
+  [/\bplates?\b|\bplated\b/i, 'plate'],
+  [/\bplatters?\b/i, 'platter'],
+  [/\bcutlery\b|\bforks?\b|\bknife and fork\b/i, 'cutlery'],
+  [/\bdining table\b|\bdinner table\b|\btabletop\b|\bon (a|the) table\b/i, 'table'],
+  [/\bgarnish(ed)?\b/i, 'garnish'],
+  [/\bappetizing\b|\bappetising\b/i, 'appetizing'],
+  [/\bserved\b|\bserving\b/i, 'served'],
+  [/\bfood photography\b|\bfood styling\b/i, 'food photography'],
+];
+
 /** Every content word of `phrase` appears in `text` (plurals count as the same word). */
 const hasAllWords = (text: string, phrase: string): boolean => {
   const have = new Set(words(text));
@@ -157,6 +189,8 @@ export interface ImageContext {
   allowedText?: string;
   /** The website's language. Picture prompts are English, so the recipe can be held to them only when it is too. */
   language?: string;
+  /** The article's text: on a page that is not a recipe, food styling is allowed only when it talks about it. */
+  article?: string;
 }
 
 /** What is wrong with the set, in words the AI can act on. Empty when it passes. */
@@ -208,6 +242,13 @@ export function checkImageSet(set: ImageSet, ctx: ImageContext): string[] {
       const invented = inventedIngredients(im.prompt, [ctx.allowedText, ctx.keyword, themeText].join('\n'));
       if (invented.length) problems.push(`${name}: these ingredients are not in the recipe: ${invented.join(', ')}.`);
     }
+    if (!recipePage && ctx.article !== undefined) {
+      for (const [pattern, word] of FOOD_STYLING) {
+        if (pattern.test(im.prompt) && !pattern.test(ctx.article)) {
+          problems.push(`${name}: "${word}" is food styling and this article never talks about it. Show the subject where it really is in this niche, not on a table or a plate.`);
+        }
+      }
+    }
     const twin = set.images.slice(0, i).find((other) => similarity(other.prompt, im.prompt) >= 0.85);
     if (twin) problems.push(`${name}: too close to image "${twin.slot}"; show something different.`);
 
@@ -229,12 +270,13 @@ export interface ImageDeps {
 interface Context {
   niche: string;
   niche_context: string;
+  picture_style: string;
 }
 
 /** Write the image prompts for one keyword, correcting mistakes until they pass (rounds.ts). */
 export async function makeImagePrompts(row: SeoRow, deps: ImageDeps): Promise<void> {
   const ctx = get<Context>(
-    `SELECT w.niche, w.niche_context FROM keyword_plans p JOIN new_websites w ON w.id = p.website_id WHERE p.id = ?`,
+    `SELECT w.niche, w.niche_context, w.picture_style FROM keyword_plans p JOIN new_websites w ON w.id = p.website_id WHERE p.id = ?`,
     row.plan_id,
   );
   const skeleton = row.skeleton_json ? parseSkeleton(row.skeleton_json) : null;
@@ -263,6 +305,7 @@ export async function makeImagePrompts(row: SeoRow, deps: ImageDeps): Promise<vo
         title: row.title,
         niche: ctx.niche,
         nicheContext: ctx.niche_context || '(none)',
+        pictureStyle: pictureStyleFor(ctx, Boolean(recipe)),
         altPattern: row.alt_text || '(none)',
         recipeJson: recipe ? JSON.stringify(recipe) : '(no fixed recipe for this page)',
         article: row.article_md.slice(0, 24000),
@@ -270,7 +313,7 @@ export async function makeImagePrompts(row: SeoRow, deps: ImageDeps): Promise<vo
         problemsJson: corrections,
       }),
     parse: parseImageSet,
-    check: (set) => checkImageSet(set, { keyword: row.keyword, slots, allowedText, language: planLanguage(row.plan_id) }),
+    check: (set) => checkImageSet(set, { keyword: row.keyword, slots, allowedText, language: planLanguage(row.plan_id), article: row.article_md }),
     onError: (err) => log.warn(`AI#4 could not reach the AI for "${row.keyword}": ${errorMessage(err)}`),
   });
   const { problems, technical } = outcome;

@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { closeDatabase, openDatabase, run } from '../src/db/index.js';
-import { checkImageSet, imageSlots, type ImageSet, type ImageSlot } from '../src/newsite/images.js';
+import { checkImageSet, imageSlots, pictureStyleFor, type ImageSet, type ImageSlot } from '../src/newsite/images.js';
 import type { Recipe } from '../src/newsite/recipe.js';
 import { createNewWebsite, saveKeywordPlan } from '../src/newsite/repo.js';
 import { kickSeoWriter, listPlanSeo, queuePlanSeo, requeueArticle, requeueImages } from '../src/newsite/seo.js';
@@ -199,5 +199,71 @@ describe('AI#4 follows the article', () => {
     run(`UPDATE keyword_seo SET images_status = 'done', images_json = '{}' WHERE plan_id = ?`, planId);
     requeueArticle(listPlanSeo(planId)[0]!.id);
     expect(listPlanSeo(planId)[0]).toMatchObject({ article_status: 'pending', images_status: '', images_json: '' });
+  });
+});
+
+describe('AI#4 pictures that fit the niche', () => {
+  const PET_SKELETON: Skeleton = {
+    h1: 'T',
+    sections: ['Intro', 'Brush Weekly', 'Bath Time', 'Questions'].map((h2) => ({ h2, covers: `about ${h2}`, keyPoints: ['a'], words: 100, h3: [] })),
+  };
+  const slots = imageSlots('golden retriever grooming', PET_SKELETON, null);
+  const petTheme = { ...THEME, surface: 'worn oak floorboards in a sunny living room', style: 'candid lifestyle pet photography', dish: '' };
+  const petPrompt = (slot: ImageSlot, i: number, extra = '') => ({
+    slot: slot.slot,
+    prompt:
+      `Candid photo ${i + 1} of a golden retriever grooming moment for ${slot.slot}, the dog lying on ${petTheme.surface}, ${petTheme.lighting}, ` +
+      [`an owner's hands working a slicker brush through the thick golden coat, loose fur drifting across the boards. `, `seen from low at floor level, a wet nose and a wagging tail, a towel rolled beside the water bowl, splashes on tiles. `, `wide view across the room, a sofa and a window behind, the dog stretched out asleep after its bath, a comb left on the rug. `][i % 3] +
+      `Shot on an 85mm lens at f/2.8, 5200K, soft shadows to the right, the dog's eyes in focus. ${extra}No text, no labels, no watermarks, no collage.`,
+    alt: 'Golden retriever being brushed by its owner on oak floorboards',
+  });
+  const ctx = { keyword: 'golden retriever grooming', slots, article: '## Brush Weekly\n\nBrush your golden retriever on the floor every week.' };
+
+  it('has no food styling in the default photo direction of a website that is not about food', () => {
+    const style = pictureStyleFor({ niche: 'Pets', picture_style: '' }, false);
+    expect(style).toContain('Real-life photography for a website about Pets');
+    expect(style).toContain('never on a dining table or a plate');
+    expect(pictureStyleFor({ niche: 'Recipes' }, true)).toContain('Food photography of this recipe');
+    // The website's own Picture style wins.
+    expect(pictureStyleFor({ niche: 'Pets', picture_style: 'Cats at home only.' }, false)).toBe('Cats at home only.');
+    expect(imageSlots('golden retriever grooming', PET_SKELETON, null)[0]!.shows).not.toMatch(/empty table/);
+  });
+
+  it('sends back a pet picture put on a plate or a dining table, unless the article talks about it', () => {
+    const fine: ImageSet = { theme: petTheme, images: slots.map((s, i) => petPrompt(s, i)) };
+    expect(checkImageSet(fine, ctx)).toEqual([]);
+    const onTable: ImageSet = { theme: petTheme, images: slots.map((s, i) => petPrompt(s, i, i === 0 ? 'The dog sits on the dining table next to a plate. ' : '')) };
+    const problems = checkImageSet(onTable, ctx);
+    expect(problems).toContain('Image "feature": "plate" is food styling and this article never talks about it. Show the subject where it really is in this niche, not on a table or a plate.');
+    expect(problems.some((p) => p.includes('"table" is food styling'))).toBe(true);
+    // An article about the dog's feeding plate may show one.
+    expect(checkImageSet(onTable, { ...ctx, article: `${ctx.article} Put the plate on the dining table.` })).toEqual([]);
+  });
+
+  it('gives the AI the website’s own picture style', async () => {
+    openDatabase(':memory:');
+    try {
+      const websiteId = createNewWebsite(
+        {
+          name: 'Pets', domain: 'p.example.com', apiKey: 'sk_test_ABCDEFGHIJKLMNOP', niche: 'Pets', nicheContext: '', pictureStyle: 'Dogs outdoors, on grass or trails.',
+          persona: 'Storyteller', status: 'active', autoPublish: true, dailyTarget: 3, intervalMinutes: 480, bufferToken: '', pinUsername: '', projectId: '',
+        },
+        KEY,
+      );
+      const plan = saveKeywordPlan(websiteId, 'golden retriever grooming', [], 'article');
+      queuePlanSeo(plan, 'golden retriever grooming', [], 'article');
+      run(
+        `UPDATE keyword_seo SET status = 'done', title = 'T', skeleton_status = 'done', skeleton_json = ?, article_status = 'done', article_md = ?, images_status = 'pending' WHERE plan_id = ?`,
+        JSON.stringify(PET_SKELETON),
+        ctx.article,
+        plan,
+      );
+      const asked: Record<string, unknown>[] = [];
+      await kickSeoWriter({ suggest: async () => [], ask: async (_n, vars) => { asked.push(vars); return JSON.stringify({ theme: petTheme, images: slots.map((s, i) => petPrompt(s, i)) }); } });
+      expect(asked[0]!.pictureStyle).toBe('Dogs outdoors, on grass or trails.');
+      expect(listPlanSeo(plan)[0]).toMatchObject({ images_status: 'done', images_problems: '' });
+    } finally {
+      closeDatabase();
+    }
   });
 });

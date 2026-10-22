@@ -992,6 +992,13 @@ export const MIGRATIONS: Migration[] = [
       addColumn(db, 'newsite_pictures', 'by_hand', 'INTEGER NOT NULL DEFAULT 0');
     },
   },
+  {
+    id: '048-newsite-picture-style',
+    description: 'New websites: a picture style of their own, so each niche gets photos that fit it (a pet website never gets food photos)',
+    up(db) {
+      addColumn(db, 'new_websites', 'picture_style', "TEXT NOT NULL DEFAULT ''");
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */

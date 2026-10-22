@@ -3,6 +3,7 @@ Article title: {{title}}
 
 Niche: {{niche}}
 About the website: {{nicheContext}}
+Photo direction for this website (follow it in every picture): {{pictureStyle}}
 Alt text pattern from the SEO step: {{altPattern}}
 
 The slots, one image each, in this order (slot name and what it shows):

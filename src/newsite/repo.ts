@@ -9,6 +9,8 @@ export interface NewWebsiteRow {
   domain: string;
   niche: string;
   niche_context: string;
+  /** How this niche's photos look; empty means the platform decides from the niche. */
+  picture_style: string;
   persona: string;
   language: string;
   status: 'active' | 'paused';
@@ -44,8 +46,8 @@ export function createNewWebsite(site: CleanWebsite, key: Buffer): number {
   return run(
     `INSERT INTO new_websites (name, domain, niche, niche_context, persona, status,
        auto_publish, daily_target, interval_minutes, pin_username, project_id,
-       api_key_encrypted, buffer_token_encrypted, language)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       api_key_encrypted, buffer_token_encrypted, language, picture_style)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     site.name,
     site.domain,
     site.niche,
@@ -60,6 +62,7 @@ export function createNewWebsite(site: CleanWebsite, key: Buffer): number {
     encrypt(site.apiKey, key),
     encrypt(site.bufferToken, key),
     site.language || 'English',
+    site.pictureStyle ?? '',
   ).lastInsertRowid;
 }
 
@@ -68,7 +71,7 @@ export function updateNewWebsite(id: number, site: CleanWebsite, key: Buffer): v
   run(
     `UPDATE new_websites SET name = ?, domain = ?, niche = ?, niche_context = ?, persona = ?, status = ?,
        auto_publish = ?, daily_target = ?, interval_minutes = ?, pin_username = ?, project_id = ?,
-       api_key_encrypted = ?, buffer_token_encrypted = ?, language = ?
+       api_key_encrypted = ?, buffer_token_encrypted = ?, language = ?, picture_style = ?
      WHERE id = ?`,
     site.name,
     site.domain,
@@ -84,6 +87,7 @@ export function updateNewWebsite(id: number, site: CleanWebsite, key: Buffer): v
     encrypt(site.apiKey, key),
     encrypt(site.bufferToken, key),
     site.language || 'English',
+    site.pictureStyle ?? '',
     id,
   );
 }
