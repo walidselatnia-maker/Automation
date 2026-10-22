@@ -106,7 +106,7 @@ export function registerPlatformRoutes(app: FastifyInstance, deps: PlatformRoute
         active: '/new-website/platform',
         body: platformPage(
           await view(),
-          automationBar(automationOn(deps.settings), listNewWebsites(), deps.settings.get('timezone') || 'UTC', '/new-website/platform', Date.now(), automationOnAt(deps.settings)),
+          automationBar(automationOn(deps.settings), listNewWebsites(), deps.settings.get('timezone') || 'UTC', '/new-website/platform', Date.now(), automationOnAt(deps.settings), deps.settings),
         ),
         flash: deps.readFlash(request.query),
       }),

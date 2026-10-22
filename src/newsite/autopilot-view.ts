@@ -2,6 +2,7 @@ import { html, raw, type Html } from '../web/views/layout.js';
 import { autopilotState } from './autopilot.js';
 import type { GenerateChoice } from './generate-now.js';
 import type { NewWebsiteRow } from './repo.js';
+import type { Settings } from '../settings.js';
 
 /**
  * The new dashboard's Automation switch (setting newsite_automation_enabled), the first
@@ -31,7 +32,7 @@ const CSS = `
 .ap-switch:hover { border-color: var(--ink); }
 `;
 
-export function automationBar(on: boolean, sites: NewWebsiteRow[], tz: string, back: string, now = Date.now(), onAt = 0): Html {
+export function automationBar(on: boolean, sites: NewWebsiteRow[], tz: string, back: string, now = Date.now(), onAt = 0, settings?: Settings): Html {
   const active = sites.filter((s) => s.status === 'active');
   return html`
     <style>${raw(CSS)}</style>
@@ -41,7 +42,7 @@ export function automationBar(on: boolean, sites: NewWebsiteRow[], tz: string, b
         ${on
           ? active.length
             ? html`<ul class="ap-sites">${active.map((s) => {
-                const next = autopilotState(s, tz, now, onAt).next;
+                const next = autopilotState(s, tz, now, onAt, settings).next;
                 return html`<li class="${next.startsWith('No keywords') || next.includes('stopped') ? 'bad' : ''}"><b>${s.name}:</b> ${next}</li>`;
               })}</ul>`
             : html`No active website.`

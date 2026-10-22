@@ -226,6 +226,8 @@ export interface PictureDeps {
   afterMain?: (seoId: number) => Promise<void>;
   /** Called when a pin's picture is made (ok) or failed: its social post carries on. */
   afterPin?: (pictureId: number, ok: boolean) => Promise<void>;
+  /** Whether the platform's Automation switch is on: off, Automation's keyword gets no new picture. */
+  automationOn?: () => boolean;
 }
 
 let running: Promise<void> | null = null;
@@ -289,8 +291,12 @@ export function kickPictureMaker(deps: PictureDeps): Promise<void> {
          JOIN keyword_seo s ON s.id = p.seo_id
          JOIN keyword_plans k ON k.id = s.plan_id
          JOIN new_websites w ON w.id = k.website_id
-        WHERE p.status = 'queued' AND (p.slot LIKE 'step-%') = ? ORDER BY s.generate_now DESC, p.id LIMIT 1`,
+        WHERE p.status = 'queued' AND (p.slot LIKE 'step-%') = ?
+          AND NOT (s.auto_active = 1 AND s.generate_now = 0 AND ? = 0)
+        ORDER BY s.generate_now DESC, p.id LIMIT 1`,
       stepLane ? 1 : 0,
+      // Automation's keyword waits while the switch is off; pictures someone asked for are made.
+      !deps.automationOn || deps.automationOn() ? 1 : 0,
     );
 
   running = Promise.resolve()

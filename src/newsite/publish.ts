@@ -1,5 +1,4 @@
 import { readFileSync } from 'node:fs';
-import { automationOn } from './autopilot.js';
 import { join } from 'node:path';
 import { get, run } from '../db/index.js';
 import { resolveDataDir } from '../config.js';
@@ -258,23 +257,33 @@ export async function addStepPicture(pictureId: number, deps: PublishDeps): Prom
   }
 }
 
-/** One publish at a time, so two triggers never post the same article twice at once. */
+/**
+ * One publish at a time, so two triggers never post the same article twice at
+ * once. An article already waiting in line, or being sent, is not added again.
+ */
 let chain: Promise<void> = Promise.resolve();
+const inLine = new Map<number, Promise<void>>();
 export function queuePublish(seoId: number, deps: PublishDeps): Promise<void> {
-  chain = chain.then(() => publishKeyword(seoId, deps)).catch(() => {});
-  return chain;
+  const waiting = inLine.get(seoId);
+  if (waiting) return waiting;
+  const mine: Promise<void> = chain.then(() => publishKeyword(seoId, deps)).catch(() => {}).finally(() => inLine.delete(seoId));
+  inLine.set(seoId, mine);
+  chain = mine;
+  return mine;
 }
 
+/** Whether an article is waiting in line to be published, or being sent. */
+export const publishQueued = (seoId: number): boolean => inLine.has(seoId);
+
 /**
- * An article's main pictures are all made. On a website set to "Publish
- * automatically" it goes out now; on "Wait for my approval" it waits for the
- * Publish button. With the platform's Automation on, websites publish by
- * their posts per day and gap instead (autopilot.ts), so nothing goes out here.
- * An article started with Generate now always goes out as soon as it is ready.
+ * An article's main pictures are all made. Only an article started with
+ * Generate now goes out here, as soon as it is ready. Every other article
+ * is published by Automation (autopilot.ts), by the website's gap and posts
+ * per day, or by its Publish button; never just because its pictures are done.
  */
 export function publishWhenReady(seoId: number, deps: PublishDeps): Promise<void> {
   const t = target(seoId, deps.encryptionKey);
-  if (!t || (!t.row.generate_now && (!t.site.auto_publish || automationOn(deps.settings))) || t.row.post_status === 'published' || t.row.post_status === 'publishing') return Promise.resolve();
+  if (!t || !t.row.generate_now || t.row.post_status === 'published' || t.row.post_status === 'publishing') return Promise.resolve();
   if (notReadyReason(t.row, listPictures(seoId))) return Promise.resolve();
   log.info(`Main pictures of "${t.row.keyword}" are made: publishing it automatically.`);
   return queuePublish(seoId, deps);

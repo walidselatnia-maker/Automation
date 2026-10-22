@@ -174,11 +174,16 @@ describe('Publishing to the website', () => {
     expect(post.body).toMatchObject({ externalId: `newsite-${seoId}`, cover: 101, gallery: [102, 103], category: 5 });
   });
 
-  it('publishes by itself once the main pictures are made, when the website says Publish automatically', async () => {
-    ['feature', 'overhead'].forEach(made);
+  it('publishes a Generate now article by itself once its main pictures are made, and no other article', async () => {
+    ['feature', 'overhead', 'closeup'].forEach(made);
+    // Not Generate now: its pictures being done never publishes it (Automation or its Publish button does).
+    await publishWhenReady(seoId, deps());
+    expect(calls).toEqual([]);
+    run('UPDATE keyword_seo SET generate_now = 1 WHERE id = ?', seoId);
+    run(`UPDATE newsite_pictures SET status = 'queued' WHERE slot = 'closeup'`);
     await publishWhenReady(seoId, deps());
     expect(calls).toEqual([]); // one main picture still missing
-    made('closeup', 2);
+    run(`UPDATE newsite_pictures SET status = 'done' WHERE slot = 'closeup'`);
     await publishWhenReady(seoId, deps());
     expect(getSeoRow(seoId)).toMatchObject({ post_status: 'published' });
     // Already posted: not sent again.

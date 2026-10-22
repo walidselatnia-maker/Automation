@@ -124,8 +124,8 @@ export interface KeywordPlan {
 
 export function listKeywordPlans(websiteId?: number): KeywordPlan[] {
   const plans = websiteId
-    ? all<Omit<KeywordPlan, 'items'>>('SELECT * FROM keyword_plans WHERE website_id = ? ORDER BY id DESC', websiteId)
-    : all<Omit<KeywordPlan, 'items'>>('SELECT * FROM keyword_plans ORDER BY id DESC');
+    ? all<Omit<KeywordPlan, 'items'>>('SELECT * FROM keyword_plans WHERE website_id = ? ORDER BY id', websiteId)
+    : all<Omit<KeywordPlan, 'items'>>('SELECT * FROM keyword_plans ORDER BY id');
   return plans.map((plan) => ({
     ...plan,
     items: all<PlanItem>(

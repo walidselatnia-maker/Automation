@@ -11,7 +11,8 @@ import { makeImagePrompts } from './images.js';
 /**
  * AI#1: SEO metadata for every keyword in a saved keyword plan.
  *
- * Runs in the background after a plan is saved, one keyword at a time. The
+ * Runs in the background, one keyword at a time: the keyword whose turn it is
+ * in Automation (autopilot.ts), or a Generate now one. The
  * AI writes; the checks below decide. A mistake is sent back to the AI with
  * its previous answer and exactly what to fix (rounds.ts), until it passes.
  */
@@ -184,6 +185,8 @@ export interface SeoRow {
   retry_at: number | null;
   /** 1 while "Generate now" carries this keyword through to publishing, ahead of the rest. */
   generate_now: number;
+  /** 1 on the one keyword Automation is working on now (autopilot.ts). */
+  auto_active: number;
 }
 
 /** One waiting row per keyword: the pillar first, then the sub-keywords in order. */
@@ -293,6 +296,14 @@ export interface WriterDeps {
   ask: (promptName: string, variables: Record<string, unknown>) => Promise<string>;
   /** Real autocomplete searches for one keyword. */
   suggest: (keyword: string, language?: string) => Promise<string[]>;
+  /**
+   * Whether the platform's Automation switch is on. Given, the writer only
+   * writes the keyword whose turn it is (autopilot.ts), and only while the
+   * switch is on; a Generate now keyword, and a rewrite of a published
+   * article, are written whatever the switch says. Left out (tests of one
+   * step), every waiting keyword is written.
+   */
+  automationOn?: () => boolean;
 }
 
 interface PlanContext {
@@ -384,12 +395,17 @@ export function kickSeoWriter(deps: WriterDeps): Promise<void> {
   // Started on the next tick, so `running` is set before the loop can finish
   // and clear it. (Done the other way round, an empty queue cleared it first
   // and the writer then looked busy forever.)
+  // Asked again before every step, so turning Automation off stops the next step (the one being written finishes).
+  const turn = (): string =>
+    deps.automationOn
+      ? `AND (generate_now = 1 OR post_status = 'published' OR (auto_active = 1 AND ${deps.automationOn() ? 1 : 0}))`
+      : '';
   running = Promise.resolve()
     .then(async () => {
       for (;;) {
         // AI#1 first, so every keyword of a plan has its title before any
         // skeleton is made; then AI#2 on the keywords whose metadata is done.
-        const next = get<SeoRow>(`SELECT * FROM keyword_seo WHERE status = 'pending' ORDER BY generate_now DESC, plan_id, position LIMIT 1`);
+        const next = get<SeoRow>(`SELECT * FROM keyword_seo WHERE status = 'pending' ${turn()} ORDER BY generate_now DESC, plan_id, position LIMIT 1`);
         if (next) {
           try {
             await writeOne(next, deps);
@@ -400,7 +416,7 @@ export function kickSeoWriter(deps: WriterDeps): Promise<void> {
           continue;
         }
         const dish = get<SeoRow>(
-          `SELECT * FROM keyword_seo WHERE status = 'done' AND recipe_status = 'pending' ORDER BY generate_now DESC, plan_id, position LIMIT 1`,
+          `SELECT * FROM keyword_seo WHERE status = 'done' AND recipe_status = 'pending' ${turn()} ORDER BY generate_now DESC, plan_id, position LIMIT 1`,
         );
         if (dish) {
           try {
@@ -412,7 +428,7 @@ export function kickSeoWriter(deps: WriterDeps): Promise<void> {
           continue;
         }
         const outline = get<SeoRow>(
-          `SELECT * FROM keyword_seo WHERE status = 'done' AND skeleton_status = 'pending' ORDER BY generate_now DESC, plan_id, position LIMIT 1`,
+          `SELECT * FROM keyword_seo WHERE status = 'done' AND skeleton_status = 'pending' ${turn()} ORDER BY generate_now DESC, plan_id, position LIMIT 1`,
         );
         if (outline) {
           try {
@@ -424,7 +440,7 @@ export function kickSeoWriter(deps: WriterDeps): Promise<void> {
           continue;
         }
         const piece = get<SeoRow>(
-          `SELECT * FROM keyword_seo WHERE skeleton_status = 'done' AND article_status = 'pending' ORDER BY generate_now DESC, plan_id, position LIMIT 1`,
+          `SELECT * FROM keyword_seo WHERE skeleton_status = 'done' AND article_status = 'pending' ${turn()} ORDER BY generate_now DESC, plan_id, position LIMIT 1`,
         );
         if (piece) {
           try {
@@ -436,7 +452,7 @@ export function kickSeoWriter(deps: WriterDeps): Promise<void> {
           continue;
         }
         const pictures = get<SeoRow>(
-          `SELECT * FROM keyword_seo WHERE article_status = 'done' AND images_status = 'pending' ORDER BY generate_now DESC, plan_id, position LIMIT 1`,
+          `SELECT * FROM keyword_seo WHERE article_status = 'done' AND images_status = 'pending' ${turn()} ORDER BY generate_now DESC, plan_id, position LIMIT 1`,
         );
         if (!pictures) break;
         try {

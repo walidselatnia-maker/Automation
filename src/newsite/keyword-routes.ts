@@ -48,6 +48,10 @@ export interface KeywordRouteDeps extends FindDeps {
   /** When the slow queue makes its next step picture (ms since 1970). */
   nextStepAt?: () => number;
   dataDir?: string;
+  /** Whether the platform's Automation switch is on: the writer only writes the keyword whose turn it is. */
+  automationOn?: () => boolean;
+  /** Called when a pass of the writer ends, so Automation moves its keyword on. */
+  afterWriting?: () => void;
 }
 
 const body = (request: FastifyRequest): Record<string, unknown> =>
@@ -88,9 +92,9 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
   const fail = (reply: FastifyReply, error: string) => reply.send({ ok: false, error });
 
   const NOT_READY = 'Set up the platform first: keywords need a working AI key.';
-  const writer = { ask: deps.ask, suggest: deps.suggest };
+  const writer = { ask: deps.ask, suggest: deps.suggest, automationOn: deps.automationOn };
   const startSeo = () => {
-    if (deps.autoSeo !== false) void kickSeoWriter(writer);
+    if (deps.autoSeo !== false) void kickSeoWriter(writer).then(() => deps.afterWriting?.());
   };
   // Imported keywords without sub-keywords: found one plan at a time, then on to the SEO step.
   const startFinder = () => {
@@ -130,7 +134,7 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
     const sites = listNewWebsites().map((site) => ({
       site,
       plans: plans.filter((p) => p.website_id === site.id),
-      autopilot: deps.settings && automationOn(deps.settings) && site.status === 'active' ? autopilotState(site, tz, Date.now(), automationOnAt(deps.settings)).next : '',
+      autopilot: deps.settings && automationOn(deps.settings) && site.status === 'active' ? autopilotState(site, tz, Date.now(), automationOnAt(deps.settings), deps.settings).next : '',
     }));
     return reply.type('text/html; charset=utf-8').send(
       newLayout({ title: 'Keywords', active: '/new-website/keywords', body: keywordsOverview(sites, planStats()), flash: deps.readFlash(request.query) }),

@@ -958,6 +958,22 @@ export const MIGRATIONS: Migration[] = [
       addColumn(db, 'new_websites', 'language', "TEXT NOT NULL DEFAULT 'English'");
     },
   },
+  {
+    id: '045-newsite-one-keyword-at-a-time',
+    description: 'New websites: Automation works on one keyword at a time, and keeps a history of what it did',
+    up(db) {
+      addColumn(db, 'keyword_seo', 'auto_active', 'INTEGER NOT NULL DEFAULT 0');
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS newsite_automation_log (
+          id     INTEGER PRIMARY KEY AUTOINCREMENT,
+          at     TEXT NOT NULL DEFAULT (datetime('now')),
+          seo_id INTEGER NOT NULL,
+          event  TEXT NOT NULL,
+          note   TEXT NOT NULL DEFAULT ''
+        );
+      `);
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */

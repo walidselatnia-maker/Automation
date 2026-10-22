@@ -102,6 +102,11 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
   let automationStarted: () => void = () => {};
   /** Carries Generate now keywords on, once the picture maker is wired up. */
   let generateTick: () => void = () => {};
+  /** One look by Automation's conductor (autopilot.ts), the only thing that starts a keyword. */
+  let conduct: () => void = () => {};
+  /** Wakes the writer; set once the keyword routes are registered. */
+  let wakeWriter: () => void = () => {};
+  const isOn = deps.settings ? () => automationOn(deps.settings) : undefined;
 
   const ask =
     deps.ask ??
@@ -135,6 +140,7 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
     publish.afterPublish = (seoId) => {
       if (createSocialPosts(seoId)) void kickSocial(social);
       if (createReels(seoId)) void kickReels(social);
+      conduct();
     };
     publish.startPictures = registerPictureRoutes(app, {
       settings: deps.settings,
@@ -142,17 +148,22 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
       dataDir: deps.dataDir,
       autoPictures: deps.autoPictures,
       afterStep: (pictureId) => addStepPicture(pictureId, publish),
-      afterMain: (seoId) => publishWhenReady(seoId, publish),
+      afterMain: async (seoId) => {
+        await publishWhenReady(seoId, publish);
+        conduct();
+      },
+      automationOn: isOn,
       afterPin: (pictureId, ok) => onPinPicture(pictureId, ok, social),
     });
     social.startPictures = publish.startPictures;
     generateTick = () => generateNowTick(publish);
     if (deps.autoPictures !== false) {
+      conduct = () => autopilotTick({ ...publish, startWriter: wakeWriter });
       setInterval(() => {
-        autopilotTick(publish);
+        conduct();
         generateTick();
       }, 60_000).unref();
-      automationStarted = () => setTimeout(() => autopilotTick(publish), START_DELAY_MS + 1000).unref();
+      automationStarted = () => setTimeout(conduct, START_DELAY_MS + 1000).unref();
     }
     registerSocialRoutes(app, { ...social, readFlash, autoStart: deps.autoPictures });
   }
@@ -171,7 +182,11 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
     listPosts: deps.listPosts ?? ((domain, apiKey) => realListPosts(domain, apiKey)),
     suggest: deps.suggest ?? ((pillar, language) => expandSeeds([pillar], { hl: LANGUAGE_CODES[language || 'English'] })),
     ask,
+    automationOn: isOn,
+    // A pass of the writer ended: the conductor moves the keyword on (to its pictures) at once.
+    afterWriting: () => conduct(),
   });
+  wakeWriter = startWriter;
 
   /**
    * Everything wrong with the given fields, including the things only the
@@ -229,7 +244,7 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
     const asked = Number((request.query as { days?: string }).days);
     const days: Period = (PERIODS as readonly number[]).includes(asked) ? (asked as Period) : 30;
     const tz = deps.settings?.get('timezone') || 'UTC';
-    const body = dashboardPage(dashboardData(days, tz), Date.now(), html`${automationBar(automationOn(deps.settings), listNewWebsites(), tz, '/new-website/dashboard', Date.now(), deps.settings ? automationOnAt(deps.settings) : 0)}${generateBox(generateChoices(), generateNowLines())}`);
+    const body = dashboardPage(dashboardData(days, tz), Date.now(), html`${automationBar(automationOn(deps.settings), listNewWebsites(), tz, '/new-website/dashboard', Date.now(), deps.settings ? automationOnAt(deps.settings) : 0, deps.settings)}${generateBox(generateChoices(), generateNowLines())}`);
     return send(reply, newLayout({ title: 'Dashboard', active: '/new-website/dashboard', body, flash: readFlash(request.query) }));
   });
 

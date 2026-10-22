@@ -25,6 +25,7 @@ export interface PictureRouteDeps {
   afterStep?: PictureDeps['afterStep'];
   afterMain?: PictureDeps['afterMain'];
   afterPin?: PictureDeps['afterPin'];
+  automationOn?: PictureDeps['automationOn'];
 }
 
 const imagesPage = (planId: number, message: string, kind: 'ok' | 'error' = 'ok'): string =>
@@ -45,6 +46,7 @@ export function registerPictureRoutes(app: FastifyInstance, deps: PictureRouteDe
     afterStep: deps.afterStep,
     afterMain: deps.afterMain,
     afterPin: deps.afterPin,
+    automationOn: deps.automationOn,
   };
   const start = () => {
     if (deps.autoPictures !== false) void kickPictureMaker(maker);

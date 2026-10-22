@@ -1,36 +1,56 @@
-import { all } from '../db/index.js';
+import { all, get, run } from '../db/index.js';
 import { createLogger } from '../lib/logger.js';
 import type { Settings } from '../settings.js';
 import { parseImageSet } from './images.js';
-import { notReadyReason, queuePublish, type PublishDeps } from './publish.js';
+import { notReadyReason, publishQueued, queuePublish, type PublishDeps } from './publish.js';
 import { isMainSlot, queuePictures, type PictureRow } from './pictures.js';
-import { listNewWebsites, type NewWebsiteRow } from './repo.js';
-import type { SeoRow } from './seo.js';
+import { getNewWebsite, listNewWebsites, type NewWebsiteRow } from './repo.js';
+import { retriesOf, type StepName } from './retries.js';
+import { queueNotStartedSteps, type SeoRow } from './seo.js';
 
 /**
- * Automation for the new websites: with the platform's Automation switch on
- * (Platform settings, also shown at the top of the Dashboard), every active
- * website runs without anyone pressing a button.
+ * Automation for the new websites: the one place that decides which keyword
+ * is worked on, and when. Checked every minute, and right after anything
+ * that moves the keyword on (a step written, its pictures made).
  *
- * Its articles are already written as soon as keywords are added (the AI
- * steps run by themselves). Autopilot does the rest, checked every minute:
- * - pictures: the main pictures of the next articles in line are made, one
- *   day's worth ahead (Posts per day, or 3 when there is no target), so Flow
- *   is never asked for a whole backlog at once;
- * - publishing: on "Publish automatically", one article at a time, never
- *   more than Posts per day in the platform's timezone, and at least the gap
- *   after the previous one. On "Wait for my approval" the pictures are made
- *   and the article waits for the Publish button.
- * Social posts and reels follow each publish on the website's channels, as
- * they already do.
+ * One keyword at a time, across the whole platform. The keyword Automation
+ * is working on is marked (keyword_seo.auto_active); the writer and the
+ * picture maker only work on that one (and on a Generate now keyword), so
+ * no other keyword is written or pictured meanwhile. Its pipeline:
  *
- * An article whose picture failed is passed over (it shows as failed on the
- * Images step, with Try again), so one bad picture never stops the website.
+ *   1. Waiting in line. The next one is the first keyword, in the order the
+ *      Keywords page shows (oldest main keyword first, its pillar then its
+ *      sub-keywords), of a website whose turn has come: Automation is ON,
+ *      the website is active, its gap since its last published article has
+ *      passed, and it has not reached its posts per day.
+ *   2. Writing: SEO, recipe, outline, article, image prompts (seo.ts).
+ *   3. Pictures: its main pictures, made straight away (pictures.ts). No
+ *      approval is asked for pictures.
+ *   4. Publishing. On "Publish automatically" it goes out at once (its
+ *      gap has passed: that is how it got its turn). On "Wait for my
+ *      approval" it waits, with everything else, for its Publish button;
+ *      pressing it is the approval, and the line moves on once it is out.
+ *   5. Done: published. The next keyword gets its turn when its website's
+ *      gap and posts per day allow it.
+ *
+ * Failure: a writing step the AI could not do is tried again by the
+ * platform's retry settings (retries.ts), and the keyword keeps its turn
+ * while a try is left. When none is (or a picture or the publish failed),
+ * the keyword is stopped: it keeps its failed step, with Try again, and the
+ * next keyword gets its turn. A stopped keyword pressed Try again joins the
+ * line again in its place.
+ *
+ * Turning Automation off: the step being done right now (one AI answer, one
+ * picture, one publish) finishes and is kept; nothing after it starts. The
+ * keyword keeps its turn, and carries on from that step when it is turned
+ * on again, by the same gap and posts per day.
+ *
+ * Generate now (generate-now.ts) is the owner's own: it runs whatever the
+ * switch says, and while it runs, Automation starts no new keyword.
+ * Every start, finish and stop is kept in newsite_automation_log.
  */
 
 const log = createLogger('newsite-autopilot');
-
-const AHEAD_WITHOUT_TARGET = 3;
 
 /** How long after Automation is turned on the first check runs. */
 export const START_DELAY_MS = 30_000;
@@ -44,7 +64,7 @@ export const automationOn = (settings: Settings | undefined): boolean => setting
 export interface AutopilotState {
   /** Articles with every main picture made, waiting to be published. */
   ready: number;
-  /** Articles still being written or getting their pictures. */
+  /** Articles not published yet that are neither ready nor stopped. */
   preparing: number;
   /** Articles published today, in the platform's timezone. */
   today: number;
@@ -52,28 +72,12 @@ export interface AutopilotState {
   next: string;
 }
 
-interface SiteWork {
-  rows: SeoRow[];
-  pictures: Map<number, PictureRow[]>;
+export interface ConductorDeps extends PublishDeps {
+  /** Wakes the writer, for the keyword whose turn it is. */
+  startWriter?: () => void;
 }
 
-function siteWork(siteId: number): SiteWork {
-  const rows = all<SeoRow>(
-    `SELECT s.* FROM keyword_seo s JOIN keyword_plans p ON p.id = s.plan_id WHERE p.website_id = ? ORDER BY s.plan_id, s.position`,
-    siteId,
-  );
-  // Only pictures of each article's prompts as they are now: one left from an older prompt counts for nothing.
-  const current = new Map(rows.map((r) => [r.id, new Map((r.images_status === 'done' ? parseImageSet(r.images_json)?.images ?? [] : []).map((im) => [im.slot, im.prompt]))]));
-  const pictures = new Map<number, PictureRow[]>();
-  for (const p of all<PictureRow>(
-    `SELECT * FROM newsite_pictures WHERE seo_id IN (SELECT s.id FROM keyword_seo s JOIN keyword_plans p ON p.id = s.plan_id WHERE p.website_id = ?)`,
-    siteId,
-  )) {
-    if (!isMainSlot(p.slot) || current.get(p.seo_id)?.get(p.slot) !== p.prompt) continue;
-    pictures.set(p.seo_id, [...(pictures.get(p.seo_id) ?? []), p]);
-  }
-  return { rows, pictures };
-}
+/* -- Small helpers ----------------------------------------------------------- */
 
 const dayKey = (ms: number, tz: string): string => {
   try {
@@ -94,91 +98,183 @@ const clock = (ms: number, tz: string): string => {
   }
 };
 
-function look(site: NewWebsiteRow, work: SiteWork, now: number, tz: string, onAt = 0) {
-  const pics = (r: SeoRow) => work.pictures.get(r.id) ?? [];
-  const waiting = work.rows.filter((r) => r.post_status !== 'published');
-  const stuck = (r: SeoRow) => pics(r).some((p) => p.status === 'failed') || r.post_status === 'failed';
-  const started = (r: SeoRow) => pics(r).length > 0;
-  const ready = waiting.filter((r) => !stuck(r) && r.post_status !== 'publishing' && !notReadyReason(r, pics(r)));
-  const posted = work.rows.filter((r) => r.post_status === 'published' && r.posted_at).map((r) => sqlTime(r.posted_at));
-  const today = posted.filter((t) => dayKey(t, tz) === dayKey(now, tz)).length;
-  const last = posted.length ? Math.max(...posted) : 0;
-  // Turning Automation on starts at once (30 seconds later), not a whole gap after the last post.
-  const gapDue = last + site.interval_minutes * 60_000;
-  const due = onAt > last ? Math.min(gapDue, onAt + START_DELAY_MS) : gapDue;
-  return {
-    pics,
-    stuck,
-    started,
-    waiting,
-    ready,
-    today,
-    due,
-    full: site.daily_target > 0 && today >= site.daily_target,
-    publishing: work.rows.some((r) => r.post_status === 'publishing'),
-    ahead: site.daily_target > 0 ? site.daily_target : AHEAD_WITHOUT_TARGET,
-  };
+/** One line of the automation history. */
+function remember(seoId: number, event: string, note = ''): void {
+  run('INSERT INTO newsite_automation_log (seo_id, event, note) VALUES (?, ?, ?)', seoId, event, note.slice(0, 400));
 }
 
-/** One minute of automation for every active website, while the platform's Automation switch is on. */
-export function autopilotTick(deps: PublishDeps, now = Date.now()): void {
+export interface LogLine {
+  at: string;
+  seo_id: number;
+  event: string;
+  note: string;
+}
+export const automationLog = (): LogLine[] => all<LogLine>('SELECT at, seo_id, event, note FROM newsite_automation_log ORDER BY id');
+
+/** A website's keywords, in line order: oldest main keyword first, its pillar then its sub-keywords. */
+const siteRows = (siteId: number): SeoRow[] =>
+  all<SeoRow>(`SELECT s.* FROM keyword_seo s JOIN keyword_plans p ON p.id = s.plan_id WHERE p.website_id = ? ORDER BY s.plan_id, s.position`, siteId);
+
+const siteOf = (row: SeoRow): NewWebsiteRow | undefined => {
+  const plan = get<{ website_id: number }>('SELECT website_id FROM keyword_plans WHERE id = ?', row.plan_id);
+  return plan ? getNewWebsite(plan.website_id) : undefined;
+};
+
+/** A keyword's main pictures, from its image prompts as they are now: one left from an older prompt counts for nothing. */
+function mainPictures(row: SeoRow): PictureRow[] {
+  const prompts = new Map((row.images_status === 'done' ? parseImageSet(row.images_json)?.images ?? [] : []).map((im) => [im.slot, im.prompt]));
+  return all<PictureRow>('SELECT * FROM newsite_pictures WHERE seo_id = ? ORDER BY position', row.id).filter(
+    (p) => isMainSlot(p.slot) && prompts.get(p.slot) === p.prompt,
+  );
+}
+
+const TEXT_STEPS: [StepName, keyof SeoRow][] = [
+  ['seo', 'status'],
+  ['recipe', 'recipe_status'],
+  ['skeleton', 'skeleton_status'],
+  ['article', 'article_status'],
+  ['images', 'images_status'],
+];
+
+/**
+ * Why a keyword is stopped, or '' when it is not: a failed writing step with
+ * no automatic try left, a failed main picture, or a failed publish.
+ */
+export function stoppedReason(row: SeoRow, settings: Settings): string {
+  const failed = TEXT_STEPS.find(([, column]) => row[column] === 'failed');
+  if (failed) {
+    const left = settings.getBool('auto_retry_enabled') && (retriesOf(row)[failed[0]] ?? 0) < Math.max(0, settings.getNumber('auto_retry_max'));
+    return left ? '' : `The ${failed[0]} step failed.`;
+  }
+  if (mainPictures(row).some((p) => p.status === 'failed')) return 'A picture failed.';
+  if (row.post_status === 'failed') return `Publishing failed: ${row.post_error}`;
+  return '';
+}
+
+/** When a website may start its next keyword, and whether today's posts per day are reached. */
+function schedule(site: NewWebsiteRow, rows: SeoRow[], now: number, tz: string): { due: number; full: boolean; today: number } {
+  const posted = rows.filter((r) => r.post_status === 'published' && r.posted_at).map((r) => sqlTime(r.posted_at));
+  const last = posted.length ? Math.max(...posted) : 0;
+  const today = posted.filter((t) => dayKey(t, tz) === dayKey(now, tz)).length;
+  return { due: last ? last + site.interval_minutes * 60_000 : 0, full: site.daily_target > 0 && today >= site.daily_target, today };
+}
+
+/** The keyword Automation is working on, if any. */
+export const activeKeyword = (): SeoRow | undefined => get<SeoRow>('SELECT * FROM keyword_seo WHERE auto_active = 1 ORDER BY id LIMIT 1');
+
+/** A Generate now keyword still under way holds the line: one keyword at a time. */
+const generateNowBusy = (settings: Settings): boolean =>
+  all<SeoRow>(`SELECT * FROM keyword_seo WHERE generate_now = 1 AND COALESCE(post_status, '') != 'published'`).some((r) => !stoppedReason(r, settings));
+
+const waitingInLine = (r: SeoRow, settings: Settings): boolean =>
+  r.post_status !== 'published' && r.post_status !== 'publishing' && !r.generate_now && !stoppedReason(r, settings);
+
+/* -- The conductor --------------------------------------------------------- */
+
+/** Ends the active keyword's turn. */
+function release(row: SeoRow, event: string, note = ''): void {
+  run('UPDATE keyword_seo SET auto_active = 0 WHERE id = ?', row.id);
+  remember(row.id, event, note);
+  log.info(`Automation: "${row.keyword}" ${event}${note ? `: ${note}` : ''}.`);
+}
+
+/** Move the active keyword one stage on: writing, pictures, publishing. */
+function advance(row: SeoRow, site: NewWebsiteRow, deps: ConductorDeps, now: number, tz: string): void {
+  if (row.post_status === 'publishing' || publishQueued(row.id)) return;
+  if (row.images_status !== 'done') {
+    // Still being written: make sure its next step is queued and the writer is awake.
+    queueNotStartedSteps();
+    deps.startWriter?.();
+    return;
+  }
+  const pictures = mainPictures(row);
+  const wanted = (parseImageSet(row.images_json)?.images ?? []).filter((im) => isMainSlot(im.slot)).length;
+  if (pictures.length < wanted || pictures.some((p) => p.status === 'queued' || p.status === 'making')) {
+    if (queuePictures(row.id, deps.dataDir)) remember(row.id, 'pictures', `${wanted} main pictures`);
+    deps.startPictures?.();
+    return;
+  }
+  if (notReadyReason(row, pictures)) return;
+  // Every main picture made: publish, or wait for the Publish button.
+  if (!site.auto_publish) return;
+  const s = schedule(site, siteRows(site.id), now, tz);
+  if (s.full || now < s.due) return;
+  remember(row.id, 'publishing');
+  log.info(`Automation: publishing "${row.keyword}" on ${site.domain}.`);
+  void queuePublish(row.id, deps);
+}
+
+/**
+ * One look by the conductor: carry the active keyword on, or end its turn
+ * and give the next keyword in line its turn. Calling it again and again
+ * changes nothing until something has moved: it is safe from every trigger.
+ */
+export function autopilotTick(deps: ConductorDeps, now = Date.now()): void {
   if (!automationOn(deps.settings)) return;
   const tz = deps.settings.get('timezone') || 'UTC';
-  let queued = 0;
-  for (const site of listNewWebsites()) {
-    if (site.status !== 'active') continue;
-    const work = siteWork(site.id);
-    const s = look(site, work, now, tz, automationOnAt(deps.settings));
 
-    // Pictures, one day's worth ahead of publishing.
-    let lane = s.waiting.filter((r) => s.started(r) && !s.stuck(r)).length;
-    for (const r of s.waiting) {
-      if (lane >= s.ahead) break;
-      if (r.images_status !== 'done' || s.started(r) || s.stuck(r)) continue;
-      const n = queuePictures(r.id, deps.dataDir);
-      if (n) {
-        log.info(`Autopilot: making the pictures of "${r.keyword}" on ${site.domain}.`);
-        queued += n;
-        lane += 1;
-      }
-    }
-
-    // Publishing, by Posts per day and the gap.
-    if (!site.auto_publish || s.publishing || s.full || now < s.due) continue;
-    const next = s.ready[0];
-    if (next) {
-      log.info(`Autopilot: publishing "${next.keyword}" on ${site.domain}.`);
-      void queuePublish(next.id, deps);
+  const active = activeKeyword();
+  if (active) {
+    const site = siteOf(active);
+    if (!site || site.status !== 'active') return release(active, 'paused', 'Its website is paused or gone.');
+    if (active.post_status === 'published') release(active, 'published', active.post_url);
+    else {
+      const stopped = stoppedReason(active, deps.settings);
+      if (stopped) release(active, 'stopped', stopped);
+      else return advance(active, site, deps, now, tz);
     }
   }
-  if (queued) deps.startPictures?.();
+  if (generateNowBusy(deps.settings)) return;
+
+  // The website whose turn came first, then its first keyword in line.
+  let pick: { row: SeoRow; site: NewWebsiteRow; due: number } | null = null;
+  for (const site of listNewWebsites()) {
+    if (site.status !== 'active') continue;
+    const rows = siteRows(site.id);
+    const s = schedule(site, rows, now, tz);
+    if (s.full || now < s.due) continue;
+    const row = rows.find((r) => waitingInLine(r, deps.settings));
+    if (row && (!pick || s.due < pick.due || (s.due === pick.due && site.id < pick.site.id))) pick = { row, site, due: s.due };
+  }
+  if (!pick) return;
+  run('UPDATE keyword_seo SET auto_active = 1 WHERE id = ? AND NOT EXISTS (SELECT 1 FROM keyword_seo WHERE auto_active = 1)', pick.row.id);
+  remember(pick.row.id, 'started', pick.site.domain);
+  log.info(`Automation: starting "${pick.row.keyword}" on ${pick.site.domain}.`);
+  advance({ ...pick.row, auto_active: 1 }, pick.site, deps, now, tz);
 }
 
-/** Where a website's Autopilot stands, for the dashboard and the Keywords page. */
-export function autopilotState(site: NewWebsiteRow, tz: string, now = Date.now(), onAt = 0): AutopilotState {
-  const s = look(site, siteWork(site.id), now, tz, onAt);
-  const textFailed = (r: SeoRow) =>
-    [r.status, r.recipe_status, r.skeleton_status, r.article_status, r.images_status].includes('failed');
-  const stopped = s.waiting.filter((r) => s.stuck(r) || textFailed(r));
-  const going = s.waiting.filter((r) => !stopped.includes(r) && !s.ready.includes(r));
-  const writing = going.filter((r) => r.images_status !== 'done');
-  const picturing = going.filter((r) => r.images_status === 'done' && s.started(r));
-  // Written, pictures not started yet: they start on the next minute, one day's worth at a time.
-  const queued = going.filter((r) => r.images_status === 'done' && !s.started(r));
-  const base = { ready: s.ready.length, preparing: going.length, today: s.today };
+/* -- What the dashboard says ------------------------------------------------- */
+
+/** Which stage a keyword is at, in words. */
+function stage(row: SeoRow, site: NewWebsiteRow, due: number, now: number, tz: string): string {
+  if (row.post_status === 'publishing' || publishQueued(row.id)) return `Publishing “${row.keyword}”`;
+  if (row.images_status !== 'done') return `Writing “${row.keyword}”`;
+  if (notReadyReason(row, mainPictures(row))) return `Making the pictures of “${row.keyword}”`;
+  if (!site.auto_publish) return `“${row.keyword}” is waiting for your approval: press Publish`;
+  return due > now ? `“${row.keyword}” goes out at ${clock(due, tz)}` : `Publishing “${row.keyword}” within a minute`;
+}
+
+/** Where a website's Automation stands, for the dashboard and the Keywords page. */
+export function autopilotState(site: NewWebsiteRow, tz: string, now = Date.now(), _onAt = 0, settings?: Settings): AutopilotState {
+  const rows = siteRows(site.id);
+  const s = schedule(site, rows, now, tz);
+  const stoppedOf = (r: SeoRow) => (settings ? stoppedReason(r, settings) : r.post_status === 'failed' ? 'failed' : '');
+  const waiting = rows.filter((r) => r.post_status !== 'published');
+  const stopped = waiting.filter((r) => stoppedOf(r));
+  const ready = waiting.filter((r) => !stoppedOf(r) && r.post_status !== 'publishing' && !notReadyReason(r, mainPictures(r)));
+  const base = { ready: ready.length, preparing: waiting.length - ready.length - stopped.length, today: s.today };
   const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`;
   const stoppedNote = stopped.length ? ` · ${plural(stopped.length, 'article')} stopped` : '';
+
+  const active = activeKeyword();
   let next: string;
   if (site.status !== 'active') next = 'Paused';
-  else if (!site.auto_publish) next = s.ready.length ? `${s.ready.length} waiting for your approval` : 'Pictures are made, then each article waits for your approval';
-  else if (!s.ready.length) {
-    if (picturing.length) next = `Making the pictures of ${plural(picturing.length, 'article')}${stoppedNote}`;
-    else if (queued.length) next = `Pictures start within a minute${stoppedNote}`;
-    else if (writing.length) next = `Writing ${plural(writing.length, 'article')}${stoppedNote}`;
-    else if (stopped.length) next = `${plural(stopped.length, 'article')} stopped: open Keywords & articles`;
-    else next = 'No keywords left: add keywords';
-  } else if (s.full) next = `Next article tomorrow${stoppedNote}`;
-  else if (s.due > now) next = `Next article at ${clock(s.due, tz)}${stoppedNote}`;
-  else next = `Next article in a minute${stoppedNote}`;
+  else if (active && rows.some((r) => r.id === active.id)) next = `${stage(active, site, s.due, now, tz)}${stoppedNote}`;
+  else if (!waiting.some((r) => !stoppedOf(r) && r.post_status !== 'publishing' && !r.generate_now)) {
+    next = stopped.length ? `${plural(stopped.length, 'article')} stopped: open Keywords & articles` : 'No keywords left: add keywords';
+  } else if (active) next = `Waits for its turn: one keyword at a time (now “${active.keyword}”)${stoppedNote}`;
+  else if (s.full) next = `Next keyword tomorrow${stoppedNote}`;
+  else if (s.due > now) next = `Next keyword starts at ${clock(s.due, tz)}${stoppedNote}`;
+  else next = `Next keyword starts within a minute${stoppedNote}`;
   return { ...base, next };
 }
