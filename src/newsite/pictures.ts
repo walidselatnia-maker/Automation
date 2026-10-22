@@ -51,6 +51,8 @@ export interface PictureRow {
   media_id: number | null;
   /** A social picture's shape, from its platform's rules file; empty means by slot. */
   shape: string;
+  /** 1 when someone pressed a button for it (Make pictures, Try again). */
+  by_hand: number;
 }
 
 /** A recipe step's picture: made in the slow queue. */
@@ -117,8 +119,8 @@ export function clearPictures(seoId: number, dataDir = resolveDataDir()): void {
  * the same prompt is kept; a failed one gets fresh tries; one whose prompt was
  * rewritten since is made again. Returns how many were queued.
  */
-export const queuePictures = (seoId: number, dataDir = resolveDataDir()): number =>
-  queueLane(seoId, isMainSlot, dataDir);
+export const queuePictures = (seoId: number, dataDir = resolveDataDir(), byHand = false): number =>
+  queueLane(seoId, isMainSlot, dataDir, byHand);
 
 /** Put one keyword's step pictures in the slow queue. Returns how many were queued. */
 export function queueStepPictures(seoId: number, settings: Settings, now = Date.now(), random = Math.random, dataDir = resolveDataDir()): number {
@@ -133,7 +135,8 @@ const stepGapMs = (random: () => number): number => {
   return Math.round((min + random() * (max - min)) * 60_000);
 };
 
-function queueLane(seoId: number, inLane: (slot: string) => boolean, dataDir: string): number {
+/** byHand: someone pressed a button for these pictures, so they are made whatever Automation is doing. */
+function queueLane(seoId: number, inLane: (slot: string) => boolean, dataDir: string, byHand = false): number {
   const prompts = currentPrompts(seoId).filter((p) => inLane(p.slot));
   if (!prompts.length) return 0;
   const have = new Map(listPictures(seoId).filter((p) => inLane(p.slot)).map((p) => [p.slot, p]));
@@ -151,19 +154,22 @@ function queueLane(seoId: number, inLane: (slot: string) => boolean, dataDir: st
     const old = have.get(p.slot);
     if (old && old.prompt === p.prompt && (old.status === 'done' || old.status === 'making' || old.status === 'queued')) {
       run('UPDATE newsite_pictures SET position = ?, alt = ? WHERE id = ?', position, p.alt, old.id);
-      if (old.status === 'queued') queued += 1;
+      if (old.status === 'queued') {
+        queued += 1;
+        if (byHand) run('UPDATE newsite_pictures SET by_hand = 1 WHERE id = ?', old.id);
+      }
       return;
     }
     if (old) {
       if (old.file) rmSync(join(pictureDir(seoId, dataDir), old.file), { force: true });
       run(
-        `UPDATE newsite_pictures SET position = ?, prompt = ?, alt = ?, status = 'queued', attempts = 0, error = '', file = '', made_at = NULL WHERE id = ?`,
-        position, p.prompt, p.alt, old.id,
+        `UPDATE newsite_pictures SET position = ?, prompt = ?, alt = ?, status = 'queued', attempts = 0, error = '', file = '', made_at = NULL, by_hand = ? WHERE id = ?`,
+        position, p.prompt, p.alt, byHand ? 1 : 0, old.id,
       );
     } else {
       run(
-        `INSERT INTO newsite_pictures (seo_id, slot, position, prompt, alt, status) VALUES (?, ?, ?, ?, ?, 'queued')`,
-        seoId, p.slot, position, p.prompt, p.alt,
+        `INSERT INTO newsite_pictures (seo_id, slot, position, prompt, alt, status, by_hand) VALUES (?, ?, ?, ?, ?, 'queued', ?)`,
+        seoId, p.slot, position, p.prompt, p.alt, byHand ? 1 : 0,
       );
     }
     queued += 1;
@@ -182,7 +188,8 @@ export function retryFailedPictures(where: { pictureId?: number; seoId?: number;
       ? ['seo_id = ?', where.seoId]
       : ['seo_id IN (SELECT id FROM keyword_seo WHERE plan_id = ?)', where.planId ?? 0];
   const again = failedArticlePictures(filter, value);
-  for (const p of again) run(`UPDATE newsite_pictures SET status = 'queued', attempts = 0, error = '' WHERE id = ?`, p.id);
+  // Try again is always pressed by someone (or by Generate now): made whatever Automation is doing.
+  for (const p of again) run(`UPDATE newsite_pictures SET status = 'queued', attempts = 0, error = '', by_hand = 1 WHERE id = ?`, p.id);
   return again.length;
 }
 
@@ -292,11 +299,13 @@ export function kickPictureMaker(deps: PictureDeps): Promise<void> {
          JOIN keyword_plans k ON k.id = s.plan_id
          JOIN new_websites w ON w.id = k.website_id
         WHERE p.status = 'queued' AND (p.slot LIKE 'step-%') = ?
-          AND NOT (s.auto_active = 1 AND s.generate_now = 0 AND ? = 0)
+          AND (? = 0 OR p.slot LIKE 'pin-%' OR p.slot LIKE 'fb-%' OR p.slot LIKE 'social-%' OR s.generate_now = 1 OR p.by_hand = 1 OR (s.auto_active = 1 AND ? = 1))
         ORDER BY s.generate_now DESC, p.id LIMIT 1`,
       stepLane ? 1 : 0,
-      // Automation's keyword waits while the switch is off; pictures someone asked for are made.
-      !deps.automationOn || deps.automationOn() ? 1 : 0,
+      // An article picture is made only for Automation's current keyword (while the switch is on), a
+      // Generate now keyword, or when someone pressed a button for it. Any other waits for its keyword's turn.
+      deps.automationOn && !stepLane ? 1 : 0,
+      deps.automationOn?.() ? 1 : 0,
     );
 
   running = Promise.resolve()

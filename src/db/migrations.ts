@@ -985,6 +985,13 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    id: '047-newsite-pictures-by-hand',
+    description: 'New websites: pictures someone asked for are marked, so Automation never makes another keyword’s pictures ahead of its turn',
+    up(db) {
+      addColumn(db, 'newsite_pictures', 'by_hand', 'INTEGER NOT NULL DEFAULT 0');
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */

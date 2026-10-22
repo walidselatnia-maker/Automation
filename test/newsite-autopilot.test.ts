@@ -8,7 +8,7 @@ import { Settings } from '../src/settings.js';
 import { createNewWebsite, getNewWebsite, listKeywordPlans, saveKeywordPlan } from '../src/newsite/repo.js';
 import { kickSeoWriter, listPlanSeo, queuePlanSeo, requeueSeo } from '../src/newsite/seo.js';
 import { activeKeyword, autopilotState, autopilotTick, automationLog, type ConductorDeps } from '../src/newsite/autopilot.js';
-import { kickPictureMaker, resetPictureMakerState } from '../src/newsite/pictures.js';
+import { kickPictureMaker, queuePictures, resetPictureMakerState } from '../src/newsite/pictures.js';
 import { publishWhenReady, queuePublish } from '../src/newsite/publish.js';
 
 const KEY = randomBytes(32);
@@ -317,6 +317,32 @@ describe('Automation: one keyword at a time', () => {
     await flush();
     expect(row(a!).post_status).toBe('published');
     expect(activeKeyword()?.id).toBe(a);
+  });
+
+  it('J: pictures left queued for a later keyword wait for its turn; an article made early waits for the gap, then goes out', async () => {
+    const [a, b, c] = ids as [number, number, number];
+    // Left by the old day-ahead picture lane: b's pictures queued, a already written and pictured.
+    written(a);
+    written(b);
+    written(c);
+    queuePictures(a, dataDir);
+    await kickPictureMaker({ settings, dataDir, sleep: async () => {}, make: async () => ({ data: Buffer.from('i'), contentType: 'image/png' }) });
+    queuePictures(b, dataDir);
+    publishedAt(ids[5]!, NOW - 60 * MIN); // the website posted an hour ago; the gap is four hours
+    autopilotTick(deps(), NOW);
+    expect(activeIds()).toEqual([]);
+    expect(autopilotState(getNewWebsite(siteId)!, 'UTC', NOW, 0, settings).next).toBe('“roses” is ready and goes out at 15:00, when the website’s gap has passed');
+    await maker();
+    expect(made).toEqual([]); // b's pictures are not made ahead of its turn
+    // Pictures someone asks for are made at once.
+    queuePictures(c, dataDir, true);
+    await maker();
+    expect(new Set(made)).toEqual(new Set([c]));
+    // The gap passes: a is the one, and goes out straight away.
+    autopilotTick(deps(), NOW + 180 * MIN);
+    await flush();
+    expect(row(a).post_status).toBe('published');
+    expect(all<{ status: string }>('SELECT status FROM newsite_pictures WHERE seo_id = ?', b).map((p) => p.status)).toEqual(['queued', 'queued']);
   });
 });
 

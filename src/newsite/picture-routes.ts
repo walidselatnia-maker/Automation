@@ -38,7 +38,7 @@ const queuedMessage = (queued: number, what: string): string =>
 export function registerPictureRoutes(app: FastifyInstance, deps: PictureRouteDeps): () => void {
   const { settings } = deps;
   const dataDir = deps.dataDir ?? resolveDataDir();
-  const queueAll = (seoId: number): number => queuePictures(seoId, dataDir);
+  const queueAll = (seoId: number): number => queuePictures(seoId, dataDir, true);
   const maker: PictureDeps = {
     settings,
     make: deps.makePicture,

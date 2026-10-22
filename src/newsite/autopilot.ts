@@ -274,7 +274,13 @@ export function autopilotState(site: NewWebsiteRow, tz: string, now = Date.now()
     next = stopped.length ? `${plural(stopped.length, 'article')} stopped: open Keywords & articles` : 'No keywords left: add keywords';
   } else if (active) next = `Waits for its turn: one keyword at a time (now “${active.keyword}”)${stoppedNote}`;
   else if (s.full) next = `Next keyword tomorrow${stoppedNote}`;
-  else if (s.due > now) next = `Next keyword starts at ${clock(s.due, tz)}${stoppedNote}`;
+  else if (s.due > now) {
+    // The next in line may be made already (before Automation ran it): it still waits for the gap.
+    const first = waiting.find((r) => !stoppedOf(r) && r.post_status !== 'publishing' && !r.generate_now);
+    next = first && ready.includes(first)
+      ? `“${first.keyword}” is ready and goes out at ${clock(s.due, tz)}, when the website’s gap has passed${stoppedNote}`
+      : `Next keyword starts at ${clock(s.due, tz)}${stoppedNote}`;
+  }
   else next = `Next keyword starts within a minute${stoppedNote}`;
   return { ...base, next };
 }
