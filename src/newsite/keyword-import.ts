@@ -16,6 +16,8 @@ import {
 import { get, all, run } from '../db/index.js';
 import { listPlanSeo, queueMissingSeo, queuePlanSeo } from './seo.js';
 import { articleTypeFor } from './skeleton.js';
+import { parseImageSet } from './images.js';
+import { isPinSlot } from './pictures.js';
 
 /**
  * Keywords from a CSV file: many main keywords at once, each for its own
@@ -374,17 +376,41 @@ export interface PlanStats {
   articles: number;
   published: number;
   total: number;
+  /** The article pictures its image prompts ask for (main and step pictures; not social ones). */
+  images: number;
+  /** Of those, the ones made, and the ones that failed. */
+  imagesMade: number;
+  imagesFailed: number;
 }
 
-/** Per plan, how far its keywords have got: one query for the whole platform. */
+/** Per plan, how far its keywords have got: a few queries for the whole platform. */
 export function planStats(): Map<number, PlanStats> {
   const rows = all<PlanStats>(
     `SELECT plan_id AS planId,
             SUM(status = 'done') AS seoDone,
             SUM(article_status = 'done') AS articles,
             SUM(post_status = 'published') AS published,
-            COUNT(*) AS total
+            COUNT(*) AS total,
+            0 AS images, 0 AS imagesMade, 0 AS imagesFailed
        FROM keyword_seo GROUP BY plan_id`,
   );
-  return new Map(rows.map((r) => [r.planId, r]));
+  const stats = new Map(rows.map((r) => [r.planId, r]));
+  // A picture counts only when made from its article's prompt as it is now, the same as the Images step shows.
+  const pictures = new Map<string, string>();
+  for (const p of all<{ seo_id: number; slot: string; prompt: string; status: string }>(
+    `SELECT seo_id, slot, prompt, status FROM newsite_pictures WHERE status IN ('done', 'failed')`,
+  )) {
+    if (!isPinSlot(p.slot)) pictures.set(`${p.seo_id}|${p.slot}|${p.prompt}`, p.status);
+  }
+  for (const r of all<{ id: number; plan_id: number; images_json: string }>(`SELECT id, plan_id, images_json FROM keyword_seo WHERE images_status = 'done'`)) {
+    const s = stats.get(r.plan_id);
+    if (!s) continue;
+    for (const im of parseImageSet(r.images_json)?.images ?? []) {
+      s.images += 1;
+      const status = pictures.get(`${r.id}|${im.slot}|${im.prompt}`);
+      if (status === 'done') s.imagesMade += 1;
+      else if (status === 'failed') s.imagesFailed += 1;
+    }
+  }
+  return stats;
 }

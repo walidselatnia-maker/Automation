@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { closeDatabase, get, openDatabase } from '../src/db/index.js';
+import { closeDatabase, get, openDatabase, run } from '../src/db/index.js';
+import { listPlanSeo, queuePlanSeo } from '../src/newsite/seo.js';
 import { createNewWebsite, getNewWebsite, listKeywordPlans, saveKeywordPlan, setPlanImport } from '../src/newsite/repo.js';
 import { recheckSubs, planStats } from '../src/newsite/keyword-import.js';
 import { keywordsOverview } from '../src/newsite/keywords-view.js';
@@ -41,6 +42,26 @@ describe('Recheck sub-keywords', () => {
     expect([status(short), status(failed), status(full)]).toEqual(['finding', 'finding', '']);
     // Pressed again while they are being found: nothing is sent twice.
     expect(recheckSubs(siteId)).toBe(0);
+  });
+
+  it('shows under Progress how many pictures are made, not made yet and failed', () => {
+    const plan = saveKeywordPlan(siteId, 'roses', [sub('pruning roses')], 'article');
+    queuePlanSeo(plan, 'roses', [sub('pruning roses')], 'article');
+    const [a, b] = listPlanSeo(plan).map((r) => r.id) as [number, number];
+    const set = (slots: string[]) =>
+      JSON.stringify({ theme: {}, images: slots.map((slot) => ({ slot, prompt: `p ${slot}`, alt: 'alt' })) });
+    run(`UPDATE keyword_seo SET images_status = 'done', images_json = ? WHERE id = ?`, set(['feature', 'overhead', 'step-1']), a);
+    run(`UPDATE keyword_seo SET images_status = 'done', images_json = ? WHERE id = ?`, set(['feature', 'overhead']), b);
+    const pic = (seo: number, slot: string, status: string, prompt = `p ${slot}`) =>
+      run(`INSERT INTO newsite_pictures (seo_id, slot, position, prompt, alt, status) VALUES (?, ?, 0, ?, 'alt', ?)`, seo, slot, prompt, status);
+    pic(a, 'feature', 'done');
+    pic(a, 'overhead', 'failed');
+    pic(b, 'feature', 'done');
+    pic(b, 'overhead', 'done', 'an older prompt'); // made from a prompt since rewritten: not counted
+    pic(b, 'pin-1', 'done'); // a social picture: not one of the article's
+    expect(planStats().get(plan)).toMatchObject({ images: 5, imagesMade: 2, imagesFailed: 1 });
+    const page = String(keywordsOverview([{ site: getNewWebsite(siteId)!, plans: listKeywordPlans(siteId), autopilot: '' }], planStats()));
+    expect(page.replace(/\s+/g, ' ')).toContain('Images: <span class="made"><b>2</b> made</span> · <span class="left"><b>3</b> not made yet</span> · <span class="failed"><b>1</b> failed</span> <small>of 5</small>');
   });
 
   it('shades every other keyword line of the table', () => {
