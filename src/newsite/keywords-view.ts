@@ -8,7 +8,7 @@ import { parseImageSet } from './images.js';
 import { isStepSlot, type PictureRow } from './pictures.js';
 import { notReadyReason } from './publish.js';
 import { WIZARD_CSS } from './view.js';
-import { postLinkOf, type ChannelRow } from './channels.js';
+import { channelTakes, postLinkOf, type ChannelRow } from './channels.js';
 import type { SocialPostRow } from './social.js';
 import type { ImportCheck, PlanStats } from './keyword-import.js';
 import { MAX_SUBS } from './keywords.js';
@@ -1013,14 +1013,15 @@ export function sharePostRow(p: SocialPostRow, channel: ChannelRow | undefined, 
 }
 
 /** Channels this keyword's article should be on but has no post for yet. */
-export const missingChannels = (posts: SocialPostRow[], channels: ChannelRow[]): ChannelRow[] =>
-  channels.filter((c) => (c.platform !== 'facebook' || c.post_image) && !posts.some((p) => p.channel_id === c.id));
+/** The channels an article is not shared on yet; with its category, only those that share that category. */
+export const missingChannels = (posts: SocialPostRow[], channels: ChannelRow[], category?: string): ChannelRow[] =>
+  channels.filter((c) => (category === undefined || channelTakes(c, category)) && (c.platform !== 'facebook' || c.post_image) && !posts.some((p) => p.channel_id === c.id));
 
 export function shareCard(row: SeoRow, intent: string, posts: SocialPostRow[], channels: ChannelRow[], allChannels: ChannelRow[], planId: number, pictures: PictureRow[]): Html {
   const published = row.post_status === 'published' && Boolean(row.post_url);
   const sent = posts.filter((p) => p.status === 'sent').length;
   const failed = posts.filter((p) => p.status === 'failed').length;
-  const missing = published ? missingChannels(posts, channels) : [];
+  const missing = published ? missingChannels(posts, channels, row.post_category) : [];
   const state = !published
     ? 'Not published yet'
     : !posts.length

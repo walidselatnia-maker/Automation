@@ -1,6 +1,6 @@
 import { all, run } from '../db/index.js';
 import { createLogger } from '../lib/logger.js';
-import { CATCH_UP_DAYS, takesReels, websiteChannels } from './channels.js';
+import { CATCH_UP_DAYS, channelTakes, takesReels, websiteChannels } from './channels.js';
 import { createReels } from './reels.js';
 import { listNewWebsites } from './repo.js';
 import { createSocialPosts } from './social.js';
@@ -18,6 +18,8 @@ import { createSocialPosts } from './social.js';
  *   one of its channels takes reels.
  * - A channel taken off a website, or no longer set to get that kind of post,
  *   loses what had not gone out yet. What already went out stays as it was.
+ * - A channel set to some categories of a website only gets that website's
+ *   articles of those categories; the rest it had not sent yet are dropped.
  *
  * It runs after a website's channels are saved, after a channel's websites or
  * what it posts are saved, at start and every few minutes.
@@ -49,27 +51,32 @@ export function syncSharing(): SyncResult {
     for (const a of recent) added += createSocialPosts(a.id) + createReels(a.id);
     const reelChannels = channels.filter((c) => c.post_reel && takesReels(c.platform));
     if (reelChannels.length) {
-      const reels = all<{ id: number }>(
-        `SELECT id FROM newsite_reels WHERE status = 'done' AND done_at >= datetime('now', ?) AND seo_id IN (${seoIds})`,
+      const reels = all<{ id: number; category: string }>(
+        `SELECT r.id, COALESCE(s.post_category, '') AS category FROM newsite_reels r JOIN keyword_seo s ON s.id = r.seo_id
+          WHERE r.status = 'done' AND r.done_at >= datetime('now', ?) AND r.seo_id IN (${seoIds})`,
         SINCE,
       );
       for (const r of reels) {
-        for (const c of reelChannels) added += run('INSERT OR IGNORE INTO newsite_reel_shares (reel_id, channel_id) VALUES (?, ?)', r.id, c.id).changes;
+        for (const c of reelChannels.filter((ch) => channelTakes(ch, r.category))) {
+          added += run('INSERT OR IGNORE INTO newsite_reel_shares (reel_id, channel_id) VALUES (?, ?)', r.id, c.id).changes;
+        }
       }
     }
 
-    // No longer wanted, and not gone out yet.
-    removed += run(
-      `DELETE FROM newsite_social_posts WHERE status <> 'sent' AND seo_id IN (${seoIds})
-         AND channel_id NOT IN (SELECT channel_id FROM newsite_website_channels WHERE website_id = ? AND post_image = 1)`,
-      site.id,
-    ).changes;
-    removed += run(
-      `DELETE FROM newsite_reel_shares WHERE status <> 'sent'
-         AND reel_id IN (SELECT id FROM newsite_reels WHERE seo_id IN (${seoIds}))
-         AND channel_id NOT IN (SELECT channel_id FROM newsite_website_channels WHERE website_id = ? AND post_reel = 1)`,
-      site.id,
-    ).changes;
+    // No longer wanted, and not gone out yet: the channel is off the website, set to another kind of post, or not to this category.
+    const wants = (channelId: number, kind: 'post_image' | 'post_reel', category: string): boolean =>
+      channels.some((c) => c.id === channelId && c[kind] && channelTakes(c, category));
+    const posts = all<{ id: number; channel_id: number; category: string }>(
+      `SELECT p.id, p.channel_id, COALESCE(s.post_category, '') AS category FROM newsite_social_posts p JOIN keyword_seo s ON s.id = p.seo_id
+        WHERE p.status <> 'sent' AND p.seo_id IN (${seoIds})`,
+    );
+    for (const p of posts.filter((x) => !wants(x.channel_id, 'post_image', x.category))) removed += run('DELETE FROM newsite_social_posts WHERE id = ?', p.id).changes;
+    const shares = all<{ id: number; channel_id: number; category: string }>(
+      `SELECT sh.id, sh.channel_id, COALESCE(s.post_category, '') AS category FROM newsite_reel_shares sh
+         JOIN newsite_reels r ON r.id = sh.reel_id JOIN keyword_seo s ON s.id = r.seo_id
+        WHERE sh.status <> 'sent' AND r.seo_id IN (${seoIds})`,
+    );
+    for (const sh of shares.filter((x) => !wants(x.channel_id, 'post_reel', x.category))) removed += run('DELETE FROM newsite_reel_shares WHERE id = ?', sh.id).changes;
   }
   if (added || removed) log.info(`sharing brought in line with the websites: ${added} added, ${removed} no longer wanted`);
   return { added, removed };

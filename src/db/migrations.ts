@@ -1040,6 +1040,14 @@ export const MIGRATIONS: Migration[] = [
       addColumn(db, 'new_websites', 'skeleton_last', "TEXT NOT NULL DEFAULT ''");
     },
   },
+  {
+    id: '053-newsite-channel-categories',
+    description: 'New websites: the categories a website shares on each of its channels (empty = all categories)',
+    up(db) {
+      addColumn(db, 'newsite_website_channels', 'categories', "TEXT NOT NULL DEFAULT ''");
+      addColumn(db, 'new_websites', 'site_categories', "TEXT NOT NULL DEFAULT ''");
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */

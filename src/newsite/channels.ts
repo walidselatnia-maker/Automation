@@ -59,6 +59,8 @@ export interface ChannelRow {
   /** The channel's own rules, edited on its page; empty means its platform's default rules. */
   rules_text: string;
   created_at: string;
+  /** As one of a website's channels: the categories it shares (lower case); empty = all categories. */
+  categories?: string[];
 }
 
 export const listChannels = (): ChannelRow[] => all<ChannelRow>('SELECT * FROM newsite_channels ORDER BY platform, name');
@@ -306,7 +308,56 @@ export function channelsFor(websiteId: number): ChannelRow[] {
 export interface ChannelContent {
   image: boolean;
   reel: boolean;
+  /** Only articles in these categories; empty = all categories. Left out: kept as it was. */
+  categories?: string[];
 }
+
+/** A category list as kept: trimmed, lower case, no repeats. */
+export const cleanCategories = (names: string[]): string[] => [...new Set(names.map((n) => n.trim().toLowerCase()).filter(Boolean))].slice(0, 200);
+
+const readCategories = (raw: string | null | undefined): string[] => {
+  try {
+    const list = JSON.parse(raw || '[]') as unknown;
+    return Array.isArray(list) ? cleanCategories(list.map(String)) : [];
+  } catch {
+    return [];
+  }
+};
+
+/**
+ * The categories a website's channels can be limited to: the website's own
+ * (as last read from it), and any its articles or channels use. Each once,
+ * as the website writes it.
+ */
+export function knownCategories(websiteId: number): string[] {
+  const site = get<{ site_categories: string }>('SELECT site_categories FROM new_websites WHERE id = ?', websiteId);
+  let fromSite: string[] = [];
+  try {
+    const list = JSON.parse(site?.site_categories || '[]') as unknown;
+    if (Array.isArray(list)) fromSite = list.map(String);
+  } catch {
+    /* none kept yet */
+  }
+  const used = all<{ name: string }>(
+    `SELECT DISTINCT s.post_category AS name FROM keyword_seo s JOIN keyword_plans p ON p.id = s.plan_id WHERE p.website_id = ? AND s.post_category <> ''`,
+    websiteId,
+  ).map((r) => r.name);
+  const picked = websiteChannels(websiteId).flatMap((c) => c.categories ?? []);
+  const byKey = new Map<string, string>();
+  for (const name of [...fromSite, ...used, ...picked].map((n) => n.trim()).filter(Boolean)) {
+    if (!byKey.has(name.toLowerCase())) byKey.set(name.toLowerCase(), name);
+  }
+  return [...byKey.values()].sort((a, b) => a.localeCompare(b));
+}
+
+/** Keep the categories just read from a website, for its channels' category lists. */
+export function rememberSiteCategories(websiteId: number, names: string[]): void {
+  run('UPDATE new_websites SET site_categories = ? WHERE id = ?', JSON.stringify([...new Set(names.map((n) => n.trim()).filter(Boolean))].slice(0, 200)), websiteId);
+}
+
+/** Whether one of a website's channels shares an article of this category: all categories, or one of its picked ones. */
+export const channelTakes = (c: Pick<ChannelRow, 'categories'>, category: string): boolean =>
+  !c.categories?.length || c.categories.includes(category.trim().toLowerCase());
 
 /**
  * Save which channels a website posts to, and what it sends to each. A
@@ -318,14 +369,16 @@ export interface ChannelContent {
 export function setWebsiteChannels(websiteId: number, channelIds: number[], content: Map<number, ChannelContent> = new Map()): string[] {
   const allowed = new Set(channelsFor(websiteId).map((c) => c.id));
   const refused = channelIds.filter((id) => !allowed.has(id));
-  const before = new Map(websiteChannels(websiteId).map((c) => [c.id, { image: Boolean(c.post_image), reel: Boolean(c.post_reel) }]));
+  const before = new Map(websiteChannels(websiteId).map((c) => [c.id, { image: Boolean(c.post_image), reel: Boolean(c.post_reel), categories: c.categories ?? [] }]));
   run('DELETE FROM newsite_website_channels WHERE website_id = ?', websiteId);
   for (const id of channelIds.filter((x) => allowed.has(x))) {
     const c = getChannel(id)!;
     const what = content.get(id) ?? before.get(id) ?? { image: Boolean(c.post_image), reel: Boolean(c.post_reel) };
+    const categories = cleanCategories(what.categories ?? before.get(id)?.categories ?? []);
     run(
-      'INSERT OR IGNORE INTO newsite_website_channels (website_id, channel_id, post_image, post_reel) VALUES (?, ?, ?, ?)',
+      'INSERT OR IGNORE INTO newsite_website_channels (website_id, channel_id, post_image, post_reel, categories) VALUES (?, ?, ?, ?, ?)',
       websiteId, id, takesImages(c.platform) && (what.image || !takesReels(c.platform)) ? 1 : 0, (what.reel || videoOnly(c.platform)) && takesReels(c.platform) ? 1 : 0,
+      categories.length ? JSON.stringify(categories) : '',
     );
   }
   return refused.map((id) => {
@@ -335,15 +388,15 @@ export function setWebsiteChannels(websiteId: number, channelIds: number[], cont
 }
 
 /**
- * The channels a website posts its articles to. Their post_image and
- * post_reel are what this website sends them, not the channel's own default.
+ * The channels a website posts its articles to. Their post_image, post_reel
+ * and categories are what this website sends them, not the channel's own default.
  */
 export const websiteChannels = (websiteId: number): ChannelRow[] =>
-  all<ChannelRow & { site_image: number; site_reel: number }>(
-    `SELECT c.*, wc.post_image AS site_image, wc.post_reel AS site_reel FROM newsite_channels c
+  all<ChannelRow & { site_image: number; site_reel: number; site_categories: string }>(
+    `SELECT c.*, wc.post_image AS site_image, wc.post_reel AS site_reel, wc.categories AS site_categories FROM newsite_channels c
        JOIN newsite_website_channels wc ON wc.channel_id = c.id WHERE wc.website_id = ? ORDER BY c.platform, c.name`,
     websiteId,
-  ).map(({ site_image, site_reel, ...c }) => ({ ...c, post_image: site_image, post_reel: site_reel }));
+  ).map(({ site_image, site_reel, site_categories, ...c }) => ({ ...c, post_image: site_image, post_reel: site_reel, categories: readCategories(site_categories) }));
 
 /**
  * Choose, from the channel's side, the websites it posts for. A channel not
@@ -358,14 +411,17 @@ export function setChannelWebsites(channelId: number, websiteIds: number[]): str
     return 'This channel is for one website only. Tick “Connect this channel to multiple websites” to use it on more.';
   }
   const before = new Map(
-    all<{ website_id: number; post_image: number; post_reel: number }>('SELECT website_id, post_image, post_reel FROM newsite_website_channels WHERE channel_id = ?', channelId).map((r) => [r.website_id, r]),
+    all<{ website_id: number; post_image: number; post_reel: number; categories: string }>(
+      'SELECT website_id, post_image, post_reel, categories FROM newsite_website_channels WHERE channel_id = ?',
+      channelId,
+    ).map((r) => [r.website_id, r]),
   );
   run('DELETE FROM newsite_website_channels WHERE channel_id = ?', channelId);
   for (const w of ids) {
     const old = before.get(w);
     run(
-      'INSERT OR IGNORE INTO newsite_website_channels (website_id, channel_id, post_image, post_reel) VALUES (?, ?, ?, ?)',
-      w, channelId, old?.post_image ?? c.post_image, old?.post_reel ?? c.post_reel,
+      'INSERT OR IGNORE INTO newsite_website_channels (website_id, channel_id, post_image, post_reel, categories) VALUES (?, ?, ?, ?, ?)',
+      w, channelId, old?.post_image ?? c.post_image, old?.post_reel ?? c.post_reel, old?.categories ?? '',
     );
   }
   return null;

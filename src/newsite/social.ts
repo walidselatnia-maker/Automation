@@ -13,7 +13,7 @@ import { channelRules, type PlatformRules } from './platform-rules.js';
 import { loadTemplate } from '../pipeline/prompts.js';
 import { pickedPinDesigns, renderDesign } from './pin-designs.js';
 import type { Settings } from '../settings.js';
-import { bufferTokenOf, fbTokenOf, getChannel, videoOnly, websiteChannels, type ChannelRow } from './channels.js';
+import { bufferTokenOf, channelTakes, fbTokenOf, getChannel, videoOnly, websiteChannels, type ChannelRow } from './channels.js';
 import type { Fetch } from './client.js';
 import { claimSocialSlot, lastSocialSent, socialDueAt } from './gaps.js';
 import { parseImageSet } from './images.js';
@@ -195,9 +195,10 @@ export function websiteOf(seoId: number): NewWebsiteRow | undefined {
 export function createSocialPosts(seoId: number): number {
   const site = websiteOf(seoId);
   if (!site) return 0;
+  const category = getSeoRow(seoId)?.post_category ?? '';
   let added = 0;
   for (const c of websiteChannels(site.id)) {
-    if (!c.post_image || videoOnly(c.platform)) continue;
+    if (!c.post_image || videoOnly(c.platform) || !channelTakes(c, category)) continue;
     added += Number(run('INSERT OR IGNORE INTO newsite_social_posts (seo_id, channel_id, kind) VALUES (?, ?, ?)', seoId, c.id, c.platform).changes);
   }
   return added;
@@ -608,8 +609,8 @@ async function work(item: SocialPostRow, deps: SocialDeps, now: number): Promise
   const site = row ? websiteOf(row.id) : undefined;
   if (!row || !channel || !site) return fail(item.id, 'Its article, website or channel is gone.');
   if (row.post_status !== 'published' || !row.post_url) return fail(item.id, 'The article is not published on the website yet.');
-  if (!websiteChannels(site.id).some((c) => c.id === channel.id && c.post_image)) {
-    // The website no longer sends image posts there: it is dropped, never sent.
+  if (!websiteChannels(site.id).some((c) => c.id === channel.id && c.post_image && channelTakes(c, row.post_category))) {
+    // The website no longer sends image posts there (or not of this category): it is dropped, never sent.
     run('DELETE FROM newsite_social_posts WHERE id = ?', item.id);
     return;
   }

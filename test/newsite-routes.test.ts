@@ -2,13 +2,14 @@ import { randomBytes } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
 import formbody from '@fastify/formbody';
-import { all, closeDatabase, openDatabase, run } from '../src/db/index.js';
+import { all, closeDatabase, get, openDatabase, run } from '../src/db/index.js';
 import { decrypt } from '../src/lib/crypto.js';
 import { registerNewWebsiteRoutes } from '../src/newsite/routes.js';
 import type { SiteCheck } from '../src/newsite/client.js';
 import { checkSite } from '../src/newsite/client.js';
 import { saveKeywordPlan, type NewWebsiteRow } from '../src/newsite/repo.js';
 import { queuePlanSeo } from '../src/newsite/seo.js';
+import { createReelShares } from '../src/newsite/reel-shares.js';
 
 const KEY = randomBytes(32);
 const API_KEY = 'sk_test_FAKE0000000000000000000000';
@@ -174,6 +175,74 @@ describe('new website routes', () => {
     // Facebook off this website: its post that had not gone out is dropped.
     await post('/new-website/save', { ...GOOD, id: '1', channelId: '1', channelContent: '1', 'reel-1': '1' });
     expect(all('SELECT channel_id FROM newsite_social_posts')).toEqual([]);
+  });
+
+  it('channels by category: each channel shares all categories, or only the ones ticked; sharing follows it', async () => {
+    run(`INSERT INTO newsite_channels (platform, name, fb_page_id, via, post_image, post_reel) VALUES ('facebook', 'Cakes Page', 'p1', 'api', 1, 1)`);
+    run(`INSERT INTO newsite_channels (platform, name, fb_page_id, via, post_image, post_reel) VALUES ('facebook', 'Everything Page', 'p2', 'api', 1, 1)`);
+    expect((await post('/new-website/save', { ...GOOD, channelId: ['1', '2'], channelContent: '1', 'image-1': '1', 'reel-1': '1', 'image-2': '1', 'reel-2': '1' })).json().saved).toBe(true);
+    const plan = saveKeywordPlan(1, 'cake', [], 'recipe');
+    queuePlanSeo(plan, 'cake', [], 'recipe');
+    const plan2 = saveKeywordPlan(1, 'cookies', [], 'recipe');
+    queuePlanSeo(plan2, 'cookies', [], 'recipe');
+    run(`UPDATE keyword_seo SET post_status = 'published', post_url = 'https://f.longlivo.com/' || keyword, posted_at = datetime('now', '-1 day'),
+           post_category = CASE keyword WHEN 'cake' THEN 'Cakes' ELSE 'Cookies' END`);
+
+    // The edit page lists the website's categories under each channel, all unticked: all categories.
+    const page = (await app.inject({ method: 'GET', url: '/new-website/1/edit?section=4' })).body;
+    expect(page).toContain('All categories');
+    expect(page).toContain('name="cat-1" value="cakes"');
+    expect(page).toContain('name="cat-2" value="cookies"');
+
+    // The Cakes page gets cakes only; the other one keeps all categories.
+    const fields = { ...GOOD, id: '1', channelId: ['1', '2'], channelContent: '1', channelCats: '1', 'image-1': '1', 'reel-1': '1', 'image-2': '1', 'reel-2': '1' };
+    expect((await post('/new-website/save', { ...fields, 'cat-1': 'Cakes' })).json().saved).toBe(true);
+    expect(all('SELECT channel_id, categories FROM newsite_website_channels ORDER BY channel_id')).toEqual([
+      { channel_id: 1, categories: '["cakes"]' },
+      { channel_id: 2, categories: '' },
+    ]);
+    const posts = () => all<{ channel_id: number; keyword: string }>(
+      'SELECT p.channel_id, s.keyword FROM newsite_social_posts p JOIN keyword_seo s ON s.id = p.seo_id ORDER BY p.channel_id, s.keyword',
+    );
+    expect(posts()).toEqual([
+      { channel_id: 1, keyword: 'cake' },
+      { channel_id: 2, keyword: 'cake' },
+      { channel_id: 2, keyword: 'cookies' },
+    ]);
+    expect((await app.inject({ method: 'GET', url: '/new-website/1/edit?section=4' })).body).toContain('1 category');
+    // Reels the same way.
+    run(`UPDATE newsite_reels SET status = 'done', file = 'r.mp4'`);
+    for (const r of all<{ id: number }>('SELECT id FROM newsite_reels')) createReelShares(r.id);
+    expect(all(`SELECT sh.channel_id, s.keyword FROM newsite_reel_shares sh JOIN newsite_reels r ON r.id = sh.reel_id JOIN keyword_seo s ON s.id = r.seo_id
+      ORDER BY sh.channel_id, s.keyword`)).toEqual([
+      { channel_id: 1, keyword: 'cake' },
+      { channel_id: 2, keyword: 'cake' },
+      { channel_id: 2, keyword: 'cookies' },
+    ]);
+    run('DELETE FROM newsite_reel_shares');
+
+    // Changed to cookies only: the cake post not gone out yet is dropped, the one sent stays, cookies come in.
+    run(`UPDATE newsite_social_posts SET status = 'sent' WHERE channel_id = 2`);
+    await post('/new-website/save', { ...fields, 'cat-1': 'cookies', 'cat-2': 'cakes' });
+    expect(posts()).toEqual([
+      { channel_id: 1, keyword: 'cookies' },
+      { channel_id: 2, keyword: 'cake' },
+      { channel_id: 2, keyword: 'cookies' },
+    ]);
+    // Saved without the category lists (the add-website form): the lists are kept.
+    await post('/new-website/save', { ...GOOD, id: '1', channelId: ['1', '2'], channelContent: '1', 'image-1': '1', 'image-2': '1' });
+    expect(all('SELECT categories FROM newsite_website_channels ORDER BY channel_id')).toEqual([{ categories: '["cookies"]' }, { categories: '["cakes"]' }]);
+  });
+
+  it('reads a website\'s categories again from the website, and keeps them for the lists', async () => {
+    await app.close();
+    app = Fastify();
+    await app.register(formbody);
+    registerNewWebsiteRoutes(app, { encryptionKey: KEY, isPlatformReady: () => true, checkSite: async () => siteAnswer, siteCategories: async () => ['Breads', 'Cakes'] });
+    await app.ready();
+    expect((await post('/new-website/save', GOOD)).json().saved).toBe(true);
+    expect((await app.inject({ method: 'GET', url: '/new-website/1/categories' })).json()).toEqual({ categories: ['Breads', 'Cakes'] });
+    expect(get<{ site_categories: string }>('SELECT site_categories FROM new_websites WHERE id = 1')!.site_categories).toBe('["Breads","Cakes"]');
   });
 
   it('does not touch the old sites table', async () => {

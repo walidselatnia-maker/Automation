@@ -5,6 +5,7 @@ import { resolveDataDir } from '../config.js';
 import { createLogger, errorMessage } from '../lib/logger.js';
 import type { Settings } from '../settings.js';
 import { listAuthors, listCategories, patchPost, savePost, uploadMedia, type Fetch } from './client.js';
+import { rememberSiteCategories } from './channels.js';
 import { parseImageSet } from './images.js';
 import { isMainSlot, isStepSlot, listPictures, pictureDir, queueStepPictures, type PictureRow } from './pictures.js';
 import { parseRecipe, type Recipe } from './recipe.js';
@@ -106,6 +107,7 @@ const parseJson = (raw: string): Record<string, unknown> | null => {
  */
 async function categoryAndAuthor(t: Target, deps: PublishDeps): Promise<{ category: number | string; author?: number }> {
   const categories = await listCategories(t.site.domain, t.apiKey, deps.fetchImpl);
+  rememberSiteCategories(t.site.id, categories.map((c) => c.name));
   if (!categories.length) {
     const niche = get<{ niche: string }>('SELECT niche FROM new_websites WHERE id = ?', t.site.id)?.niche ?? '';
     const name = titleCase(niche.split(/\s+/).filter(Boolean).slice(0, 3).join(' ') || t.row.keyword);

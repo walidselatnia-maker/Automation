@@ -40,7 +40,8 @@ import { newLayout, type NewFlash } from './layout.js';
 import { homePage, homeState } from './home.js';
 import { dashboardData, dashboardPage, PERIODS, type Period } from './dashboard.js';
 import { newWebsiteListPage, newWebsiteWizardPage, type WizardChannel } from './view.js';
-import { channelsFor, setWebsiteChannels, takesImages, takesReels, websiteChannels } from './channels.js';
+import { channelsFor, knownCategories, rememberSiteCategories, setWebsiteChannels, takesImages, takesReels, websiteChannels } from './channels.js';
+import { listCategories } from './client.js';
 import { createReels, kickReels } from './reels.js';
 import { sharingChanged } from './sharing-sync.js';
 
@@ -52,9 +53,13 @@ const wizardChannels = (websiteId: number): WizardChannel[] => {
     return {
       id: c.id, name: c.name, platform: c.platform, via: c.via, checked: mine.has(c.id),
       image: Boolean(used.post_image), reel: Boolean(used.post_reel), takesReels: takesReels(c.platform), takesImages: takesImages(c.platform),
+      categories: mine.get(c.id)?.categories ?? [],
     };
   });
 };
+
+/** A form field that may come once or many times, as a list. */
+const many = (value: unknown): string[] => (Array.isArray(value) ? value.map(String) : value === undefined ? [] : [String(value)]);
 import { LANGUAGE_CODES, STEP_FIELDS, stepOf, validate, type CleanWebsite, type Errors } from './validate.js';
 
 /** What the new dashboard needs from the server that hosts it. */
@@ -69,6 +74,8 @@ export interface NewWebsiteDeps {
   ask?: (promptName: string, variables: Record<string, unknown>) => Promise<string>;
   /** Whether websites may be added yet. Defaults to the saved platform setup. */
   isPlatformReady?: () => boolean;
+  /** The category names on a website (GET /api/v1/categories); tests pass their own. */
+  siteCategories?: (domain: string, apiKey: string) => Promise<string[]>;
   /** Start AI#1 in the background when plans are saved. Tests turn it off. */
   autoSeo?: boolean;
   /** For the platform setup's live checks (AI provider, Telegram, image service). */
@@ -279,7 +286,7 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
 
   app.get('/new-website/add', async (_request, reply) => {
     if (!ready()) return reply.redirect(`/new-website/platform?error=${encodeURIComponent(NOT_READY)}`, 303);
-    return send(reply, newLayout({ title: 'Add website', active: '/new-website', body: newWebsiteWizardPage(undefined, wizardChannels(0)) }));
+    return send(reply, newLayout({ title: 'Add website', active: '/new-website', body: newWebsiteWizardPage(undefined, wizardChannels(0), -1, []) }));
   });
 
   app.get('/new-website/:id/edit', async (request, reply) => {
@@ -288,8 +295,21 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
     const section = Number((request.query as { section?: string } | undefined)?.section ?? -1);
     return send(
       reply,
-      newLayout({ title: `Edit ${site.name}`, active: '/new-website', body: newWebsiteWizardPage(site, wizardChannels(site.id), Number.isInteger(section) ? section : -1) }),
+      newLayout({ title: `Edit ${site.name}`, active: '/new-website', body: newWebsiteWizardPage(site, wizardChannels(site.id), Number.isInteger(section) ? section : -1, knownCategories(site.id)) }),
     );
+  });
+
+  /** A website's categories, read again from the website, for its channels' category lists. */
+  app.get('/new-website/:id/categories', async (request, reply) => {
+    const site = getNewWebsite(Number((request.params as { id: string }).id) || 0);
+    if (!site) return reply.code(404).send({ categories: [] });
+    try {
+      const read = deps.siteCategories ?? (async (domain: string, apiKey: string) => (await listCategories(domain, apiKey, deps.fetchImpl)).map((c) => c.name));
+      rememberSiteCategories(site.id, await read(site.domain, websiteApiKey(site, deps.encryptionKey)));
+    } catch {
+      // The website cannot be reached: the categories known already.
+    }
+    return reply.send({ categories: knownCategories(site.id) });
   });
 
   /** One wizard step: say what is wrong, or let the browser move on. */
@@ -330,7 +350,14 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
       return reply.send({ errors: { domain: 'This website has already been added.' }, step: 0 });
     }
     const picked = (Array.isArray(raw.channelId) ? raw.channelId : raw.channelId === undefined ? [] : [raw.channelId]).map(Number).filter(Boolean);
-    const content = new Map(picked.map((id) => [id, { image: raw[`image-${id}`] !== undefined, reel: raw[`reel-${id}`] !== undefined }]));
+    // No category ticked: all categories.
+    const content = new Map(
+      picked.map((id) => [id, {
+        image: raw[`image-${id}`] !== undefined,
+        reel: raw[`reel-${id}`] !== undefined,
+        ...(raw.channelCats ? { categories: many(raw[`cat-${id}`]) } : {}),
+      }]),
+    );
     const refused = setWebsiteChannels(websiteId, picked, raw.channelContent ? content : undefined);
     sharingChanged();
     return reply.send({

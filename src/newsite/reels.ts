@@ -7,7 +7,7 @@ import { createLogger, errorMessage } from '../lib/logger.js';
 import { pictureMediaUrl } from '../core/media-links.js';
 import { promptsDirectory } from '../pipeline/prompts.js';
 import type { Settings } from '../settings.js';
-import { PLATFORMS, REEL_PLATFORMS, takesReels, websiteChannels } from './channels.js';
+import { PLATFORMS, REEL_PLATFORMS, channelTakes, takesReels, websiteChannels } from './channels.js';
 import { flowProjectFor, isMainSlot, isStepSlot, listPictures } from './pictures.js';
 import { getKeywordPlan, getNewWebsite, type NewWebsiteRow } from './repo.js';
 import { getSeoRow, type SeoRow } from './seo.js';
@@ -79,7 +79,7 @@ export function createReels(seoId: number, always = false): number {
   const row = getSeoRow(seoId);
   const plan = row ? getKeywordPlan(row.plan_id) : undefined;
   if (!row || !plan || row.post_status !== 'published') return 0;
-  if (!always && !websiteChannels(plan.website_id).some((c) => c.post_reel && takesReels(c.platform))) return 0;
+  if (!always && !websiteChannels(plan.website_id).some((c) => c.post_reel && takesReels(c.platform) && channelTakes(c, row.post_category))) return 0;
   if (get('SELECT id FROM newsite_reels WHERE seo_id = ? LIMIT 1', seoId)) return 0;
   return Number(run(`INSERT OR IGNORE INTO newsite_reels (seo_id, platform) VALUES (?, ?)`, seoId, ALL_PLATFORMS).changes ?? 0);
 }

@@ -174,7 +174,7 @@ const num = (n: number, label: string, cls = ''): Html => html`<div class="sh-nu
 /** Where each website stands, in counts. */
 function countsOf(s: SharingSite) {
   const postsOf = (id: number) => s.posts.filter((p) => p.seo_id === id);
-  const toShare = s.articles.filter((a) => missingChannels(postsOf(a.row.id), s.channels).length).length;
+  const toShare = s.articles.filter((a) => missingChannels(postsOf(a.row.id), s.channels, a.row.post_category).length).length;
   return {
     published: s.articles.length,
     shared: s.articles.filter((a) => postsOf(a.row.id).length > 0 && postsOf(a.row.id).every((p) => p.status === 'sent')).length,
@@ -192,7 +192,7 @@ function channelData(s: SharingSite, c: ChannelRow, plan: { id: number } | null 
   const articles = plan ? s.articles.filter((a) => a.planId === plan.id) : s.articles;
   const ids = new Set(articles.map((a) => a.row.id));
   const posts = s.posts.filter((p) => p.channel_id === c.id && ids.has(p.seo_id));
-  const notYet = articles.filter((a) => missingChannels(posts.filter((p) => p.seo_id === a.row.id), [c]).length);
+  const notYet = articles.filter((a) => missingChannels(posts.filter((p) => p.seo_id === a.row.id), [c], a.row.post_category).length);
   // Reels on this channel: only where each one stands here (they are made on the Reels page).
   const reelIds = new Set(s.reels.filter((r) => ids.has(r.seo_id)).map((r) => r.id));
   const shares = takesReels(c.platform) ? s.reelShares.filter((x) => x.channel_id === c.id && reelIds.has(x.reel_id)) : null;
@@ -413,7 +413,7 @@ export function shareWebsiteStep(sites: SharingSite[], chosen = 0): Html {
 
 export function shareArticlesStep(s: SharingSite): Html {
   const postsOf = (id: number) => s.posts.filter((p) => p.seo_id === id);
-  const open = s.articles.map((a) => ({ a, missing: missingChannels(postsOf(a.row.id), s.channels) })).filter((x) => x.missing.length);
+  const open = s.articles.map((a) => ({ a, missing: missingChannels(postsOf(a.row.id), s.channels, a.row.post_category) })).filter((x) => x.missing.length);
   const error = !s.channels.length
     ? `${s.site.name} shares on no channel yet. Pick its channels in the website’s settings first.`
     : '';

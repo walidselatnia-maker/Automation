@@ -7,7 +7,7 @@ import { createLogger, errorMessage } from '../lib/logger.js';
 import { commentsThroughApi } from './first-comment.js';
 import { newsiteReelMediaUrl } from '../core/media-links.js';
 import type { Settings } from '../settings.js';
-import { bufferTokenOf, fbTokenOf, getChannel, takesReels, websiteChannels, type ChannelRow } from './channels.js';
+import { bufferTokenOf, fbTokenOf, channelTakes, getChannel, takesReels, websiteChannels, type ChannelRow } from './channels.js';
 import { channelRules } from './platform-rules.js';
 import { getReel, reelDir, withDomain, type ReelRow } from './reels.js';
 import { getSeoRow } from './seo.js';
@@ -102,10 +102,11 @@ export const listPlanReelShares = (planId: number): ReelShareRow[] =>
     planId,
   );
 
-/** Every channel of the reel's website that takes reels: where it can be shared. */
+/** Every channel of the reel's website that takes reels and its article's category: where it can be shared. */
 export function reelDestinations(reel: Pick<ReelRow, 'seo_id'>): ChannelRow[] {
   const site = websiteOf(reel.seo_id);
-  return site ? websiteChannels(site.id).filter((c) => takesReels(c.platform)) : [];
+  const category = getSeoRow(reel.seo_id)?.post_category ?? '';
+  return site ? websiteChannels(site.id).filter((c) => takesReels(c.platform) && channelTakes(c, category)) : [];
 }
 
 /**
@@ -151,8 +152,8 @@ async function work(share: ReelShareRow, deps: ReelShareDeps, now: number): Prom
   if (!reel || !channel || !row || !site) return fail(share.id, 'Its reel, article, website or channel is gone.');
   if (reel.status !== 'done' || !reel.file) return fail(share.id, 'The reel has no video yet.');
   if (row.post_status !== 'published' || !row.post_url) return fail(share.id, 'The article is not published on the website yet.');
-  if (!websiteChannels(site.id).some((c) => c.id === channel.id && c.post_reel)) {
-    // The website no longer sends reels there: it is dropped, never sent.
+  if (!websiteChannels(site.id).some((c) => c.id === channel.id && c.post_reel && channelTakes(c, row.post_category))) {
+    // The website no longer sends reels there (or not of this category): it is dropped, never sent.
     run('DELETE FROM newsite_reel_shares WHERE id = ?', share.id);
     return;
   }

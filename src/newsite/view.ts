@@ -260,6 +260,11 @@ export const WIZARD_CSS = `
 .wz-ch-what label { display: flex; align-items: center; gap: 6px; cursor: pointer; white-space: nowrap; margin: 0; font-weight: 400; }
 .wz-ch-what input { width: 16px; height: 16px; min-height: 0; margin: 0; padding: 0; flex: none; accent-color: var(--accent); }
 .wz-ch-row:not(:has(input[name=channelId]:checked)) .wz-ch-what { opacity: .45; }
+.wz-ch-cats { flex-basis: 100%; font-size: 13px; }
+.wz-ch-cats summary { cursor: pointer; color: var(--idle-ink); font-weight: 600; }
+.wz-ch-catlist { display: flex; flex-wrap: wrap; gap: 6px 16px; padding: 8px 0 2px; }
+.wz-ch-catlist label { display: flex; align-items: center; gap: 6px; margin: 0; font-weight: 400; cursor: pointer; }
+.wz-ch-catlist input { width: 16px; height: 16px; min-height: 0; margin: 0; padding: 0; accent-color: var(--accent); }
 .wz-saveerr { color: var(--bad); font-size: 14px; font-weight: 600; margin-top: 16px; }
 .wz-saveerr:empty { display: none; }
 @media (max-width: 640px) {
@@ -338,9 +343,22 @@ export interface WizardChannel {
   takesReels: boolean;
   /** False for YouTube and TikTok: videos only. */
   takesImages: boolean;
+  /** The website's categories it shares (lower case); empty = all categories. */
+  categories: string[];
 }
 
-export function newWebsiteWizardPage(existing?: NewWebsiteRow, channels: WizardChannel[] = [], section = -1): Html {
+const catsSummary = (n: number): string => (n ? `${n} ${n === 1 ? 'category' : 'categories'}` : 'All categories');
+
+/** Which of the website's categories a channel shares: none ticked = all categories. */
+const channelCategories = (c: WizardChannel, names: string[]): Html => {
+  const on = new Set(c.categories);
+  return html`<details class="wz-ch-cats" data-ch="${String(c.id)}"><summary>${catsSummary(c.categories.length)}</summary>
+    <div class="wz-ch-catlist">${names.map(
+      (n) => html`<label><input type="checkbox" name="cat-${String(c.id)}" value="${n.toLowerCase()}" ${on.has(n.toLowerCase()) ? raw('checked') : raw('')} /> ${n}</label>`,
+    )}</div></details>`;
+};
+
+export function newWebsiteWizardPage(existing?: NewWebsiteRow, channels: WizardChannel[] = [], section = -1, categories: string[] = []): Html {
   const e = existing;
   // A saved website opens on one part alone, with Cancel and Save.
   const one = Boolean(e) && section >= 0 && section < STEP_NAMES.length - 1;
@@ -448,7 +466,7 @@ export function newWebsiteWizardPage(existing?: NewWebsiteRow, channels: WizardC
             <div class="wz-field">
               <label>Share this website’s articles on</label>
               ${channels.length
-                ? html`<input type="hidden" name="channelContent" value="1" />
+                ? html`<input type="hidden" name="channelContent" value="1" />${e ? html`<input type="hidden" name="channelCats" value="1" />` : raw('')}
                   <div class="wz-channels">${channels.map(
                     (c) => html`<div class="wz-ch-row">
                       <label class="wz-check"><input type="checkbox" name="channelId" value="${String(c.id)}" data-name="${c.name}" ${c.checked ? raw('checked') : raw('')} />
@@ -457,6 +475,7 @@ export function newWebsiteWizardPage(existing?: NewWebsiteRow, channels: WizardC
                         ${c.takesImages ? html`<label><input type="checkbox" name="image-${String(c.id)}" value="1" ${c.image ? raw('checked') : raw('')} /> Image posts</label>` : raw('')}
                         ${c.takesReels ? html`<label><input type="checkbox" name="reel-${String(c.id)}" value="1" ${c.reel ? raw('checked') : raw('')} /> Reels</label>` : raw('')}
                       </span>
+                      ${e ? channelCategories(c, categories) : raw('')}
                     </div>`,
                   )}</div>`
                 : html`<div class="wz-hint">No channel to share on yet. Add one on the <a href="/new-website/channels">Channels</a> page, then come back.</div>`}
@@ -501,6 +520,26 @@ const SCRIPT = `<script>
   var persona = function () { return val('customPersona') || val('persona'); };
   var range = function (p) { return val(p + 'From') || val(p + 'To') ? val(p + 'From') + ' to ' + val(p + 'To') + ' ' + val(p + 'Unit') : '—'; };
   var EDIT = form.getAttribute('data-edit') === '1';
+  // Each channel's categories: the summary follows the ticks, and the website's own categories are read again.
+  var catsText = function (n) { return n ? n + (n === 1 ? ' category' : ' categories') : 'All categories'; };
+  [].forEach.call(form.querySelectorAll('.wz-ch-cats'), function (d) {
+    d.addEventListener('change', function () { d.querySelector('summary').textContent = catsText(d.querySelectorAll('input:checked').length); });
+  });
+  if (EDIT && form.querySelector('.wz-ch-cats')) {
+    fetch('/new-website/' + f('id').value + '/categories').then(function (r) { return r.json(); }).then(function (data) {
+      [].forEach.call(form.querySelectorAll('.wz-ch-cats'), function (d) {
+        var list = d.querySelector('.wz-ch-catlist'), id = d.getAttribute('data-ch'), have = {};
+        [].forEach.call(list.querySelectorAll('input'), function (i) { have[i.value] = 1; });
+        (data.categories || []).forEach(function (name) {
+          var v = name.toLowerCase();
+          if (have[v]) return;
+          var l = document.createElement('label'), i = document.createElement('input');
+          i.type = 'checkbox'; i.name = 'cat-' + id; i.value = v;
+          l.appendChild(i); l.appendChild(document.createTextNode(' ' + name)); list.appendChild(l);
+        });
+      });
+    }).catch(function () {});
+  }
   var channelsText = function () {
     var names = [].slice.call(form.querySelectorAll('input[name=channelId]:checked')).map(function (b) { return b.getAttribute('data-name'); });
     return names.length ? names.join(', ') : 'No channel';
