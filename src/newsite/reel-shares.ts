@@ -11,7 +11,7 @@ import { bufferTokenOf, fbTokenOf, getChannel, takesReels, websiteChannels, type
 import { channelRules } from './platform-rules.js';
 import { getReel, reelDir, type ReelRow } from './reels.js';
 import { getSeoRow } from './seo.js';
-import { bufferMetadata, holdForSocialGap, isQueueFull, pickBoard, realInstagram, realThreads, websiteOf, writePostWords, type InstagramApi, type ThreadsApi } from './social.js';
+import { NO_BOARD, bufferMetadata, holdForSocialGap, isQueueFull, pickBoard, realInstagram, realThreads, websiteOf, writePostWords, type InstagramApi, type ThreadsApi } from './social.js';
 import { threadsTokenOf, type Renew } from './threads-token.js';
 
 /**
@@ -178,6 +178,7 @@ async function work(share: ReelShareRow, deps: ReelShareDeps, now: number): Prom
       if (channel.platform === 'pinterest') {
         if (!found.boards.length) throw new Error('This Pinterest channel has no boards. Create one on Pinterest first.');
         board = await pickBoard({ row, site }, found.boards, deps);
+        if (!board) return fail(share.id, NO_BOARD);
       }
       const base = deps.settings.get('public_base_url').trim();
       if (!base) {

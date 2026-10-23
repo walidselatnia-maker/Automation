@@ -20,7 +20,9 @@ import { listChannels, saveBufferChannel, saveChannelRules, saveFacebookApiChann
 import { kickPictureMaker, resetPictureMakerState } from '../src/newsite/pictures.js';
 import { addPinDesign, pickedPinDesigns, setPinDesignPicked } from '../src/newsite/pin-designs.js';
 import { checkPlatformRules, listPlatformRules, loadPlatformRules, parseRules } from '../src/newsite/platform-rules.js';
+import { dashboardData, dashboardPage } from '../src/newsite/dashboard.js';
 import {
+  NO_BOARD,
   bufferMetadata,
   checkFields,
   createSocialPosts,
@@ -73,10 +75,12 @@ describe('Sharing an article on its channels', () => {
   let answers: Record<string, string>;
   let pictureStatus: number;
   let clock: number;
+  let pinBoards: { serviceId: string; name: string }[];
+  let boardAnswer: string;
 
   const buffer = (): BufferApi => ({
     channels: async () => [
-      { id: 'ch-pin', name: 'longlivo', service: 'pinterest', boards: [{ serviceId: 'b1', name: 'Recipes' }, { serviceId: 'b2', name: 'Strawberry Desserts' }] },
+      { id: 'ch-pin', name: 'longlivo', service: 'pinterest', boards: pinBoards },
       { id: 'ch-fb', name: 'Easy Cakes', service: 'facebook', boards: [] },
       { id: 'ch-ig', name: 'longlivo.kitchen', service: 'instagram', boards: [] },
       { id: 'ch-threads', name: 'longlivo threads', service: 'threads', boards: [] },
@@ -120,7 +124,7 @@ describe('Sharing an article on its channels', () => {
     wakeIn: () => {},
     ask: async (name, vars) => {
       asked.push({ name, vars });
-      if (name === 'newsite-pick-board') return '{"board": "Strawberry Desserts"}';
+      if (name === 'newsite-pick-board') return boardAnswer;
       return answers[String(vars.label)] ?? '{}';
     },
   });
@@ -179,6 +183,8 @@ describe('Sharing an article on its channels', () => {
     pictureStatus = 200;
     answers = { Pinterest: JSON.stringify(GOOD_PIN), Facebook: JSON.stringify(GOOD_FB), Instagram: JSON.stringify(GOOD_IG) };
     clock = 1_000_000;
+    pinBoards = [{ serviceId: 'b1', name: 'Recipes' }, { serviceId: 'b2', name: 'Strawberry Desserts' }];
+    boardAnswer = '{"board": "Strawberry Desserts"}';
     resetPictureMakerState();
   });
 
@@ -233,6 +239,28 @@ describe('Sharing an article on its channels', () => {
     expect(sent.text).not.toMatch(/http|longlivo/);
     // Recorded only with Buffer's own confirmation: its post id and when it will post.
     expect(getSocialPost(item!.id)).toMatchObject({ status: 'sent', external_id: 'buffer-1', due_at: '2026-10-14T09:30:00.000Z', board_name: 'Strawberry Desserts', error: '' });
+  });
+
+  it('Pinterest: when no board fits the keyword, the pin goes to the account’s board with “general” in its name', async () => {
+    pinBoards = [{ serviceId: 'b1', name: 'Recipes' }, { serviceId: 'b9', name: 'My General Ideas' }];
+    boardAnswer = '{"board": ""}';
+    setWebsiteChannels(websiteId, [pinChannel()]);
+    await share();
+    expect(bufferPosts).toHaveLength(1);
+    expect(bufferPosts[0]!.metadata).toContain('boardServiceId: "b9"');
+    expect(listSocialPosts()[0]).toMatchObject({ status: 'sent', board_name: 'My General Ideas' });
+  });
+
+  it('Pinterest: with no fitting board and no “general” board, the pin is not posted and the Dashboard names the keyword', async () => {
+    pinBoards = [{ serviceId: 'b1', name: 'Recipes' }];
+    boardAnswer = '{"board": "Cakes"}'; // not on the account
+    setWebsiteChannels(websiteId, [pinChannel()]);
+    await share();
+    expect(bufferPosts).toHaveLength(0);
+    expect(listSocialPosts()[0]).toMatchObject({ status: 'failed', error: NO_BOARD });
+    const d = dashboardData(30, 'UTC');
+    expect(d.notes.map((n) => n.text)).toEqual(['No Pinterest board for “strawberry cake” (Long Livo): add a board with “general” in its name']);
+    expect(String(dashboardPage(d))).toContain('No Pinterest board for “strawberry cake”');
   });
 
   it('never records a post as sent when Buffer does not confirm it', async () => {

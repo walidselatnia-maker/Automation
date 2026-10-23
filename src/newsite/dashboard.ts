@@ -3,6 +3,7 @@ import { failedArticlePictures } from './pictures.js';
 import { html, raw, type Html } from '../web/views/layout.js';
 import { PLATFORMS } from './channels.js';
 import { listNewWebsites } from './repo.js';
+import { NO_BOARD } from './social.js';
 
 /**
  * The dashboard: what the content generation did over a period, at a glance.
@@ -40,6 +41,8 @@ export interface DashboardData {
   platforms: { label: string; color: string; sent: number; failed: number }[];
   websites: { name: string; domain: string; published: number; working: number; posts: number; inPeriod: number }[];
   problems: { label: string; count: number; href: string }[];
+  /** One line per thing to fix by hand: a keyword with no Pinterest board. */
+  notes: { text: string; href: string }[];
   recent: { when: number; kind: 'article' | 'post' | 'reel'; title: string; where: string; color?: string; href?: string }[];
 }
 
@@ -162,6 +165,16 @@ export function dashboardData(days: Period, timezone: string, now = Date.now()):
     { label: 'reel not made|reels not made', count: reels.filter((r) => r.status === 'failed').length, href: '/new-website/sharing/reels' },
   ].filter((p) => p.count);
 
+  const noBoard = all<{ keyword: string; site: string }>(
+    `SELECT DISTINCT s.keyword, COALESCE(w.name, '') AS site FROM (
+       SELECT seo_id, error FROM newsite_social_posts WHERE status = 'failed'
+       UNION ALL SELECT re.seo_id, r.error FROM newsite_reel_shares r JOIN newsite_reels re ON re.id = r.reel_id WHERE r.status = 'failed'
+     ) f JOIN keyword_seo s ON s.id = f.seo_id LEFT JOIN keyword_plans pl ON pl.id = s.plan_id LEFT JOIN new_websites w ON w.id = pl.website_id
+     WHERE f.error = ? ORDER BY s.id`,
+    NO_BOARD,
+  );
+  const notes = noBoard.map((r) => ({ text: `No Pinterest board for “${r.keyword}”${r.site ? ` (${r.site})` : ''}: add a board with “general” in its name`, href: '/new-website/sharing' }));
+
   const colorOf = (platform: string) => PLATFORMS.find((p) => p.key === platform)?.color;
   const recent = [
     ...articles.map((a) => ({ when: a.t, kind: 'article' as const, title: a.title || a.keyword, where: a.site, href: a.post_url || undefined })),
@@ -172,7 +185,7 @@ export function dashboardData(days: Period, timezone: string, now = Date.now()):
     .sort((a, b) => b.when - a.when)
     .slice(0, 8);
 
-  return { days, kpis, daily, funnel, platforms, websites, problems, recent };
+  return { days, kpis, daily, funnel, platforms, websites, problems, notes, recent };
 }
 
 /* -- The page ------------------------------------------------------------- */
@@ -234,6 +247,8 @@ html.dark .db { --c-articles: #7f86dc; --c-words: #9b89d8; --c-pictures: #d6a545
 .db-problems { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 18px; padding: 12px 16px; border: 1px solid var(--bad); border-left-width: 4px; border-radius: var(--r-ctl); background: var(--bad-tint); }
 .db-problems b { margin-right: 4px; }
 .db-problems a { color: var(--bad); font-weight: 600; text-decoration: none; }
+.db-notes { margin: 0 0 18px; padding: 10px 16px 10px 34px; border: 1px solid var(--line-strong); border-left: 4px solid var(--bad); border-radius: var(--r-ctl); background: var(--surface); display: grid; gap: 4px; }
+.db-notes a { color: var(--ink); font-weight: 600; text-decoration: none; }
 .db-problems a:hover { text-decoration: underline; }
 .db-empty { color: var(--faint); font-size: 14px; padding: 20px 0; text-align: center; }
 @media (max-width: 1100px) { .db-grid { grid-template-columns: 1fr; } }
@@ -321,6 +336,7 @@ export function dashboardPage(d: DashboardData, now = Date.now(), autopilot: Htm
     ${d.problems.length
       ? html`<div class="db-problems" role="status"><b>Needs your attention:</b>${d.problems.map((p, i) => html`${i ? ' · ' : ''}<a href="${p.href}">${String(p.count)} ${p.label.split('|')[p.count === 1 ? 0 : 1]!}</a>`)}</div>`
       : raw('')}
+    ${d.notes.length ? html`<ul class="db-notes" role="status">${d.notes.map((n) => html`<li><a href="${n.href}">${n.text}</a></li>`)}</ul>` : raw('')}
 
     <div class="db-kpis">
       ${d.kpis.map((k) => html`<a class="db-kpi" href="${k.href}" style="--tone:var(--${k.tone})"><span>${k.label}</span><b>${fmt(k.value)}</b>${change(k, d.days)}</a>`)}

@@ -28,8 +28,8 @@ import { getSeoRow, type SeoRow } from './seo.js';
  *
  * One post per channel, each its own: a Pinterest pin (its own 3:4 picture
  * from one of four rotating templates, its own words, a board the AI picks
- * for the keyword) sent through the channel's Buffer account, and a Facebook
- * image post sent the way its channel posts: through the Facebook API, or
+ * for the keyword, or the account's "general" board) sent through the
+ * channel's Buffer account, and a Facebook image post sent the way its channel posts: through the Facebook API, or
  * through Buffer.
  *
  * The link rule never bends: the article link is never in a post's text. A
@@ -386,7 +386,11 @@ function queuePicture(w: Work, deps: SocialDeps): void {
   deps.startPictures?.();
 }
 
-/** The board for this keyword, from the boards on the channel's Pinterest account. */
+/**
+ * The board for this keyword, from the boards on the channel's Pinterest
+ * account: the AI's pick, or, when none fits, the account's "general" board.
+ * None when there is no such board: the pin is not posted.
+ */
 export async function pickBoard(w: { row: SeoRow; site: NewWebsiteRow }, boards: { serviceId: string; name: string }[], deps: Pick<SocialDeps, 'ask'>) {
   const raw = await deps
     .ask('newsite-pick-board', {
@@ -397,8 +401,14 @@ export async function pickBoard(w: { row: SeoRow; site: NewWebsiteRow }, boards:
     })
     .catch(() => '');
   const name = String(parseObject(raw)?.board ?? '').trim().toLowerCase();
-  return boards.find((b) => b.name.toLowerCase() === name) ?? boards[0]!;
+  return boards.find((b) => b.name.toLowerCase() === name) ?? generalBoard(boards);
 }
+
+/** The account's catch-all board: the first whose name contains "general". Boards cannot be created from here. */
+export const generalBoard = <T extends { name: string }>(boards: T[]): T | undefined => boards.find((b) => /general/i.test(b.name));
+
+/** The error a pin is stopped with when no board fits its keyword and the account has no "general" board; the Dashboard looks for it. */
+export const NO_BOARD = 'No Pinterest board fits this keyword, and the account has no board with “general” in its name.';
 
 /**
  * Where Buffer fetches a picture from: this platform itself, by a signed link
@@ -510,6 +520,7 @@ async function sendThroughBuffer(w: Work, picture: PictureRow, deps: SocialDeps,
     if (w.channel.platform === 'pinterest') {
       if (!found.boards.length) throw new Error('This Pinterest channel has no boards. Create one on Pinterest first.');
       board = await pickBoard(w, found.boards, deps);
+      if (!board) return fail(w.item.id, NO_BOARD);
     }
     // The link, only ever where the rules put it: the pin's own link, or the first comment (paid Buffer plans only).
     const firstComment = w.rules.link === 'first_comment' && w.channel.paid_buffer && !commentsThroughApi(w.channel) ? w.row.post_url : '';
