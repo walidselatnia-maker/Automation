@@ -17,6 +17,12 @@ export interface NewWebsiteRow {
   auto_publish: number;
   daily_target: number;
   interval_minutes: number;
+  /** The random gap between articles, in minutes; random_gap_to 0 = not set, the fixed gap counts. */
+  random_gap_from: number;
+  random_gap_to: number;
+  /** The random gap between two social posts to one channel, in minutes; social_gap_to 0 = not set. */
+  social_gap_from: number;
+  social_gap_to: number;
   pin_username: string;
   project_id: string;
   api_key_encrypted: string;
@@ -46,8 +52,9 @@ export function createNewWebsite(site: CleanWebsite, key: Buffer): number {
   return run(
     `INSERT INTO new_websites (name, domain, niche, niche_context, persona, status,
        auto_publish, daily_target, interval_minutes, pin_username, project_id,
-       api_key_encrypted, buffer_token_encrypted, language, picture_style)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       api_key_encrypted, buffer_token_encrypted, language, picture_style,
+       random_gap_from, random_gap_to, social_gap_from, social_gap_to)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     site.name,
     site.domain,
     site.niche,
@@ -63,6 +70,10 @@ export function createNewWebsite(site: CleanWebsite, key: Buffer): number {
     encrypt(site.bufferToken, key),
     site.language || 'English',
     site.pictureStyle ?? '',
+    site.randomGapFrom ?? 0,
+    site.randomGapTo ?? 0,
+    site.socialGapFrom ?? 0,
+    site.socialGapTo ?? 0,
   ).lastInsertRowid;
 }
 
@@ -71,7 +82,8 @@ export function updateNewWebsite(id: number, site: CleanWebsite, key: Buffer): v
   run(
     `UPDATE new_websites SET name = ?, domain = ?, niche = ?, niche_context = ?, persona = ?, status = ?,
        auto_publish = ?, daily_target = ?, interval_minutes = ?, pin_username = ?, project_id = ?,
-       api_key_encrypted = ?, buffer_token_encrypted = ?, language = ?, picture_style = ?
+       api_key_encrypted = ?, buffer_token_encrypted = ?, language = ?, picture_style = ?,
+       random_gap_from = ?, random_gap_to = ?, social_gap_from = ?, social_gap_to = ?
      WHERE id = ?`,
     site.name,
     site.domain,
@@ -88,6 +100,10 @@ export function updateNewWebsite(id: number, site: CleanWebsite, key: Buffer): v
     encrypt(site.bufferToken, key),
     site.language || 'English',
     site.pictureStyle ?? '',
+    site.randomGapFrom ?? 0,
+    site.randomGapTo ?? 0,
+    site.socialGapFrom ?? 0,
+    site.socialGapTo ?? 0,
     id,
   );
 }

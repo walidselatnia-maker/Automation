@@ -71,6 +71,21 @@ describe('new website validation', () => {
     expect(validate({ gapAmount: '31', gapUnit: 'days' }, [...f]).errors.gapAmount).toBeTruthy();
   });
 
+  it('takes an optional random gap "from X to Y" in minutes, for articles and for social posts', () => {
+    const f = ['randomFrom', 'randomTo', 'randomUnit', 'socialFrom', 'socialTo', 'socialUnit'] as const;
+    const none = validate({ randomUnit: 'hours', socialUnit: 'hours' }, [...f]);
+    expect(none.errors).toEqual({});
+    expect(none.clean).toMatchObject({ randomGapFrom: 0, randomGapTo: 0, socialGapFrom: 0, socialGapTo: 0 });
+    const set = validate({ randomFrom: '2', randomTo: '6', randomUnit: 'hours', socialFrom: '30', socialTo: '90', socialUnit: 'minutes' }, [...f]);
+    expect(set.errors).toEqual({});
+    expect(set.clean).toMatchObject({ randomGapFrom: 120, randomGapTo: 360, socialGapFrom: 30, socialGapTo: 90 });
+    expect(validate({ randomFrom: '2', randomTo: '', randomUnit: 'hours' }, ['randomFrom', 'randomTo']).errors.randomTo).toBeTruthy();
+    expect(validate({ randomFrom: '6', randomTo: '2', randomUnit: 'hours' }, ['randomFrom', 'randomTo']).errors.randomFrom).toBeTruthy();
+    expect(validate({ randomFrom: '0', randomTo: '0', randomUnit: 'hours' }, ['randomFrom', 'randomTo']).errors.randomTo).toBeTruthy();
+    expect(validate({ socialFrom: '1', socialTo: '31', socialUnit: 'days' }, ['socialFrom', 'socialTo']).errors.socialTo).toBeTruthy();
+    expect(validate({ socialFrom: '1', socialTo: '2', socialUnit: 'weeks' }, ['socialUnit']).errors.socialUnit).toBeTruthy();
+  });
+
   it('needs whole posts per day from 0 to 100', () => {
     expect(validate({ dailyTarget: '3' }, ['dailyTarget']).clean.dailyTarget).toBe(3);
     for (const bad of ['', '-1', '1.5', 'x', '101']) {

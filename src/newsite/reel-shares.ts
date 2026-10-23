@@ -11,7 +11,7 @@ import { bufferTokenOf, fbTokenOf, getChannel, takesReels, websiteChannels, type
 import { channelRules } from './platform-rules.js';
 import { getReel, reelDir, type ReelRow } from './reels.js';
 import { getSeoRow } from './seo.js';
-import { bufferMetadata, isQueueFull, pickBoard, realInstagram, realThreads, websiteOf, writePostWords, type InstagramApi, type ThreadsApi } from './social.js';
+import { bufferMetadata, holdForSocialGap, isQueueFull, pickBoard, realInstagram, realThreads, websiteOf, writePostWords, type InstagramApi, type ThreadsApi } from './social.js';
 import { threadsTokenOf, type Renew } from './threads-token.js';
 
 /**
@@ -167,6 +167,7 @@ async function work(share: ReelShareRow, deps: ReelShareDeps, now: number): Prom
     share.title = out.answer.title ?? '';
     run('UPDATE newsite_reel_shares SET text = ?, title = ? WHERE id = ?', share.text, share.title, share.id);
   }
+  if (holdForSocialGap('newsite_reel_shares', share.id, site, channel.id, now)) return;
 
   if (channel.via === 'buffer') {
     const api = (deps.buffer ?? realBuffer)(bufferTokenOf(channel, deps.encryptionKey));

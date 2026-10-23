@@ -259,6 +259,19 @@ describe('Automation: one keyword at a time', () => {
     expect(activeIds()).toEqual([ids[1]]);
   });
 
+  it('F2: with a random gap set, the next keyword waits a time inside the range, drawn once, instead of the fixed gap', () => {
+    run('UPDATE new_websites SET random_gap_from = 60, random_gap_to = 120');
+    publishedAt(ids[0]!, NOW);
+    let startedAt = 0;
+    for (let m = 0; m <= 130 && !startedAt; m++) {
+      autopilotTick(deps(), NOW + m * MIN);
+      if (activeIds().length) startedAt = m;
+    }
+    expect(startedAt).toBeGreaterThanOrEqual(60);
+    expect(startedAt).toBeLessThanOrEqual(120); // well before the fixed four hours
+    expect(activeIds()).toEqual([ids[1]]);
+  });
+
   it('G: a failed keyword is recorded and stopped, the later ones wait for it, and Try again carries it on', async () => {
     autopilotTick(deps(), NOW);
     const [a] = ids as [number];

@@ -1,6 +1,7 @@
 import { all, get, run } from '../db/index.js';
 import { createLogger } from '../lib/logger.js';
 import type { Settings } from '../settings.js';
+import { articleGapMinutes } from './gaps.js';
 import { parseImageSet } from './images.js';
 import { notReadyReason, publishQueued, queuePublish, type PublishDeps } from './publish.js';
 import { isMainSlot, queuePictures, retryFailedPictures, type PictureRow } from './pictures.js';
@@ -22,7 +23,8 @@ import { queueNotStartedSteps, type SeoRow } from './seo.js';
  *      Keywords page shows (oldest main keyword first, its pillar then its
  *      sub-keywords), of a website whose turn has come: Automation is ON,
  *      the website is active, its gap since its last published article has
- *      passed, and it has not reached its posts per day.
+ *      passed (its fixed gap, or a random one from its range: gaps.ts),
+ *      and it has not reached its posts per day.
  *   2. Writing: SEO, recipe, outline, article, image prompts (seo.ts).
  *   3. Pictures: its main pictures, made straight away (pictures.ts). No
  *      approval is asked for pictures.
@@ -166,7 +168,7 @@ function schedule(site: NewWebsiteRow, rows: SeoRow[], now: number, tz: string):
   const posted = rows.filter((r) => r.post_status === 'published' && r.posted_at).map((r) => sqlTime(r.posted_at));
   const last = posted.length ? Math.max(...posted) : 0;
   const today = posted.filter((t) => dayKey(t, tz) === dayKey(now, tz)).length;
-  return { due: last ? last + site.interval_minutes * 60_000 : 0, full: site.daily_target > 0 && today >= site.daily_target, today };
+  return { due: last ? last + articleGapMinutes(site, last) * 60_000 : 0, full: site.daily_target > 0 && today >= site.daily_target, today };
 }
 
 /** The keyword Automation is working on, if any. */

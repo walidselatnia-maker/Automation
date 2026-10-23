@@ -276,6 +276,34 @@ describe('Sharing an article on its channels', () => {
     expect(getSocialPost(item!.id)).toMatchObject({ status: 'sent', external_id: 'buffer-1' });
   });
 
+  it('with a social random gap set, waits a time inside the range after the last post to that channel, then sends', async () => {
+    const pin = pinChannel();
+    setWebsiteChannels(websiteId, [pin]);
+    run('UPDATE new_websites SET social_gap_from = 30, social_gap_to = 90 WHERE id = ?', websiteId);
+    clock = Date.parse('2026-10-20T10:00:00Z');
+    // The website sent this channel something a minute ago.
+    run(`INSERT INTO newsite_social_posts (seo_id, channel_id, kind, status, sent_at) VALUES (?, ?, 'older', 'sent', ?)`, seoId, pin, '2026-10-20 09:59:00');
+    await share();
+    const item = listSocialPosts().find((p) => p.kind === 'pinterest')!;
+    expect(item.status).toBe('waiting');
+    expect(bufferPosts).toHaveLength(0);
+    const last = Date.parse('2026-10-20T09:59:00Z');
+    expect(item.retry_at!).toBeGreaterThanOrEqual(last + 30 * 60_000);
+    expect(item.retry_at!).toBeLessThanOrEqual(last + 90 * 60_000);
+    clock = item.retry_at!;
+    await kickSocial(deps());
+    expect(getSocialPost(item.id)).toMatchObject({ status: 'sent', external_id: 'buffer-1' });
+  });
+
+  it('with no social random gap, sends straight away as before', async () => {
+    const pin = pinChannel();
+    setWebsiteChannels(websiteId, [pin]);
+    clock = Date.parse('2026-10-20T10:00:00Z');
+    run(`INSERT INTO newsite_social_posts (seo_id, channel_id, kind, status, sent_at) VALUES (?, ?, 'older', 'sent', ?)`, seoId, pin, '2026-10-20 09:59:00');
+    await share();
+    expect(bufferPosts).toHaveLength(1);
+  });
+
   it('sends words with a link back to the AI, with the exact problem', async () => {
     answers.Pinterest = JSON.stringify({ ...GOOD_PIN, description: `${GOOD_PIN.description} Get it at f.longlivo.com` });
     let round = 0;

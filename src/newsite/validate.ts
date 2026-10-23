@@ -45,6 +45,12 @@ export type FieldName =
   | 'dailyTarget'
   | 'gapAmount'
   | 'gapUnit'
+  | 'randomFrom'
+  | 'randomTo'
+  | 'randomUnit'
+  | 'socialFrom'
+  | 'socialTo'
+  | 'socialUnit'
   | 'bufferToken'
   | 'pinUsername'
   | 'projectId';
@@ -54,7 +60,7 @@ export const STEP_FIELDS: FieldName[][] = [
   ['name', 'domain', 'apiKey'],
   ['niche', 'nicheContext', 'pictureStyle', 'language'],
   ['persona', 'customPersona'],
-  ['status', 'autoPublish', 'dailyTarget', 'gapAmount', 'gapUnit'],
+  ['status', 'autoPublish', 'dailyTarget', 'gapAmount', 'gapUnit', 'randomFrom', 'randomTo', 'randomUnit', 'socialFrom', 'socialTo', 'socialUnit'],
   ['bufferToken', 'pinUsername', 'projectId'],
   [],
 ];
@@ -75,6 +81,12 @@ export interface CleanWebsite {
   autoPublish: boolean;
   dailyTarget: number;
   intervalMinutes: number;
+  /** The random gap between articles, in minutes; randomGapTo 0 (or missing) = not set. */
+  randomGapFrom?: number;
+  randomGapTo?: number;
+  /** The random gap between social posts to one channel, in minutes; socialGapTo 0 (or missing) = not set. */
+  socialGapFrom?: number;
+  socialGapTo?: number;
   bufferToken: string;
   pinUsername: string;
   projectId: string;
@@ -115,6 +127,30 @@ export function normalizeDomain(input: string): string | null {
 
 const UNIT_MINUTES = { minutes: 1, hours: 60, days: 1440 } as const;
 const MAX_INTERVAL_MINUTES = 30 * 1440;
+
+/**
+ * A random gap "from X to Y unit": both empty = not set (0, 0); otherwise
+ * both numbers, from no more than to, to above 0 and at most 30 days.
+ */
+function rangeCheck(raw: Raw, prefix: 'random' | 'social'): { error: string; on: FieldName } | { from: number; to: number } {
+  const fromField = `${prefix}From` as FieldName;
+  const toField = `${prefix}To` as FieldName;
+  const from = text(raw, fromField);
+  const to = text(raw, toField);
+  if (!from && !to) return { from: 0, to: 0 };
+  const number = /^\d+(\.\d{1,2})?$/;
+  if (!number.test(from)) return { error: 'Enter a number, like 2 or 1.5.', on: fromField };
+  if (!number.test(to)) return { error: 'Enter a number, like 6 or 1.5.', on: toField };
+  const unit = text(raw, `${prefix}Unit` as FieldName);
+  if (!(unit in UNIT_MINUTES)) return { error: 'Choose minutes, hours or days.', on: `${prefix}Unit` as FieldName };
+  const per = UNIT_MINUTES[unit as keyof typeof UNIT_MINUTES];
+  const lo = Math.round(Number(from) * per);
+  const hi = Math.round(Number(to) * per);
+  if (hi <= 0) return { error: 'The longest wait must be more than 0.', on: toField };
+  if (lo > hi) return { error: 'The first number must not be bigger than the second.', on: fromField };
+  if (hi > MAX_INTERVAL_MINUTES) return { error: 'The gap cannot be longer than 30 days.', on: toField };
+  return { from: lo, to: hi };
+}
 
 function fieldCheck(field: FieldName, raw: Raw, clean: Partial<CleanWebsite>): string | null {
   switch (field) {
@@ -233,6 +269,25 @@ function fieldCheck(field: FieldName, raw: Raw, clean: Partial<CleanWebsite>): s
         return field === 'gapAmount' ? 'The gap cannot be longer than 30 days.' : null;
       }
       clean.intervalMinutes = minutes;
+      return null;
+    }
+    case 'randomFrom':
+    case 'randomTo':
+    case 'randomUnit':
+    case 'socialFrom':
+    case 'socialTo':
+    case 'socialUnit': {
+      // Judged together: a range is its two numbers and their unit.
+      const prefix = field.startsWith('random') ? 'random' : 'social';
+      const range = rangeCheck(raw, prefix);
+      if ('error' in range) return range.on === field ? range.error : null;
+      if (prefix === 'random') {
+        clean.randomGapFrom = range.from;
+        clean.randomGapTo = range.to;
+      } else {
+        clean.socialGapFrom = range.from;
+        clean.socialGapTo = range.to;
+      }
       return null;
     }
     case 'bufferToken': {

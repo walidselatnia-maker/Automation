@@ -15,6 +15,7 @@ import { pickedPinDesigns, renderDesign } from './pin-designs.js';
 import type { Settings } from '../settings.js';
 import { bufferTokenOf, fbTokenOf, getChannel, videoOnly, websiteChannels, type ChannelRow } from './channels.js';
 import type { Fetch } from './client.js';
+import { lastSocialSent, socialDueAt } from './gaps.js';
 import { parseImageSet } from './images.js';
 import { pictureDir, type PictureRow } from './pictures.js';
 import { instagramFileOf, makeInstagramPicture } from './instagram-picture.js';
@@ -461,6 +462,17 @@ function waitForRoom(w: Work, err: unknown, deps: SocialDeps, now: number): void
 }
 
 /**
+ * The website's social random gap (gaps.ts): a post or reel due later than
+ * now waits for its time, and is sent then. True when it waits.
+ */
+export function holdForSocialGap(table: 'newsite_social_posts' | 'newsite_reel_shares', id: number, site: NewWebsiteRow, channelId: number, now: number): boolean {
+  const due = socialDueAt(site, channelId, lastSocialSent(site.id, channelId));
+  if (due <= now) return false;
+  run(`UPDATE ${table} SET status = 'waiting', retry_at = ?, error = '' WHERE id = ?`, due, id);
+  return true;
+}
+
+/**
  * The service-specific part of a Buffer post, as GraphQL. Unknown services
  * need none. `type` is Buffer's post type: post for a picture, reel for a video.
  */
@@ -593,6 +605,7 @@ async function work(item: SocialPostRow, deps: SocialDeps, now: number): Promise
   if (!item.text && !(await writeFields(w, deps))) return;
   const picture = item.picture_id ? get<PictureRow>('SELECT * FROM newsite_pictures WHERE id = ?', item.picture_id) : undefined;
   if (!picture || picture.status !== 'done') return queuePicture(w, deps);
+  if (holdForSocialGap('newsite_social_posts', item.id, site, channel.id, now)) return;
   if (channel.via === 'buffer') return sendThroughBuffer(w, picture, deps, now);
   if (channel.platform === 'facebook') return sendThroughFacebook(w, picture, deps);
   if (channel.platform === 'instagram' || channel.platform === 'threads') return sendThroughMetaApi(w, picture, deps, now);

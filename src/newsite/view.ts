@@ -37,6 +37,8 @@ const gap = (minutes: number): string => {
   return `${minutes} minutes`;
 };
 
+const gapRange = (from: number, to: number): string => `${from ? gap(from) : '0'} to ${gap(to)}`;
+
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 /** SQLite's "2026-10-08 11:02:31" as "8 Oct 2026". */
@@ -165,6 +167,8 @@ export function newWebsiteListPage(rows: NewWebsiteRow[], platformReady = true):
                     ['Approval', r.auto_publish ? 'Publishes automatically' : 'Waits for my approval'],
                     ['Posts per day', String(r.daily_target || 'No target')],
                     ['Gap between posts', gap(r.interval_minutes)],
+                    ...(r.random_gap_to > 0 ? [['Random gap between posts', gapRange(r.random_gap_from, r.random_gap_to)] as [string, string]] : []),
+                    ...(r.social_gap_to > 0 ? [['Random gap between social posts', gapRange(r.social_gap_from, r.social_gap_to)] as [string, string]] : []),
                   ])}
                   ${part(r.id, 4, 'Channels and pictures', [
                     ['Social channels', websiteChannels(r.id).length ? `${websiteChannels(r.id).length} (listed above, under Shares on)` : 'None yet'],
@@ -224,6 +228,8 @@ export const WIZARD_CSS = `
 .wz-two:last-child { margin-bottom: 0; }
 .wz-two > .wz-field { margin-bottom: 0; }
 .wz-inline { display: grid; grid-template-columns: 1fr 130px; gap: 10px; }
+.wz-range { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) 120px; gap: 8px; align-items: center; }
+.wz-range span { color: var(--soft); font-size: 14px; }
 .wz-ok { display: none; margin-top: 4px; padding: 10px 14px; border-radius: var(--r-ctl); border-left: 4px solid var(--good); background: var(--good-tint); color: var(--ink); font-size: 14px; font-weight: 500; }
 .wz-personas { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 20px; }
 .wz-persona { text-align: left; padding: 14px 16px; border-radius: var(--r-ctl); border: 1px solid var(--idle-line); background: var(--idle);
@@ -288,6 +294,31 @@ const gapParts = (minutes: number): { amount: number; unit: 'minutes' | 'hours' 
       : { amount: minutes, unit: 'minutes' };
 
 const selected = (on: boolean): Html => raw(on ? 'selected' : '');
+
+/** A random gap's two ends in one unit: the largest one both are exact in. Empty when not set. */
+const rangeParts = (from: number, to: number): { from: string; to: string; unit: 'minutes' | 'hours' | 'days' } => {
+  if (!(to > 0)) return { from: '', to: '', unit: 'hours' };
+  const per = [from, to].every((m) => m % 1440 === 0) ? 1440 : [from, to].every((m) => m % 60 === 0) ? 60 : 1;
+  return { from: String(from / per), to: String(to / per), unit: per === 1440 ? 'days' : per === 60 ? 'hours' : 'minutes' };
+};
+
+/** "From X to Y unit", optional: a random gap. */
+const rangeField = (prefix: 'random' | 'social', label: string, now: ReturnType<typeof rangeParts>): Html => html`
+  <div class="wz-field">
+    <label for="wz-${prefix}From">${label}<em>optional</em></label>
+    <div class="wz-range">
+      <input id="wz-${prefix}From" name="${prefix}From" inputmode="decimal" placeholder="from" value="${now.from}" />
+      <span>to</span>
+      <input name="${prefix}To" inputmode="decimal" placeholder="to" aria-label="${label}: to" value="${now.to}" />
+      <select name="${prefix}Unit" aria-label="Unit">
+        <option value="minutes" ${selected(now.unit === 'minutes')}>minutes</option><option value="hours" ${selected(now.unit === 'hours')}>hours</option><option value="days" ${selected(now.unit === 'days')}>days</option>
+      </select>
+    </div>
+    <div class="wz-err" data-err="${prefix}From"></div>
+    <div class="wz-err" data-err="${prefix}To"></div>
+    <div class="wz-err" data-err="${prefix}Unit"></div>
+  </div>
+`;
 
 /**
  * The wizard. Without a website it adds one; with one it edits it, every
@@ -405,6 +436,10 @@ export function newWebsiteWizardPage(existing?: NewWebsiteRow, channels: WizardC
                 <div class="wz-err" data-err="gapUnit"></div>
               </div>
             </div>
+            <div class="wz-two">
+              ${rangeField('random', 'Random gap between posts', rangeParts(e?.random_gap_from ?? 0, e?.random_gap_to ?? 0))}
+              ${rangeField('social', 'Random gap between social posts', rangeParts(e?.social_gap_from ?? 0, e?.social_gap_to ?? 0))}
+            </div>
           </div>
 
           <div class="wz-step">
@@ -464,6 +499,7 @@ const SCRIPT = `<script>
   var val = function (n) { return (f(n).value || '').trim(); };
   var host = function (v) { return v.toLowerCase().replace(/^https?:\\/\\//, '').replace(/[\\/?#].*$/, ''); };
   var persona = function () { return val('customPersona') || val('persona'); };
+  var range = function (p) { return val(p + 'From') || val(p + 'To') ? val(p + 'From') + ' to ' + val(p + 'To') + ' ' + val(p + 'Unit') : '—'; };
   var EDIT = form.getAttribute('data-edit') === '1';
   var channelsText = function () {
     var names = [].slice.call(form.querySelectorAll('input[name=channelId]:checked')).map(function (b) { return b.getAttribute('data-name'); });
@@ -519,7 +555,8 @@ const SCRIPT = `<script>
       [1, 'Niche', [['Niche', val('niche')], ['More detail', val('nicheContext') || '—'], ['Picture style', val('pictureStyle') || 'Decided from the niche'], ['Language', val('language')]]],
       [2, 'Voice', [['Persona', persona()]]],
       [3, 'Publishing', [['Status', f('status').selectedOptions[0].text], ['Approval', f('autoPublish').selectedOptions[0].text],
-        ['Posts per day', val('dailyTarget')], ['Gap between posts', val('gapAmount') + ' ' + val('gapUnit')]]],
+        ['Posts per day', val('dailyTarget')], ['Gap between posts', val('gapAmount') + ' ' + val('gapUnit')],
+        ['Random gap between posts', range('random')], ['Random gap between social posts', range('social')]]],
       [4, 'Channels and images', [['Shares on', channelsText()],
         ['Google Flow project', val('projectId') || 'Shared project from Platform settings']]]
     ];

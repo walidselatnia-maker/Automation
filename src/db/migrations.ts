@@ -1014,6 +1014,16 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    id: '050-newsite-random-gaps',
+    description: 'New websites: an optional random gap between articles, and one between social posts, each from X to Y minutes',
+    up(db) {
+      addColumn(db, 'new_websites', 'random_gap_from', 'INTEGER NOT NULL DEFAULT 0');
+      addColumn(db, 'new_websites', 'random_gap_to', 'INTEGER NOT NULL DEFAULT 0');
+      addColumn(db, 'new_websites', 'social_gap_from', 'INTEGER NOT NULL DEFAULT 0');
+      addColumn(db, 'new_websites', 'social_gap_to', 'INTEGER NOT NULL DEFAULT 0');
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */
