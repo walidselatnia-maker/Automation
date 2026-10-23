@@ -624,6 +624,7 @@ export function reelRulesPage(text: string, isDefault: boolean, back: string, er
         <form id="rr-form" method="post" action="/new-website/sharing/reel-rules">
           <input type="hidden" name="back" value="${back}" />
           <p>Keep the time marks as lines starting with “- 0-2s:”, the hook line limit (“at most N words”) and the closing line (“closing line, word for word: "…"”): the prompt is checked against them. Change the rest for another niche or another style.</p>
+          <p>Placeholder: <code>{domain}</code> = the website’s address.</p>
           <textarea class="rr-text" name="text" spellcheck="false" aria-label="Reel rules">${text}</textarea>
           <label style="display:flex;gap:8px;align-items:center;margin-top:12px"><input type="checkbox" name="reset" value="1" /> Replace them with the default rules</label>
         </form>

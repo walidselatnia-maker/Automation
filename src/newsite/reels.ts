@@ -169,6 +169,11 @@ export const REEL_RULES_KEY = 'newsite_reel_rules';
 /** The reel rules: as changed on the dashboard, or its file. */
 export const reelRules = (settings: Settings): string => (settings.get(REEL_RULES_KEY).trim() ? settings.get(REEL_RULES_KEY) : defaultReelRules());
 
+/** The placeholder reel rules and reel captions may use for the website's address. */
+export const DOMAIN_PLACEHOLDER = '{domain}';
+/** Text with {domain} filled in with the website's address. */
+export const withDomain = (text: string, domain: string): string => text.split(DOMAIN_PLACEHOLDER).join(domain);
+
 export interface ReelScript {
   hook_line: string;
   closing_line: string;
@@ -180,8 +185,8 @@ const words = (s: string): number => s.split(/\s+/).filter(Boolean).length;
 const ruleMax = (rules: string, what: string, fallback: number): number =>
   Number(new RegExp(`${what}[^\\n]*?at most (\\d+) words`, 'i').exec(rules)?.[1]) || fallback;
 
-/** What is checked before anything is spent on Flow. */
-export function checkReelScript(s: ReelScript, rules: string): string[] {
+/** What is checked before anything is spent on Flow. The website's own address (its {domain}) is the one web address allowed. */
+export function checkReelScript(s: ReelScript, rules: string, domain = ''): string[] {
   const problems: string[] = [];
   const hookMax = ruleMax(rules, 'hook line', 10);
   if (!s.hook_line) problems.push('The hook_line is empty.');
@@ -196,7 +201,8 @@ export function checkReelScript(s: ReelScript, rules: string): string[] {
   if (/slow[- ]?motion|slowly|cinematic|masterpiece|\b8k\b|hyper-detailed/i.test(s.prompt.replace(/never[^.]*\./gi, ''))) {
     problems.push('The prompt uses a banned word (slow motion, slowly, cinematic, masterpiece, 8k, hyper-detailed).');
   }
-  if (/https?:\/\/|www\.|\.com\b/i.test(s.prompt)) problems.push('The prompt must have no link or web address.');
+  const bare = domain ? s.prompt.split(domain).join('') : s.prompt;
+  if (/https?:\/\/|www\.|\.com\b/i.test(bare)) problems.push('The prompt must have no link or web address.');
   if (s.prompt.length < 400) problems.push(`The prompt is ${s.prompt.length} characters; write every shot fully (at least 400).`);
   if (s.prompt.length > 4000) problems.push(`The prompt is ${s.prompt.length} characters; at most 4000.`);
   return problems;
@@ -217,7 +223,7 @@ function articleParts(row: SeoRow): { steps: string; things: string } {
 
 /** The AI writes the one video prompt from the article, by the reel rules. */
 async function writeScript(reel: ReelRow, row: SeoRow, site: NewWebsiteRow, described: string, deps: ReelDeps): Promise<ReelScript> {
-  const rules = reelRules(deps.settings);
+  const rules = withDomain(reelRules(deps.settings), site.domain);
   if (!rules.trim()) throw new Error('There are no reel rules (prompts/reel-rules/reel.md).');
   if (!deps.ask) throw new Error('No AI to write the reel prompt.');
   const ask = deps.ask;
@@ -250,7 +256,7 @@ async function writeScript(reel: ReelRow, row: SeoRow, site: NewWebsiteRow, desc
         return null;
       }
     },
-    check: (s) => checkReelScript(s, rules),
+    check: (s) => checkReelScript(s, rules, site.domain),
   });
   if (out.technical || !out.answer) throw new Error(`The reel prompt could not be written: ${out.problems.join(' ')}`);
   return out.answer;

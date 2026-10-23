@@ -11,7 +11,7 @@ import { configurePrompts } from '../src/pipeline/prompts.js';
 import { createNewWebsite, saveKeywordPlan } from '../src/newsite/repo.js';
 import { listPlanSeo, queuePlanSeo } from '../src/newsite/seo.js';
 import { saveBufferChannel, setWebsiteChannels } from '../src/newsite/channels.js';
-import { createReels, getReel, kickReels, listPlanReels, onReelMade, reelDir, reelRules, type ReelDeps } from '../src/newsite/reels.js';
+import { checkReelScript, createReels, getReel, kickReels, listPlanReels, onReelMade, reelDir, reelRules, withDomain, type ReelDeps } from '../src/newsite/reels.js';
 import { registerSocialRoutes } from '../src/newsite/social-routes.js';
 
 const KEY = randomBytes(32);
@@ -178,6 +178,38 @@ describe('reels: one Flow video per article, from one prompt', () => {
     expect(reelRules(settings)).toBe(own);
     await form({ text: own, reset: '1' });
     expect(reelRules(settings)).toContain('Full recipe linked below.');
+  });
+
+  it('fills in {domain} in the reel rules with the website’s address, and lets the reel name it in its call to action', async () => {
+    settings.set('newsite_reel_rules', [
+      '- 0-3s: the finished cake in full.',
+      '- 3-10s: the steps, and the call to action.',
+      'The hook line: at most 9 words. The closing line, word for word: "Full recipe on {domain}."',
+    ].join('\n'));
+    setWebsiteChannels(websiteId, [channel('facebook', 'f1')]);
+    createReels(seoId);
+    await kickReels(deps());
+    const write = asked.find((a) => a.name === 'newsite-reel-prompt')!;
+    expect(String(write.vars.reelRules)).toContain('"Full recipe on f.longlivo.com."');
+    expect(String(write.vars.reelRules)).not.toContain('{domain}');
+    expect(submitted).toHaveLength(1);
+    expect(submitted[0]!.prompt).toContain('"Full recipe on f.longlivo.com."');
+    expect(listPlanReels(planId)[0]).toMatchObject({ status: 'done', closing: 'Full recipe on f.longlivo.com.' });
+  });
+
+  it('allows the website’s own address in a reel prompt, and no other web address', () => {
+    expect(withDomain('Visit {domain} or {domain}', 'g.example.com')).toBe('Visit g.example.com or g.example.com');
+    const rules = '- 0-10s: all.\nThe hook line: at most 9 words.';
+    const script = (end: string) => ({ hook_line: 'No oven needed', closing_line: '', prompt: `0-10s: "No oven needed". ${'Real hands at work, close and handheld. '.repeat(12)}${end}` });
+    expect(checkReelScript(script('More on g.example.com.'), rules, 'g.example.com')).toEqual([]);
+    expect(checkReelScript(script('More on other.com.'), rules, 'g.example.com')).toContain('The prompt must have no link or web address.');
+  });
+
+  it('shows {domain} as a placeholder where the reel rules are edited', async () => {
+    const app = Fastify();
+    await app.register(formbody);
+    registerSocialRoutes(app, { settings, encryptionKey: KEY, dataDir, ask: async () => '{}', readFlash: () => null, autoStart: false });
+    expect((await app.inject({ url: '/new-website/sharing/reel-rules' })).body).toContain('<code>{domain}</code>');
   });
 
   it('pauses every reel for 30 minutes when Google flags unusual activity, and keeps the pause', async () => {

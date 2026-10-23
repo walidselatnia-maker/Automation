@@ -171,6 +171,15 @@ describe('sharing reels on the website channels', () => {
     expect(share!.text).not.toContain('http');
   });
 
+  it('fills in {domain} in a reel caption with the website’s address, so it can end with a call to action', async () => {
+    setWebsiteChannels(websiteId, [fbApiPage(true)]);
+    createReelShares(madeReel());
+    const withCta = { ...GOOD_FB, text: 'Watch real berries go right into this batter, then that first pink slice. Soft, light and easy. More cakes on {domain}.' };
+    await kickReelShares({ ...deps(), ask: async (name, vars) => (name === 'newsite-social-post' ? JSON.stringify(withCta) : ask(name, vars)) });
+    expect(reelsPosted[0]!.description).toBe('Watch real berries go right into this batter, then that first pink slice. Soft, light and easy. More cakes on f.longlivo.com.');
+    expect(listPlanReelShares(planId)[0]!.text).not.toContain('{domain}');
+  });
+
   it('sends the SAME video to Facebook, Instagram and Pinterest, each with its own words and status, never making it again', async () => {
     setWebsiteChannels(websiteId, [fbApiPage(true), igChannel(), pinChannel()]);
     const reelId = madeReel();

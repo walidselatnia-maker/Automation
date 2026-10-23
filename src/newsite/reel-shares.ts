@@ -9,7 +9,7 @@ import { newsiteReelMediaUrl } from '../core/media-links.js';
 import type { Settings } from '../settings.js';
 import { bufferTokenOf, fbTokenOf, getChannel, takesReels, websiteChannels, type ChannelRow } from './channels.js';
 import { channelRules } from './platform-rules.js';
-import { getReel, reelDir, type ReelRow } from './reels.js';
+import { getReel, reelDir, withDomain, type ReelRow } from './reels.js';
 import { getSeoRow } from './seo.js';
 import { NO_BOARD, bufferMetadata, holdForSocialGap, isQueueFull, pickBoard, realInstagram, realThreads, websiteOf, writePostWords, type InstagramApi, type ThreadsApi } from './social.js';
 import { threadsTokenOf, type Renew } from './threads-token.js';
@@ -34,7 +34,7 @@ const log = createLogger('newsite-reel-shares');
 
 /** Said to the AI with the channel's rules: the words are for a video. */
 const REEL_NOTE =
-  'This post is a reel: a 10-second vertical video of the dish being made, ending on the finished result. Write its words for that video, not for a picture.';
+  'This post is a reel: a 10-second vertical video of the dish being made, ending on the finished result. Write its words for that video, not for a picture. Where the rules name the website, write {domain} exactly like that: it is filled in with the website\'s address.';
 
 export interface ReelShareRow {
   id: number;
@@ -163,8 +163,9 @@ async function work(share: ReelShareRow, deps: ReelShareDeps, now: number): Prom
   if (!share.text) {
     const out = await writePostWords(rules, row, site, deps.ask, REEL_NOTE);
     if (!out.answer) return fail(share.id, out.problems.join(' '));
-    share.text = out.answer[rules.postText] ?? '';
-    share.title = out.answer.title ?? '';
+    // {domain} in a reel caption is the website's address: a call to action can name the website.
+    share.text = withDomain(out.answer[rules.postText] ?? '', site.domain);
+    share.title = withDomain(out.answer.title ?? '', site.domain);
     run('UPDATE newsite_reel_shares SET text = ?, title = ? WHERE id = ?', share.text, share.title, share.id);
   }
   if (holdForSocialGap('newsite_reel_shares', share.id, site, channel.id, now)) return;
