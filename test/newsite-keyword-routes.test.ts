@@ -289,7 +289,7 @@ describe('keyword routes', () => {
       expect(started).toBe(1);
       const page = await app.inject({ method: 'GET', url: '/new-website/keywords' });
       expect(page.body).toContain('vegan pumpkin chocolate chip cookies');
-      expect(page.body).toContain('From a CSV file');
+      expect(page.body).not.toContain('From a CSV file');
     });
 
     it('sends the main keyword on alone when no sub-keyword can be found', async () => {

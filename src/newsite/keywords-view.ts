@@ -1329,7 +1329,7 @@ export function keywordsOverview(sites: OverviewSite[], stats: Map<number, PlanS
                     <thead><tr><th>Main keyword</th><th>Sub-keywords</th><th>Niche</th><th>Progress</th><th></th></tr></thead>
                     <tbody>${plans.map(
                       (p) => html`<tr>
-                        <td class="ko-kw"><a href="${planHref(p.id, 'seo')}">${p.pillar}</a>${p.source === 'csv' ? html`<span class="ko-from">From a CSV file</span>` : raw('')}</td>
+                        <td class="ko-kw"><a href="${planHref(p.id, 'seo')}">${p.pillar}</a></td>
                         <td class="ko-subs">${p.subs_status === 'finding'
                           ? p.items.length
                             ? html`${p.items.map((i) => i.keyword).join(', ')} <span class="ns-badge busy">Finding more</span>`
