@@ -105,7 +105,7 @@ describe('reels: one Flow video per article, from one prompt', () => {
     expect(writes.map((w) => w.vars.label)).toEqual(['Facebook, Threads and Pinterest']);
     expect(String(writes[0]!.vars.reelRules)).toContain('0-2s: THE HOOK');
     expect(String(writes[0]!.vars.references)).toMatch(/^1\. The finished result/);
-    expect(submitted[0]!.prompt).toContain('"Full recipe linked below."');
+    expect(submitted[0]!.prompt).toContain('"Full recipe on f.longlivo.com."');
     expect(reels[0]!.hook).toBe('This cake needs no oven, watch this');
     expect(submitted[0]!.referenceUrls).toHaveLength(2);
     expect(submitted[0]!.referenceUrls[0]).toMatch(/^https:\/\/dash\.example\.com\/media\/picture\//);
@@ -156,7 +156,7 @@ describe('reels: one Flow video per article, from one prompt', () => {
     });
     const problems = String(asked[1]!.vars.problemsJson);
     expect(problems).toMatch(/hook_line has 13 words; at most 9/);
-    expect(problems).toMatch(/closing_line must be exactly: "Full recipe linked below."/);
+    expect(problems).toMatch(/closing_line must be exactly: "Full recipe on f\.longlivo\.com\."/);
     expect(problems).toMatch(/missing: 0-2s, 2-4s, 4-6s, 6-8s, 8-10s/);
     expect(submitted).toHaveLength(1);
     expect(listPlanReels(planId)[0]).toMatchObject({ status: 'done', hook: 'No oven. Three ingredients. Watch.' });
@@ -177,7 +177,7 @@ describe('reels: one Flow video per article, from one prompt', () => {
     expect((await form({ text: own, back: '/new-website/sharing/reels' })).headers.location).toMatch(/^\/new-website\/sharing\/reels\?ok=Reel%20rules%20saved/);
     expect(reelRules(settings)).toBe(own);
     await form({ text: own, reset: '1' });
-    expect(reelRules(settings)).toContain('Full recipe linked below.');
+    expect(reelRules(settings)).toContain('Full recipe on {domain}.');
   });
 
   it('fills in {domain} in the reel rules with the website’s address, and lets the reel name it in its call to action', async () => {
@@ -195,6 +195,21 @@ describe('reels: one Flow video per article, from one prompt', () => {
     expect(submitted).toHaveLength(1);
     expect(submitted[0]!.prompt).toContain('"Full recipe on f.longlivo.com."');
     expect(listPlanReels(planId)[0]).toMatchObject({ status: 'done', closing: 'Full recipe on f.longlivo.com.' });
+  });
+
+  it('default reel rules are an exact timeline in seconds, from 0 to 10, ending on a call to action naming the website', () => {
+    const rules = reelRules(settings);
+    const marks = [...rules.matchAll(/^- (\d+)-(\d+)s:/gm)].map((m) => [Number(m[1]), Number(m[2])]);
+    expect(marks[0]![0]).toBe(0);
+    expect(marks.at(-1)![1]).toBe(10);
+    marks.slice(1).forEach(([from], i) => expect(from).toBe(marks[i]![1])); // no gap, no overlap
+    expect(rules).toMatch(/^- 8-10s: THE CALL TO ACTION/m);
+    expect(rules).toContain('The closing line, word for word: "Full recipe on {domain}."');
+  });
+
+  it('keeps reel rules saved on the dashboard over the default file', () => {
+    settings.set('newsite_reel_rules', '- 0-10s: mine.\nThe hook line: at most 5 words.');
+    expect(reelRules(settings)).toBe('- 0-10s: mine.\nThe hook line: at most 5 words.');
   });
 
   it('allows the website’s own address in a reel prompt, and no other web address', () => {
