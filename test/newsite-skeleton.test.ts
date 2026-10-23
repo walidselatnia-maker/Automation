@@ -1,9 +1,11 @@
 import { randomBytes } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { closeDatabase, openDatabase } from '../src/db/index.js';
+import { closeDatabase, get, openDatabase, run } from '../src/db/index.js';
+import { setPromptOverride } from '../src/db/repos.js';
+import { invalidatePromptCache, readShippedPrompt } from '../src/pipeline/prompts.js';
 import { createNewWebsite, saveKeywordPlan } from '../src/newsite/repo.js';
 import { kickSeoWriter, listPlanSeo, queuePlanSeo } from '../src/newsite/seo.js';
-import { articleTypeFor, checkSkeleton, parseSkeleton, type Skeleton } from '../src/newsite/skeleton.js';
+import { SKELETON_PARTS, articleTypeFor, checkSkeleton, parseSkeleton, pickSkeletonStyles, styleFile, type Skeleton } from '../src/newsite/skeleton.js';
 
 const KEY = randomBytes(32);
 const TITLE = 'Pumpkin Chocolate Chip Cookies: Soft, Easy and Spiced';
@@ -143,10 +145,11 @@ describe('AI#2 checks', () => {
 
 describe('AI#2 follows AI#1', () => {
   let planId: number;
+  let websiteId: number;
 
   beforeEach(() => {
     openDatabase(':memory:');
-    const websiteId = createNewWebsite(
+    websiteId = createNewWebsite(
       {
         name: 'Long Livo', domain: 'f.longlivo.com', apiKey: 'sk_test_ABCDEFGHIJKLMNOP', niche: 'Recipes',
         nicheContext: '', persona: 'Storyteller', status: 'active', autoPublish: true,
@@ -204,6 +207,49 @@ describe('AI#2 follows AI#1', () => {
     expect(skeletonAsks).toHaveLength(10);
     expect(String(skeletonAsks[1]!.problemsJson)).toMatch(/H2 sections[\s\S]*Your previous answer:/);
     expect(listPlanSeo(planId)[0]).toMatchObject({ skeleton_status: 'done', skeleton_problems: expect.stringMatching(/Kept after 10 rounds[\s\S]*H2 sections/) });
+  });
+
+  it('builds the outline prompt from one version of each part, kept on the keyword, in the website\'s language', async () => {
+    run(`UPDATE new_websites SET language = 'French' WHERE id = ?`, websiteId);
+    const asked: Record<string, unknown>[] = [];
+    await kickSeoWriter({
+      suggest: async () => [],
+      ask: async (name, vars) => {
+        if (name === 'article-skeleton') asked.push(vars);
+        return JSON.stringify(name === 'seo-metadata' ? SEO : name === 'recipe-card' ? RECIPE : PILLAR_WITH_RECIPE);
+      },
+    });
+    const styles = JSON.parse(listPlanSeo(planId)[0]!.skeleton_styles) as Record<string, number>;
+    for (const { key } of SKELETON_PARTS) {
+      expect(styles[key]).toBeGreaterThanOrEqual(1);
+      expect(styles[key]).toBeLessThanOrEqual(4);
+      expect(asked[0]![`${key}Part`]).toBe(readShippedPrompt(styleFile(key, styles[key]!)).trim());
+    }
+    expect(asked[0]!.language).toBe('French');
+    expect(String(asked[0]!.depth)).toMatch(/PILLAR/);
+    expect(get<{ skeleton_last: string }>('SELECT skeleton_last FROM new_websites WHERE id = ?', websiteId)!.skeleton_last).toBe(JSON.stringify(styles));
+  });
+
+  it('never gives a website the version of a part it used last, and varies over many articles', () => {
+    const seen: Record<string, Set<number>> = { opening: new Set(), body: new Set(), closing: new Set() };
+    let last: Record<string, number> | null = null;
+    for (let i = 0; i < 40; i++) {
+      const picked = pickSkeletonStyles(websiteId);
+      for (const { key } of SKELETON_PARTS) {
+        if (last) expect(picked[key]).not.toBe(last[key]);
+        seen[key]!.add(picked[key]);
+      }
+      run('UPDATE new_websites SET skeleton_last = ? WHERE id = ?', JSON.stringify(picked), websiteId);
+      last = picked;
+    }
+    for (const { key } of SKELETON_PARTS) expect(seen[key]!.size).toBeGreaterThanOrEqual(3);
+  });
+
+  it('skips a version left empty', () => {
+    for (const v of [1, 2, 3]) setPromptOverride(styleFile('body', v), ' ');
+    invalidatePromptCache();
+    expect(pickSkeletonStyles(websiteId).body).toBe(4);
+    invalidatePromptCache();
   });
 
   it('makes no skeleton when the metadata failed for a technical reason', async () => {

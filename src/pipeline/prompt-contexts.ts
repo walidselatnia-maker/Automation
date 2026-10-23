@@ -143,6 +143,9 @@ export const STEP_CONTEXTS: Record<string, Record<string, unknown>> = {
     niche: 'n',
     nicheContext: 'c',
     persona: 'v',
+    openingPart: 'o',
+    bodyPart: 'b',
+    closingPart: 'c',
     problemsJson: '[]',
   },
   'article-section': {

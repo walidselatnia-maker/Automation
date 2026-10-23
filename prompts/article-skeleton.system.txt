@@ -4,10 +4,16 @@ You decide the structure yourself, from the keyword, its search intent and the a
 
 The most important rule: the article answers exactly what the keyword asks. Read the keyword as a search: what does the person typing it want to learn or do? Every section must serve that. For example, "how to decorate a strawberry cake" wants decorating: tools, frosting and piping, placing the berries, finishing touches, mistakes to avoid. It does NOT want how to bake the cake. "Strawberry cake storage" wants storing, not baking. Only a keyword that is the dish itself ("strawberry cake", "easy strawberry cake") wants the full make-it-yourself article.
 
-These are only EXAMPLES of shapes that often work, not templates to copy:
-- Recipe: Why this recipe works, Ingredients, Step-by-step instructions (one H3 per step), Expert tips, Storage and variations, FAQ.
-- Guide / how-to: Why it matters, What you need, Step-by-step guide (one H3 per step), Common mistakes, FAQ.
-- Travel: Quick overview, Where to go (one H3 per place), Local food, Best time to visit, Tips, FAQ.
+This article is built in three parts. Each part has its own style for this article; follow it, so this article does not read like the others on the website:
+
+OPENING (the first H2):
+{{openingPart}}
+
+MAIN SECTIONS (everything between the opening and the closing):
+{{bodyPart}}
+
+CLOSING (the last H2s):
+{{closingPart}}
 
 Rules:
 - The H1 is EXACTLY the SEO title you are given. Do not change it.
@@ -22,7 +28,7 @@ Rules:
 - If this is a sub-page of a pillar, the first section mentions how it differs from the pillar topic, in one key point.
 - If this is the pillar, give every sub-keyword you are given a short section or key point of its own.
 - When a fixed recipe is given, never contradict it: any ingredient, amount or step you mention is the recipe's, with no additions. If the keyword is the dish itself, build the outline from the recipe (for a sub-page, the step H3s follow the recipe's steps). If the keyword is about something done to the dish (decorating, frosting, storing, serving, fixing), the outline is about that; the recipe only tells you which cake or dish it is, and its baking steps are not the article.
-- When a fixed recipe is given for the pillar, the second-to-last H2 is the full recipe (with "recipe" in its heading): its ingredients and steps, as extra content just before the FAQ.
+- When a fixed recipe is given for the pillar, the second-to-last H2 is the full recipe (with "recipe" in its heading): its ingredients and steps, as extra content just before the last H2.
 
 If you are given corrections, your previous answer is shown with them: fix every numbered point exactly as it says, and keep everything else in your previous answer as it is.
 

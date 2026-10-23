@@ -1,0 +1,1 @@
+STEP BY STEP. The main sections follow the order the reader works in. Where there is a process, one H2 holds it with one H3 per step, each step a single action with its own key points (time, sign it is done, what to avoid). Around it, short H2s for what to prepare before and what to check after. Headings are actions ("Chill the Dough"), not labels.

@@ -1,4 +1,5 @@
 import { all, get, run } from '../db/index.js';
+import { loadTemplate } from '../pipeline/prompts.js';
 import { planLanguage } from './repo.js';
 import { createLogger, errorMessage } from '../lib/logger.js';
 import { words } from '../seo/rules.js';
@@ -12,6 +13,11 @@ import { parseRecipe, type Recipe } from './recipe.js';
  * The AI designs the structure; there is no template. Code only checks the
  * plan's general rules (H1 is the SEO title, an opening and a closing section,
  * the focus keyword in a heading without stuffing, realistic word counts).
+ *
+ * The prompt has three parts (opening, main sections, closing), each with a
+ * few versions written in different styles. Each article gets one version
+ * of each part, never the one its website used last for that part, so the
+ * articles of a website do not all read the same.
  */
 
 const log = createLogger('newsite-skeleton');
@@ -205,7 +211,7 @@ export function checkSkeleton(k: Skeleton, ctx: SkeletonContext): string[] {
   // The pillar carries its own full recipe as extra content, at the end and
   // just before the closing FAQ.
   if (ctx.role === 'pillar' && ctx.recipe && n >= 2 && !/recipe/i.test(k.sections[n - 2]!.h2)) {
-    problems.push('The pillar must have the full recipe as its second-to-last H2 (just before the FAQ), with "recipe" in the heading.');
+    problems.push('The pillar must have the full recipe as its second-to-last H2 (just before the last H2), with "recipe" in the heading.');
   }
 
   // The pillar is the hub: every sub-topic gets at least a mention, so the
@@ -224,13 +230,68 @@ export function checkSkeleton(k: Skeleton, ctx: SkeletonContext): string[] {
   return problems;
 }
 
+/* -- Outline styles ------------------------------------------------------ */
+
+export const SKELETON_PARTS = [
+  { key: 'opening', name: 'Outline opening', about: 'How the article opens: its first section.' },
+  { key: 'body', name: 'Outline main sections', about: 'How the middle of the article is built.' },
+  { key: 'closing', name: 'Outline closing', about: 'How the article ends: its last sections.' },
+] as const;
+export type SkeletonPart = (typeof SKELETON_PARTS)[number]['key'];
+export type SkeletonStyles = Record<SkeletonPart, number>;
+/** How many versions each part has. */
+export const SKELETON_VERSIONS = 4;
+
+/** The prompt file of one version of one part. */
+export const styleFile = (part: SkeletonPart, version: number): string => `article-skeleton.${part}-${version}.template.txt`;
+
+const readStyles = (raw: string | null | undefined): Partial<SkeletonStyles> => {
+  try {
+    const o = JSON.parse(raw || '{}') as Record<string, unknown>;
+    return Object.fromEntries(SKELETON_PARTS.map((p) => [p.key, Number(o[p.key]) || 0]).filter(([, v]) => v)) as Partial<SkeletonStyles>;
+  } catch {
+    return {};
+  }
+};
+
+/**
+ * One version per part for a new article of a website: any version with
+ * text, except the one the website used last for that part (when there is
+ * another to pick).
+ */
+export function pickSkeletonStyles(websiteId: number, random: () => number = Math.random): SkeletonStyles {
+  const last = readStyles(get<{ skeleton_last: string }>('SELECT skeleton_last FROM new_websites WHERE id = ?', websiteId)?.skeleton_last);
+  const picked = {} as SkeletonStyles;
+  for (const { key } of SKELETON_PARTS) {
+    const usable = Array.from({ length: SKELETON_VERSIONS }, (_, i) => i + 1).filter((v) => loadTemplate(styleFile(key, v), {}).trim());
+    const fresh = usable.filter((v) => v !== last[key]);
+    const from = fresh.length ? fresh : usable.length ? usable : [1];
+    picked[key] = from[Math.min(from.length - 1, Math.floor(random() * from.length))]!;
+  }
+  return picked;
+}
+
+/** A keyword's outline styles: the ones it was given before (a remake keeps them), or a new pick for its website. */
+function stylesFor(row: SeoRow, websiteId: number, random?: () => number): SkeletonStyles {
+  const kept = readStyles(row.skeleton_styles);
+  if (SKELETON_PARTS.every((p) => kept[p.key])) return kept as SkeletonStyles;
+  const picked = pickSkeletonStyles(websiteId, random);
+  const json = JSON.stringify(picked);
+  run('UPDATE keyword_seo SET skeleton_styles = ? WHERE id = ?', json, row.id);
+  run('UPDATE new_websites SET skeleton_last = ? WHERE id = ?', json, websiteId);
+  return picked;
+}
+
 /* -- The writer step ----------------------------------------------------- */
 
 export interface SkeletonDeps {
   ask: (promptName: string, variables: Record<string, unknown>) => Promise<string>;
+  /** Picks the outline styles (tests); Math.random by default. */
+  random?: () => number;
 }
 
 interface Context {
+  website_id: number;
   pillar: string;
   niche: string;
   niche_context: string;
@@ -240,7 +301,7 @@ interface Context {
 /** Make one keyword's skeleton, correcting mistakes until it passes (rounds.ts). */
 export async function makeSkeleton(row: SeoRow, deps: SkeletonDeps): Promise<void> {
   const ctx = get<Context>(
-    `SELECT p.pillar, w.niche, w.niche_context, w.persona
+    `SELECT p.website_id, p.pillar, w.niche, w.niche_context, w.persona
        FROM keyword_plans p JOIN new_websites w ON w.id = p.website_id WHERE p.id = ?`,
     row.plan_id,
   );
@@ -257,6 +318,8 @@ export async function makeSkeleton(row: SeoRow, deps: SkeletonDeps): Promise<voi
       : [];
   const limits = LIMITS[row.role];
   const recipe = row.recipe_json ? parseRecipe(row.recipe_json) : null;
+  const styles = stylesFor(row, ctx.website_id, deps.random);
+  const style = (part: SkeletonPart) => loadTemplate(styleFile(part, styles[part]), {}).trim();
   const depth =
     row.role === 'pillar'
       ? `This is the PILLAR: the hub of the topic and the longest, deepest page of the plan. Cover the whole topic thoroughly, ` +
@@ -283,6 +346,9 @@ export async function makeSkeleton(row: SeoRow, deps: SkeletonDeps): Promise<voi
         depth,
         subKeywordsJson: JSON.stringify(subKeywords),
         recipeJson: recipe ? JSON.stringify(recipe) : '(no fixed recipe: this is not a recipe website)',
+        openingPart: style('opening'),
+        bodyPart: style('body'),
+        closingPart: style('closing'),
         problemsJson: corrections,
       }),
     parse: (raw) => {

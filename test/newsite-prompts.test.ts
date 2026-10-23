@@ -34,7 +34,7 @@ describe('Prompts page', () => {
   it('lists only prompts that ship with the platform, grouped by step, under Set up', async () => {
     for (const stage of PROMPT_STAGES) {
       for (const p of stage.prompts.filter((x) => !x.href)) {
-        const files = p.template ? [`${p.key}.txt`] : [`${p.key}.system.txt`, `${p.key}.user.txt`];
+        const files = p.template || p.style ? [`${p.key}.txt`] : [`${p.key}.system.txt`, `${p.key}.user.txt`];
         for (const f of files) expect(readShippedPrompt(f).trim(), f).not.toBe('');
       }
     }
@@ -43,6 +43,22 @@ describe('Prompts page', () => {
     expect(page).toContain('href="/new-website/prompts/seo-metadata"');
     expect(page).toMatch(/Social channels<\/span>.*Prompts<\/span>.*Keywords &amp; articles<\/span>/s);
     expect(page).toContain('aria-current="page"><svg');
+  });
+
+  it('shows the article outline\'s three parts, each version editable, under the outline', async () => {
+    const page = (await app.inject({ method: 'GET', url: '/new-website/prompts' })).body;
+    const outline = page.indexOf('href="/new-website/prompts/article-skeleton"');
+    expect(outline).toBeGreaterThan(0);
+    for (const part of ['opening', 'body', 'closing']) {
+      for (let v = 1; v <= 4; v++) expect(page.indexOf(`href="/new-website/prompts/article-skeleton.${part}-${v}.template"`)).toBeGreaterThan(outline);
+    }
+    expect(page).toContain('Outline main sections, version 3');
+    const edit = (await app.inject({ method: 'GET', url: '/new-website/prompts/article-skeleton.closing-2.template' })).body;
+    expect(edit).toContain('MISTAKES THEN FAQ');
+    await post('/new-website/prompts/article-skeleton.closing-2.template', { part0: 'End on a short checklist, then an FAQ.' });
+    expect(getPromptOverride('article-skeleton.closing-2.template.txt')).toBe('End on a short checklist, then an FAQ.');
+    const system = loadPrompt('article-skeleton', { closingPart: 'CLOSING STYLE' }).system;
+    expect(system).toContain('CLOSING STYLE');
   });
 
   it('saves an edit that the next AI call reads, keeps the old text as a version, and goes back to the default', async () => {

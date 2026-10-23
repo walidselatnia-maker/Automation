@@ -1032,6 +1032,14 @@ export const MIGRATIONS: Migration[] = [
       addColumn(db, 'keyword_seo', 'dup_checked', 'INTEGER NOT NULL DEFAULT 0');
     },
   },
+  {
+    id: '052-newsite-skeleton-styles',
+    description: 'New websites: the outline style picked for each article (one version per part), and the last ones a website used',
+    up(db) {
+      addColumn(db, 'keyword_seo', 'skeleton_styles', "TEXT NOT NULL DEFAULT ''");
+      addColumn(db, 'new_websites', 'skeleton_last', "TEXT NOT NULL DEFAULT ''");
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */

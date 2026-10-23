@@ -159,6 +159,8 @@ export interface SeoRow {
   article_type: string;
   skeleton_json: string;
   skeleton_problems: string;
+  /** The outline style picked for it, one version per part (skeleton.ts), as JSON; '' until its skeleton is made. */
+  skeleton_styles: string;
   recipe_status: '' | 'pending' | 'writing' | 'done' | 'failed';
   recipe_json: string;
   recipe_problems: string;

@@ -12,6 +12,7 @@ import { invalidatePromptCache, readShippedPrompt } from '../pipeline/prompts.js
 import { variablesFor } from '../pipeline/prompt-contexts.js';
 import { html, raw, type Html } from '../web/views/layout.js';
 import { newLayout, type NewFlash } from './layout.js';
+import { SKELETON_PARTS, SKELETON_VERSIONS, styleFile } from './skeleton.js';
 
 /**
  * The prompts the new platform writes with, in the order the work is done.
@@ -29,6 +30,8 @@ export interface PromptEntry {
   template?: boolean;
   /** Edited on its own page instead. */
   href?: string;
+  /** One version of a part of another prompt: listed under it, one text. */
+  style?: boolean;
 }
 
 export interface PromptStage {
@@ -56,6 +59,15 @@ export const PROMPT_STAGES: PromptStage[] = [
     prompts: [
       { key: 'recipe-card', name: 'Recipe card', about: 'Creates the recipe an article is written from: ingredients, amounts, times and steps.' },
       { key: 'article-skeleton', name: 'Article outline', about: 'Decides which sections the article has and in what order.' },
+      // Its three parts, each in a few styles: every article gets one of each.
+      ...SKELETON_PARTS.flatMap((part) =>
+        Array.from({ length: SKELETON_VERSIONS }, (_, i) => ({
+          key: styleFile(part.key, i + 1).replace(/\.txt$/, ''),
+          name: `${part.name}, version ${i + 1}`,
+          about: part.about,
+          style: true,
+        })),
+      ),
       { key: 'article-section', name: 'Article sections', about: 'Writes each section of the article from its outline.' },
     ],
   },
@@ -102,7 +114,9 @@ interface Part {
 }
 
 const partsOf = (p: PromptEntry): Part[] =>
-  p.template
+  p.style
+    ? [{ file: `${p.key}.txt`, label: 'Style', help: 'Added to the article outline prompt. Each article gets one version of each part.' }]
+    : p.template
     ? [{ file: `${p.key}.txt`, label: 'Picture description', help: 'Sent to the picture maker as it is, with the words in double braces filled in.' }]
     : [
         { file: `${p.key}.system.txt`, label: 'Instructions', help: 'Who the AI is and the rules it follows. The same every time.' },
@@ -140,6 +154,7 @@ const CSS = `
 .pr-stage summary p { margin: 0; font-size: 13px; color: var(--idle-ink); opacity: .75; }
 .pr-row { display: flex; align-items: center; gap: 16px; padding: 8px 20px; border-top: 1px solid var(--line); }
 .pr-row:first-of-type { border-top: 0; }
+.pr-row.sub { padding-left: 44px; }
 .pr-row div { flex: 1; min-width: 0; }
 .pr-row b { display: block; font-weight: 600; font-size: 15px; }
 .pr-row span { color: var(--soft); font-size: 13px; }
@@ -177,7 +192,7 @@ export function promptsListPage(): Html {
   const row = (p: PromptEntry): Html => {
     if (p.href) return html`<div class="pr-row"><div><b>${p.name}</b><span>${p.about}</span></div><a class="ns-btn quiet" href="${p.href}">Open</a></div>`;
     const changed = isChanged(p);
-    return html`<div class="pr-row"><div><b>${p.name}</b><span>${p.about}</span></div>
+    return html`<div class="pr-row${p.style ? ' sub' : ''}"><div><b>${p.name}</b><span>${p.about}</span></div>
       <span class="pr-state ${changed ? 'changed' : ''}">${changed ? 'Changed' : 'Default'}</span>
       <a class="ns-btn quiet" href="/new-website/prompts/${p.key}">Edit</a></div>`;
   };
@@ -192,7 +207,7 @@ export function promptsListPage(): Html {
     </div>
     ${PROMPT_STAGES.map(
       (s) => {
-        const count = s.prompts.length + (s.link ? 1 : 0);
+        const count = s.prompts.filter((p) => !p.style).length + (s.link ? 1 : 0);
         const changed = s.prompts.filter((p) => !p.href && isChanged(p)).length;
         return html`<details class="pr-stage" data-stage="${s.title}"><summary><h2>${s.title}</h2><p>${s.about}</p>
           <small>${String(count)} ${count === 1 ? 'prompt' : 'prompts'}${changed ? html` · <b>${String(changed)} changed</b>` : raw('')}</small></summary>

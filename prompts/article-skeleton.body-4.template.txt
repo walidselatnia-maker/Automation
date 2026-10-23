@@ -1,0 +1,1 @@
+HOW IT WORKS. The main sections explain the why before the how: one H2 on what is really going on (the science, the mechanics or the reasoning, in plain words), then H2s that apply it, each one tied back to that reason. Concrete numbers, temperatures, sizes and timings in the key points. If the keyword needs a process (a recipe, a how-to), keep it in one H2 with H3 steps.
