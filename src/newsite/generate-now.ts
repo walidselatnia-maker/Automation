@@ -30,7 +30,7 @@ export function generateChoices(): GenerateChoice[] {
     websiteName: w.name,
     keywords: all<{ id: number; keyword: string; role: 'pillar' | 'sub'; pillar: string }>(
       `SELECT s.id, s.keyword, s.role, p.pillar FROM keyword_seo s JOIN keyword_plans p ON p.id = s.plan_id
-        WHERE p.website_id = ? AND COALESCE(s.post_status, '') NOT IN ('published', 'publishing')
+        WHERE p.website_id = ? AND COALESCE(s.post_status, '') NOT IN ('published', 'publishing') AND s.skip_reason = ''
         ORDER BY s.plan_id, s.position`,
       w.id,
     ),
@@ -40,7 +40,7 @@ export function generateChoices(): GenerateChoice[] {
 /** Mark one keyword and put every failed step of it back in its queue. */
 export function startGenerateNow(seoId: number): SeoRow | undefined {
   const row = getSeoRow(seoId);
-  if (!row || row.post_status === 'published' || row.post_status === 'publishing') return undefined;
+  if (!row || row.post_status === 'published' || row.post_status === 'publishing' || row.skip_reason) return undefined;
   run(`UPDATE keyword_seo SET generate_now = 1, retry_step = '', retry_at = NULL WHERE id = ?`, seoId);
   if (row.status === 'failed') run(`UPDATE keyword_seo SET status = 'pending', problems = '' WHERE id = ?`, seoId);
   for (const step of ['recipe', 'skeleton', 'article', 'images'] as const) {

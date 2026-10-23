@@ -1,6 +1,7 @@
 import { all, get, run } from '../db/index.js';
 import { createLogger } from '../lib/logger.js';
 import type { Settings } from '../settings.js';
+import { listDuplicate, skipKeyword } from './duplicates.js';
 import { articleGapMinutes } from './gaps.js';
 import { parseImageSet } from './images.js';
 import { notReadyReason, publishQueued, queuePublish, type PublishDeps } from './publish.js';
@@ -25,6 +26,9 @@ import { queueNotStartedSteps, type SeoRow } from './seo.js';
  *      the website is active, its gap since its last published article has
  *      passed (its fixed gap, or a random one from its range: gaps.ts),
  *      and it has not reached its posts per day.
+ *      Right before it starts, it is checked for duplicates (duplicates.ts):
+ *      one that repeats an earlier keyword of its website or one of its
+ *      published posts is skipped, with why, and the next one gets the turn.
  *   2. Writing: SEO, recipe, outline, article, image prompts (seo.ts).
  *   3. Pictures: its main pictures, made straight away (pictures.ts). No
  *      approval is asked for pictures.
@@ -80,6 +84,12 @@ export interface AutopilotState {
 export interface ConductorDeps extends PublishDeps {
   /** Wakes the writer, for the keyword whose turn it is. */
   startWriter?: () => void;
+  /**
+   * Checks a keyword about to start against its website's published posts
+   * (duplicates.ts): the skip reason, or ''. Without it only the website's
+   * keyword list is checked.
+   */
+  checkPosts?: (row: SeoRow, site: NewWebsiteRow) => Promise<string>;
 }
 
 /* -- Small helpers ----------------------------------------------------------- */
@@ -185,12 +195,29 @@ const generateNowBusy = (settings: Settings): boolean =>
  * no later keyword goes ahead of it.
  */
 function firstInLine(rows: SeoRow[], settings: Settings): SeoRow | undefined {
-  const first = rows.find((r) => r.post_status !== 'published');
+  const first = rows.find((r) => r.post_status !== 'published' && !r.skip_reason);
   if (!first || first.post_status === 'publishing' || first.generate_now || stoppedReason(first, settings)) return undefined;
   return first;
 }
 
 /* -- The conductor --------------------------------------------------------- */
+
+/** Keywords being checked against their website's posts right now. */
+const checking = new Set<number>();
+
+/** The website whose turn came first, and its first keyword in line. */
+function nextInLine(settings: Settings, now: number, tz: string): { row: SeoRow; site: NewWebsiteRow; due: number } | null {
+  let pick: { row: SeoRow; site: NewWebsiteRow; due: number } | null = null;
+  for (const site of listNewWebsites()) {
+    if (site.status !== 'active') continue;
+    const rows = siteRows(site.id);
+    const s = schedule(site, rows, now, tz);
+    if (s.full || now < s.due) continue;
+    const row = firstInLine(rows, settings);
+    if (row && (!pick || s.due < pick.due || (s.due === pick.due && site.id < pick.site.id))) pick = { row, site, due: s.due };
+  }
+  return pick;
+}
 
 /** Ends the active keyword's turn. */
 function release(row: SeoRow, event: string, note = ''): void {
@@ -253,17 +280,36 @@ export function autopilotTick(deps: ConductorDeps, now = Date.now()): void {
   }
   if (generateNowBusy(deps.settings)) return;
 
-  // The website whose turn came first, then its first keyword in line.
-  let pick: { row: SeoRow; site: NewWebsiteRow; due: number } | null = null;
-  for (const site of listNewWebsites()) {
-    if (site.status !== 'active') continue;
-    const rows = siteRows(site.id);
-    const s = schedule(site, rows, now, tz);
-    if (s.full || now < s.due) continue;
-    const row = firstInLine(rows, deps.settings);
-    if (row && (!pick || s.due < pick.due || (s.due === pick.due && site.id < pick.site.id))) pick = { row, site, due: s.due };
+  // The next keyword in line, skipping the ones that repeat an earlier keyword of their website.
+  let pick = nextInLine(deps.settings, now, tz);
+  while (pick) {
+    const duplicate = listDuplicate(pick.row);
+    if (!duplicate) break;
+    skipKeyword(pick.row.id, duplicate);
+    remember(pick.row.id, 'skipped', duplicate);
+    pick = nextInLine(deps.settings, now, tz);
   }
   if (!pick) return;
+  // Then against the website's published posts, once, before it starts: the answer brings the conductor back.
+  if (deps.checkPosts && !pick.row.dup_checked) {
+    const { row, site } = pick;
+    if (checking.has(row.id)) return;
+    checking.add(row.id);
+    void deps
+      .checkPosts(row, site)
+      .catch(() => '')
+      .then((duplicate) => {
+        if (duplicate) {
+          skipKeyword(row.id, duplicate);
+          remember(row.id, 'skipped', duplicate);
+        } else run('UPDATE keyword_seo SET dup_checked = 1 WHERE id = ?', row.id);
+      })
+      .finally(() => {
+        checking.delete(row.id);
+        autopilotTick(deps);
+      });
+    return;
+  }
   run('UPDATE keyword_seo SET auto_active = 1 WHERE id = ? AND NOT EXISTS (SELECT 1 FROM keyword_seo WHERE auto_active = 1)', pick.row.id);
   remember(pick.row.id, 'started', pick.site.domain);
   log.info(`Automation: starting "${pick.row.keyword}" on ${pick.site.domain}.`);
@@ -286,7 +332,7 @@ export function autopilotState(site: NewWebsiteRow, tz: string, now = Date.now()
   const rows = siteRows(site.id);
   const s = schedule(site, rows, now, tz);
   const stoppedOf = (r: SeoRow) => (settings ? stoppedReason(r, settings) : r.post_status === 'failed' ? 'failed' : '');
-  const waiting = rows.filter((r) => r.post_status !== 'published');
+  const waiting = rows.filter((r) => r.post_status !== 'published' && !r.skip_reason);
   const stopped = waiting.filter((r) => stoppedOf(r));
   const ready = waiting.filter((r) => !stoppedOf(r) && r.post_status !== 'publishing' && !notReadyReason(r, mainPictures(r)));
   const base = { ready: ready.length, preparing: waiting.length - ready.length - stopped.length, today: s.today };

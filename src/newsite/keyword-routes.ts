@@ -27,6 +27,7 @@ import {
 } from './repo.js';
 import { listChannels, websiteChannels } from './channels.js';
 import { listPlanSocialPosts } from './social.js';
+import { skippedKeywords } from './duplicates.js';
 import { addKeywordsStep, importCheckStep, importFileStep, keywordsOverview, articleStepPage, imagesStepPage, publishStepPage, keywordsPage, recipeStepPage, seoStepPage, skeletonStepPage } from './keywords-view.js';
 import { articleTypeFor } from './skeleton.js';
 import { clearPictures, isMainSlot, listPictures, listPlanPictures, listPlanSocialPictures } from './pictures.js';
@@ -137,7 +138,7 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
       autopilot: deps.settings && automationOn(deps.settings) && site.status === 'active' ? autopilotState(site, tz, Date.now(), automationOnAt(deps.settings), deps.settings).next : '',
     }));
     return reply.type('text/html; charset=utf-8').send(
-      newLayout({ title: 'Keywords', active: '/new-website/keywords', body: keywordsOverview(sites, planStats()), flash: deps.readFlash(request.query) }),
+      newLayout({ title: 'Keywords', active: '/new-website/keywords', body: keywordsOverview(sites, planStats(), skippedKeywords()), flash: deps.readFlash(request.query) }),
     );
   });
 

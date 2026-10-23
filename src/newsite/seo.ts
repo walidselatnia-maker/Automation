@@ -187,6 +187,10 @@ export interface SeoRow {
   generate_now: number;
   /** 1 on the one keyword Automation is working on now (autopilot.ts). */
   auto_active: number;
+  /** Why it is skipped ("duplicate of …"), or '' (duplicates.ts). A skipped keyword is never written. */
+  skip_reason: string;
+  /** 1 once it was checked against the website's published posts, right before it started. */
+  dup_checked: number;
 }
 
 /** One waiting row per keyword: the pillar first, then the sub-keywords in order. */

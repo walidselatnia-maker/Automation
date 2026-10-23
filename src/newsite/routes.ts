@@ -14,6 +14,8 @@ import { afterArticlePublished, syncCategoryIntros } from './category-intros.js'
 import { syncClusters } from './clusters.js';
 import { addStepPicture, publishWhenReady, type PublishDeps } from './publish.js';
 import { generateChoices, generateNowLines, generateNowTick, startGenerateNow } from './generate-now.js';
+import { findDuplicate, postsDuplicate, skipKeyword, type DuplicateDeps } from './duplicates.js';
+import { getSeoRow } from './seo.js';
 import { AUTOMATION_KEY, AUTOMATION_ON_AT, automationOn, automationOnAt, autopilotTick, START_DELAY_MS } from './autopilot.js';
 import { createSocialPosts, kickSocial, onPinPicture, type SocialDeps } from './social.js';
 import { registerSocialRoutes } from './social-routes.js';
@@ -25,6 +27,7 @@ import { publicBaseUrlProblem } from '../core/media-links.js';
 import {
   createNewWebsite,
   deleteNewWebsite,
+  getKeywordPlan,
   getNewWebsite,
   getNewWebsiteByDomain,
   listNewWebsites,
@@ -109,6 +112,8 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
   /** Wakes the writer; set once the keyword routes are registered. */
   let wakeWriter: () => void = () => {};
   const isOn = deps.settings ? () => automationOn(deps.settings) : undefined;
+  /** How a keyword about to start reads its website's posts, for the duplicate check. */
+  const duplicateDeps: DuplicateDeps = { encryptionKey: deps.encryptionKey, fetchImpl: deps.fetchImpl, listPosts: deps.listPosts };
 
   const ask =
     deps.ask ??
@@ -161,7 +166,7 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
     social.startPictures = publish.startPictures;
     generateTick = () => generateNowTick(publish);
     if (deps.autoPictures !== false) {
-      conduct = () => autopilotTick({ ...publish, startWriter: wakeWriter });
+      conduct = () => autopilotTick({ ...publish, startWriter: wakeWriter, checkPosts: (row, site) => postsDuplicate(row, site, duplicateDeps) });
       setInterval(() => {
         conduct();
         generateTick();
@@ -336,7 +341,18 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
 
   /** Generate now, from the Dashboard: one keyword written, pictured and published ahead of the rest. */
   app.post('/new-website/generate-now', async (request, reply) => {
-    const row = startGenerateNow(Number(body(request).seo) || 0);
+    const seoId = Number(body(request).seo) || 0;
+    // Checked for duplicates first, as Automation checks a keyword whose turn it is.
+    const asked = getSeoRow(seoId);
+    const site = asked ? getNewWebsite(getKeywordPlan(asked.plan_id)?.website_id ?? 0) : undefined;
+    if (asked && site && !asked.skip_reason && asked.post_status !== 'published' && !asked.generate_now) {
+      const duplicate = await findDuplicate(asked, site, duplicateDeps);
+      if (duplicate) {
+        skipKeyword(asked.id, duplicate);
+        return reply.redirect(`/new-website/dashboard?error=${encodeURIComponent(`"${asked.keyword}" is skipped: ${duplicate}.`)}`, 303);
+      }
+    }
+    const row = startGenerateNow(seoId);
     if (!row) return reply.redirect(`/new-website/dashboard?error=${encodeURIComponent('Pick a keyword that is not published yet.')}`, 303);
     startWriter();
     generateTick();

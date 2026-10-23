@@ -1293,7 +1293,7 @@ const planProgress = (s: PlanStats | undefined): Html =>
     : html`Waiting to start`;
 
 /** The Keywords page: one card per website, each opening on a table of its keyword plans. */
-export function keywordsOverview(sites: OverviewSite[], stats: Map<number, PlanStats>): Html {
+export function keywordsOverview(sites: OverviewSite[], stats: Map<number, PlanStats>, skipped: { plan_id: number; keyword: string; skip_reason: string }[] = []): Html {
   const ready = sites.length > 0;
   return html`
     <style>${raw(CSS)}${raw(OVERVIEW_CSS)}</style>
@@ -1336,7 +1336,8 @@ export function keywordsOverview(sites: OverviewSite[], stats: Map<number, PlanS
                             : html`<span class="ns-badge busy">Being found</span>`
                           : p.items.length
                             ? p.items.map((i) => i.keyword).join(', ')
-                            : html`None${p.subs_status === 'failed' ? html`<span class="ko-err">Not found: ${p.subs_error.replace(/[.\s]+$/, '')}. The main keyword goes on alone.</span>` : raw('')}`}</td>
+                            : html`None${p.subs_status === 'failed' ? html`<span class="ko-err">Not found: ${p.subs_error.replace(/[.\s]+$/, '')}. The main keyword goes on alone.</span>` : raw('')}`}
+                          ${skipped.filter((k) => k.plan_id === p.id).map((k) => html`<span class="ko-err">Skipped “${k.keyword}”: ${k.skip_reason}</span>`)}</td>
                         <td class="ko-niche">${p.niche ? p.niche : html`${site.niche} <small>(website)</small>`}</td>
                         <td class="ko-progress">${planProgress(stats.get(p.id))}</td>
                         <td><form method="post" action="/new-website/keywords/${String(p.id)}/delete" data-name="${p.pillar}"

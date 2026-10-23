@@ -1024,6 +1024,14 @@ export const MIGRATIONS: Migration[] = [
       addColumn(db, 'new_websites', 'social_gap_to', 'INTEGER NOT NULL DEFAULT 0');
     },
   },
+  {
+    id: '051-newsite-duplicate-skip',
+    description: 'New websites: a keyword that duplicates a published article or an earlier keyword is skipped, with why; and whether it was checked against the website',
+    up(db) {
+      addColumn(db, 'keyword_seo', 'skip_reason', "TEXT NOT NULL DEFAULT ''");
+      addColumn(db, 'keyword_seo', 'dup_checked', 'INTEGER NOT NULL DEFAULT 0');
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */
