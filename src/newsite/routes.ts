@@ -10,6 +10,8 @@ import { registerPictureRoutes, type PictureRouteDeps } from './picture-routes.j
 import { registerImageModelRoutes } from './image-model.js';
 import { registerChannelRoutes, type ChannelLookups } from './channels-routes.js';
 import { registerPublishRoutes } from './publish-routes.js';
+import { afterArticlePublished, syncCategoryIntros } from './category-intros.js';
+import { syncClusters } from './clusters.js';
 import { addStepPicture, publishWhenReady, type PublishDeps } from './publish.js';
 import { generateChoices, generateNowLines, generateNowTick, startGenerateNow } from './generate-now.js';
 import { AUTOMATION_KEY, AUTOMATION_ON_AT, automationOn, automationOnAt, autopilotTick, START_DELAY_MS } from './autopilot.js';
@@ -140,6 +142,7 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
     publish.afterPublish = (seoId) => {
       if (createSocialPosts(seoId)) void kickSocial(social);
       if (createReels(seoId)) void kickReels(social);
+      void afterArticlePublished(seoId, publish);
       conduct();
     };
     publish.startPictures = registerPictureRoutes(app, {
@@ -164,6 +167,14 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
         generateTick();
       }, 60_000).unref();
       automationStarted = () => setTimeout(conduct, START_DELAY_MS + 1000).unref();
+      // Articles published before their website knew topic clusters get their pillar/sub label,
+      // and categories that were already full get their intro.
+      const clusters = () =>
+        void syncClusters(publish)
+          .then(() => syncCategoryIntros(publish))
+          .catch(() => {});
+      setTimeout(clusters, START_DELAY_MS + 5000).unref();
+      setInterval(clusters, 6 * 60 * 60_000).unref();
     }
     registerSocialRoutes(app, { ...social, readFlash, autoStart: deps.autoPictures });
   }

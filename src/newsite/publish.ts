@@ -22,7 +22,13 @@ import { getSeoRow, type SeoRow } from './seo.js';
  *
  * Its category is one of the website's own, picked by the AI, so the site
  * gives it one of the authors assigned to that category. A category with no
- * author assigned gets one of the site's authors sent along instead.
+ * author assigned gets one of the site's authors sent along instead. Every
+ * article of a plan goes in the same category: the first one picked.
+ *
+ * The post also says where it sits in its topic cluster: the plan's pillar is
+ * marked "pillar", every sub-keyword "sub" with its own plan's pillar (by
+ * externalId, so it may even go out before the pillar). The website links
+ * them to each other from that; nothing is left to wording or the AI.
  *
  * Once posted, the article's recipe step pictures join the slow queue; each
  * one, as it is made, is uploaded and set on its step of the recipe card.
@@ -47,6 +53,17 @@ export interface PublishDeps {
 }
 
 export const externalIdFor = (seoId: number): string => `newsite-${seoId}`;
+
+/** The plan's pillar keyword, if the plan has one. */
+export const pillarSeoId = (planId: number): number | null =>
+  get<{ id: number }>(`SELECT id FROM keyword_seo WHERE plan_id = ? AND role = 'pillar' ORDER BY id LIMIT 1`, planId)?.id ?? null;
+
+/** Where a keyword's post sits in its topic cluster, as the website takes it. Empty when its plan has no pillar. */
+export function clusterFields(row: Pick<SeoRow, 'id' | 'plan_id' | 'role'>): { clusterRole: 'pillar' } | { clusterRole: 'sub'; pillar: string } | Record<string, never> {
+  if (row.role === 'pillar') return { clusterRole: 'pillar' };
+  const pillar = pillarSeoId(row.plan_id);
+  return pillar && pillar !== row.id ? { clusterRole: 'sub', pillar: `ext:${externalIdFor(pillar)}` } : {};
+}
 
 interface Target {
   row: SeoRow;
@@ -83,13 +100,30 @@ const parseJson = (raw: string): Record<string, unknown> | null => {
 /**
  * Which of the website's categories the article goes in, and an author when
  * that category has none assigned. The pick is kept, so publishing again
- * asks nobody. A site with no categories gets the pillar as a new one.
+ * asks nobody. A site with no categories gets one named after its niche, a
+ * broad topic: never after the pillar, which would compete with the pillar
+ * article for the same search.
  */
 async function categoryAndAuthor(t: Target, deps: PublishDeps): Promise<{ category: number | string; author?: number }> {
   const categories = await listCategories(t.site.domain, t.apiKey, deps.fetchImpl);
-  if (!categories.length) return { category: titleCase(t.pillar) };
+  if (!categories.length) {
+    const niche = get<{ niche: string }>('SELECT niche FROM new_websites WHERE id = ?', t.site.id)?.niche ?? '';
+    const name = titleCase(niche.split(/\s+/).filter(Boolean).slice(0, 3).join(' ') || t.row.keyword);
+    run('UPDATE keyword_seo SET post_category = ? WHERE id = ?', name, t.row.id);
+    return { category: name };
+  }
 
   let chosen = categories.find((c) => c.name.toLowerCase() === t.row.post_category.toLowerCase());
+  // the plan's other articles already have one: the whole cluster stays together, the pillar's first
+  if (!chosen) {
+    const planCategory = get<{ post_category: string }>(
+      `SELECT post_category FROM keyword_seo WHERE plan_id = ? AND id <> ? AND post_category <> ''
+        ORDER BY role = 'pillar' DESC, id LIMIT 1`,
+      t.row.plan_id,
+      t.row.id,
+    )?.post_category;
+    if (planCategory) chosen = categories.find((c) => c.name.toLowerCase() === planCategory.toLowerCase());
+  }
   if (!chosen && deps.ask) {
     const niche = get<{ niche: string }>('SELECT niche FROM new_websites WHERE id = ?', t.site.id)?.niche ?? '';
     const raw = await deps.ask('pick-category', {
@@ -211,6 +245,7 @@ export async function publishKeyword(seoId: number, deps: PublishDeps): Promise<
         category: placed.category,
         ...(placed.author ? { author: placed.author } : {}),
         seo: { metaTitle: t.row.title, metaDescription: t.row.description, focusKeyword: t.row.focus_keyword },
+        ...clusterFields(t.row),
         ...(recipe ? { details: recipeDetails(recipe, uploadedSteps(listPictures(seoId))) } : {}),
       },
       deps.fetchImpl,

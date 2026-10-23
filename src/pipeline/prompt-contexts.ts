@@ -203,6 +203,16 @@ export const STEP_CONTEXTS: Record<string, Record<string, unknown>> = {
     niche: 'n',
     categoriesJson: '[]',
   },
+  'category-intro': {
+    language: 'English',
+    niche: 'n',
+    nicheContext: 'c',
+    persona: 'p',
+    category: 'c',
+    pillarsJson: '[]',
+    articlesJson: '[]',
+    problemsJson: '[]',
+  },
   'article-images': {
     keyword: 'k',
     title: 't',

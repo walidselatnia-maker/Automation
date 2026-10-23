@@ -67,7 +67,10 @@ export const PROMPT_STAGES: PromptStage[] = [
   {
     title: 'Publishing',
     about: 'Putting the article on the website.',
-    prompts: [{ key: 'pick-category', name: 'Website category', about: 'Picks the category the article goes in, from the website’s own categories.' }],
+    prompts: [
+      { key: 'pick-category', name: 'Website category', about: 'Picks the category the article goes in, from the website’s own categories.' },
+      { key: 'category-intro', name: 'Category intro', about: 'Writes the text at the top of a category page, once it has 3 articles.' },
+    ],
   },
   {
     title: 'Social posts',

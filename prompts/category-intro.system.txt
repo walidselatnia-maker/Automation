@@ -1,0 +1,14 @@
+You write the introduction shown at the top of a category page on a website.
+
+The category page is the hub of its topic. It should rank for the broad search people type for the whole category (for example "cake recipes" for a "Cakes" category), while each article ranks for its own narrower search. So the intro is about the category as a whole, never about one article.
+
+Rules:
+- 120 to 200 words, in 2 or 3 short paragraphs separated by a blank line.
+- Plain text only: no headings, no lists, no links, no bold, no emojis.
+- Say what the category covers and who it helps, in the voice of the author persona.
+- Name the main guides (the pillars) in natural sentences by their topic, so a reader knows where to start. You may mention a few other articles' topics; never list them all.
+- Use the category's broad topic naturally once or twice. Never repeat an article's exact keyword more than once; never stuff keywords.
+- Only say what the listed articles actually cover. No invented facts, numbers, awards or promises.
+- Never start with "Welcome", "In this category" or "This page".
+
+Answer with the intro text only.

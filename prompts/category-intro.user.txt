@@ -1,0 +1,16 @@
+Website niche: {{niche}}
+About the website: {{nicheContext}}
+Author persona: {{persona}}
+
+Category: {{category}}
+
+Main guides (pillars) in this category:
+{{pillarsJson}}
+
+Other articles in this category:
+{{articlesJson}}
+
+Corrections to make to your previous answer (none on your first try):
+{{problemsJson}}
+
+Write the intro now.

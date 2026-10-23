@@ -999,6 +999,21 @@ export const MIGRATIONS: Migration[] = [
       addColumn(db, 'new_websites', 'picture_style', "TEXT NOT NULL DEFAULT ''");
     },
   },
+  {
+    id: '049-newsite-category-intros',
+    description: 'New websites: when each category intro was written and which pillars it covers, so it is rewritten only for a new pillar, at most once in 30 days',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS newsite_category_intros (
+          website_id INTEGER NOT NULL,
+          category   TEXT NOT NULL,
+          written_at TEXT NOT NULL,
+          pillar_ids TEXT NOT NULL DEFAULT '[]',
+          PRIMARY KEY (website_id, category)
+        );
+      `);
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */

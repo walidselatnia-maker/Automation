@@ -58,6 +58,10 @@ export interface SitePost {
   slug: string;
   title: string;
   status?: string;
+  /** Topic cluster label; undefined when the site is too old to know clusters. */
+  clusterRole?: string | null;
+  pillarId?: number | null;
+  pillarRef?: string | null;
 }
 
 /** Most pages read for one list, so a runaway answer cannot loop forever. */
@@ -94,6 +98,13 @@ export async function listPosts(domain: string, apiKey: string, fetchImpl: Fetch
         slug: String(item.slug ?? ''),
         title: String(item.title ?? ''),
         status: typeof item.status === 'string' ? item.status : undefined,
+        ...('clusterRole' in item
+          ? {
+              clusterRole: (item.clusterRole as string | null) ?? null,
+              pillarId: (item.pillarId as number | null) ?? null,
+              pillarRef: (item.pillarRef as string | null) ?? null,
+            }
+          : {}),
       });
     }
     const pages = Number(body.pages);
@@ -201,6 +212,7 @@ export async function patchPost(domain: string, apiKey: string, id: number, fiel
 export interface SiteCategory {
   id: number;
   name: string;
+  slug: string;
   /** Authors assigned to the category in the site's admin. */
   authorIds: number[];
 }
@@ -232,9 +244,31 @@ export async function listCategories(domain: string, apiKey: string, fetchImpl: 
     .map((c) => ({
       id: Number(c.id),
       name: String(c.name ?? ''),
+      slug: String(c.slug ?? ''),
       authorIds: Array.isArray(c.authorIds) ? c.authorIds.map(Number).filter(Number.isFinite) : [],
     }))
     .filter((c) => Number.isFinite(c.id) && c.name);
+}
+
+/** Set a category's intro, the text at the top of its page (POST /api/v1/categories updates the one with that slug). */
+export async function saveCategoryIntro(
+  domain: string,
+  apiKey: string,
+  category: { name: string; slug: string; intro: string },
+  fetchImpl: Fetch = fetch,
+): Promise<void> {
+  let response: Response;
+  try {
+    response = await fetchImpl(`https://${domain}/api/v1/categories`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(category),
+      signal: AbortSignal.timeout(30_000),
+    });
+  } catch {
+    throw new Error(`Could not reach ${domain} to save the category intro.`);
+  }
+  if (!response.ok) throw await siteError(domain, response, 'save the category intro');
 }
 
 /** The website's authors (GET /api/v1/authors). */
