@@ -47,7 +47,26 @@ export function socialDueAt(site: SocialGapSite, channelId: number, lastMs: numb
 /** An SQLite datetime('now') value (UTC) in ms. */
 const sqlTime = (value: string | null | undefined): number => (value ? Date.parse(`${value.replace(' ', 'T')}Z`) : 0);
 
-/** The last image post or reel a website sent a channel (ms), or 0. */
+/**
+ * The last moment a post or reel of a website was let through to a channel
+ * (ms), in this run. Image posts and reels have their own senders, working
+ * side by side: one let through must count before it is recorded as sent,
+ * or the other could go out at the same moment.
+ */
+const letThrough = new Map<string, number>();
+
+/** A post or reel of a website goes to a channel now: the next one waits its gap from here. */
+export function claimSocialSlot(siteId: number, channelId: number, now: number): void {
+  const key = `${siteId}:${channelId}`;
+  letThrough.set(key, Math.max(now, letThrough.get(key) ?? 0));
+}
+
+/** Forget every post let through (tests). */
+export function resetSocialSlots(): void {
+  letThrough.clear();
+}
+
+/** The last image post or reel a website sent (or let through to) a channel (ms), or 0. */
 export function lastSocialSent(siteId: number, channelId: number): number {
   const seoIds = 'SELECT s.id FROM keyword_seo s JOIN keyword_plans p ON p.id = s.plan_id WHERE p.website_id = ?';
   const row = get<{ at: string | null }>(
@@ -58,5 +77,5 @@ export function lastSocialSent(siteId: number, channelId: number): number {
         WHERE r.status = 'sent' AND r.channel_id = ? AND v.seo_id IN (${seoIds}))`,
     channelId, siteId, channelId, siteId,
   );
-  return sqlTime(row?.at);
+  return Math.max(sqlTime(row?.at), letThrough.get(`${siteId}:${channelId}`) ?? 0);
 }

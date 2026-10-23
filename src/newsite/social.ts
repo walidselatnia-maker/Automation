@@ -15,7 +15,7 @@ import { pickedPinDesigns, renderDesign } from './pin-designs.js';
 import type { Settings } from '../settings.js';
 import { bufferTokenOf, fbTokenOf, getChannel, videoOnly, websiteChannels, type ChannelRow } from './channels.js';
 import type { Fetch } from './client.js';
-import { lastSocialSent, socialDueAt } from './gaps.js';
+import { claimSocialSlot, lastSocialSent, socialDueAt } from './gaps.js';
 import { parseImageSet } from './images.js';
 import { pictureDir, type PictureRow } from './pictures.js';
 import { instagramFileOf, makeInstagramPicture } from './instagram-picture.js';
@@ -476,8 +476,13 @@ function waitForRoom(w: Work, err: unknown, deps: SocialDeps, now: number): void
  * now waits for its time, and is sent then. True when it waits.
  */
 export function holdForSocialGap(table: 'newsite_social_posts' | 'newsite_reel_shares', id: number, site: NewWebsiteRow, channelId: number, now: number): boolean {
+  if (!(site.social_gap_to > 0)) return false;
   const due = socialDueAt(site, channelId, lastSocialSent(site.id, channelId));
-  if (due <= now) return false;
+  if (due <= now) {
+    // Let through: from now on the other sender counts it too.
+    claimSocialSlot(site.id, channelId, now);
+    return false;
+  }
   run(`UPDATE ${table} SET status = 'waiting', retry_at = ?, error = '' WHERE id = ?`, due, id);
   return true;
 }
