@@ -161,6 +161,8 @@ export interface SeoRow {
   skeleton_problems: string;
   /** The outline style picked for it, one version per part (skeleton.ts), as JSON; '' until its skeleton is made. */
   skeleton_styles: string;
+  /** The one colour style of its pictures, as JSON (color-styles.ts); '' until its image prompts are made. */
+  color_style: string;
   recipe_status: '' | 'pending' | 'writing' | 'done' | 'failed';
   recipe_json: string;
   recipe_problems: string;

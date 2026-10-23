@@ -11,6 +11,8 @@ export interface NewWebsiteRow {
   niche_context: string;
   /** How this niche's photos look; empty means the platform decides from the niche. */
   picture_style: string;
+  /** Its picture colour styles as JSON (color-styles.ts); '' = its niche's list. */
+  color_styles: string;
   persona: string;
   language: string;
   status: 'active' | 'paused';
@@ -53,8 +55,8 @@ export function createNewWebsite(site: CleanWebsite, key: Buffer): number {
     `INSERT INTO new_websites (name, domain, niche, niche_context, persona, status,
        auto_publish, daily_target, interval_minutes, pin_username, project_id,
        api_key_encrypted, buffer_token_encrypted, language, picture_style,
-       random_gap_from, random_gap_to, social_gap_from, social_gap_to)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       random_gap_from, random_gap_to, social_gap_from, social_gap_to, color_styles)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     site.name,
     site.domain,
     site.niche,
@@ -74,6 +76,7 @@ export function createNewWebsite(site: CleanWebsite, key: Buffer): number {
     site.randomGapTo ?? 0,
     site.socialGapFrom ?? 0,
     site.socialGapTo ?? 0,
+    site.colorStyles ?? '',
   ).lastInsertRowid;
 }
 
@@ -83,7 +86,7 @@ export function updateNewWebsite(id: number, site: CleanWebsite, key: Buffer): v
     `UPDATE new_websites SET name = ?, domain = ?, niche = ?, niche_context = ?, persona = ?, status = ?,
        auto_publish = ?, daily_target = ?, interval_minutes = ?, pin_username = ?, project_id = ?,
        api_key_encrypted = ?, buffer_token_encrypted = ?, language = ?, picture_style = ?,
-       random_gap_from = ?, random_gap_to = ?, social_gap_from = ?, social_gap_to = ?
+       random_gap_from = ?, random_gap_to = ?, social_gap_from = ?, social_gap_to = ?, color_styles = ?
      WHERE id = ?`,
     site.name,
     site.domain,
@@ -104,6 +107,7 @@ export function updateNewWebsite(id: number, site: CleanWebsite, key: Buffer): v
     site.randomGapTo ?? 0,
     site.socialGapFrom ?? 0,
     site.socialGapTo ?? 0,
+    site.colorStyles ?? '',
     id,
   );
 }

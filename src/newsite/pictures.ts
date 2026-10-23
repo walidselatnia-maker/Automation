@@ -7,6 +7,7 @@ import { ImageClient } from '../integrations/images.js';
 import { createLogger, errorMessage } from '../lib/logger.js';
 import type { Settings } from '../settings.js';
 import { parseImageSet } from './images.js';
+import { articleColorStyle, withColorStyle } from './color-styles.js';
 
 /**
  * The pictures themselves: each AI#4 prompt made into a picture by the image
@@ -348,7 +349,9 @@ export function kickPictureMaker(deps: PictureDeps): Promise<void> {
 
         run(`UPDATE newsite_pictures SET status = 'making', attempts = attempts + 1 WHERE id = ?`, next.id);
         try {
-          const { data, contentType } = await make(next.prompt, project.projectId, (next.shape as PictureShape) || shapeOf(next.slot));
+          // An article picture (main or step) gets its article's one colour style; a pin's prompt is its own.
+          const prompt = pin ? next.prompt : withColorStyle(next.prompt, articleColorStyle(next.seo_id));
+          const { data, contentType } = await make(prompt, project.projectId, (next.shape as PictureShape) || shapeOf(next.slot));
           lastImageGeneratedAt = now();
           const dir = pictureDir(next.seo_id, dataDir);
           mkdirSync(dir, { recursive: true });

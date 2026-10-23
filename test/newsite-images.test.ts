@@ -32,6 +32,7 @@ const THEME = {
   style: 'commercial food photography',
   mood: 'warm and homemade',
   dish: 'thick round pumpkin cookies, orange crumb, dotted with melted chocolate chips',
+  colorStyle: 'Warm & Appetizing',
 };
 
 /** A prompt that passes every rule, for one slot. */
@@ -184,6 +185,47 @@ describe('AI#4 follows the article', () => {
     expect(JSON.parse(row!.images_json).images).toHaveLength(9);
   });
 
+  it('picks ONE colour style from the website\'s list for the article, keeps it, and a remake reuses it', async () => {
+    const lists: string[] = [];
+    let named = 'Sunset Neon';
+    const writer = () =>
+      kickSeoWriter({
+        suggest: async () => [],
+        ask: async (_name, vars) => {
+          lists.push(String(vars.colorStylesJson));
+          const set = goodSet(JSON.parse(String(vars.slotsJson)) as ImageSlot[]);
+          return JSON.stringify({ ...set, theme: { ...set.theme, colorStyle: named } });
+        },
+      });
+    named = 'Sunset Neon';
+    let round = 0;
+    await kickSeoWriter({
+      suggest: async () => [],
+      ask: async (_name, vars) => {
+        lists.push(String(vars.colorStylesJson));
+        round += 1;
+        const set = goodSet(JSON.parse(String(vars.slotsJson)) as ImageSlot[]);
+        // Not one of the list first: sent back, then a real one.
+        return JSON.stringify({ ...set, theme: { ...set.theme, colorStyle: round === 1 ? 'Sunset Neon' : 'clean & bright' } });
+      },
+    });
+    // A recipe website: its niche's list, main style first.
+    const first = JSON.parse(lists[0]!) as { name: string }[];
+    expect(first.slice(0, 2).map((s) => s.name)).toEqual(['Warm & Appetizing', 'Clean & Bright']);
+    expect(round).toBe(2);
+    const [row] = listPlanSeo(planId);
+    expect(JSON.parse(row!.color_style)).toEqual({ name: 'Clean & Bright', description: 'Bright neutral tones, soft daylight, minimal shadows' });
+    expect(JSON.parse(row!.images_json).theme.colorStyle).toBe('Clean & Bright');
+
+    // Made again: only the style it has is offered, so the article never mixes two.
+    requeueImages(row!.id);
+    lists.length = 0;
+    named = 'Clean & Bright';
+    await writer();
+    expect(JSON.parse(lists[0]!)).toEqual([{ name: 'Clean & Bright', description: 'Bright neutral tones, soft daylight, minimal shadows' }]);
+    expect(JSON.parse(listPlanSeo(planId)[0]!.color_style).name).toBe('Clean & Bright');
+  });
+
   it('keeps correcting, then keeps the best with what is left noted, and can be written again', async () => {
     let calls = 0;
     await kickSeoWriter({ suggest: async () => [], ask: async () => { calls += 1; return '{"theme":{},"images":[]}'; } });
@@ -208,7 +250,7 @@ describe('AI#4 pictures that fit the niche', () => {
     sections: ['Intro', 'Brush Weekly', 'Bath Time', 'Questions'].map((h2) => ({ h2, covers: `about ${h2}`, keyPoints: ['a'], words: 100, h3: [] })),
   };
   const slots = imageSlots('golden retriever grooming', PET_SKELETON, null);
-  const petTheme = { ...THEME, surface: 'worn oak floorboards in a sunny living room', style: 'candid lifestyle pet photography', dish: '' };
+  const petTheme = { ...THEME, surface: 'worn oak floorboards in a sunny living room', style: 'candid lifestyle pet photography', dish: '', colorStyle: 'Natural & Documentary' };
   const petPrompt = (slot: ImageSlot, i: number, extra = '') => ({
     slot: slot.slot,
     prompt:

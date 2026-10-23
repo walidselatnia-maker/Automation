@@ -7,6 +7,7 @@
  */
 
 import { flowProjectProblem } from '../core/project-id.js';
+import { parseColorStyles } from './color-styles.js';
 
 export const PERSONAS = [
   'Expert / Professional',
@@ -37,6 +38,7 @@ export type FieldName =
   | 'niche'
   | 'nicheContext'
   | 'pictureStyle'
+  | 'colorStyles'
   | 'language'
   | 'persona'
   | 'customPersona'
@@ -58,7 +60,7 @@ export type FieldName =
 /** The fields on each wizard step, in order. The last step is only a review. */
 export const STEP_FIELDS: FieldName[][] = [
   ['name', 'domain', 'apiKey'],
-  ['niche', 'nicheContext', 'pictureStyle', 'language'],
+  ['niche', 'nicheContext', 'pictureStyle', 'colorStyles', 'language'],
   ['persona', 'customPersona'],
   ['status', 'autoPublish', 'dailyTarget', 'gapAmount', 'gapUnit', 'randomFrom', 'randomTo', 'randomUnit', 'socialFrom', 'socialTo', 'socialUnit'],
   ['bufferToken', 'pinUsername', 'projectId'],
@@ -74,6 +76,8 @@ export interface CleanWebsite {
   nicheContext: string;
   /** How this niche's photos look (settings, subjects, what never to show); empty means the platform decides from the niche. */
   pictureStyle?: string;
+  /** Its picture colour styles as JSON; '' (or missing) = its niche's list. */
+  colorStyles?: string;
   /** What every reader-facing word is written in; English when not given. */
   language?: string;
   persona: string;
@@ -203,6 +207,14 @@ function fieldCheck(field: FieldName, raw: Raw, clean: Partial<CleanWebsite>): s
       if (value.length > 600) return 'Keep the picture style under 600 characters.';
       if (BAD_TEXT.test(value)) return 'The picture style must be plain text.';
       clean.pictureStyle = value;
+      return null;
+    }
+    case 'colorStyles': {
+      const value = String(raw[field] ?? '');
+      if (value.split(/\r?\n/).some((line) => BAD_TEXT.test(line))) return 'The colour styles must be plain text.';
+      const styles = parseColorStyles(value);
+      if (styles.length > 20) return 'Keep it to 20 colour styles or fewer.';
+      clean.colorStyles = styles.length ? JSON.stringify(styles) : '';
       return null;
     }
     case 'language': {

@@ -7,6 +7,7 @@ import { parseRecipe, recipeText, type Recipe } from './recipe.js';
 import type { SeoRow } from './seo.js';
 import { correctUntilRight, keptNote } from './rounds.js';
 import { parseSkeleton, type Skeleton } from './skeleton.js';
+import { articleColorStyle, colorStylesOf, type ColorStyle } from './color-styles.js';
 
 /**
  * AI#4: the image prompts for one keyword's article, made after the article.
@@ -42,6 +43,8 @@ export interface ImageTheme {
    * others, so without one shared description every picture invents its own version of the dish.
    */
   dish: string;
+  /** The one colour style of the article's pictures, by its name in the website's list (color-styles.ts). */
+  colorStyle?: string;
 }
 
 export interface ImagePrompt {
@@ -136,6 +139,7 @@ export function parseImageSet(raw: string): ImageSet | null {
       style: clean(t.style, 200),
       mood: clean(t.mood, 200),
       dish: clean(t.dish, 300),
+      colorStyle: clean(t.colorStyle, 80),
     },
     images: o.images.map((im) => {
       const i = (im ?? {}) as Record<string, unknown>;
@@ -191,6 +195,8 @@ export interface ImageContext {
   language?: string;
   /** The article's text: on a page that is not a recipe, food styling is allowed only when it talks about it. */
   article?: string;
+  /** The colour styles it picks one from, by name. */
+  colorStyles?: string[];
 }
 
 /** What is wrong with the set, in words the AI can act on. Empty when it passes. */
@@ -201,6 +207,9 @@ export function checkImageSet(set: ImageSet, ctx: ImageContext): string[] {
   }
   // A recipe page: every picture is the same dish, so every prompt carries its description.
   const recipePage = ctx.allowedText !== undefined;
+  if (ctx.colorStyles?.length && !ctx.colorStyles.some((n) => n.toLowerCase() === (set.theme.colorStyle ?? '').toLowerCase())) {
+    problems.push(`The theme needs its colorStyle: exactly one name from the colour styles given (${ctx.colorStyles.join(', ')}), the one that fits this article best.`);
+  }
   if (recipePage && !set.theme.dish) problems.push('The theme needs its dish: how this recipe\'s finished dish looks (shape, layers, colours, topping), from the recipe.');
 
   const got = set.images.map((i) => i.slot);
@@ -271,12 +280,17 @@ interface Context {
   niche: string;
   niche_context: string;
   picture_style: string;
+  color_styles: string;
 }
+
+/** The style the AI named, from the styles it was given; else the first of them (the website's main one). */
+const chosenStyle = (styles: ColorStyle[], named: string | undefined): ColorStyle | null =>
+  styles.find((s) => s.name.toLowerCase() === (named ?? '').toLowerCase()) ?? styles[0] ?? null;
 
 /** Write the image prompts for one keyword, correcting mistakes until they pass (rounds.ts). */
 export async function makeImagePrompts(row: SeoRow, deps: ImageDeps): Promise<void> {
   const ctx = get<Context>(
-    `SELECT w.niche, w.niche_context, w.picture_style FROM keyword_plans p JOIN new_websites w ON w.id = p.website_id WHERE p.id = ?`,
+    `SELECT w.niche, w.niche_context, w.picture_style, w.color_styles FROM keyword_plans p JOIN new_websites w ON w.id = p.website_id WHERE p.id = ?`,
     row.plan_id,
   );
   const skeleton = row.skeleton_json ? parseSkeleton(row.skeleton_json) : null;
@@ -296,6 +310,9 @@ export async function makeImagePrompts(row: SeoRow, deps: ImageDeps): Promise<vo
   // sub-recipes, but letting their ingredients into the pictures is how a strawberry cake got
   // blueberries in its step photos.)
   const allowedText = recipe ? recipeText(recipe) + '\n' + recipe.notes : undefined;
+  // One colour style for the whole article: the one it already has (made again, it keeps it), or one the AI picks.
+  const kept = articleColorStyle(row.id);
+  const styles = kept ? [kept] : colorStylesOf(ctx);
 
   const outcome = await correctUntilRight<ImageSet>({
     ask: (corrections) =>
@@ -310,14 +327,21 @@ export async function makeImagePrompts(row: SeoRow, deps: ImageDeps): Promise<vo
         recipeJson: recipe ? JSON.stringify(recipe) : '(no fixed recipe for this page)',
         article: row.article_md.slice(0, 24000),
         slotsJson: JSON.stringify(slots),
+        colorStylesJson: JSON.stringify(styles),
         problemsJson: corrections,
       }),
     parse: parseImageSet,
-    check: (set) => checkImageSet(set, { keyword: row.keyword, slots, allowedText, language: planLanguage(row.plan_id), article: row.article_md }),
+    check: (set) =>
+      checkImageSet(set, { keyword: row.keyword, slots, allowedText, language: planLanguage(row.plan_id), article: row.article_md, colorStyles: styles.map((s) => s.name) }),
     onError: (err) => log.warn(`AI#4 could not reach the AI for "${row.keyword}": ${errorMessage(err)}`),
   });
   const { problems, technical } = outcome;
   const last = outcome.answer;
+  const style = last ? chosenStyle(styles, last.theme.colorStyle) : null;
+  if (last && style) {
+    last.theme.colorStyle = style.name;
+    run('UPDATE keyword_seo SET color_style = ? WHERE id = ?', JSON.stringify(style), row.id);
+  }
 
   run(
     `UPDATE keyword_seo SET images_status = ?, images_json = ?, images_problems = ? WHERE id = ?`,

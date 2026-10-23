@@ -1048,6 +1048,14 @@ export const MIGRATIONS: Migration[] = [
       addColumn(db, 'new_websites', 'site_categories', "TEXT NOT NULL DEFAULT ''");
     },
   },
+  {
+    id: '054-newsite-color-styles',
+    description: "New websites: each website's list of picture colour styles ('' = its niche's list), and the one picked for each article",
+    up(db) {
+      addColumn(db, 'new_websites', 'color_styles', "TEXT NOT NULL DEFAULT ''");
+      addColumn(db, 'keyword_seo', 'color_style', "TEXT NOT NULL DEFAULT ''");
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */

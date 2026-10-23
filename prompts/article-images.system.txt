@@ -10,6 +10,7 @@ Work in two steps.
 - palette: the colours, taken from the real subject (for example "warm pumpkin orange and dark chocolate brown", or "golden retriever fur and soft sage green").
 - style: the photography style, from the photo direction (for example "commercial food photography" for a recipe, "candid lifestyle pet photography" or "documentary garden photography" for other niches).
 - mood: what the picture should feel like, in a few words.
+- colorStyle: the name of ONE colour style from the list you are given, exactly as written there: the one that fits this article's subject best (prefer the first two, the website's main ones, unless the subject clearly calls for another). The whole article uses this one style; the platform adds it to every picture, so do not repeat it in the prompts. Your palette, lighting and mood must agree with it: consistent lighting, realistic colors, no excessive saturation or contrast.
 - dish (only when a fixed recipe is given, otherwise ""): how THIS recipe's finished dish looks, taken from the recipe, in one phrase of 10 to 25 words: its shape and size, its layers or pieces, the colour of each part, and its topping (for example "round two-layer vanilla sponge cake, pale golden crumb, fresh strawberry slices between the layers, covered in glossy dark chocolate ganache"). Name the colour of the cake or bread itself, not only of its frosting or sauce: "chocolate frosting" alone makes the picture a chocolate cake.
 
 2. Write one prompt per slot you are given, in the order given, using the slot names exactly. Google Flow makes every picture on its own and never sees the other prompts, so each prompt must say everything itself. Every prompt:
@@ -38,4 +39,4 @@ Each image also gets alt text: 8 to 12 words saying what the picture shows, the 
 If you are given corrections, your previous answer is shown with them: fix every numbered point exactly as it says, and keep everything else in your previous answer as it is.
 
 Answer with JSON only:
-{"theme": {"surface": "...", "lighting": "...", "palette": "...", "style": "...", "mood": "...", "dish": "..."}, "images": [{"slot": "...", "prompt": "...", "alt": "..."}]}
+{"theme": {"surface": "...", "lighting": "...", "palette": "...", "style": "...", "mood": "...", "colorStyle": "...", "dish": "..."}, "images": [{"slot": "...", "prompt": "...", "alt": "..."}]}

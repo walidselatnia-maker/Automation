@@ -5,6 +5,7 @@ Niche: {{niche}}
 About the website: {{nicheContext}}
 Photo direction for this website (follow it in every picture): {{pictureStyle}}
 Alt text pattern from the SEO step: {{altPattern}}
+Colour styles of this website (pick ONE for the whole article; the first two are its main ones): {{colorStylesJson}}
 
 The slots, one image each, in this order (slot name and what it shows):
 {{slotsJson}}

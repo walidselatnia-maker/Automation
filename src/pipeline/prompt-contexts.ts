@@ -226,6 +226,7 @@ export const STEP_CONTEXTS: Record<string, Record<string, unknown>> = {
     recipeJson: '{}',
     article: 'a',
     slotsJson: '[]',
+    colorStylesJson: '[]',
     problemsJson: '[]',
   },
   'recipe-card': {
