@@ -1233,9 +1233,8 @@ export const OVERVIEW_CSS = `
 .ko-niche small { color: var(--faint); }
 .ko-progress { white-space: nowrap; color: var(--soft); }
 .ko-progress b { color: var(--ink); font-variant-numeric: tabular-nums; }
-.ko-images { display: block; margin-top: 6px; padding-top: 6px; border-top: 1px dashed var(--line); }
-.ko-images .made b { color: var(--good); }
-.ko-images .failed, .ko-images .failed b { color: var(--bad); }
+.ko-images b.made { color: var(--good); }
+.ko-images b.failed { color: var(--bad); }
 .ko-table form { margin: 0; }
 .ko-none { color: var(--faint); padding: 16px 0 4px; margin: 0; }
 .ko-err { color: var(--bad); font-size: 13px; display: block; margin-top: 2px; }
@@ -1287,10 +1286,10 @@ export const CHEV = '<svg class="ko-chev" viewBox="0 0 24 24" fill="none" stroke
 /** One plan's progress, from its keywords. */
 const planProgress = (s: PlanStats | undefined): Html =>
   s
-    ? html`SEO <b>${String(s.seoDone)}/${String(s.total)}</b> · articles <b>${String(s.articles)}/${String(s.total)}</b> · published <b>${String(s.published)}/${String(s.total)}</b>
-        <span class="ko-images">${s.images
-          ? html`Images: <span class="made"><b>${String(s.imagesMade)}</b> made</span> · <span class="${s.images - s.imagesMade ? 'left' : ''}"><b>${String(s.images - s.imagesMade)}</b> not made yet</span>${s.imagesFailed ? html` · <span class="failed"><b>${String(s.imagesFailed)}</b> failed</span>` : raw('')} <small>of ${String(s.images)}</small>`
-          : html`Images: none planned yet`}</span>`
+    ? html`SEO <b>${String(s.seoDone)}/${String(s.total)}</b> · Art <b>${String(s.articles)}/${String(s.total)}</b> · Pub <b>${String(s.published)}/${String(s.total)}</b>
+        <span class="ko-images">· IMG <b class="made" title="Pictures made">${String(s.imagesMade)}</b>${s.imagesFailed
+          ? html` <b class="failed" title="Pictures failed">${String(s.imagesFailed)} failed</b>`
+          : raw('')}</span>`
     : html`Waiting to start`;
 
 /** The Keywords page: one card per website, each opening on a table of its keyword plans. */

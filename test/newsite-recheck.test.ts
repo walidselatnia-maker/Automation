@@ -44,7 +44,7 @@ describe('Recheck sub-keywords', () => {
     expect(recheckSubs(siteId)).toBe(0);
   });
 
-  it('shows under Progress how many pictures are made, not made yet and failed', () => {
+  it('shows under Progress, in short, how many pictures are made and failed', () => {
     const plan = saveKeywordPlan(siteId, 'roses', [sub('pruning roses')], 'article');
     queuePlanSeo(plan, 'roses', [sub('pruning roses')], 'article');
     const [a, b] = listPlanSeo(plan).map((r) => r.id) as [number, number];
@@ -61,7 +61,10 @@ describe('Recheck sub-keywords', () => {
     pic(b, 'pin-1', 'done'); // a social picture: not one of the article's
     expect(planStats().get(plan)).toMatchObject({ images: 5, imagesMade: 2, imagesFailed: 1 });
     const page = String(keywordsOverview([{ site: getNewWebsite(siteId)!, plans: listKeywordPlans(siteId), autopilot: '' }], planStats()));
-    expect(page.replace(/\s+/g, ' ')).toContain('Images: <span class="made"><b>2</b> made</span> · <span class="left"><b>3</b> not made yet</span> · <span class="failed"><b>1</b> failed</span> <small>of 5</small>');
+    const text = page.replace(/\s+/g, ' ');
+    expect(text).toContain('Art <b>0/2</b> · Pub <b>0/2</b>');
+    expect(text).toContain('· IMG <b class="made" title="Pictures made">2</b> <b class="failed" title="Pictures failed">1 failed</b>');
+    expect(text).not.toContain('not made yet');
   });
 
   it('shades every other keyword line of the table', () => {

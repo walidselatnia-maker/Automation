@@ -3,7 +3,7 @@ import { createLogger } from '../lib/logger.js';
 import type { Settings } from '../settings.js';
 import { parseImageSet } from './images.js';
 import { notReadyReason, publishQueued, queuePublish, type PublishDeps } from './publish.js';
-import { isMainSlot, queuePictures, type PictureRow } from './pictures.js';
+import { isMainSlot, queuePictures, retryFailedPictures, type PictureRow } from './pictures.js';
 import { getNewWebsite, listNewWebsites, type NewWebsiteRow } from './repo.js';
 import { retriesOf, type StepName } from './retries.js';
 import { queueNotStartedSteps, type SeoRow } from './seo.js';
@@ -33,12 +33,15 @@ import { queueNotStartedSteps, type SeoRow } from './seo.js';
  *   5. Done: published. The next keyword gets its turn when its website's
  *      gap and posts per day allow it.
  *
- * Failure: a writing step the AI could not do is tried again by the
- * platform's retry settings (retries.ts), and the keyword keeps its turn
- * while a try is left. When none is (or a picture or the publish failed),
- * the keyword is stopped: it keeps its failed step, with Try again, and the
- * next keyword gets its turn. A stopped keyword pressed Try again joins the
- * line again in its place.
+ * Strict order: a website's next keyword is always its first one not
+ * published yet. No later keyword of that website starts before it is out.
+ *
+ * Failure: a writing step the AI could not do, or a main picture that could
+ * not be made, is tried again by the platform's retry settings (retries.ts),
+ * and the keyword keeps its turn while a try is left. When none is (or the
+ * publish failed), the keyword is stopped: it keeps its failed step, with Try
+ * again, and its website's line waits for it (other websites carry on).
+ * Pressing Try again carries it on from its failed step.
  *
  * Turning Automation off: the step being done right now (one AI answer, one
  * picture, one publish) finishes and is kept; nothing after it starts. The
@@ -146,9 +149,16 @@ export function stoppedReason(row: SeoRow, settings: Settings): string {
     const left = settings.getBool('auto_retry_enabled') && (retriesOf(row)[failed[0]] ?? 0) < Math.max(0, settings.getNumber('auto_retry_max'));
     return left ? '' : `The ${failed[0]} step failed.`;
   }
-  if (mainPictures(row).some((p) => p.status === 'failed')) return 'A picture failed.';
+  if (mainPictures(row).some((p) => p.status === 'failed') && pictureTriesLeft(row, settings) <= 0) return 'A picture failed.';
   if (row.post_status === 'failed') return `Publishing failed: ${row.post_error}`;
   return '';
+}
+
+/** Automatic picture tries a keyword has left: the platform's retry settings, counted in the automation history. */
+function pictureTriesLeft(row: SeoRow, settings: Settings): number {
+  if (!settings.getBool('auto_retry_enabled')) return 0;
+  const used = get<{ n: number }>(`SELECT COUNT(*) AS n FROM newsite_automation_log WHERE seo_id = ? AND event = 'pictures again'`, row.id)?.n ?? 0;
+  return Math.max(0, settings.getNumber('auto_retry_max')) - used;
 }
 
 /** When a website may start its next keyword, and whether today's posts per day are reached. */
@@ -166,8 +176,17 @@ export const activeKeyword = (): SeoRow | undefined => get<SeoRow>('SELECT * FRO
 const generateNowBusy = (settings: Settings): boolean =>
   all<SeoRow>(`SELECT * FROM keyword_seo WHERE generate_now = 1 AND COALESCE(post_status, '') != 'published'`).some((r) => !stoppedReason(r, settings));
 
-const waitingInLine = (r: SeoRow, settings: Settings): boolean =>
-  r.post_status !== 'published' && r.post_status !== 'publishing' && !r.generate_now && !stoppedReason(r, settings);
+/**
+ * A website's keyword whose turn it is: its first one not published yet, in
+ * the Keywords page's order. None while that one is stopped, being
+ * published, or under way through Generate now: the line waits for it, and
+ * no later keyword goes ahead of it.
+ */
+function firstInLine(rows: SeoRow[], settings: Settings): SeoRow | undefined {
+  const first = rows.find((r) => r.post_status !== 'published');
+  if (!first || first.post_status === 'publishing' || first.generate_now || stoppedReason(first, settings)) return undefined;
+  return first;
+}
 
 /* -- The conductor --------------------------------------------------------- */
 
@@ -188,6 +207,12 @@ function advance(row: SeoRow, site: NewWebsiteRow, deps: ConductorDeps, now: num
     return;
   }
   const pictures = mainPictures(row);
+  if (pictures.some((p) => p.status === 'failed')) {
+    // stoppedReason let it through: an automatic try is left.
+    if (retryFailedPictures({ seoId: row.id })) remember(row.id, 'pictures again');
+    deps.startPictures?.();
+    return;
+  }
   const wanted = (parseImageSet(row.images_json)?.images ?? []).filter((im) => isMainSlot(im.slot)).length;
   if (pictures.length < wanted || pictures.some((p) => p.status === 'queued' || p.status === 'making')) {
     if (queuePictures(row.id, deps.dataDir)) remember(row.id, 'pictures', `${wanted} main pictures`);
@@ -233,7 +258,7 @@ export function autopilotTick(deps: ConductorDeps, now = Date.now()): void {
     const rows = siteRows(site.id);
     const s = schedule(site, rows, now, tz);
     if (s.full || now < s.due) continue;
-    const row = rows.find((r) => waitingInLine(r, deps.settings));
+    const row = firstInLine(rows, deps.settings);
     if (row && (!pick || s.due < pick.due || (s.due === pick.due && site.id < pick.site.id))) pick = { row, site, due: s.due };
   }
   if (!pick) return;
@@ -270,13 +295,14 @@ export function autopilotState(site: NewWebsiteRow, tz: string, now = Date.now()
   let next: string;
   if (site.status !== 'active') next = 'Paused';
   else if (active && rows.some((r) => r.id === active.id)) next = `${stage(active, site, s.due, now, tz)}${stoppedNote}`;
+  else if (waiting[0] && stoppedOf(waiting[0])) next = `“${waiting[0].keyword}” stopped: press Try again. The next keywords wait for it`;
   else if (!waiting.some((r) => !stoppedOf(r) && r.post_status !== 'publishing' && !r.generate_now)) {
     next = stopped.length ? `${plural(stopped.length, 'article')} stopped: open Keywords & articles` : 'No keywords left: add keywords';
   } else if (active) next = `Waits for its turn: one keyword at a time (now “${active.keyword}”)${stoppedNote}`;
   else if (s.full) next = `Next keyword tomorrow${stoppedNote}`;
   else if (s.due > now) {
     // The next in line may be made already (before Automation ran it): it still waits for the gap.
-    const first = waiting.find((r) => !stoppedOf(r) && r.post_status !== 'publishing' && !r.generate_now);
+    const first = waiting[0];
     next = first && ready.includes(first)
       ? `“${first.keyword}” is ready and goes out at ${clock(s.due, tz)}, when the website’s gap has passed${stoppedNote}`
       : `Next keyword starts at ${clock(s.due, tz)}${stoppedNote}`;

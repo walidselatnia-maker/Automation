@@ -259,36 +259,37 @@ describe('Automation: one keyword at a time', () => {
     expect(activeIds()).toEqual([ids[1]]);
   });
 
-  it('G: a failed keyword is recorded and stopped, the next one gets its turn, and Try again puts it back in line', async () => {
+  it('G: a failed keyword is recorded and stopped, the later ones wait for it, and Try again carries it on', async () => {
     autopilotTick(deps(), NOW);
-    const [a, b] = ids as [number, number];
+    const [a] = ids as [number];
     await writer(); // the AI cannot be reached: AI#1 fails
     expect(row(a).status).toBe('failed');
-    autopilotTick(deps(), NOW);
+    for (let i = 0; i < 5; i++) autopilotTick(deps(), NOW);
     expect(automationLog().find((l) => l.event === 'stopped')).toMatchObject({ seo_id: a, note: 'The seo step failed.' });
-    expect(activeIds()).toEqual([b]);
-    for (let i = 0; i < 5; i++) autopilotTick(deps(), NOW);
-    expect(started()).toEqual([a, b]); // no duplicate start
+    expect(activeIds()).toEqual([]); // nothing goes ahead of it
+    expect(started()).toEqual([a]);
+    expect(autopilotState(getNewWebsite(siteId)!, 'UTC', NOW, 0, settings).next).toContain('“roses” stopped: press Try again');
 
-    // With automatic tries left, a failed step keeps its turn instead.
+    // With automatic tries left, a failed step keeps its turn.
     settings.set('auto_retry_enabled', 'true');
-    settings.set('auto_retry_max', '2');
-    asked = [];
-    await writer();
-    expect(asked).toEqual(['pruning roses']);
-    for (let i = 0; i < 5; i++) autopilotTick(deps(), NOW);
-    expect(activeIds()).toEqual([b]);
+    settings.set('auto_retry_max', '1');
+    autopilotTick(deps(), NOW);
+    expect(activeIds()).toEqual([a]);
 
-    // A picture that fails stops it too.
-    settings.set('auto_retry_enabled', 'false');
-    written(b);
+    // A failed picture is tried again by itself while a try is left.
+    written(a);
     autopilotTick(deps(), NOW);
-    run(`UPDATE newsite_pictures SET status = 'failed' WHERE seo_id = ?`, b);
+    run(`UPDATE newsite_pictures SET status = 'failed' WHERE seo_id = ?`, a);
     autopilotTick(deps(), NOW);
-    expect(automationLog().filter((l) => l.event === 'stopped').map((l) => l.seo_id)).toEqual([a, b]);
-    // Try again on the first: it is first in line again.
-    run(`UPDATE keyword_seo SET auto_active = 0`);
-    requeueSeo(a);
+    expect(all<{ status: string }>('SELECT status FROM newsite_pictures WHERE seo_id = ?', a).map((p) => p.status)).toEqual(['queued', 'queued']);
+    expect(activeIds()).toEqual([a]);
+    // None left: it stops, and the line waits for it again.
+    run(`UPDATE newsite_pictures SET status = 'failed' WHERE seo_id = ?`, a);
+    for (let i = 0; i < 3; i++) autopilotTick(deps(), NOW);
+    expect(activeIds()).toEqual([]);
+    expect(started()).toEqual([a, a]); // only ever this one
+    // Try again: it carries on, still first.
+    run(`UPDATE newsite_pictures SET status = 'done' WHERE seo_id = ?`, a);
     autopilotTick(deps(), NOW);
     expect(activeIds()).toEqual([a]);
   });
