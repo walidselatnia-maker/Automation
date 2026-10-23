@@ -282,6 +282,8 @@ describe('Automation: one keyword at a time', () => {
     run(`UPDATE newsite_pictures SET status = 'failed' WHERE seo_id = ?`, a);
     autopilotTick(deps(), NOW);
     expect(all<{ status: string }>('SELECT status FROM newsite_pictures WHERE seo_id = ?', a).map((p) => p.status)).toEqual(['queued', 'queued']);
+    // Automation's own try is not a button press: it is made only while the keyword has its turn.
+    expect(all<{ by_hand: number }>('SELECT by_hand FROM newsite_pictures WHERE seo_id = ?', a).map((p) => p.by_hand)).toEqual([0, 0]);
     expect(activeIds()).toEqual([a]);
     // None left: it stops, and the line waits for it again.
     run(`UPDATE newsite_pictures SET status = 'failed' WHERE seo_id = ?`, a);

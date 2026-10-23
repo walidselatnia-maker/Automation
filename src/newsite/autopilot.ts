@@ -209,7 +209,7 @@ function advance(row: SeoRow, site: NewWebsiteRow, deps: ConductorDeps, now: num
   const pictures = mainPictures(row);
   if (pictures.some((p) => p.status === 'failed')) {
     // stoppedReason let it through: an automatic try is left.
-    if (retryFailedPictures({ seoId: row.id })) remember(row.id, 'pictures again');
+    if (retryFailedPictures({ seoId: row.id }, false)) remember(row.id, 'pictures again');
     deps.startPictures?.();
     return;
   }

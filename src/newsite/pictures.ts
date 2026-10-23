@@ -181,15 +181,16 @@ function queueLane(seoId: number, inLane: (slot: string) => boolean, dataDir: st
  * Put failed article pictures back in the queue: one picture, one keyword's, or a whole plan's.
  * Social post pictures are left out: their posts remake them. Step pictures go back in the slow queue.
  */
-export function retryFailedPictures(where: { pictureId?: number; seoId?: number; planId?: number }): number {
+export function retryFailedPictures(where: { pictureId?: number; seoId?: number; planId?: number }, byHand = true): number {
   const [filter, value] = where.pictureId
     ? ['id = ?', where.pictureId]
     : where.seoId
       ? ['seo_id = ?', where.seoId]
       : ['seo_id IN (SELECT id FROM keyword_seo WHERE plan_id = ?)', where.planId ?? 0];
   const again = failedArticlePictures(filter, value);
-  // Try again is always pressed by someone (or by Generate now): made whatever Automation is doing.
-  for (const p of again) run(`UPDATE newsite_pictures SET status = 'queued', attempts = 0, error = '', by_hand = 1 WHERE id = ?`, p.id);
+  // Try again pressed by someone (or by Generate now) is made whatever Automation is doing;
+  // Automation's own automatic try stays its keyword's, made only while that keyword has its turn.
+  for (const p of again) run(`UPDATE newsite_pictures SET status = 'queued', attempts = 0, error = '', by_hand = ? WHERE id = ?`, byHand ? 1 : 0, p.id);
   return again.length;
 }
 
