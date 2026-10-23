@@ -1056,6 +1056,34 @@ export const MIGRATIONS: Migration[] = [
       addColumn(db, 'keyword_seo', 'color_style', "TEXT NOT NULL DEFAULT ''");
     },
   },
+  {
+    id: '055-newsite-content-research',
+    description: 'New websites: search API keys (tried in order) and Content research projects',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS newsite_search_keys (
+          id         INTEGER PRIMARY KEY AUTOINCREMENT,
+          provider   TEXT    NOT NULL DEFAULT 'serper',
+          key_enc    TEXT    NOT NULL,
+          position   INTEGER NOT NULL DEFAULT 0,
+          status     TEXT    NOT NULL DEFAULT '',
+          error      TEXT    NOT NULL DEFAULT '',
+          checked_at INTEGER NOT NULL DEFAULT 0,
+          failed_at  INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT    NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE IF NOT EXISTS newsite_research (
+          id          INTEGER PRIMARY KEY AUTOINCREMENT,
+          website_id  INTEGER NOT NULL REFERENCES new_websites (id) ON DELETE CASCADE,
+          topic       TEXT    NOT NULL,
+          status      TEXT    NOT NULL DEFAULT 'new',
+          state_json  TEXT    NOT NULL DEFAULT '{}',
+          created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+          updated_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+        );
+      `);
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */

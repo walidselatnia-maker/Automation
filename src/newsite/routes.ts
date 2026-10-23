@@ -6,6 +6,7 @@ import { expandSeeds } from '../integrations/google-suggest.js';
 import type { Settings } from '../settings.js';
 import { checkSite as realCheckSite, listPosts as realListPosts, type SitePost, type SiteCheck } from './client.js';
 import { registerKeywordRoutes } from './keyword-routes.js';
+import { registerResearchRoutes } from './research-routes.js';
 import { registerPictureRoutes, type PictureRouteDeps } from './picture-routes.js';
 import { registerImageModelRoutes } from './image-model.js';
 import { registerChannelRoutes, type ChannelLookups } from './channels-routes.js';
@@ -210,6 +211,16 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
     afterWriting: () => conduct(),
   });
   wakeWriter = startWriter;
+
+  registerResearchRoutes(app, {
+    encryptionKey: deps.encryptionKey,
+    readFlash,
+    ask,
+    fetchImpl: deps.fetchImpl,
+    listPosts: deps.listPosts ?? ((domain, apiKey) => realListPosts(domain, apiKey)),
+    startWriter,
+    autoStart: deps.autoPictures,
+  });
 
   /**
    * Everything wrong with the given fields, including the things only the

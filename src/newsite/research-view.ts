@@ -1,0 +1,189 @@
+import { html, raw, type Html } from '../web/views/layout.js';
+import type { NewWebsiteRow } from './repo.js';
+import { stateOf, type Origin, type ResearchRow, type ResearchState } from './research.js';
+import { PROVIDERS, type SearchKeyRow } from './search-keys.js';
+
+/**
+ * Content research pages: the projects, one project's plan as a tree, and the
+ * search keys. Plain: buttons and the data.
+ */
+
+const CSS = `
+.rs-box { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); box-shadow: var(--shadow); padding: 18px 22px; margin: 0 0 18px; }
+.rs-box h2 { font-size: 17px; margin: 0 0 12px; }
+.rs-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; padding: 10px 0; border-top: 1px solid var(--line); }
+.rs-row:first-of-type { border-top: 0; }
+.rs-row .grow { flex: 1; min-width: 200px; }
+.rs-row b { font-weight: 600; }
+.rs-soft { color: var(--soft); font-size: 14px; }
+.rs-form { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
+.rs-form label { display: grid; gap: 4px; font-size: 13px; font-weight: 600; color: var(--soft); }
+.rs-form input, .rs-form select, .rs-tree input[type=text], .rs-tree select, .rs-keys textarea { height: 38px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: var(--r-ctl); background: var(--page); color: var(--ink); font: inherit; }
+.rs-form input { min-width: 280px; }
+.rs-keys textarea { width: 100%; height: 120px; padding: 10px; font: 13px/1.5 var(--mono); }
+.rs-counts { display: flex; flex-wrap: wrap; gap: 8px 22px; margin: 0 0 16px; font-size: 14px; color: var(--soft); }
+.rs-counts b { color: var(--ink); font-variant-numeric: tabular-nums; }
+.rs-error { margin: 0 0 16px; padding: 12px 16px; border: 1px solid var(--bad); border-left-width: 4px; border-radius: var(--r-ctl); background: var(--bad-tint); color: var(--ink); }
+.rs-tree { display: grid; gap: 14px; }
+.rs-pillar { border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: var(--r-card); padding: 12px 16px; background: var(--surface); }
+.rs-line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.rs-line input[type=text] { flex: 1; min-width: 220px; }
+.rs-pillar > .rs-line input[type=text] { font-weight: 700; }
+.rs-subs { list-style: none; margin: 10px 0 0; padding: 0 0 0 22px; display: grid; gap: 6px; border-left: 2px solid var(--line); }
+.rs-tag { font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+.rs-tag.real { background: var(--good-tint); color: var(--good); }
+.rs-tag.ai { background: var(--idle); color: var(--idle-ink); }
+.rs-tag.yours { background: var(--raised); color: var(--soft); }
+.rs-remove { display: flex; align-items: center; gap: 4px; font-size: 13px; color: var(--soft); }
+.rs-status { font-weight: 600; font-size: 14px; }
+.rs-status.failed { color: var(--bad); }
+.rs-status.working { color: var(--good); }
+.rs-actions { display: flex; flex-wrap: wrap; gap: 10px; justify-content: flex-end; margin-top: 16px; }
+.rs-dropped summary { cursor: pointer; font-size: 14px; color: var(--soft); }
+.rs-dropped ul { margin: 8px 0 0; padding-left: 18px; font-size: 13px; color: var(--soft); }
+`;
+
+const STATUS: Record<string, string> = {
+  new: 'Waiting to start',
+  fetching: 'Reading Google',
+  grouping: 'The AI is grouping',
+  ready: 'Ready to review',
+  failed: 'Stopped',
+  approved: 'Approved',
+};
+
+const TAG: Record<Origin, string> = { real: 'Google', ai: 'AI', yours: 'Yours' };
+const tag = (o: Origin): Html => html`<span class="rs-tag ${o}" title="${o === 'real' ? 'Real search data' : o === 'ai' ? 'Made by the AI' : 'Typed by you'}">${TAG[o]}</span>`;
+
+const callsMade = (s: ResearchState): number => Object.values(s.made).reduce((a, b) => a + b, 0);
+
+function counts(s: ResearchState): Html {
+  const subs = s.plan.reduce((n, p) => n + p.subs.length, 0);
+  const real = s.plan.reduce((n, p) => n + [p, ...p.subs].filter((k) => k.origin === 'real').length, 0);
+  return html`<div class="rs-counts">
+    <span>Search calls <b>${String(callsMade(s))}</b></span>
+    <span>Google searches found <b>${String(s.found.length)}</b></span>
+    <span>Already on the website <b>${String(s.dropped.length)}</b></span>
+    ${s.plan.length ? html`<span>Pillars <b>${String(s.plan.length)}</b></span><span>Sub-articles <b>${String(subs)}</b></span><span>From Google <b>${String(real)}</b> of ${String(s.plan.length + subs)}</span>` : raw('')}
+  </div>`;
+}
+
+export function researchListPage(rows: ResearchRow[], sites: NewWebsiteRow[], keys: SearchKeyRow[]): Html {
+  const name = new Map(sites.map((s) => [s.id, s.name]));
+  const working = keys.filter((k) => k.status !== 'failed').length;
+  return html`<style>${raw(CSS)}</style>
+    <div class="ns-head"><div><h1 class="ns-title">Content research</h1></div>
+      <a class="ns-btn quiet" href="/new-website/research/keys">Search keys (${String(working)} of ${String(keys.length)} working)</a></div>
+    <div class="rs-box">
+      <h2>New research</h2>
+      ${sites.length
+        ? html`<form class="rs-form" method="post" action="/new-website/research">
+            <label>Website<select name="website">${sites.map((s) => html`<option value="${String(s.id)}">${s.name}</option>`)}</select></label>
+            <label>Niche or topic<input name="topic" required maxlength="120" placeholder="sourdough bread" /></label>
+            <button class="ns-btn primary">Start</button>
+          </form>`
+        : html`<p class="rs-soft">Add a website first.</p>`}
+    </div>
+    <div class="rs-box">
+      <h2>Projects</h2>
+      ${rows.length
+        ? rows.map((r) => {
+            const s = stateOf(r);
+            return html`<div class="rs-row"><div class="grow"><b>${r.topic}</b> <span class="rs-soft">· ${name.get(r.website_id) ?? 'Website gone'}</span></div>
+              <span class="rs-status ${r.status}">${STATUS[r.status] ?? r.status}</span>
+              <span class="rs-soft">${String(s.found.length)} searches · ${String(s.plan.length)} pillars</span>
+              <a class="ns-btn small quiet" href="/new-website/research/${String(r.id)}">Open</a></div>`;
+          })
+        : html`<p class="rs-soft">None yet.</p>`}
+    </div>`;
+}
+
+export function researchPage(r: ResearchRow, site: NewWebsiteRow | undefined, busy: boolean): Html {
+  const s = stateOf(r);
+  const working = busy || r.status === 'fetching' || r.status === 'grouping';
+  const options = s.plan.map((p, i) => ({ i, name: p.pillar }));
+  const moveTo = (name: string, at: number): Html =>
+    html`<select name="${name}" aria-label="Pillar">${options.map((o) => html`<option value="${String(o.i)}" ${raw(o.i === at ? 'selected' : '')}>${o.name}</option>`)}</select>`;
+  const editable = r.status === 'ready';
+  return html`<style>${raw(CSS)}</style>
+    ${working ? raw('<meta http-equiv="refresh" content="3">') : raw('')}
+    <div class="ns-head"><div><h1 class="ns-title">${r.topic}</h1><p class="ns-lede">${site?.name ?? 'Website gone'} · ${STATUS[r.status] ?? r.status}</p></div>
+      <a class="ns-btn quiet" href="/new-website/research">Back</a></div>
+    ${counts(s)}
+    ${s.error ? html`<p class="rs-error" role="alert">${s.error}</p>` : raw('')}
+    ${!working && (r.status === 'failed' || r.status === 'new')
+      ? html`<form method="post" action="/new-website/research/${String(r.id)}/run" class="rs-actions" style="justify-content:flex-start"><button class="ns-btn primary">Resume</button></form>`
+      : raw('')}
+    ${s.approved
+      ? html`<div class="rs-box"><b>${String(s.approved.plans)} pillars went into the Keywords list.</b>
+          ${s.approved.skipped.map((x) => html`<p class="rs-soft">${x}</p>`)}
+          <p><a class="ns-btn small quiet" href="/new-website/keywords">Open Keywords</a></p></div>`
+      : raw('')}
+    ${s.plan.length
+      ? html`<form method="post" action="/new-website/research/${String(r.id)}/plan">
+          <div class="rs-tree">${s.plan.map(
+            (p, i) => html`<div class="rs-pillar">
+              <div class="rs-line">${tag(p.origin)}
+                <input type="text" name="p-${String(i)}" value="${p.pillar}" aria-label="Pillar" ${raw(editable ? '' : 'readonly')} />
+                <input type="hidden" name="page-${String(i)}" value="${p.page}" />
+                ${editable ? html`<label class="rs-remove"><input type="checkbox" name="rp-${String(i)}" value="1" /> Remove</label>` : raw('')}
+              </div>
+              <ul class="rs-subs">${p.subs.map(
+                (sub, j) => html`<li class="rs-line">${tag(sub.origin)}
+                  <input type="text" name="s-${String(i)}-${String(j)}" value="${sub.keyword}" aria-label="Sub-article" ${raw(editable ? '' : 'readonly')} />
+                  ${editable ? html`${moveTo(`m-${i}-${j}`, i)}<label class="rs-remove"><input type="checkbox" name="rs-${String(i)}-${String(j)}" value="1" /> Remove</label>` : raw('')}
+                </li>`,
+              )}
+              ${editable ? html`<li class="rs-line"><input type="text" name="new-${String(i)}" placeholder="Add a sub-article" aria-label="Add a sub-article" /></li>` : raw('')}</ul>
+            </div>`,
+          )}</div>
+          ${editable
+            ? html`<div class="rs-actions">
+                <button class="ns-btn">Save changes</button>
+                <button class="ns-btn primary" formaction="/new-website/research/${String(r.id)}/approve">Approve</button>
+              </div>`
+            : raw('')}
+        </form>`
+      : raw('')}
+    ${s.left.length
+      ? html`<details class="rs-dropped rs-box"><summary>${String(s.left.length)} left out of the plan</summary>
+          <ul>${s.left.slice(0, 200).map((d) => html`<li>${d.keyword}: ${d.reason}</li>`)}</ul></details>`
+      : raw('')}
+    ${s.dropped.length
+      ? html`<details class="rs-dropped rs-box"><summary>${String(s.dropped.length)} searches left out: the website has them</summary>
+          <ul>${s.dropped.slice(0, 200).map((d) => html`<li>${d.keyword}: ${d.reason}</li>`)}</ul></details>`
+      : raw('')}
+    <form method="post" action="/new-website/research/${String(r.id)}/delete" class="rs-actions"><button class="ns-btn small danger">Delete project</button></form>`;
+}
+
+const when = (ms: number): string => (ms ? new Date(ms).toISOString().replace('T', ' ').slice(0, 16) + ' UTC' : 'never');
+
+export function searchKeysPage(keys: SearchKeyRow[], hint: (k: SearchKeyRow) => string): Html {
+  const label = (p: string) => PROVIDERS.find((x) => x.key === p)?.label ?? p;
+  return html`<style>${raw(CSS)}</style>
+    <div class="ns-head"><div><h1 class="ns-title">Search keys</h1></div>
+      <a class="ns-btn quiet" href="/new-website/research">Back</a></div>
+    <div class="rs-box">
+      <h2>Keys, in the order they are tried</h2>
+      ${keys.length
+        ? keys.map(
+            (k, i) => html`<div class="rs-row"><b>${String(i + 1)}</b>
+              <div class="grow">${label(k.provider)} <span class="rs-soft">${hint(k)}</span></div>
+              <span class="rs-status ${k.status}">${k.status === 'working' ? 'Working' : k.status === 'failed' ? `Failed: ${k.error}` : 'Not tried yet'}</span>
+              <span class="rs-soft">Last checked ${when(k.checked_at)}</span>
+              <form method="post" action="/new-website/research/keys/${String(k.id)}/up"><button class="ns-btn small quiet" ${raw(i === 0 ? 'disabled' : '')}>Up</button></form>
+              <form method="post" action="/new-website/research/keys/${String(k.id)}/down"><button class="ns-btn small quiet" ${raw(i === keys.length - 1 ? 'disabled' : '')}>Down</button></form>
+              <form method="post" action="/new-website/research/keys/${String(k.id)}/delete"><button class="ns-btn small danger">Remove</button></form>
+            </div>`,
+          )
+        : html`<p class="rs-soft">None yet.</p>`}
+      ${keys.length ? html`<form method="post" action="/new-website/research/keys/check" class="rs-actions"><button class="ns-btn">Check all keys</button></form>` : raw('')}
+    </div>
+    <div class="rs-box rs-keys">
+      <h2>Add keys</h2>
+      <form method="post" action="/new-website/research/keys">
+        <textarea name="keys" spellcheck="false" placeholder="One key per line. Serper.dev keys as they are; a SerpAPI key as serpapi: KEY"></textarea>
+        <div class="rs-actions"><button class="ns-btn primary">Add</button></div>
+      </form>
+    </div>`;
+}

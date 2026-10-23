@@ -142,6 +142,8 @@ export const PROMPT_MODELS: Record<string, { model: string; format: 'json' | nul
   // The new website dashboard: picks a pillar's sub-keywords from real
   // Google searches. JSON because the code checks every pick.
   'keyword-cluster': { model: 'gpt-oss:120b', format: 'json' },
+  // Content research: real Google searches grouped into pillars and their sub-articles.
+  'keyword-research': { model: 'gpt-oss:120b', format: 'json' },
   // AI#1 of the new website plan: title, description, focus keyword, alt
   // text and E-E-A-T signal for one keyword. JSON because code checks it.
   'seo-metadata': { model: 'gpt-oss:120b', format: 'json' },

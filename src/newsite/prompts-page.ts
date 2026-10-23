@@ -46,7 +46,10 @@ export const PROMPT_STAGES: PromptStage[] = [
   {
     title: 'Keywords',
     about: 'Turning a main keyword into the articles to write.',
-    prompts: [{ key: 'keyword-cluster', name: 'Pick the sub-keywords', about: 'Chooses which real Google searches deserve their own article under a main keyword.' }],
+    prompts: [
+      { key: 'keyword-cluster', name: 'Pick the sub-keywords', about: 'Chooses which real Google searches deserve their own article under a main keyword.' },
+      { key: 'keyword-research', name: 'Content research plan', about: 'Groups the real Google searches of a research into pillars and their sub-articles.' },
+    ],
   },
   {
     title: 'SEO',

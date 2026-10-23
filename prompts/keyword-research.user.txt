@@ -1,0 +1,14 @@
+Topic to research: {{topic}}
+Website niche: {{niche}}
+About the website: {{nicheContext}}
+
+Real Google searches (keyword, and where Google showed it):
+{{searchesJson}}
+
+Titles of the top Google results for the topic (what already ranks):
+{{resultsJson}}
+
+Keywords the website already has (never plan these again, or anything that would be the same page):
+{{existingJson}}
+
+Answer with the JSON object only.

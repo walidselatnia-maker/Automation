@@ -241,7 +241,7 @@ export async function checkImport(csv: string, deps: CheckDeps): Promise<ImportC
  * six or more sub-keywords go straight to the SEO step; the others keep theirs
  * and wait for the finder to add more.
  */
-export function importRows(rows: ImportRow[]): { plans: number; finding: number } {
+export function importRows(rows: ImportRow[], from: { source: string; reason: string } = { source: 'csv', reason: 'From your CSV file' }): { plans: number; finding: number } {
   let plans = 0;
   let finding = 0;
   for (const r of rows) {
@@ -250,10 +250,10 @@ export function importRows(rows: ImportRow[]): { plans: number; finding: number 
     if (!site) continue;
     const recipeSite = articleTypeFor(site.niche) === 'recipe';
     const page: 'recipe' | 'article' = recipeSite ? 'recipe' : 'article';
-    const items: PlanItem[] = r.subs.map((k) => ({ keyword: k, intent: 'yours', reason: 'From your CSV file', page }));
+    const items: PlanItem[] = r.subs.map((k) => ({ keyword: k, intent: 'yours', reason: from.reason, page }));
     const planId = saveKeywordPlan(site.id, r.keyword, items, page);
     const full = items.length >= MAX_SUBS;
-    setPlanImport(planId, { niche: r.niche, source: 'csv', subsStatus: full ? '' : 'finding' });
+    setPlanImport(planId, { niche: r.niche, source: from.source, subsStatus: full ? '' : 'finding' });
     if (full) queuePlanSeo(planId, r.keyword, items, page);
     else finding++;
     plans++;

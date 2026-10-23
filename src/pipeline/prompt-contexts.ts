@@ -118,6 +118,14 @@ export const STEP_CONTEXTS: Record<string, Record<string, unknown>> = {
     searchesJson: '[]',
     givenJson: '[]',
   },
+  'keyword-research': {
+    topic: 't',
+    niche: 'n',
+    nicheContext: 'c',
+    searchesJson: '[]',
+    resultsJson: '[]',
+    existingJson: '[]',
+  },
   'seo-metadata': {
     keyword: 'k',
     role: 'r',

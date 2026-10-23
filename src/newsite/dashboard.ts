@@ -5,6 +5,7 @@ import { PLATFORMS } from './channels.js';
 import { listNewWebsites } from './repo.js';
 import { NO_BOARD } from './social.js';
 import { skippedKeywords } from './duplicates.js';
+import { allSearchKeysFailed, listSearchKeys } from './search-keys.js';
 
 /**
  * The dashboard: what the content generation did over a period, at a glance.
@@ -164,6 +165,8 @@ export function dashboardData(days: Period, timezone: string, now = Date.now()):
     { label: 'picture failed|pictures failed', count: failedArticlePictures().length, href: '/new-website/keywords' },
     { label: 'social post not sent|social posts not sent', count: posts.filter((p) => p.status === 'failed').length, href: '/new-website/sharing' },
     { label: 'reel not made|reels not made', count: reels.filter((r) => r.status === 'failed').length, href: '/new-website/sharing/reels' },
+    // Every search key failed: Content research cannot read Google.
+    { label: 'search key failed (all of them)|search keys failed (all of them)', count: allSearchKeysFailed() ? listSearchKeys().length : 0, href: '/new-website/research/keys' },
   ].filter((p) => p.count);
 
   const noBoard = all<{ keyword: string; site: string }>(
