@@ -101,7 +101,5 @@ export function keyLine(l: KeyLine): Html {
 
 export function keyLines(lines: KeyLine[]): Html {
   if (!lines.length) return raw('');
-  // What needs doing first, then where the others are.
-  const ordered = [...lines.filter((l) => l.state !== 'set'), ...lines.filter((l) => l.state === 'set')];
-  return html`<style>${raw(KEY_CSS)}</style><div class="ns-keys">${ordered.map(keyLine)}</div>`;
+  return html`<style>${raw(KEY_CSS)}</style><div class="ns-keys">${lines.map(keyLine)}</div>`;
 }
