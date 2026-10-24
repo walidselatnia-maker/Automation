@@ -8,6 +8,7 @@ import type { SeoRow } from './seo.js';
 import { correctUntilRight, keptNote } from './rounds.js';
 import { parseSkeleton, type Skeleton } from './skeleton.js';
 import { articleColorStyle, colorStylesOf, type ColorStyle } from './color-styles.js';
+import { articlePictureStyle, pictureStylesOf, type Style } from './style-library.js';
 
 /**
  * AI#4: the image prompts for one keyword's article, made after the article.
@@ -45,6 +46,8 @@ export interface ImageTheme {
   dish: string;
   /** The one colour style of the article's pictures, by its name in the website's list (color-styles.ts). */
   colorStyle?: string;
+  /** The one picture style of the article, by its name in the website's list (style-library.ts). */
+  pictureStyle?: string;
 }
 
 export interface ImagePrompt {
@@ -140,6 +143,7 @@ export function parseImageSet(raw: string): ImageSet | null {
       mood: clean(t.mood, 200),
       dish: clean(t.dish, 300),
       colorStyle: clean(t.colorStyle, 80),
+      pictureStyle: clean(t.pictureStyle, 80),
     },
     images: o.images.map((im) => {
       const i = (im ?? {}) as Record<string, unknown>;
@@ -149,14 +153,20 @@ export function parseImageSet(raw: string): ImageSet | null {
 }
 
 /**
- * How this website's photos look, for the AI. The website's own Picture style
- * when it has one. Otherwise: food photography for a recipe page, and for
- * every other page real-life photography of the subject where it belongs in
- * the niche, never styled like food.
+ * How this website's photos look, for the AI. The website's picture styles
+ * when it has some: one is followed as it is; from several, the AI picks ONE
+ * for the article (theme.pictureStyle). Otherwise: food photography for a
+ * recipe page, and for every other page real-life photography of the subject
+ * where it belongs in the niche, never styled like food.
  */
-export function pictureStyleFor(site: { niche: string; picture_style?: string }, recipePage: boolean): string {
-  const own = (site.picture_style ?? '').trim();
-  if (own) return own;
+export function pictureStyleFor(site: { niche: string; picture_style?: string }, recipePage: boolean, styles: Style[] = pictureStylesOf(site)): string {
+  if (styles.length === 1) return styles[0]!.description || styles[0]!.name;
+  if (styles.length > 1) {
+    return (
+      'Pick ONE of these picture styles for the whole article, the one that fits this article best, name it as the theme\'s pictureStyle exactly as written, ' +
+      `and follow it in every picture: ${JSON.stringify(styles)}`
+    );
+  }
   if (recipePage) {
     return 'Food photography of this recipe: the dish as the star, styled and appetizing, on a table or counter with the props of the recipe, hands at work or reaching in.';
   }
@@ -197,6 +207,8 @@ export interface ImageContext {
   article?: string;
   /** The colour styles it picks one from, by name. */
   colorStyles?: string[];
+  /** The picture styles it picks one from, by name, when there are several. */
+  pictureStyles?: string[];
 }
 
 /** What is wrong with the set, in words the AI can act on. Empty when it passes. */
@@ -209,6 +221,9 @@ export function checkImageSet(set: ImageSet, ctx: ImageContext): string[] {
   const recipePage = ctx.allowedText !== undefined;
   if (ctx.colorStyles?.length && !ctx.colorStyles.some((n) => n.toLowerCase() === (set.theme.colorStyle ?? '').toLowerCase())) {
     problems.push(`The theme needs its colorStyle: exactly one name from the colour styles given (${ctx.colorStyles.join(', ')}), the one that fits this article best.`);
+  }
+  if (ctx.pictureStyles && ctx.pictureStyles.length > 1 && !ctx.pictureStyles.some((n) => n.toLowerCase() === (set.theme.pictureStyle ?? '').toLowerCase())) {
+    problems.push(`The theme needs its pictureStyle: exactly one name from the picture styles given (${ctx.pictureStyles.join(', ')}), the one that fits this article best.`);
   }
   if (recipePage && !set.theme.dish) problems.push('The theme needs its dish: how this recipe\'s finished dish looks (shape, layers, colours, topping), from the recipe.');
 
@@ -313,6 +328,9 @@ export async function makeImagePrompts(row: SeoRow, deps: ImageDeps): Promise<vo
   // One colour style for the whole article: the one it already has (made again, it keeps it), or one the AI picks.
   const kept = articleColorStyle(row.id);
   const styles = kept ? [kept] : colorStylesOf(ctx);
+  // The same with its picture style: the one kept, or one the AI picks from the website's list.
+  const keptPicture = articlePictureStyle(row.id);
+  const pictureStyles = keptPicture ? [keptPicture] : pictureStylesOf(ctx);
 
   const outcome = await correctUntilRight<ImageSet>({
     ask: (corrections) =>
@@ -322,7 +340,7 @@ export async function makeImagePrompts(row: SeoRow, deps: ImageDeps): Promise<vo
         title: row.title,
         niche: ctx.niche,
         nicheContext: ctx.niche_context || '(none)',
-        pictureStyle: pictureStyleFor(ctx, Boolean(recipe)),
+        pictureStyle: pictureStyleFor(ctx, Boolean(recipe), pictureStyles),
         altPattern: row.alt_text || '(none)',
         recipeJson: recipe ? JSON.stringify(recipe) : '(no fixed recipe for this page)',
         article: row.article_md.slice(0, 24000),
@@ -332,7 +350,7 @@ export async function makeImagePrompts(row: SeoRow, deps: ImageDeps): Promise<vo
       }),
     parse: parseImageSet,
     check: (set) =>
-      checkImageSet(set, { keyword: row.keyword, slots, allowedText, language: planLanguage(row.plan_id), article: row.article_md, colorStyles: styles.map((s) => s.name) }),
+      checkImageSet(set, { keyword: row.keyword, slots, allowedText, language: planLanguage(row.plan_id), article: row.article_md, colorStyles: styles.map((s) => s.name), pictureStyles: pictureStyles.map((s) => s.name) }),
     onError: (err) => log.warn(`AI#4 could not reach the AI for "${row.keyword}": ${errorMessage(err)}`),
   });
   const { problems, technical } = outcome;
@@ -341,6 +359,11 @@ export async function makeImagePrompts(row: SeoRow, deps: ImageDeps): Promise<vo
   if (last && style) {
     last.theme.colorStyle = style.name;
     run('UPDATE keyword_seo SET color_style = ? WHERE id = ?', JSON.stringify(style), row.id);
+  }
+  const picture = last ? chosenStyle(pictureStyles, last.theme.pictureStyle) : null;
+  if (last && picture) {
+    last.theme.pictureStyle = picture.name;
+    run('UPDATE keyword_seo SET picture_style = ? WHERE id = ?', JSON.stringify(picture), row.id);
   }
 
   run(

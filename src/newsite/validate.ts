@@ -8,6 +8,7 @@
 
 import { flowProjectProblem } from '../core/project-id.js';
 import { parseColorStyles } from './color-styles.js';
+import { joinPicks, parseOwnPictureStyles } from './style-library.js';
 
 export const PERSONAS = [
   'Expert / Professional',
@@ -74,7 +75,7 @@ export interface CleanWebsite {
   apiKey: string;
   niche: string;
   nicheContext: string;
-  /** How this niche's photos look (settings, subjects, what never to show); empty means the platform decides from the niche. */
+  /** Its picture styles as JSON (style-library.ts); empty means the platform decides from the niche. */
   pictureStyle?: string;
   /** Its picture colour styles as JSON; '' (or missing) = its niche's list. */
   colorStyles?: string;
@@ -109,6 +110,9 @@ const text = (raw: Raw, field: FieldName): string => {
   const value = raw[field];
   return typeof value === 'string' ? value.trim() : '';
 };
+
+/** A form field that may come once or many times (ticked boxes). */
+const picks = (v: unknown): string[] => (Array.isArray(v) ? v : v === undefined ? [] : [v]).filter((x): x is string => typeof x === 'string');
 
 /** Control characters and angle brackets have no place in a name or a sentence. */
 const BAD_TEXT = /[\u0000-\u001f\u007f<>{}]/;
@@ -203,16 +207,19 @@ function fieldCheck(field: FieldName, raw: Raw, clean: Partial<CleanWebsite>): s
       return null;
     }
     case 'pictureStyle': {
-      const value = text(raw, field);
-      if (value.length > 600) return 'Keep the picture style under 600 characters.';
-      if (BAD_TEXT.test(value)) return 'The picture style must be plain text.';
-      clean.pictureStyle = value;
+      // The styles ticked in the library, then the website's own lines.
+      const value = String(raw[field] ?? '');
+      if (value.split(/\r?\n/).some((line) => BAD_TEXT.test(line))) return 'The picture styles must be plain text.';
+      if (value.split(/\r?\n/).some((line) => line.trim().length > 600)) return 'Keep each picture style under 600 characters.';
+      const styles = joinPicks('picture', picks(raw.picturePick), parseOwnPictureStyles(value));
+      if (styles.length > 20) return 'Keep it to 20 picture styles or fewer.';
+      clean.pictureStyle = styles.length ? JSON.stringify(styles) : '';
       return null;
     }
     case 'colorStyles': {
       const value = String(raw[field] ?? '');
       if (value.split(/\r?\n/).some((line) => BAD_TEXT.test(line))) return 'The colour styles must be plain text.';
-      const styles = parseColorStyles(value);
+      const styles = joinPicks('color', picks(raw.colorPick), parseColorStyles(value));
       if (styles.length > 20) return 'Keep it to 20 colour styles or fewer.';
       clean.colorStyles = styles.length ? JSON.stringify(styles) : '';
       return null;

@@ -163,6 +163,8 @@ export interface SeoRow {
   skeleton_styles: string;
   /** The one colour style of its pictures, as JSON (color-styles.ts); '' until its image prompts are made. */
   color_style: string;
+  /** The one picture style of its pictures, as JSON (style-library.ts); '' until its image prompts are made. */
+  picture_style: string;
   recipe_status: '' | 'pending' | 'writing' | 'done' | 'failed';
   recipe_json: string;
   recipe_problems: string;

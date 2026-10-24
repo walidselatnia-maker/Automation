@@ -7,6 +7,7 @@ import type { Settings } from '../settings.js';
 import { checkSite as realCheckSite, listPosts as realListPosts, type SitePost, type SiteCheck } from './client.js';
 import { registerKeywordRoutes } from './keyword-routes.js';
 import { registerResearchRoutes } from './research-routes.js';
+import { defaultPicks, styleGroups } from './style-library.js';
 import { registerPictureRoutes, type PictureRouteDeps } from './picture-routes.js';
 import { registerImageModelRoutes } from './image-model.js';
 import { registerChannelRoutes, type ChannelLookups } from './channels-routes.js';
@@ -308,6 +309,13 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
       reply,
       newLayout({ title: `Edit ${site.name}`, active: '/new-website', body: newWebsiteWizardPage(site, wizardChannels(site.id), Number.isInteger(section) ? section : -1, knownCategories(site.id)) }),
     );
+  });
+
+  /** The style libraries for a niche as it is typed: its group first, its two main styles. */
+  app.get('/new-website/styles', async (request, reply) => {
+    const niche = String((request.query as { niche?: unknown } | undefined)?.niche ?? '').slice(0, 60);
+    const of = (kind: 'color' | 'picture') => ({ groups: styleGroups(kind, niche), defaults: defaultPicks(kind, niche) });
+    return reply.send({ color: of('color'), picture: of('picture') });
   });
 
   /** A website's categories, read again from the website, for its channels' category lists. */

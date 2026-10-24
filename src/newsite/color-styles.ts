@@ -23,8 +23,11 @@ const list = (text: string): ColorStyle[] =>
     return { name: name!, description: description ?? '' };
   });
 
+/** The niches with a list of their own. */
+export type NicheGroup = 'recipes' | 'pets' | 'travel' | 'home' | 'diy' | 'crochet' | 'other';
+
 /** The default lists by niche, main style first, then the second one. */
-export const NICHE_COLOR_STYLES: Record<string, ColorStyle[]> = {
+export const NICHE_COLOR_STYLES: Record<NicheGroup, ColorStyle[]> = {
   recipes: list(
     'Warm & Appetizing — Warm golden highlights, rich natural colors, soft shadows; Clean & Bright — Bright neutral tones, soft daylight, minimal shadows; ' +
       'Luxury & Elegant — Deep shadows, warm highlights, rich contrast; Earthy & Organic — Warm browns, natural greens, muted earth tones; ' +
@@ -66,7 +69,7 @@ export const NICHE_COLOR_STYLES: Record<string, ColorStyle[]> = {
 };
 
 /** Which default list a niche gets. */
-export function nicheGroup(niche: string): keyof typeof NICHE_COLOR_STYLES {
+export function nicheGroup(niche: string): NicheGroup {
   if (/crochet|knit|yarn|amigurumi|tricot|ganchillo|uncinetto|häkel/i.test(niche)) return 'crochet';
   if (/\bdiy\b|\bcrafts?\b|crafting|woodwork|handmade|\bmakers?\b|upcycl|bricolage|sewing/i.test(niche)) return 'diy';
   if (/\bpets?\b|\bdogs?\b|\bcats?\b|pupp|kitten|\banimals?\b|\bbirds?\b|parrot|aquarium|hamster|rabbit|\bhorses?\b|\bchiens?\b|\bchats?\b|\bperros?\b|\bgatos?\b/i.test(niche)) return 'pets';
@@ -101,7 +104,7 @@ export function colorStylesOf(site: { niche: string; color_styles?: string }): C
   } catch {
     /* none of its own */
   }
-  return NICHE_COLOR_STYLES[nicheGroup(site.niche)]!;
+  return NICHE_COLOR_STYLES[nicheGroup(site.niche)];
 }
 
 /** The style an article's pictures were given, or null. */

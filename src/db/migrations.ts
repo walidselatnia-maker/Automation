@@ -1084,6 +1084,13 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    id: '056-newsite-picture-style-pick',
+    description: 'New websites: the one picture style picked for each article, from its website\'s list',
+    up(db) {
+      addColumn(db, 'keyword_seo', 'picture_style', "TEXT NOT NULL DEFAULT ''");
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */

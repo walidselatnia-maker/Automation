@@ -21,6 +21,7 @@ const flowProject = (value: string): Html => {
     : html`<span class="nl-oneline" title="${value}">Flow project ${short}</span>`;
 };
 import { colorStylesOf, styleLine } from './color-styles.js';
+import { COLOR_LIBRARY, PICTURE_LIBRARY, defaultPicks, pictureStylesOf, splitSaved, styleGroups, type Style, type StyleKind } from './style-library.js';
 import type { NewWebsiteRow } from './repo.js';
 import { LANGUAGES, PERSONAS } from './validate.js';
 
@@ -159,7 +160,7 @@ export function newWebsiteListPage(rows: NewWebsiteRow[], platformReady = true):
                   ${part(r.id, 1, 'Topic', [
                     ['Topic', r.niche],
                     ['More detail', r.niche_context || '—'],
-                    ['Picture style', r.picture_style || 'Decided from the niche'],
+                    ['Picture styles', pictureStylesOf(r).map((s) => s.name).join(', ') || 'Decided from the niche'],
                     ['Colour styles', colorStylesOf(r).map((s) => s.name).join(', ')],
                     ['Language', r.language || 'English'],
                   ])}
@@ -267,6 +268,16 @@ export const WIZARD_CSS = `
 .wz-ch-catlist { display: flex; flex-wrap: wrap; gap: 6px 16px; padding: 8px 0 2px; }
 .wz-ch-catlist label { display: flex; align-items: center; gap: 6px; margin: 0; font-weight: 400; cursor: pointer; }
 .wz-ch-catlist input { width: 16px; height: 16px; min-height: 0; margin: 0; padding: 0; accent-color: var(--accent); }
+.wz-sgroup { margin: 0 0 10px; }
+.wz-sgroup[hidden] { display: none; }
+.wz-sgname { font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--faint); margin: 0 0 6px; }
+.wz-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.wz-chip { display: inline-flex; align-items: center; gap: 6px; margin: 0; padding: 6px 12px; border: 1px solid var(--line-strong); border-radius: 999px; font-size: 14px; font-weight: 500; cursor: pointer; background: var(--page); }
+.wz-chip input { width: 15px; height: 15px; min-height: 0; margin: 0; padding: 0; flex: none; accent-color: var(--accent); }
+.wz-chip:has(input:checked) { border-color: var(--accent); background: var(--accent-tint, var(--raised)); color: var(--accent-text, var(--ink)); }
+.wz-own { margin-top: 6px; font-size: 14px; }
+.wz-own summary { cursor: pointer; color: var(--idle-ink); font-weight: 600; }
+.wz-own textarea { margin-top: 8px; }
 .wz-saveerr { color: var(--bad); font-size: 14px; font-weight: 600; margin-top: 16px; }
 .wz-saveerr:empty { display: none; }
 @media (max-width: 640px) {
@@ -291,6 +302,34 @@ export const field = (
     <div class="wz-err" data-err="${name}"></div>
   </div>
 `;
+
+/**
+ * A style library on the Niche step: ready-made styles as ticks, grouped by
+ * niche (the website's first), each shown once; the website's own lines in
+ * "Add your own". A new website starts with its niche's two main styles.
+ */
+export function stylePicker(kind: StyleKind, label: string, niche: string, saved: Style[] | null): Html {
+  const lib = kind === 'color' ? COLOR_LIBRARY : PICTURE_LIBRARY;
+  const { picked, own } = saved ? splitSaved(kind, saved) : { picked: defaultPicks(kind, niche), own: [] as Style[] };
+  const on = new Set(picked.map((n) => n.toLowerCase()));
+  const shown = new Set<string>();
+  const ownName = kind === 'color' ? 'colorStyles' : 'pictureStyle';
+  return html`<div class="wz-field" data-styles="${kind}">
+    <label>${label}</label>
+    <div class="wz-sgroups">${styleGroups(kind, niche).map((g) => {
+      const names = g.names.filter((n) => !shown.has(n.toLowerCase()));
+      names.forEach((n) => shown.add(n.toLowerCase()));
+      return html`<div class="wz-sgroup" data-group="${g.group}" ${raw(names.length ? '' : 'hidden')}><div class="wz-sgname">${g.label}</div>
+        <div class="wz-chips">${names.map((n) => {
+          const st = lib.get(n.toLowerCase())!;
+          return html`<label class="wz-chip" title="${st.description}"><input type="checkbox" name="${kind}Pick" value="${st.name}" ${raw(on.has(n.toLowerCase()) ? 'checked' : '')} />${st.name}</label>`;
+        })}</div></div>`;
+    })}</div>
+    <details class="wz-own" ${raw(own.length ? 'open' : '')}><summary>Add your own</summary>
+      <textarea id="wz-${ownName}" name="${ownName}" rows="3" maxlength="6000" aria-label="${label}: your own" placeholder="Name — description">${own.map(styleLine).join('\n')}</textarea></details>
+    <div class="wz-err" data-err="${ownName}"></div>
+  </div>`;
+}
 
 /** Minutes as the wizard's amount and unit, in the largest unit that is exact. */
 const gapParts = (minutes: number): { amount: number; unit: 'minutes' | 'hours' | 'days' } =>
@@ -405,14 +444,8 @@ export function newWebsiteWizardPage(existing?: NewWebsiteRow, channels: WizardC
               optional: 'optional',
               hint: 'Two or three sentences that steer the writing.',
             })}
-            ${field('pictureStyle', 'Picture style', html`<textarea id="wz-pictureStyle" name="pictureStyle" maxlength="600" placeholder="Dogs and cats at home, in the garden and at the vet, on the floor, a sofa or the grass. Real owners' hands. Never on a dining table, never with plates or food styling.">${e?.picture_style ?? ''}</textarea>`, {
-              optional: 'optional',
-              hint: 'How the photos of this niche look: where they are taken, who and what is in them, and what never to show. Left empty, the platform decides from the niche.',
-            })}
-            ${field('colorStyles', 'Colour styles', html`<textarea id="wz-colorStyles" name="colorStyles" rows="7" maxlength="6000" placeholder="Warm & Cozy — Warm highlights, soft shadows, inviting golden tones">${e ? colorStylesOf(e).map(styleLine).join('\n') : ''}</textarea>`, {
-              optional: 'optional',
-              hint: 'One per line: Name — description. Each article’s pictures get one of them. Empty: the list for the niche.',
-            })}
+            ${stylePicker('picture', 'Picture styles', e?.niche ?? '', e ? pictureStylesOf(e) : null)}
+            ${stylePicker('color', 'Colour styles', e?.niche ?? '', e ? colorStylesOf(e) : null)}
             ${field('language', 'Language', html`<select id="wz-language" name="language">${LANGUAGES.map(
               (l) => html`<option ${selected(l === (e?.language || 'English'))}>${l}</option>`,
             )}</select>`, {
@@ -546,6 +579,49 @@ const SCRIPT = `<script>
       });
     }).catch(function () {});
   }
+  // The style libraries: ticked names and own lines, for the summary.
+  var styles = function (kind, own) {
+    var names = [].slice.call(form.querySelectorAll('input[name=' + kind + 'Pick]:checked')).map(function (b) { return b.value; });
+    val(own).split('\\n').forEach(function (l) { if (l.trim()) names.push(l.split(/\\s+[—–-]\\s+/)[0].trim()); });
+    return names.join(', ');
+  };
+  // A new website: the libraries follow the niche as it is typed (its group first, its two main styles ticked) until a tick is changed.
+  var touched = {};
+  [].forEach.call(form.querySelectorAll('[data-styles]'), function (box) {
+    box.addEventListener('change', function (ev) { if (ev.target.type === 'checkbox') touched[box.getAttribute('data-styles')] = 1; });
+  });
+  function regroup(data) {
+    [].forEach.call(form.querySelectorAll('[data-styles]'), function (box) {
+      var kind = box.getAttribute('data-styles'), d = data[kind], wrap = box.querySelector('.wz-sgroups'), chips = {}, seen = {};
+      if (!d) return;
+      [].forEach.call(box.querySelectorAll('.wz-chip'), function (c) { chips[c.querySelector('input').value.toLowerCase()] = c; });
+      d.groups.forEach(function (g) {
+        var div = box.querySelector('[data-group="' + g.group + '"]');
+        if (!div) return;
+        wrap.appendChild(div);
+        var list = div.querySelector('.wz-chips'), n = 0;
+        g.names.forEach(function (name) {
+          var k = name.toLowerCase();
+          if (seen[k] || !chips[k]) return;
+          seen[k] = 1; n++; list.appendChild(chips[k]);
+        });
+        div.hidden = !n;
+      });
+      if (touched[kind]) return;
+      var on = {};
+      d.defaults.forEach(function (n) { on[n.toLowerCase()] = 1; });
+      Object.keys(chips).forEach(function (k) { chips[k].querySelector('input').checked = Boolean(on[k]); });
+    });
+  }
+  if (!EDIT) {
+    var nicheTimer;
+    f('niche').addEventListener('input', function () {
+      clearTimeout(nicheTimer);
+      nicheTimer = setTimeout(function () {
+        fetch('/new-website/styles?niche=' + encodeURIComponent(val('niche'))).then(function (r) { return r.json(); }).then(regroup).catch(function () {});
+      }, 300);
+    });
+  }
   var channelsText = function () {
     var names = [].slice.call(form.querySelectorAll('input[name=channelId]:checked')).map(function (b) { return b.getAttribute('data-name'); });
     return names.length ? names.join(', ') : 'No channel';
@@ -597,8 +673,8 @@ const SCRIPT = `<script>
     var groups = [
       [0, 'Website', [['Name', val('name')], ['Address', host(val('domain'))],
         ['API key', val('apiKey') ? 'New key, checked with the website' : (EDIT ? 'Saved key kept, checked with the website' : 'Checked with the website')]]],
-      [1, 'Niche', [['Niche', val('niche')], ['More detail', val('nicheContext') || '—'], ['Picture style', val('pictureStyle') || 'Decided from the niche'],
-        ['Colour styles', val('colorStyles') ? val('colorStyles').split('\\n').filter(function (l) { return l.trim(); }).length + '' : 'The list for the niche'], ['Language', val('language')]]],
+      [1, 'Niche', [['Niche', val('niche')], ['More detail', val('nicheContext') || '—'], ['Picture styles', styles('picture', 'pictureStyle') || 'Decided from the niche'],
+        ['Colour styles', styles('color', 'colorStyles') || 'The list for the niche'], ['Language', val('language')]]],
       [2, 'Voice', [['Persona', persona()]]],
       [3, 'Publishing', [['Status', f('status').selectedOptions[0].text], ['Approval', f('autoPublish').selectedOptions[0].text],
         ['Posts per day', val('dailyTarget')], ['Gap between posts', val('gapAmount') + ' ' + val('gapUnit')],

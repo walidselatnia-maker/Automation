@@ -308,4 +308,43 @@ describe('AI#4 pictures that fit the niche', () => {
       closeDatabase();
     }
   });
+
+  it('has the AI pick ONE picture style from several, keeps it on the article and offers only it again', async () => {
+    openDatabase(':memory:');
+    try {
+      const styles = [{ name: 'Cozy Living Room', description: 'Pets at home on the sofa.' }, { name: 'Park & Trail Walks', description: 'Out on a walk in a park.' }];
+      const websiteId = createNewWebsite(
+        {
+          name: 'Pets', domain: 'p.example.com', apiKey: 'sk_test_ABCDEFGHIJKLMNOP', niche: 'Pets', nicheContext: '', pictureStyle: JSON.stringify(styles),
+          persona: 'Storyteller', status: 'active', autoPublish: true, dailyTarget: 3, intervalMinutes: 480, bufferToken: '', pinUsername: '', projectId: '',
+        },
+        KEY,
+      );
+      const plan = saveKeywordPlan(websiteId, 'golden retriever grooming', [], 'article');
+      queuePlanSeo(plan, 'golden retriever grooming', [], 'article');
+      run(
+        `UPDATE keyword_seo SET status = 'done', title = 'T', skeleton_status = 'done', skeleton_json = ?, article_status = 'done', article_md = ?, images_status = 'pending' WHERE plan_id = ?`,
+        JSON.stringify(PET_SKELETON),
+        ctx.article,
+        plan,
+      );
+      const asked: Record<string, unknown>[] = [];
+      const answers = [{ ...petTheme }, { ...petTheme, pictureStyle: 'park & trail walks' }];
+      await kickSeoWriter({ suggest: async () => [], ask: async (_n, vars) => { asked.push(vars); return JSON.stringify({ theme: answers[Math.min(asked.length - 1, 1)], images: slots.map((s, i) => petPrompt(s, i)) }); } });
+      expect(String(asked[0]!.pictureStyle)).toMatch(/^Pick ONE of these picture styles/);
+      // No pick at first: sent back to name one.
+      expect(String(asked[1]!.problemsJson)).toContain('The theme needs its pictureStyle');
+      const row = listPlanSeo(plan)[0]!;
+      expect(row.images_status).toBe('done');
+      expect(JSON.parse(row.picture_style)).toEqual(styles[1]);
+      expect(JSON.parse(row.images_json).theme.pictureStyle).toBe('Park & Trail Walks');
+      // Made again: only the kept style, followed as it is.
+      requeueImages(row.id);
+      await kickSeoWriter({ suggest: async () => [], ask: async (_n, vars) => { asked.push(vars); return JSON.stringify({ theme: petTheme, images: slots.map((s, i) => petPrompt(s, i)) }); } });
+      expect(asked.at(-1)!.pictureStyle).toBe('Out on a walk in a park.');
+      expect(JSON.parse(listPlanSeo(plan)[0]!.picture_style)).toEqual(styles[1]);
+    } finally {
+      closeDatabase();
+    }
+  });
 });
