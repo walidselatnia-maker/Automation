@@ -4,7 +4,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import formbody from '@fastify/formbody';
 import { all, closeDatabase, getDb, openDatabase, run } from '../src/db/index.js';
 import { runMigrations } from '../src/db/migrations.js';
-import { queuePlanSeo } from '../src/newsite/seo.js';
+import { queueMissingSeo, queuePlanSeo } from '../src/newsite/seo.js';
 import { registerNewWebsiteRoutes } from '../src/newsite/routes.js';
 import { createNewWebsite, deleteNewWebsite, getKeywordPlan, listKeywordPlans, saveKeywordPlan, setPlanImport } from '../src/newsite/repo.js';
 import type { SitePost } from '../src/newsite/client.js';
@@ -191,6 +191,9 @@ describe('keyword routes', () => {
       expect(page.body).toContain(`action="/new-website/keywords/${plan.id}/sub/delete"`);
       const gone = await post(`/new-website/keywords/${plan.id}/sub/delete`, { keyword: 'lemon tart filling' });
       expect(gone.headers.location).toMatch(/Sub-keyword%20deleted/);
+      queueMissingSeo(plan.id, plan.pillar, listKeywordPlans(websiteId)[0]!.items);
+      const seo = await app.inject({ method: 'GET', url: `/new-website/keywords/plan/${plan.id}/seo` });
+      expect(seo.body).toContain(`action="/new-website/keywords/${plan.id}/sub/delete"`);
       plan = listKeywordPlans(websiteId)[0]!;
       expect(plan.items.map((i) => i.keyword)).toEqual(['mini lemon tarts']);
 

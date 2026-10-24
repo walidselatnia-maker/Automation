@@ -464,6 +464,7 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
     if (!plan) return reply.redirect('/new-website/keywords', 303);
     const keyword = text(body(request).keyword, 100);
     for (const id of deletePlanItem(plan.id, keyword)) clearPictures(id, deps.dataDir);
+    if (text(body(request).back, 10) === 'seo') return reply.redirect(`/new-website/keywords/plan/${plan.id}/seo?ok=${encodeURIComponent('Sub-keyword deleted.')}`, 303);
     return reply.redirect(`/new-website/keywords?ok=${encodeURIComponent('Sub-keyword deleted.')}#website-${plan.website_id}`, 303);
   });
   return startSeo;

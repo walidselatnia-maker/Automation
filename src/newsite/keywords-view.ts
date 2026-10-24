@@ -470,6 +470,10 @@ function seoCard(row: SeoRow, intent: string): Html {
           <button class="ns-btn small">Write again</button>
         </form>`
       : raw('')}
+    ${row.role === 'sub'
+      ? html`<form method="post" action="/new-website/keywords/${String(row.plan_id)}/sub/delete" class="kw-seo-retry" data-name="${row.keyword}"
+          onsubmit="return confirm('Delete ' + this.dataset.name + '?')"><input type="hidden" name="keyword" value="${row.keyword}"><input type="hidden" name="back" value="seo"><button class="ns-btn small danger">Delete</button></form>`
+      : raw('')}
     ${shown
       ? html`<div class="kw-serp">
           <div class="kw-serp-title">${row.title}</div>
