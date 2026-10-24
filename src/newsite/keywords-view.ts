@@ -1294,7 +1294,7 @@ const planProgress = (s: PlanStats | undefined): Html =>
     : html`Waiting to start`;
 
 /** The Keywords page: one card per website, each opening on a table of its keyword plans. */
-export function keywordsOverview(sites: OverviewSite[], stats: Map<number, PlanStats>, skipped: { plan_id: number; keyword: string; skip_reason: string }[] = [], keys: Html = raw('')): Html {
+export function keywordsOverview(sites: OverviewSite[], stats: Map<number, PlanStats>, skipped: { plan_id: number; keyword: string; skip_reason: string }[] = []): Html {
   const ready = sites.length > 0;
   return html`
     <style>${raw(CSS)}${raw(OVERVIEW_CSS)}</style>
@@ -1305,7 +1305,6 @@ export function keywordsOverview(sites: OverviewSite[], stats: Map<number, PlanS
       </div>
       ${ready ? html`<a class="ns-btn primary" href="/new-website/keywords/add">Add keywords</a>` : raw('')}
     </div>
-    ${keys}
     ${!ready
       ? html`<div class="ko-empty"><h2>Add a website first</h2><p>Keywords are planned for a website, and published there.</p><a class="ns-btn primary" href="/new-website/add">Add website</a></div>`
       : html`<div class="ko-cards">${sites.map(({ site, plans, autopilot }) => {

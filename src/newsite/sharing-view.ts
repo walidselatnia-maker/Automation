@@ -575,7 +575,7 @@ const REELS_SCRIPT = `<script>
  * sent to the channels that take reels. Published articles with no reel yet
  * can get one.
  */
-export function reelsPage(sites: SharingSite[], websiteId = 0, keys: Html = raw('')): Html {
+export function reelsPage(sites: SharingSite[], websiteId = 0): Html {
   const shown = websiteId ? sites.filter((s) => s.site.id === websiteId) : sites;
   const withReel = (s: SharingSite) => new Set(s.reels.map((r) => r.seo_id));
   const noReel = shown.flatMap((s) => s.articles.filter((a) => !withReel(s).has(a.row.id)).map((a) => ({ s, a })));
@@ -588,7 +588,6 @@ export function reelsPage(sites: SharingSite[], websiteId = 0, keys: Html = raw(
       </div>
       <a class="ns-btn" href="/new-website/sharing/reel-rules?back=${encodeURIComponent(reelsHref(websiteId))}">Edit reel rules</a>
     </div>
-    ${keys}
     ${sites.length > 1
       ? html`<nav class="sh-tabs" aria-label="Websites">
           <a class="sh-tab ${websiteId ? '' : 'on'}" href="${reelsHref()}">Every website <span class="n">${String(sites.reduce((n, s) => n + s.reels.length, 0))}</span></a>

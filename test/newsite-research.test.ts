@@ -157,7 +157,7 @@ describe('Content research', () => {
       broke.add('first-key-1111').add('second-key-2222');
       await expect(askSearch('search', TOPIC, {}, deps())).rejects.toThrow(/No search key could answer/);
       expect(allSearchKeysFailed()).toBe(true);
-      expect(dashboardData(7, 'UTC').problems.find((p) => p.href === '/new-website/platform#search-keys')).toMatchObject({ count: 2 });
+      expect(dashboardData(7, 'UTC').problems.find((p) => p.href === '/new-website/research/keys')).toMatchObject({ count: 2 });
     });
   });
 
@@ -317,10 +317,9 @@ describe('Content research', () => {
     });
     afterEach(async () => app.close());
 
-    it('asks only for a website and a niche or topic, and shows the missing key line instead of starting without one', async () => {
+    it('asks only for a website and a niche or topic, and shows the short no-key note instead of starting without one', async () => {
       const without = (await app.inject({ method: 'GET', url: '/new-website/research' })).body;
-      expect(without).toContain('Search key missing');
-      expect(without).toContain('href="/new-website/platform#search-keys">Add key</a>');
+      expect(without).toContain('<p class="rs-note">No search key. Add one in <a href="/new-website/platform#search-keys">Platform settings</a>.</p>');
       expect(without).not.toContain('Discover topics');
       await post('/new-website/research', { website: String(siteId), topic: TOPIC });
       expect(all('SELECT id FROM newsite_research')).toEqual([]);
@@ -330,7 +329,7 @@ describe('Content research', () => {
       const form = /<form class="rs-form"[\s\S]*?<\/form>/.exec(page)![0];
       expect(form.match(/name="[^"]+"/g)).toEqual(['name="website"', 'name="topic"']);
       expect(form).toContain('<button class="ns-btn primary">Discover topics</button>');
-      expect(page).toContain('Search key: set · Platform settings &gt; Search keys');
+      expect(page).not.toContain('<p class="rs-note">');
     });
 
     it('a research is started, shown as a tree with Google/AI marks, saved, and approved; keys show their status', async () => {

@@ -2,7 +2,6 @@ import { randomBytes } from 'node:crypto';
 import { autopilotState, automationOn, automationOnAt } from './autopilot.js';
 import { get } from '../db/index.js';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { PAGE_KEYS, keyLines, keyLinesFor } from './key-status.js';
 import { checkImport, importRows, kickSubFinder, planStats, recheckSubs, type ImportRow } from './keyword-import.js';
 import type { SitePost } from './client.js';
 import {
@@ -139,7 +138,7 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
       autopilot: deps.settings && automationOn(deps.settings) && site.status === 'active' ? autopilotState(site, tz, Date.now(), automationOnAt(deps.settings), deps.settings).next : '',
     }));
     return reply.type('text/html; charset=utf-8').send(
-      newLayout({ title: 'Keywords', active: '/new-website/keywords', body: keywordsOverview(sites, planStats(), skippedKeywords(), keyLines(keyLinesFor(PAGE_KEYS.keywords, deps.settings))), flash: deps.readFlash(request.query) }),
+      newLayout({ title: 'Keywords', active: '/new-website/keywords', body: keywordsOverview(sites, planStats(), skippedKeywords()), flash: deps.readFlash(request.query) }),
     );
   });
 

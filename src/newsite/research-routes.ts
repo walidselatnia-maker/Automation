@@ -16,9 +16,8 @@ import {
   type ResearchDeps,
   type TreeEdit,
 } from './research.js';
-import { researchListPage, researchPage } from './research-view.js';
+import { researchListPage, researchPage, searchKeyNote } from './research-view.js';
 import { RETRY_MS, addSearchKeys, checkSearchKeys, deleteSearchKey, listSearchKeys, moveSearchKey } from './search-keys.js';
-import { PAGE_KEYS, keyLines, keyLinesFor, keyMissing } from './key-status.js';
 
 const log = createLogger('newsite-research-routes');
 
@@ -64,19 +63,18 @@ export function registerResearchRoutes(app: FastifyInstance, deps: ResearchRoute
     }, RETRY_MS).unref();
   }
 
-  /** Discover topics needs a search key that works: without one, the key line instead of a start. */
-  const searchLine = () => keyLinesFor(['search']);
-  app.get('/new-website/research', async (request, reply) => {
-    const lines = keyLinesFor(PAGE_KEYS.research);
-    return send(reply, 'Content research', researchListPage(listResearch(), listNewWebsites(), keyLines(lines), !keyMissing(searchLine())), deps.readFlash(request.query));
-  });
+  /** Discover topics needs a search key that works: without one, a short note instead of a start. */
+  const searchNote = () => searchKeyNote(listSearchKeys());
+  app.get('/new-website/research', async (request, reply) =>
+    send(reply, 'Content research', researchListPage(listResearch(), listNewWebsites(), searchNote()), deps.readFlash(request.query)),
+  );
 
   app.post('/new-website/research', async (request, reply) => {
     const b = form(request);
     const site = getNewWebsite(Number(one(b.website)) || 0);
     const topic = one(b.topic).replace(/\s+/g, ' ').trim();
     if (!site || topic.length < 2) return reply.redirect(`/new-website/research?error=${encodeURIComponent('Pick a website and type a niche or topic.')}`, 303);
-    if (keyMissing(searchLine())) return reply.redirect('/new-website/research', 303);
+    if (searchNote()) return reply.redirect('/new-website/research', 303);
     const id = createResearch(site.id, topic);
     start(id);
     return reply.redirect(at(id), 303);
@@ -111,7 +109,7 @@ export function registerResearchRoutes(app: FastifyInstance, deps: ResearchRoute
   app.get('/new-website/research/:id', async (request, reply) => {
     const r = getResearch(idOf(request));
     if (!r) return reply.redirect(`/new-website/research?error=${encodeURIComponent('That research no longer exists.')}`, 303);
-    return send(reply, r.topic, researchPage(r, getNewWebsite(r.website_id), isRunning(r.id), keyLines(keyLinesFor(['search']).filter((l) => l.state !== 'set'))), deps.readFlash(request.query));
+    return send(reply, r.topic, researchPage(r, getNewWebsite(r.website_id), isRunning(r.id), searchNote()), deps.readFlash(request.query));
   });
 
   app.post('/new-website/research/:id/run', async (request, reply) => {

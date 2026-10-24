@@ -7,7 +7,6 @@ import type { Settings } from '../settings.js';
 import { checkSite as realCheckSite, listPosts as realListPosts, type SitePost, type SiteCheck } from './client.js';
 import { registerKeywordRoutes } from './keyword-routes.js';
 import { registerResearchRoutes } from './research-routes.js';
-import { PAGE_KEYS, keyLines, keyLinesFor } from './key-status.js';
 import { registerPictureRoutes, type PictureRouteDeps } from './picture-routes.js';
 import { registerImageModelRoutes } from './image-model.js';
 import { registerChannelRoutes, type ChannelLookups } from './channels-routes.js';
@@ -279,7 +278,7 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
     const asked = Number((request.query as { days?: string }).days);
     const days: Period = (PERIODS as readonly number[]).includes(asked) ? (asked as Period) : 30;
     const tz = deps.settings?.get('timezone') || 'UTC';
-    const body = dashboardPage(dashboardData(days, tz), Date.now(), html`${automationBar(automationOn(deps.settings), listNewWebsites(), tz, '/new-website/dashboard', Date.now(), deps.settings ? automationOnAt(deps.settings) : 0, deps.settings)}${keyLines(keyLinesFor(PAGE_KEYS.dashboard, deps.settings))}${generateBox(generateChoices(), generateNowLines())}`);
+    const body = dashboardPage(dashboardData(days, tz), Date.now(), html`${automationBar(automationOn(deps.settings), listNewWebsites(), tz, '/new-website/dashboard', Date.now(), deps.settings ? automationOnAt(deps.settings) : 0, deps.settings)}${generateBox(generateChoices(), generateNowLines())}`);
     return send(reply, newLayout({ title: 'Dashboard', active: '/new-website/dashboard', body, flash: readFlash(request.query) }));
   });
 

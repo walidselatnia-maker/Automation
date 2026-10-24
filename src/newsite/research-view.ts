@@ -38,6 +38,7 @@ const CSS = `
 .rs-status { font-weight: 600; font-size: 14px; }
 .rs-status.failed { color: var(--bad); }
 .rs-status.working { color: var(--good); }
+.rs-note { margin: 0; font-size: 14px; color: var(--soft); }
 .rs-actions { display: flex; flex-wrap: wrap; gap: 10px; justify-content: flex-end; margin-top: 16px; }
 .rs-progress { list-style: none; margin: 0 0 18px; padding: 14px 18px; display: grid; gap: 8px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); counter-reset: rs; }
 .rs-progress li { counter-increment: rs; display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; color: var(--faint); font-size: 14px; }
@@ -75,18 +76,23 @@ function counts(s: ResearchState): Html {
   </div>`;
 }
 
-/** The projects, and a new one: a website and a niche or topic, then Discover topics. Without a working search key, the key line instead. */
-export function researchListPage(rows: ResearchRow[], sites: NewWebsiteRow[], keys: Html = raw(''), canSearch = true): Html {
+/** "No search key. Add one in Platform settings." while no search key works; '' once one does. */
+export function searchKeyNote(keys: SearchKeyRow[]): Html | '' {
+  if (keys.some((k) => k.status !== 'failed')) return '';
+  return html`<p class="rs-note">${keys.length ? 'No search key works.' : 'No search key.'} Add one in <a href="/new-website/platform#search-keys">Platform settings</a>.</p>`;
+}
+
+/** The projects, and a new one: a website and a niche or topic, then Discover topics. Without a working search key, the note instead. */
+export function researchListPage(rows: ResearchRow[], sites: NewWebsiteRow[], note: Html | '' = ''): Html {
   const name = new Map(sites.map((s) => [s.id, s.name]));
   return html`<style>${raw(CSS)}</style>
     <div class="ns-head"><div><h1 class="ns-title">Content research</h1></div></div>
-    ${canSearch ? keys : raw('')}
     <div class="rs-box">
       <h2>New research</h2>
       ${!sites.length
         ? html`<p class="rs-soft">Add a website first.</p>`
-        : !canSearch
-          ? keys
+        : note
+          ? note
           : html`<form class="rs-form" method="post" action="/new-website/research">
             <label>Website<select name="website">${sites.map((s) => html`<option value="${String(s.id)}">${s.name}</option>`)}</select></label>
             <label>Niche or topic<input name="topic" required maxlength="120" placeholder="sourdough bread" /></label>
@@ -117,7 +123,7 @@ function progress(s: ResearchState): Html {
   })}</ol>`;
 }
 
-export function researchPage(r: ResearchRow, site: NewWebsiteRow | undefined, busy: boolean, keys: Html = raw('')): Html {
+export function researchPage(r: ResearchRow, site: NewWebsiteRow | undefined, busy: boolean, note: Html | '' = ''): Html {
   const s = stateOf(r);
   const working = busy || r.status === 'fetching' || r.status === 'grouping';
   const options = s.plan.map((p, i) => ({ i, name: p.pillar }));
@@ -131,7 +137,7 @@ export function researchPage(r: ResearchRow, site: NewWebsiteRow | undefined, bu
     ${working ? progress(s) : raw('')}
     ${counts(s)}
     ${s.error ? html`<p class="rs-error" role="alert">${s.error}</p>` : raw('')}
-    ${r.status === 'failed' ? keys : raw('')}
+    ${r.status === 'failed' && note ? note : raw('')}
     ${!working && (r.status === 'failed' || r.status === 'new')
       ? html`<form method="post" action="/new-website/research/${String(r.id)}/run" class="rs-actions" style="justify-content:flex-start"><button class="ns-btn primary">Resume</button></form>`
       : raw('')}
