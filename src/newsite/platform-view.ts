@@ -27,6 +27,8 @@ const PAGE_CSS = `
 .pf-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); padding: 4px 32px; box-shadow: var(--shadow); }
 .pf-group { display: grid; grid-template-columns: 200px 1fr; gap: 24px; padding: 24px 0; border-top: 1px solid var(--line); }
 .pf-group:first-child { border-top: 0; }
+.pf-group { scroll-margin-top: 24px; }
+.pf-group:target { box-shadow: inset 4px 0 0 var(--accent); margin: 0 -32px; padding-left: 32px; padding-right: 32px; }
 .pf-group > div:first-child { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
 .pf-group h2 { font-size: 17px; }
 .pf-state { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: 999px; font: 600 13px/1 var(--body); white-space: nowrap; background: var(--raised); color: var(--soft); border: 1px solid var(--line); }
@@ -69,7 +71,7 @@ const codeOr = (value: string): Html => (value ? html`<dd class="ns-mono">${valu
 const head = (title: string, step: number, st: Html, done: boolean): Html =>
   html`<div><h2>${title}</h2>${st}${done ? html`<a class="ns-btn small pf-change" href="/new-website/platform/setup?section=${String(step)}">Change</a>` : raw('')}</div>`;
 
-export function platformPage(v: PlatformView, automation: Html = raw('')): Html {
+export function platformPage(v: PlatformView, automation: Html = raw(''), searchKeys?: Html): Html {
   const flow = v.value('flow_project_id');
   const d = v.done;
   return html`
@@ -106,7 +108,7 @@ export function platformPage(v: PlatformView, automation: Html = raw('')): Html 
         ${head('Timezone', 1, state(true, 'Set', ''), d)}
         <dl><dt>Timezone</dt><dd>${v.value('timezone')}</dd></dl>
       </section>
-      <section class="pf-group">
+      <section class="pf-group" id="notifications">
         ${head('Notifications', 4, switchState(v.value('telegram_enabled') === 'true'), d)}
         <dl>
           <dt>Telegram bot</dt><dd>${v.hasTelegramToken ? 'Token saved' : 'No token'}</dd>
@@ -135,7 +137,7 @@ export function platformPage(v: PlatformView, automation: Html = raw('')): Html 
       </section>
     </details>
     <div class="pf-card pf-ai">
-      <section class="pf-group">
+      <section class="pf-group" id="ai">
         ${head('AI connection', 0, state(v.keys.length > 0, `${v.keys.length} key${v.keys.length === 1 ? '' : 's'}`, 'No AI key'), d)}
         <dl>
           <dt>Provider</dt><dd class="ns-mono">${v.value('llm_base_url')}</dd>
@@ -151,6 +153,7 @@ export function platformPage(v: PlatformView, automation: Html = raw('')): Html 
           : raw('')}
       </section>
     </div>
+    ${searchKeys ? html`<div class="pf-card pf-ai">${searchKeys}</div>` : raw('')}
   `;
 }
 

@@ -17,6 +17,7 @@ import {
   type SearchPage,
 } from '../src/newsite/search-keys.js';
 import { EXPAND, approveResearch, createResearch, editPlan, getResearch, runResearch, stateOf, type ResearchDeps } from '../src/newsite/research.js';
+import { searchKeysSection } from '../src/newsite/research-view.js';
 
 const KEY = randomBytes(32);
 const TOPIC = 'sourdough bread';
@@ -156,7 +157,7 @@ describe('Content research', () => {
       broke.add('first-key-1111').add('second-key-2222');
       await expect(askSearch('search', TOPIC, {}, deps())).rejects.toThrow(/No search key could answer/);
       expect(allSearchKeysFailed()).toBe(true);
-      expect(dashboardData(7, 'UTC').problems.find((p) => p.href === '/new-website/research/keys')).toMatchObject({ count: 2 });
+      expect(dashboardData(7, 'UTC').problems.find((p) => p.href === '/new-website/platform#search-keys')).toMatchObject({ count: 2 });
     });
   });
 
@@ -293,10 +294,15 @@ describe('Content research', () => {
       expect((await app.inject({ method: 'GET', url: '/new-website/research' })).body).toContain('Content research');
       await post('/new-website/research/keys', { keys: 'serper-key-1111\nbad-key-0000' });
       broke.add('bad-key-0000');
-      await post('/new-website/research/keys/2/up', {});
-      await post('/new-website/research/keys/check', {});
-      const keys = (await app.inject({ method: 'GET', url: '/new-website/research/keys' })).body;
+      await post('/new-website/platform/search-keys/2/up', {});
+      const checked = await post('/new-website/platform/search-keys/check', {});
+      expect(checked.headers.location).toBe('/new-website/platform#search-keys');
+      // The keys moved to Platform settings: the old page leads there.
+      const moved = await app.inject({ method: 'GET', url: '/new-website/research/keys' });
+      expect([moved.statusCode, moved.headers.location]).toEqual([301, '/new-website/platform#search-keys']);
+      const keys = String(searchKeysSection(listSearchKeys(), () => '…'));
       expect(keys).toMatch(/Failed: No credit left[\s\S]*Working/);
+      expect(keys).toContain('id="search-keys"');
 
       const started = await post('/new-website/research', { website: String(siteId), topic: TOPIC });
       const at = String(started.headers.location);

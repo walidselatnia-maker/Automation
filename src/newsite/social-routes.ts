@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
+import { PAGE_KEYS, keyLines, keyLinesFor } from './key-status.js';
 import { html, raw, type Html } from '../web/views/layout.js';
 import { listChannels, websiteChannels } from './channels.js';
 import { newLayout, type NewFlash } from './layout.js';
@@ -204,7 +205,7 @@ export function registerSocialRoutes(
   app.get('/new-website/sharing/reels', async (request, reply) => {
     linksOnView();
     const websiteId = Number((request.query as { website?: string }).website) || 0;
-    return reply.type('text/html; charset=utf-8').send(page('Reels', reelsPage(sharingSites(), websiteId), request.query));
+    return reply.type('text/html; charset=utf-8').send(page('Reels', reelsPage(sharingSites(), websiteId, keyLines(keyLinesFor(PAGE_KEYS.reels, deps.settings))), request.query));
   });
 
   /** The reel rules: edited in place, saved for the next reel. */

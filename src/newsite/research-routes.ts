@@ -16,8 +16,9 @@ import {
   type ResearchDeps,
   type TreeEdit,
 } from './research.js';
-import { researchListPage, researchPage, searchKeysPage } from './research-view.js';
-import { RETRY_MS, addSearchKeys, checkSearchKeys, deleteSearchKey, keyHint, listSearchKeys, moveSearchKey } from './search-keys.js';
+import { researchListPage, researchPage } from './research-view.js';
+import { RETRY_MS, addSearchKeys, checkSearchKeys, deleteSearchKey, listSearchKeys, moveSearchKey } from './search-keys.js';
+import { PAGE_KEYS, keyLines, keyLinesFor } from './key-status.js';
 
 const log = createLogger('newsite-research-routes');
 
@@ -64,7 +65,7 @@ export function registerResearchRoutes(app: FastifyInstance, deps: ResearchRoute
   }
 
   app.get('/new-website/research', async (request, reply) =>
-    send(reply, 'Content research', researchListPage(listResearch(), listNewWebsites(), listSearchKeys()), deps.readFlash(request.query)),
+    send(reply, 'Content research', researchListPage(listResearch(), listNewWebsites(), keyLines(keyLinesFor(PAGE_KEYS.research))), deps.readFlash(request.query)),
   );
 
   app.post('/new-website/research', async (request, reply) => {
@@ -77,28 +78,31 @@ export function registerResearchRoutes(app: FastifyInstance, deps: ResearchRoute
     return reply.redirect(at(id), 303);
   });
 
-  app.get('/new-website/research/keys', async (request, reply) =>
-    send(reply, 'Search keys', searchKeysPage(listSearchKeys(), (k) => keyHint(k, deps.encryptionKey)), deps.readFlash(request.query)),
-  );
+  // The search keys live in Platform settings; the old addresses still lead there.
+  const KEYS_AT = '/new-website/platform#search-keys';
+  const keysBack = (msg = '', kind: 'ok' | 'error' = 'ok') => (msg ? `/new-website/platform?${kind}=${encodeURIComponent(msg)}#search-keys` : KEYS_AT);
+  app.get('/new-website/research/keys', async (_request, reply) => reply.redirect(KEYS_AT, 301));
 
-  app.post('/new-website/research/keys', async (request, reply) => {
-    const { added, bad } = addSearchKeys(one(form(request).keys), deps.encryptionKey);
-    const msg = `${added} key${added === 1 ? '' : 's'} added.${bad.length ? ` Not keys: ${bad.join(', ')}.` : ''}`;
-    return reply.redirect(`/new-website/research/keys?${bad.length && !added ? 'error' : 'ok'}=${encodeURIComponent(msg)}`, 303);
-  });
+  for (const base of ['/new-website/platform/search-keys', '/new-website/research/keys']) {
+    app.post(base, async (request, reply) => {
+      const { added, bad } = addSearchKeys(one(form(request).keys), deps.encryptionKey);
+      const msg = `${added} key${added === 1 ? '' : 's'} added.${bad.length ? ` Not keys: ${bad.join(', ')}.` : ''}`;
+      return reply.redirect(keysBack(msg, bad.length && !added ? 'error' : 'ok'), 303);
+    });
 
-  app.post('/new-website/research/keys/check', async (_request, reply) => {
-    await checkSearchKeys(deps);
-    return reply.redirect('/new-website/research/keys', 303);
-  });
+    app.post(`${base}/check`, async (_request, reply) => {
+      await checkSearchKeys(deps);
+      return reply.redirect(KEYS_AT, 303);
+    });
 
-  app.post('/new-website/research/keys/:id/:what', async (request, reply) => {
-    const { what } = request.params as { what: string };
-    const id = idOf(request);
-    if (what === 'delete') deleteSearchKey(id);
-    else if (what === 'up' || what === 'down') moveSearchKey(id, what === 'up');
-    return reply.redirect('/new-website/research/keys', 303);
-  });
+    app.post(`${base}/:id/:what`, async (request, reply) => {
+      const { what } = request.params as { what: string };
+      const id = idOf(request);
+      if (what === 'delete') deleteSearchKey(id);
+      else if (what === 'up' || what === 'down') moveSearchKey(id, what === 'up');
+      return reply.redirect(KEYS_AT, 303);
+    });
+  }
 
   app.get('/new-website/research/:id', async (request, reply) => {
     const r = getResearch(idOf(request));

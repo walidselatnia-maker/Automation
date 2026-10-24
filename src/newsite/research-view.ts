@@ -5,7 +5,7 @@ import { PROVIDERS, type SearchKeyRow } from './search-keys.js';
 
 /**
  * Content research pages: the projects, one project's plan as a tree, and the
- * search keys. Plain: buttons and the data.
+ * search keys' part of Platform settings. Plain: buttons and the data.
  */
 
 const CSS = `
@@ -20,7 +20,7 @@ const CSS = `
 .rs-form label { display: grid; gap: 4px; font-size: 13px; font-weight: 600; color: var(--soft); }
 .rs-form input, .rs-form select, .rs-tree input[type=text], .rs-tree select, .rs-keys textarea { height: 38px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: var(--r-ctl); background: var(--page); color: var(--ink); font: inherit; }
 .rs-form input { min-width: 280px; }
-.rs-keys textarea { width: 100%; height: 120px; padding: 10px; font: 13px/1.5 var(--mono); }
+.rs-keys textarea { width: 100%; height: 90px; margin-top: 10px; padding: 10px; font: 13px/1.5 var(--mono); }
 .rs-counts { display: flex; flex-wrap: wrap; gap: 8px 22px; margin: 0 0 16px; font-size: 14px; color: var(--soft); }
 .rs-counts b { color: var(--ink); font-variant-numeric: tabular-nums; }
 .rs-error { margin: 0 0 16px; padding: 12px 16px; border: 1px solid var(--bad); border-left-width: 4px; border-radius: var(--r-ctl); background: var(--bad-tint); color: var(--ink); }
@@ -68,12 +68,11 @@ function counts(s: ResearchState): Html {
   </div>`;
 }
 
-export function researchListPage(rows: ResearchRow[], sites: NewWebsiteRow[], keys: SearchKeyRow[]): Html {
+export function researchListPage(rows: ResearchRow[], sites: NewWebsiteRow[], keys: Html = raw('')): Html {
   const name = new Map(sites.map((s) => [s.id, s.name]));
-  const working = keys.filter((k) => k.status !== 'failed').length;
   return html`<style>${raw(CSS)}</style>
-    <div class="ns-head"><div><h1 class="ns-title">Content research</h1></div>
-      <a class="ns-btn quiet" href="/new-website/research/keys">Search keys (${String(working)} of ${String(keys.length)} working)</a></div>
+    <div class="ns-head"><div><h1 class="ns-title">Content research</h1></div></div>
+    ${keys}
     <div class="rs-box">
       <h2>New research</h2>
       ${sites.length
@@ -158,32 +157,33 @@ export function researchPage(r: ResearchRow, site: NewWebsiteRow | undefined, bu
 
 const when = (ms: number): string => (ms ? new Date(ms).toISOString().replace('T', ' ').slice(0, 16) + ' UTC' : 'never');
 
-export function searchKeysPage(keys: SearchKeyRow[], hint: (k: SearchKeyRow) => string): Html {
+/** The search keys, in Platform settings: the order they are tried in, and the box to add more. */
+export function searchKeysSection(keys: SearchKeyRow[], hint: (k: SearchKeyRow) => string): Html {
   const label = (p: string) => PROVIDERS.find((x) => x.key === p)?.label ?? p;
+  const base = '/new-website/platform/search-keys';
   return html`<style>${raw(CSS)}</style>
-    <div class="ns-head"><div><h1 class="ns-title">Search keys</h1></div>
-      <a class="ns-btn quiet" href="/new-website/research">Back</a></div>
-    <div class="rs-box">
-      <h2>Keys, in the order they are tried</h2>
-      ${keys.length
-        ? keys.map(
-            (k, i) => html`<div class="rs-row"><b>${String(i + 1)}</b>
-              <div class="grow">${label(k.provider)} <span class="rs-soft">${hint(k)}</span></div>
-              <span class="rs-status ${k.status}">${k.status === 'working' ? 'Working' : k.status === 'failed' ? `Failed: ${k.error}` : 'Not tried yet'}</span>
-              <span class="rs-soft">Last checked ${when(k.checked_at)}</span>
-              <form method="post" action="/new-website/research/keys/${String(k.id)}/up"><button class="ns-btn small quiet" ${raw(i === 0 ? 'disabled' : '')}>Up</button></form>
-              <form method="post" action="/new-website/research/keys/${String(k.id)}/down"><button class="ns-btn small quiet" ${raw(i === keys.length - 1 ? 'disabled' : '')}>Down</button></form>
-              <form method="post" action="/new-website/research/keys/${String(k.id)}/delete"><button class="ns-btn small danger">Remove</button></form>
-            </div>`,
-          )
-        : html`<p class="rs-soft">None yet.</p>`}
-      ${keys.length ? html`<form method="post" action="/new-website/research/keys/check" class="rs-actions"><button class="ns-btn">Check all keys</button></form>` : raw('')}
-    </div>
-    <div class="rs-box rs-keys">
-      <h2>Add keys</h2>
-      <form method="post" action="/new-website/research/keys">
-        <textarea name="keys" spellcheck="false" placeholder="One key per line. Serper.dev keys as they are; a SerpAPI key as serpapi: KEY"></textarea>
-        <div class="rs-actions"><button class="ns-btn primary">Add</button></div>
-      </form>
-    </div>`;
+    <section class="pf-group rs-keys" id="search-keys">
+      <div><h2>Search keys</h2><span class="pf-state ${keys.some((k) => k.status !== 'failed') ? 'ok' : 'bad'}">${keys.length
+        ? `${keys.filter((k) => k.status !== 'failed').length} of ${keys.length} working`
+        : 'No key'}</span></div>
+      <div class="pf-wide">
+        ${keys.map(
+          (k, i) => html`<div class="rs-row"><b>${String(i + 1)}</b>
+            <div class="grow">${label(k.provider)} <span class="rs-soft">${hint(k)}</span></div>
+            <span class="rs-status ${k.status}">${k.status === 'working' ? 'Working' : k.status === 'failed' ? `Failed: ${k.error}` : 'Not tried yet'}</span>
+            <span class="rs-soft">Last checked ${when(k.checked_at)}</span>
+            <form method="post" action="${base}/${String(k.id)}/up"><button class="ns-btn small quiet" ${raw(i === 0 ? 'disabled' : '')}>Up</button></form>
+            <form method="post" action="${base}/${String(k.id)}/down"><button class="ns-btn small quiet" ${raw(i === keys.length - 1 ? 'disabled' : '')}>Down</button></form>
+            <form method="post" action="${base}/${String(k.id)}/delete"><button class="ns-btn small danger">Remove</button></form>
+          </div>`,
+        )}
+        <form method="post" action="${base}">
+          <textarea name="keys" spellcheck="false" aria-label="Search keys" placeholder="One key per line. Serper.dev keys as they are; a SerpAPI key as serpapi: KEY"></textarea>
+          <div class="rs-actions">
+            ${keys.length ? html`<button class="ns-btn" formaction="${base}/check">Check all keys</button>` : raw('')}
+            <button class="ns-btn primary">Add</button>
+          </div>
+        </form>
+      </div>
+    </section>`;
 }

@@ -243,7 +243,7 @@ export async function askSearch<K extends SearchKind>(
 ): Promise<{ answer: K extends 'autocomplete' ? string[] : SearchPage; keyId: number; provider: string }> {
   const now = deps.now ?? Date.now;
   const keys = listSearchKeys();
-  if (!keys.length) throw new SearchKeyError('No search key yet. Add one under Content research → Search keys.');
+  if (!keys.length) throw new SearchKeyError('No search key yet. Add one under Platform settings → Search keys.');
   const reasons: string[] = [];
   const due = keys.filter((k) => k.status !== 'failed' || now() - k.failed_at >= RETRY_MS);
   for (const k of due) {

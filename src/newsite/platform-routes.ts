@@ -17,6 +17,8 @@ import { imageCatalogue } from './image-model.js';
 import { automationBar } from './autopilot-view.js';
 import { automationOn, automationOnAt } from './autopilot.js';
 import { listNewWebsites } from './repo.js';
+import { listSearchKeys, keyHint } from './search-keys.js';
+import { searchKeysSection } from './research-view.js';
 import { passwordPage, platformPage, platformWizardPage, type PlatformView } from './platform-view.js';
 import { rejectionReason, storePassword, storedPasswordHash } from '../web/password.js';
 
@@ -107,6 +109,7 @@ export function registerPlatformRoutes(app: FastifyInstance, deps: PlatformRoute
         body: platformPage(
           await view(),
           automationBar(automationOn(deps.settings), listNewWebsites(), deps.settings.get('timezone') || 'UTC', '/new-website/platform', Date.now(), automationOnAt(deps.settings), deps.settings),
+          searchKeysSection(listSearchKeys(), (k) => keyHint(k, deps.encryptionKey)),
         ),
         flash: deps.readFlash(request.query),
       }),
