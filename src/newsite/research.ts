@@ -10,7 +10,9 @@ import { LANGUAGE_CODES } from './validate.js';
 
 /**
  * Content research: from a niche or topic to an approved plan of pillar and
- * sub-article keywords for one website, built on real Google data.
+ * sub-article keywords for one website, built on real Google data. The owner
+ * gives only the website and the niche; Discover topics runs every step below
+ * by itself, the page showing which one it is on (PHASES).
  *
  * 1. Fetch: Google's autocomplete for the topic, and its results page (the
  *    top results, People Also Ask, related searches), through the search
@@ -77,7 +79,12 @@ export interface ResearchState {
   error: string;
   /** After approval: what went into the Keywords list. */
   approved?: { plans: number; skipped: string[] };
+  /** While it runs: which of the PHASES it is on (1 to 4), and what it is doing, in words. */
+  progress?: { phase: number; text: string };
 }
+
+/** The steps of a research, as the page lists them while it runs. */
+export const PHASES = ['Google searches for the niche', 'Deeper searches on what was found', 'Check against the website', 'AI groups pillars and sub-articles'];
 
 export type ResearchStatus = 'new' | 'fetching' | 'grouping' | 'ready' | 'failed' | 'approved';
 
@@ -166,9 +173,14 @@ export async function runResearch(id: number, deps: ResearchDeps): Promise<void>
     state.error = '';
     save(id, 'fetching', state);
     const locale: Locale = { hl: LANGUAGE_CODES[site.language || 'English'] ?? 'en' };
-    const ask = async (kind: 'autocomplete' | 'search', query: string): Promise<void> => {
+    const step = (phase: number, text: string, status: ResearchStatus = 'fetching') => {
+      state.progress = { phase, text };
+      save(id, status, state);
+    };
+    const ask = async (kind: 'autocomplete' | 'search', query: string, phase: number, text: string): Promise<void> => {
       const k = callKey(kind, query);
       if (state.calls[k]) return;
+      step(phase, text);
       const { answer, provider } = await askSearch(kind, query, locale, deps);
       state.calls[k] = answer;
       state.made[provider] = (state.made[provider] ?? 0) + 1;
@@ -176,14 +188,16 @@ export async function runResearch(id: number, deps: ResearchDeps): Promise<void>
     };
 
     try {
-      await ask('autocomplete', row.topic);
-      await ask('search', row.topic);
-      for (const term of expansionTerms(row.topic, state)) await ask('autocomplete', term);
+      await ask('autocomplete', row.topic, 1, `Google’s suggestions for “${row.topic}”`);
+      await ask('search', row.topic, 1, 'Top results, People Also Ask and related searches');
+      const terms = expansionTerms(row.topic, state);
+      for (const [i, term] of terms.entries()) await ask('autocomplete', term, 2, `${i + 1} of ${terms.length}: “${term}”`);
     } catch (err) {
       state.error = errorMessage(err);
       return save(id, 'failed', state);
     }
 
+    step(3, `The keywords and articles of ${site.name}`);
     let posts: SitePost[] = [];
     try {
       posts = await deps.listPosts(site.domain, websiteApiKey(site, deps.encryptionKey));
@@ -199,7 +213,7 @@ export async function runResearch(id: number, deps: ResearchDeps): Promise<void>
       return save(id, 'failed', state);
     }
 
-    save(id, 'grouping', state);
+    step(4, `${found.length} searches into pillar articles and their sub-articles`, 'grouping');
     let raw: string;
     try {
       raw = await deps.ask('keyword-research', {
@@ -222,6 +236,7 @@ export async function runResearch(id: number, deps: ResearchDeps): Promise<void>
       return save(id, 'failed', state);
     }
     state.plan = plan;
+    delete state.progress;
     save(id, 'ready', state);
   } finally {
     running.delete(id);

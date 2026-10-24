@@ -1,6 +1,6 @@
 import { html, raw, type Html } from '../web/views/layout.js';
 import type { NewWebsiteRow } from './repo.js';
-import { stateOf, type Origin, type ResearchRow, type ResearchState } from './research.js';
+import { PHASES, stateOf, type Origin, type ResearchRow, type ResearchState } from './research.js';
 import { PROVIDERS, type SearchKeyRow } from './search-keys.js';
 
 /**
@@ -39,6 +39,13 @@ const CSS = `
 .rs-status.failed { color: var(--bad); }
 .rs-status.working { color: var(--good); }
 .rs-actions { display: flex; flex-wrap: wrap; gap: 10px; justify-content: flex-end; margin-top: 16px; }
+.rs-progress { list-style: none; margin: 0 0 18px; padding: 14px 18px; display: grid; gap: 8px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); counter-reset: rs; }
+.rs-progress li { counter-increment: rs; display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; color: var(--faint); font-size: 14px; }
+.rs-progress li::before { content: counter(rs); display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--line-strong); font-size: 12px; font-weight: 700; }
+.rs-progress li.done { color: var(--soft); }
+.rs-progress li.done::before { content: '✓'; background: var(--good-tint); color: var(--good); border-color: var(--good); }
+.rs-progress li.now { color: var(--ink); }
+.rs-progress li.now::before { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
 .rs-dropped summary { cursor: pointer; font-size: 14px; color: var(--soft); }
 .rs-dropped ul { margin: 8px 0 0; padding-left: 18px; font-size: 13px; color: var(--soft); }
 `;
@@ -68,20 +75,23 @@ function counts(s: ResearchState): Html {
   </div>`;
 }
 
-export function researchListPage(rows: ResearchRow[], sites: NewWebsiteRow[], keys: Html = raw('')): Html {
+/** The projects, and a new one: a website and a niche or topic, then Discover topics. Without a working search key, the key line instead. */
+export function researchListPage(rows: ResearchRow[], sites: NewWebsiteRow[], keys: Html = raw(''), canSearch = true): Html {
   const name = new Map(sites.map((s) => [s.id, s.name]));
   return html`<style>${raw(CSS)}</style>
     <div class="ns-head"><div><h1 class="ns-title">Content research</h1></div></div>
-    ${keys}
+    ${canSearch ? keys : raw('')}
     <div class="rs-box">
       <h2>New research</h2>
-      ${sites.length
-        ? html`<form class="rs-form" method="post" action="/new-website/research">
+      ${!sites.length
+        ? html`<p class="rs-soft">Add a website first.</p>`
+        : !canSearch
+          ? keys
+          : html`<form class="rs-form" method="post" action="/new-website/research">
             <label>Website<select name="website">${sites.map((s) => html`<option value="${String(s.id)}">${s.name}</option>`)}</select></label>
             <label>Niche or topic<input name="topic" required maxlength="120" placeholder="sourdough bread" /></label>
-            <button class="ns-btn primary">Start</button>
-          </form>`
-        : html`<p class="rs-soft">Add a website first.</p>`}
+            <button class="ns-btn primary">Discover topics</button>
+          </form>`}
     </div>
     <div class="rs-box">
       <h2>Projects</h2>
@@ -97,7 +107,17 @@ export function researchListPage(rows: ResearchRow[], sites: NewWebsiteRow[], ke
     </div>`;
 }
 
-export function researchPage(r: ResearchRow, site: NewWebsiteRow | undefined, busy: boolean): Html {
+/** The steps of a running research: done, the one under way (with what it is doing), and the ones to come. */
+function progress(s: ResearchState): Html {
+  const at = s.progress?.phase ?? 1;
+  return html`<ol class="rs-progress" role="status">${PHASES.map((p, i) => {
+    const n = i + 1;
+    const cls = n < at ? 'done' : n === at ? 'now' : '';
+    return html`<li class="${cls}"><b>${p}</b>${n === at && s.progress?.text ? html` <span class="rs-soft">${s.progress.text}</span>` : raw('')}</li>`;
+  })}</ol>`;
+}
+
+export function researchPage(r: ResearchRow, site: NewWebsiteRow | undefined, busy: boolean, keys: Html = raw('')): Html {
   const s = stateOf(r);
   const working = busy || r.status === 'fetching' || r.status === 'grouping';
   const options = s.plan.map((p, i) => ({ i, name: p.pillar }));
@@ -108,8 +128,10 @@ export function researchPage(r: ResearchRow, site: NewWebsiteRow | undefined, bu
     ${working ? raw('<meta http-equiv="refresh" content="3">') : raw('')}
     <div class="ns-head"><div><h1 class="ns-title">${r.topic}</h1><p class="ns-lede">${site?.name ?? 'Website gone'} · ${STATUS[r.status] ?? r.status}</p></div>
       <a class="ns-btn quiet" href="/new-website/research">Back</a></div>
+    ${working ? progress(s) : raw('')}
     ${counts(s)}
     ${s.error ? html`<p class="rs-error" role="alert">${s.error}</p>` : raw('')}
+    ${r.status === 'failed' ? keys : raw('')}
     ${!working && (r.status === 'failed' || r.status === 'new')
       ? html`<form method="post" action="/new-website/research/${String(r.id)}/run" class="rs-actions" style="justify-content:flex-start"><button class="ns-btn primary">Resume</button></form>`
       : raw('')}

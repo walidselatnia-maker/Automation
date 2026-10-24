@@ -17,7 +17,7 @@ import {
   type SearchPage,
 } from '../src/newsite/search-keys.js';
 import { EXPAND, approveResearch, createResearch, editPlan, getResearch, runResearch, stateOf, type ResearchDeps } from '../src/newsite/research.js';
-import { searchKeysSection } from '../src/newsite/research-view.js';
+import { researchPage, searchKeysSection } from '../src/newsite/research-view.js';
 
 const KEY = randomBytes(32);
 const TOPIC = 'sourdough bread';
@@ -274,6 +274,33 @@ describe('Content research', () => {
     expect(listKeywordPlans(siteId)).toHaveLength(3);
   });
 
+  it('shows each step while it runs: Google, the deeper searches, the website check, then the AI', async () => {
+    addSearchKeys('serper-key-1111', KEY);
+    const id = createResearch(siteId, TOPIC);
+    const seen: string[] = [];
+    const watch = () => {
+      const p = stateOf(getResearch(id)!).progress;
+      if (p && seen.at(-1) !== `${p.phase} ${p.text}`) seen.push(`${p.phase} ${p.text}`);
+    };
+    const d = deps();
+    await runResearch(id, {
+      ...d,
+      fetchImpl: (async (url: string, init?: RequestInit) => { watch(); return fetchImpl(url, init); }) as unknown as typeof fetch,
+      listPosts: async (domain, key) => { watch(); return d.listPosts(domain, key); },
+      ask: async (name, vars) => { watch(); return d.ask(name, vars); },
+    });
+    expect(seen[0]).toBe('1 Google’s suggestions for “sourdough bread”');
+    expect(seen[1]).toBe('1 Top results, People Also Ask and related searches');
+    expect(seen[2]).toMatch(/^2 1 of \d+: “sourdough bread recipe”$/);
+    expect(seen.at(-2)).toBe('3 The keywords and articles of Bread Home');
+    expect(seen.at(-1)).toMatch(/^4 \d+ searches into pillar articles and their sub-articles$/);
+    // Ready: the steps are gone and the tree is there.
+    expect(getResearch(id)!.status).toBe('ready');
+    expect(stateOf(getResearch(id)!).progress).toBeUndefined();
+    const page = String(researchPage({ ...getResearch(id)!, status: 'fetching' }, undefined, true));
+    expect(page).toContain('class="rs-progress"');
+  });
+
   describe('pages', () => {
     let app: FastifyInstance;
     const post = (url: string, fields: Record<string, string>) =>
@@ -289,6 +316,22 @@ describe('Content research', () => {
       await app.ready();
     });
     afterEach(async () => app.close());
+
+    it('asks only for a website and a niche or topic, and shows the missing key line instead of starting without one', async () => {
+      const without = (await app.inject({ method: 'GET', url: '/new-website/research' })).body;
+      expect(without).toContain('Search key missing');
+      expect(without).toContain('href="/new-website/platform#search-keys">Add key</a>');
+      expect(without).not.toContain('Discover topics');
+      await post('/new-website/research', { website: String(siteId), topic: TOPIC });
+      expect(all('SELECT id FROM newsite_research')).toEqual([]);
+
+      addSearchKeys('serper-key-1111', KEY);
+      const page = (await app.inject({ method: 'GET', url: '/new-website/research' })).body;
+      const form = /<form class="rs-form"[\s\S]*?<\/form>/.exec(page)![0];
+      expect(form.match(/name="[^"]+"/g)).toEqual(['name="website"', 'name="topic"']);
+      expect(form).toContain('<button class="ns-btn primary">Discover topics</button>');
+      expect(page).toContain('Search key: set · Platform settings &gt; Search keys');
+    });
 
     it('a research is started, shown as a tree with Google/AI marks, saved, and approved; keys show their status', async () => {
       expect((await app.inject({ method: 'GET', url: '/new-website/research' })).body).toContain('Content research');
