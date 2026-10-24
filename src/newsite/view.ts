@@ -272,11 +272,11 @@ export const WIZARD_CSS = `
 .wz-sgroup[hidden] { display: none; }
 .wz-sgname { font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--faint); margin: 0 0 6px; }
 .wz-chips { display: flex; flex-wrap: wrap; gap: 8px; }
-.wz-chip { display: inline-flex; align-items: center; gap: 6px; margin: 0; padding: 6px 12px; border: 1px solid var(--line-strong); border-radius: 999px; font-size: 14px; font-weight: 500; cursor: pointer; background: var(--page); }
-.wz-chip input { width: 15px; height: 15px; min-height: 0; margin: 0; padding: 0; flex: none; accent-color: var(--accent); }
-.wz-chip:has(input:checked) { border-color: var(--accent); background: var(--accent-tint, var(--raised)); color: var(--accent-text, var(--ink)); }
+.wz-field .wz-chip { display: inline-flex; align-items: center; gap: 6px; margin: 0; padding: 6px 12px; border: 1px solid var(--line-strong); border-radius: 999px; font-size: 14px; font-weight: 500; cursor: pointer; background: var(--page); }
+.wz-field .wz-chip input { width: 16px; height: 16px; min-height: 0; margin: 0; padding: 0; flex: none; box-shadow: none; accent-color: var(--accent); }
+.wz-field .wz-chip:has(input:checked) { border-color: var(--accent); background: var(--accent-tint, var(--raised)); color: var(--accent-text, var(--ink)); }
 .wz-own { margin-top: 6px; font-size: 14px; }
-.wz-own summary { cursor: pointer; color: var(--idle-ink); font-weight: 600; }
+.wz-field .wz-own summary { cursor: pointer; color: var(--idle-ink); font-weight: 600; }
 .wz-own textarea { margin-top: 8px; }
 .wz-saveerr { color: var(--bad); font-size: 14px; font-weight: 600; margin-top: 16px; }
 .wz-saveerr:empty { display: none; }
