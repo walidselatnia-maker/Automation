@@ -1,15 +1,15 @@
 import { get } from '../db/index.js';
-import { NICHE_COLOR_STYLES, nicheGroup, type ColorStyle, type NicheGroup } from './color-styles.js';
+import { NICHE_COLOR_STYLES, type ColorStyle, type NicheGroup } from './color-styles.js';
 
 /**
- * The ready-made styles a website picks from on its Niche step, instead of
- * writing them: colour styles (the colour grading of its pictures) and
- * picture styles (where its photos are taken and what is in them).
+ * The ready-made styles a website can add to its Niche step's fields, from a
+ * dropdown under each: colour styles (the colour grading of its pictures) and
+ * picture styles (where its photos are taken and what is in them). Picking
+ * one adds its "Name — description" line to the field; the field stays the
+ * website's own text.
  *
  * Both libraries are grouped by niche. A colour style is in the library once,
- * by name, with the description of the first niche that has it. A website's
- * saved list keeps working: a saved name the library has is that library
- * style; one it does not have stays as the website's own.
+ * by name, with the description of the first niche that has it.
  *
  * Before an article's image prompts are written, the AI picks ONE picture
  * style from the website's list, the same way it picks one colour style
@@ -18,13 +18,6 @@ import { NICHE_COLOR_STYLES, nicheGroup, type ColorStyle, type NicheGroup } from
  */
 
 export type Style = ColorStyle;
-
-export interface StyleGroup {
-  group: NicheGroup;
-  label: string;
-  /** The names of this niche's styles, main ones first. */
-  names: string[];
-}
 
 export const GROUP_LABELS: Record<NicheGroup, string> = {
   recipes: 'Recipes',
@@ -105,77 +98,40 @@ export const COLOR_LIBRARY = library(NICHE_COLOR_STYLES);
 export const PICTURE_LIBRARY = library(NICHE_PICTURE_STYLES);
 
 export type StyleKind = 'color' | 'picture';
-const byKind = (kind: StyleKind) => (kind === 'color' ? NICHE_COLOR_STYLES : NICHE_PICTURE_STYLES);
-const libraryOf = (kind: StyleKind) => (kind === 'color' ? COLOR_LIBRARY : PICTURE_LIBRARY);
 
-/** The groups to show, the website's niche first; empty groups are left out. */
-export function styleGroups(kind: StyleKind, niche: string): StyleGroup[] {
-  const first = nicheGroup(niche);
-  return [first, ...GROUPS.filter((g) => g !== first)]
-    .map((group) => ({ group, label: GROUP_LABELS[group], names: byKind(kind)[group].map((s) => s.name) }))
-    .filter((g) => g.names.length);
+/** The library for a field's dropdown, grouped by niche; each style once, in the first niche that has it. */
+export function styleGroups(kind: StyleKind): { label: string; styles: Style[] }[] {
+  const byNiche = kind === 'color' ? NICHE_COLOR_STYLES : NICHE_PICTURE_STYLES;
+  const shown = new Set<string>();
+  return GROUPS.map((g) => ({
+    label: GROUP_LABELS[g],
+    styles: byNiche[g].filter((s) => !shown.has(s.name.toLowerCase()) && shown.add(s.name.toLowerCase())),
+  })).filter((g) => g.styles.length);
 }
 
-/** What a new website starts with: its niche's main style and the second one. */
-export const defaultPicks = (kind: StyleKind, niche: string): string[] =>
-  byKind(kind)[nicheGroup(niche)].slice(0, 2).map((s) => s.name);
-
-/** A saved list split into the library styles it has (by name) and the website's own ones. */
-export function splitSaved(kind: StyleKind, saved: Style[]): { picked: string[]; own: Style[] } {
-  const lib = libraryOf(kind);
-  const picked: string[] = [];
-  const own: Style[] = [];
-  for (const s of saved) {
-    const hit = lib.get(s.name.toLowerCase());
-    if (hit) picked.push(hit.name);
-    else own.push(s);
-  }
-  return { picked, own };
-}
-
-/** The list to save: the picked library styles, then the website's own lines; each name once. */
-export function joinPicks(kind: StyleKind, picked: string[], own: Style[]): Style[] {
-  const lib = libraryOf(kind);
-  const seen = new Set<string>();
-  const out: Style[] = [];
-  for (const s of [...picked.map((n) => lib.get(n.toLowerCase())).filter((s): s is Style => Boolean(s)), ...own]) {
-    if (seen.has(s.name.toLowerCase())) continue;
-    seen.add(s.name.toLowerCase());
-    out.push(s);
-  }
-  return out;
-}
-
-/** "Own style" lines for pictures: "Name — description", or a whole sentence that gets a name of its own. */
-export function parseOwnPictureStyles(text: string): Style[] {
-  const out: Style[] = [];
-  for (const line of text.split(/\r?\n/)) {
-    const t = line.replace(/\s+/g, ' ').trim();
-    if (!t) continue;
-    const m = /^(.{1,60}?)\s+(?:—|–|-)\s+(.+)$/.exec(t);
-    if (m) out.push({ name: m[1]!.trim(), description: m[2]!.slice(0, 600) });
-    else out.push({ name: out.some((s) => s.name === 'Own style') ? `Own style ${out.length + 1}` : 'Own style', description: t.slice(0, 600) });
-  }
-  return out;
-}
+/** A "Name — description" line (a long or short dash separates them). */
+const NAMED_LINE = /^(.{1,60}?)\s+(?:—|–)\s+(.+)$/;
 
 /**
- * A website's picture styles. Saved as a JSON list; a website saved before
- * the library has its one typed direction, kept as its own style. Empty: the
- * platform decides from the niche.
+ * A website's picture styles, from its Picture style field. One typed
+ * direction (the field as it always was) is one style, followed as it is.
+ * Several lines with "Name — description" ones among them (added from the
+ * library's dropdown) are several styles; a line with no name gets one.
+ * Empty: the platform decides from the niche.
  */
 export function pictureStylesOf(site: { picture_style?: string }): Style[] {
   const raw = (site.picture_style ?? '').trim();
   if (!raw) return [];
-  if (raw.startsWith('[')) {
-    try {
-      const saved = JSON.parse(raw) as Style[];
-      if (Array.isArray(saved)) return saved.filter((s) => s && typeof s.name === 'string' && s.name).map((s) => ({ name: s.name, description: String(s.description ?? '') }));
-    } catch {
-      /* typed text after all */
-    }
+  const lines = raw.split(/\r?\n/).map((l) => l.replace(/\s+/g, ' ').trim()).filter(Boolean);
+  if (lines.length < 2 || !lines.some((l) => NAMED_LINE.test(l))) return [{ name: 'Own style', description: raw }];
+  const out: Style[] = [];
+  for (const line of lines) {
+    const m = NAMED_LINE.exec(line);
+    const name = m ? m[1]!.trim() : out.some((s) => s.name === 'Own style') ? `Own style ${out.length + 1}` : 'Own style';
+    if (out.some((s) => s.name.toLowerCase() === name.toLowerCase())) continue;
+    out.push({ name, description: (m ? m[2]! : line).slice(0, 600) });
   }
-  return [{ name: 'Own style', description: raw }];
+  return out;
 }
 
 /** The picture style an article was given, or null. */

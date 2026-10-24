@@ -315,7 +315,7 @@ describe('AI#4 pictures that fit the niche', () => {
       const styles = [{ name: 'Cozy Living Room', description: 'Pets at home on the sofa.' }, { name: 'Park & Trail Walks', description: 'Out on a walk in a park.' }];
       const websiteId = createNewWebsite(
         {
-          name: 'Pets', domain: 'p.example.com', apiKey: 'sk_test_ABCDEFGHIJKLMNOP', niche: 'Pets', nicheContext: '', pictureStyle: JSON.stringify(styles),
+          name: 'Pets', domain: 'p.example.com', apiKey: 'sk_test_ABCDEFGHIJKLMNOP', niche: 'Pets', nicheContext: '', pictureStyle: styles.map((s) => `${s.name} — ${s.description}`).join('\n'),
           persona: 'Storyteller', status: 'active', autoPublish: true, dailyTarget: 3, intervalMinutes: 480, bufferToken: '', pinUsername: '', projectId: '',
         },
         KEY,

@@ -1091,6 +1091,29 @@ export const MIGRATIONS: Migration[] = [
       addColumn(db, 'keyword_seo', 'picture_style', "TEXT NOT NULL DEFAULT ''");
     },
   },
+  {
+    id: '057-newsite-picture-style-text',
+    description: 'New websites: the Picture style field is text again (a JSON list saved for a while becomes its lines)',
+    up(db) {
+      const rows = db.prepare("SELECT id, picture_style FROM new_websites WHERE picture_style LIKE '[%'").all() as { id: number; picture_style: string }[];
+      const save = db.prepare('UPDATE new_websites SET picture_style = ? WHERE id = ?');
+      for (const r of rows) {
+        let list: { name?: unknown; description?: unknown }[];
+        try {
+          list = JSON.parse(r.picture_style) as typeof list;
+        } catch {
+          continue;
+        }
+        if (!Array.isArray(list)) continue;
+        const styles = list.filter((s) => s && typeof s.name === 'string' && s.name).map((s) => ({ name: String(s.name), description: String(s.description ?? '').trim() }));
+        const text =
+          styles.length === 1 && /^Own style/.test(styles[0]!.name)
+            ? styles[0]!.description
+            : styles.map((s) => (s.description ? `${s.name} — ${s.description}` : s.name)).join('\n');
+        save.run(text, r.id);
+      }
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */
