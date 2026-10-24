@@ -142,6 +142,11 @@ export const NAV: NavGroup[] = [
         icon: ICON('<path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z"/><path d="M14 3v5h5M8 13h8M8 17h5"/>'),
       },
       {
+        href: '/new-website/photo-jobs',
+        label: 'Photo jobs',
+        icon: ICON('<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="11" r="2"/><path d="M21 17l-5-5-8 7"/>'),
+      },
+      {
         href: '/new-website/sharing/reels',
         label: 'Reels',
         icon: ICON('<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M10 9l5 3-5 3z"/>'),

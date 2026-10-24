@@ -11,6 +11,7 @@ import { registerPictureRoutes, type PictureRouteDeps } from './picture-routes.j
 import { registerImageModelRoutes } from './image-model.js';
 import { registerChannelRoutes, type ChannelLookups } from './channels-routes.js';
 import { registerPublishRoutes } from './publish-routes.js';
+import { registerPhotoJobRoutes } from './photo-jobs.js';
 import { afterArticlePublished, syncCategoryIntros } from './category-intros.js';
 import { syncClusters } from './clusters.js';
 import { addStepPicture, publishWhenReady, type PublishDeps } from './publish.js';
@@ -190,6 +191,7 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
       setInterval(clusters, 6 * 60 * 60_000).unref();
     }
     registerSocialRoutes(app, { ...social, readFlash, autoStart: deps.autoPictures });
+    registerPhotoJobRoutes(app, { settings: deps.settings, encryptionKey: deps.encryptionKey, readFlash, fetchImpl: deps.fetchImpl, dataDir: deps.dataDir, autoStart: deps.autoPictures, make: deps.makePicture });
   }
 
   registerPromptRoutes(app, { readFlash });
