@@ -12,6 +12,7 @@ import { registerImageModelRoutes } from './image-model.js';
 import { registerChannelRoutes, type ChannelLookups } from './channels-routes.js';
 import { registerPublishRoutes } from './publish-routes.js';
 import { registerPhotoJobRoutes } from './photo-jobs.js';
+import { registerTopListRoutes } from './top-lists.js';
 import { afterArticlePublished, syncCategoryIntros } from './category-intros.js';
 import { syncClusters } from './clusters.js';
 import { addStepPicture, publishWhenReady, type PublishDeps } from './publish.js';
@@ -213,6 +214,8 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
     afterWriting: () => conduct(),
   });
   wakeWriter = startWriter;
+
+  registerTopListRoutes(app, { encryptionKey: deps.encryptionKey, readFlash, ask, fetchImpl: deps.fetchImpl });
 
   registerResearchRoutes(app, {
     encryptionKey: deps.encryptionKey,

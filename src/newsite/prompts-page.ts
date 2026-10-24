@@ -85,6 +85,7 @@ export const PROMPT_STAGES: PromptStage[] = [
     prompts: [
       { key: 'pick-category', name: 'Website category', about: 'Picks the category the article goes in, from the website’s own categories.' },
       { key: 'category-intro', name: 'Category intro', about: 'Writes the text at the top of a category page, once it has 3 articles.' },
+      { key: 'top-list-post', name: 'Top list', about: 'Writes a round-up post of the website’s own posts about one topic.' },
     ],
   },
   {

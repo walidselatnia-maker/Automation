@@ -165,6 +165,8 @@ export const PROMPT_MODELS: Record<string, { model: string; format: 'json' | nul
   'newsite-social-post': { model: 'gpt-oss:120b', format: 'json' },
   'newsite-reel-prompt': { model: 'gpt-oss:120b', format: 'json' },
   'newsite-pick-board': { model: 'gpt-oss:120b', format: 'json' },
+  // Top lists: a round-up post of the website's own posts about one topic.
+  'top-list-post': { model: 'gpt-oss:120b', format: 'json' },
 };
 
 /* -------------------------------------------------------------------------

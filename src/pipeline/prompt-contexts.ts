@@ -214,6 +214,12 @@ export const STEP_CONTEXTS: Record<string, Record<string, unknown>> = {
     niche: 'n',
     categoriesJson: '[]',
   },
+  'top-list-post': {
+    language: 'English',
+    niche: 'n',
+    topic: 't',
+    postsJson: '[]',
+  },
   'category-intro': {
     language: 'English',
     niche: 'n',

@@ -1,0 +1,7 @@
+Website niche: {{niche}}
+Topic of the list: {{topic}}
+
+The website's posts about it:
+{{postsJson}}
+
+Write the top list now.
