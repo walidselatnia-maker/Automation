@@ -124,6 +124,8 @@ function promptFor(site: NewWebsiteRow, post: Record<string, unknown>, photo: { 
 }
 
 let busy = false;
+/** Which website is asked first next time, so every website gets its turn. */
+let turn = 0;
 
 /** One look: carry on the job being made, else ask each website for its next job. */
 export async function photoJobTick(deps: PhotoJobDeps): Promise<void> {
@@ -132,7 +134,9 @@ export async function photoJobTick(deps: PhotoJobDeps): Promise<void> {
   try {
     let job = get<JobRow>(`SELECT * FROM photo_jobs WHERE status = 'making' ORDER BY id LIMIT 1`);
     if (!job) {
-      for (const site of listNewWebsites().filter((s) => s.status === 'active')) {
+      const sites = listNewWebsites().filter((s) => s.status === 'active');
+      const start = sites.length ? turn++ % sites.length : 0;
+      for (const site of [...sites.slice(start), ...sites.slice(0, start)]) {
         const answer = await call(deps, site, 'photo-jobs/next').catch(() => null);
         const j = answer?.job;
         if (!j || !Array.isArray(j.photos)) continue;
@@ -236,8 +240,68 @@ const CSS = `
 .pj-table th { color: var(--faint); font-size: 13px; font-weight: 600; }
 .pj-table form { margin: 0; }
 .pj-err { color: var(--bad); font-size: 13px; margin-top: 4px; }
-.pj-bar { display: flex; gap: 8px; }
+.pj-bar { display: flex; flex-wrap: wrap; gap: 8px; }
+.pj-site { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); padding: 18px 22px; margin-bottom: 16px; }
+.pj-site-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 12px; }
+.pj-site-head h2 { font-size: 19px; }
+.pj-more { margin-top: 12px; }
+.pj-more summary { cursor: pointer; font-weight: 600; color: var(--idle-ink); }
+.pj-more .pj-table { margin-top: 10px; }
+h2.pj-h { font-size: 19px; margin: 28px 0 12px; }
 `;
+
+interface MissingPhotos {
+  totals?: { noImages?: number; anyMissing?: number };
+  queue?: { queued?: number; working?: number; done?: number; failed?: number };
+  posts?: { id: number; title: string; type?: string; noImages?: boolean; missing?: string[]; queue?: string | null }[];
+}
+
+/** One website's posts missing photos, from the website itself; null when it cannot say. */
+const missingOn = (deps: PhotoJobDeps, site: NewWebsiteRow): Promise<MissingPhotos | null> =>
+  call(deps, site, 'missing-photos').catch(() => null);
+
+const SHOWN = 100;
+
+function siteSection(site: NewWebsiteRow, m: MissingPhotos | null) {
+  if (!m) {
+    return html`<section class="pj-site"><div class="pj-site-head"><h2>${site.name}</h2><span class="ns-mono">${site.domain}</span></div>
+      <p class="pj-err">Could not read the missing photos of this website.</p></section>`;
+  }
+  const posts = m.posts ?? [];
+  const q = m.queue ?? {};
+  return html`<section class="pj-site">
+    <div class="pj-site-head">
+      <h2>${site.name}</h2><span class="ns-mono">${site.domain}</span>
+      <span class="ns-tag">No photos ${String(m.totals?.noImages ?? 0)}</span>
+      <span class="ns-tag">Missing some ${String(m.totals?.anyMissing ?? 0)}</span>
+      <span class="ns-tag">Queued ${String(q.queued ?? 0)}</span>
+      <span class="ns-tag">Working ${String(q.working ?? 0)}</span>
+      <span class="ns-tag">Done ${String(q.done ?? 0)}</span>
+      <span class="ns-tag">Failed ${String(q.failed ?? 0)}</span>
+    </div>
+    ${posts.length
+      ? html`<form method="post" action="/new-website/photo-jobs/site/${String(site.id)}/queue">
+          <div class="pj-bar">
+            <button class="ns-btn small primary" name="what" value="picked">Queue picked</button>
+            <button class="ns-btn small" name="what" value="none">Queue all with no photos</button>
+            <button class="ns-btn small" name="what" value="all">Queue all</button>
+          </div>
+          <details class="pj-more"><summary>${String(posts.length)} posts</summary>
+          <table class="pj-table">
+            <thead><tr><th></th><th>Post</th><th>Missing</th><th>Queue</th></tr></thead>
+            <tbody>${posts.slice(0, SHOWN).map(
+              (p) => html`<tr>
+                <td><input type="checkbox" name="ids" value="${String(p.id)}" ${raw(p.queue === 'queued' || p.queue === 'working' ? 'disabled' : '')}></td>
+                <td>${p.title}</td>
+                <td>${p.noImages ? 'All photos' : String((p.missing ?? []).length)}</td>
+                <td>${p.queue ?? ''}</td>
+              </tr>`,
+            )}</tbody>
+          </table></details>
+        </form>`
+      : raw('')}
+  </section>`;
+}
 
 export function registerPhotoJobRoutes(app: FastifyInstance, deps: PhotoJobDeps): void {
   ensureTables();
@@ -255,6 +319,8 @@ export function registerPhotoJobRoutes(app: FastifyInstance, deps: PhotoJobDeps)
          FROM photo_jobs j LEFT JOIN new_websites w ON w.id = j.website_id ORDER BY j.id DESC LIMIT 200`,
     );
     const paused = deps.settings.get(PAUSED_KEY) === '1';
+    const sites = listNewWebsites().filter((s) => s.status === 'active');
+    const missing = await Promise.all(sites.map((s) => missingOn(deps, s)));
     const badge = (s: JobRow['status']) =>
       s === 'done' ? html`<span class="ns-badge ok">Done</span>` : s === 'failed' ? html`<span class="ns-badge bad">Failed</span>` : html`<span class="ns-badge busy">Making</span>`;
     const body = html`
@@ -266,6 +332,8 @@ export function registerPhotoJobRoutes(app: FastifyInstance, deps: PhotoJobDeps)
           <form method="post" action="/new-website/photo-jobs/pause"><button class="ns-btn">${paused ? 'Start' : 'Pause'}</button></form>
         </div>
       </div>
+      ${sites.map((site, i) => siteSection(site, missing[i]!))}
+      <h2 class="pj-h">Jobs</h2>
       <table class="pj-table">
         <thead><tr><th>Website</th><th>Post</th><th>Photos</th><th>Status</th><th></th></tr></thead>
         <tbody>
@@ -288,6 +356,22 @@ export function registerPhotoJobRoutes(app: FastifyInstance, deps: PhotoJobDeps)
   app.post('/new-website/photo-jobs/check', async (_request, reply) => {
     void photoJobTick(deps);
     return reply.redirect('/new-website/photo-jobs?ok=' + encodeURIComponent('Checking the websites for photo jobs.'), 303);
+  });
+
+  app.post('/new-website/photo-jobs/site/:id/queue', async (request, reply) => {
+    const site = getNewWebsite(Number((request.params as { id: string }).id) || 0);
+    if (!site) return reply.redirect('/new-website/photo-jobs', 303);
+    const form = (request.body ?? {}) as { what?: string; ids?: string | string[] };
+    const ids = (Array.isArray(form.ids) ? form.ids : form.ids ? [form.ids] : []).map(Number).filter(Number.isFinite);
+    const body = form.what === 'all' ? { all: true } : form.what === 'none' ? { all: true, only: 'none' } : { ids };
+    if (form.what === 'picked' && !ids.length) return reply.redirect('/new-website/photo-jobs?error=' + encodeURIComponent('Tick the posts to queue first.'), 303);
+    try {
+      const answer = (await call(deps, site, 'missing-photos/queue', body)) as { added?: number };
+      void photoJobTick(deps);
+      return reply.redirect('/new-website/photo-jobs?ok=' + encodeURIComponent(`${String(answer.added ?? 0)} posts queued on ${site.domain}.`), 303);
+    } catch (err) {
+      return reply.redirect('/new-website/photo-jobs?error=' + encodeURIComponent(errorMessage(err)), 303);
+    }
   });
 
   app.post('/new-website/photo-jobs/pause', async (_request, reply) => {
