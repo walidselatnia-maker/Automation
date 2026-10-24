@@ -96,10 +96,11 @@ describe('Photo jobs and top lists', () => {
   it('suggests a topic from the posts and publishes the approved top list', async () => {
     addSite();
     const items = ['Zucchini Bread', 'Chocolate Zucchini Bread', 'Lemon Zucchini Bread', 'Banana Bread'].map((title, i) => ({
-      id: i + 1, title, slug: `p${i + 1}`, status: 'published', url: `https://bakes.example.com/p${i + 1}`, cover: { id: 50 + i, url: `https://bakes.example.com/c${i}.webp` },
+      id: i + 1, title, slug: `p${i + 1}`, status: 'published', url: `https://bakes.example.com/p${i + 1}`, excerpt: 'x', category: { name: 'Breads', slug: 'breads' }, coverUrl: `https://bakes.example.com/c${i}.webp`,
     }));
     site = (url) => {
       if (url.includes('/api/v1/posts?')) return Response.json({ items, pages: 1 });
+      if (url.endsWith('/api/v1/media')) return Response.json({ media: { id: 51 } });
       if (url.endsWith('/api/v1/posts')) return Response.json({ post: { id: 99, url: 'https://bakes.example.com/top', status: 'published' } });
       return new Response('', { status: 404 });
     };
@@ -120,6 +121,8 @@ describe('Photo jobs and top lists', () => {
     const saved = calls.find((c) => c.method === 'POST' && c.url.endsWith('/api/v1/posts'))!.body as Record<string, unknown>;
     expect(saved.category).toBe('Top lists');
     expect(saved.cover).toBe(51);
+    expect(calls.find((c) => c.url.endsWith('/api/v1/media'))!.body).toEqual({ url: 'https://bakes.example.com/c1.webp', alt: 'Chocolate Zucchini Bread' });
+    expect(String(saved.content)).toContain('](https://bakes.example.com/c1.webp)');
     expect(String(saved.content)).toContain('## 1. [Chocolate Zucchini Bread](https://bakes.example.com/p2)');
     const page = await app.inject({ url: '/new-website/top-lists' });
     expect(page.body).toContain('Published');

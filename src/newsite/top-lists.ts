@@ -215,7 +215,19 @@ export async function writeTopList(id: number, deps: TopListDeps): Promise<void>
         .join('\n\n'),
     );
     const content = [String(answer?.intro ?? '').trim(), ...sections, String(answer?.outro ?? '').trim()].filter(Boolean).join('\n\n');
-    const cover = order.find((p) => p.coverId);
+    // The list gives each post's photo address, not its media id: the first photo is added once as the list's own cover.
+    const first = order.find((p) => p.coverId || p.coverUrl);
+    let coverId = first?.coverId ?? null;
+    if (first && !coverId) {
+      const response = await (deps.fetchImpl ?? fetch)(`https://${site.domain}/api/v1/media`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: first.coverUrl, alt: first.title }),
+        signal: AbortSignal.timeout(60_000),
+      }).catch(() => null);
+      const id = Number(((await response?.json().catch(() => null)) as { media?: { id?: unknown } } | null)?.media?.id);
+      if (response?.ok && Number.isFinite(id)) coverId = id;
+    }
 
     const saved = await savePost(
       site.domain,
@@ -230,7 +242,7 @@ export async function writeTopList(id: number, deps: TopListDeps): Promise<void>
         contentFormat: 'markdown',
         status: 'published',
         category: TOP_LISTS_CATEGORY,
-        ...(cover ? { cover: cover.coverId, coverAlt: cover.title } : {}),
+        ...(first && coverId ? { cover: coverId, coverAlt: first.title } : {}),
         seo: { metaTitle: title, metaDescription: String(answer?.excerpt ?? '').trim(), focusKeyword: row.topic },
       },
       deps.fetchImpl,
