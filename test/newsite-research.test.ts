@@ -3,7 +3,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import formbody from '@fastify/formbody';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { all, closeDatabase, openDatabase, run } from '../src/db/index.js';
-import { createNewWebsite, listKeywordPlans, saveKeywordPlan } from '../src/newsite/repo.js';
+import { createNewWebsite, listKeywordPlans, planRemoved, saveKeywordPlan } from '../src/newsite/repo.js';
 import { queuePlanSeo } from '../src/newsite/seo.js';
 import { dashboardData } from '../src/newsite/dashboard.js';
 import { registerNewWebsiteRoutes } from '../src/newsite/routes.js';
@@ -268,6 +268,8 @@ describe('Content research', () => {
       ['sourdough starter care', ['Why is my sourdough bread so dense?', 'sourdough starter feeding schedule', 'sourdough starter jar'], 'finding'],
     ]);
     expect(plans[0]!.items[0]!.reason).toBe('From Content research');
+    // The one deleted goes along, so the finder's top-up never adds it back.
+    expect(planRemoved(plans[0]!)).toEqual(['sourdough bread recipe no knead']);
     expect(getResearch(id)!.status).toBe('approved');
     // Approving twice adds nothing.
     expect(approveResearch(id)).toBeNull();

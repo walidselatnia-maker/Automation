@@ -1229,6 +1229,10 @@ export const OVERVIEW_CSS = `
 .ko-table td.ko-kw a { font-weight: 600; color: var(--ink); text-decoration: none; }
 .ko-table td.ko-kw a:hover { color: var(--accent-text); text-decoration: underline; }
 .ko-subs { color: var(--soft); max-width: 46ch; }
+.ko-sub { display: inline-flex; align-items: center; gap: 2px; margin: 0 8px 2px 0; }
+.ko-sub form { display: inline; margin: 0; }
+.ko-x { border: 0; background: none; padding: 0 4px; color: var(--faint); font: inherit; line-height: 1; cursor: pointer; border-radius: 4px; }
+.ko-x:hover { color: var(--bad); background: var(--bad-tint); }
 .ko-from { display: block; color: var(--faint); font-size: 12px; margin-top: 2px; }
 .ko-niche { white-space: nowrap; }
 .ko-niche small { color: var(--faint); }
@@ -1293,6 +1297,13 @@ const planProgress = (s: PlanStats | undefined): Html =>
           : raw('')}</span>`
     : html`Waiting to start`;
 
+/** A plan's sub-keywords, each with its own delete button. */
+const subList = (p: KeywordPlan): Html =>
+  html`${p.items.map(
+    (i) => html`<span class="ko-sub">${i.keyword}<form method="post" action="/new-website/keywords/${String(p.id)}/sub/delete" data-name="${i.keyword}"
+        onsubmit="return confirm('Delete ' + this.dataset.name + '?')"><input type="hidden" name="keyword" value="${i.keyword}"><button class="ko-x" title="Delete" aria-label="Delete ${i.keyword}">×</button></form></span>`,
+  )}`;
+
 /** The Keywords page: one card per website, each opening on a table of its keyword plans. */
 export function keywordsOverview(sites: OverviewSite[], stats: Map<number, PlanStats>, skipped: { plan_id: number; keyword: string; skip_reason: string }[] = []): Html {
   const ready = sites.length > 0;
@@ -1333,10 +1344,10 @@ export function keywordsOverview(sites: OverviewSite[], stats: Map<number, PlanS
                         <td class="ko-kw"><a href="${planHref(p.id, 'seo')}">${p.pillar}</a></td>
                         <td class="ko-subs">${p.subs_status === 'finding'
                           ? p.items.length
-                            ? html`${p.items.map((i) => i.keyword).join(', ')} <span class="ns-badge busy">Finding more</span>`
+                            ? html`${subList(p)} <span class="ns-badge busy">Finding more</span>`
                             : html`<span class="ns-badge busy">Being found</span>`
                           : p.items.length
-                            ? p.items.map((i) => i.keyword).join(', ')
+                            ? subList(p)
                             : html`None${p.subs_status === 'failed' ? html`<span class="ko-err">Not found: ${p.subs_error.replace(/[.\s]+$/, '')}. The main keyword goes on alone.</span>` : raw('')}`}
                           ${skipped.filter((k) => k.plan_id === p.id).map((k) => html`<span class="ko-err">Skipped “${k.keyword}”: ${k.skip_reason}</span>`)}</td>
                         <td class="ko-niche">${p.niche ? p.niche : html`${site.niche} <small>(website)</small>`}</td>

@@ -16,6 +16,7 @@ import {
 import { newLayout, type NewFlash } from './layout.js';
 import {
   deleteKeywordPlan,
+  deletePlanItem,
   getKeywordPlan,
   getNewWebsite,
   listKeywordPlans,
@@ -455,6 +456,15 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
     for (const row of listPlanSeo(planId)) clearPictures(row.id, deps.dataDir);
     deleteKeywordPlan(planId);
     return reply.redirect(`/new-website/keywords?ok=${encodeURIComponent('Keyword plan deleted.')}#website-${website}`, 303);
+  });
+
+  /** Delete one sub-keyword of a plan: the finder never adds it back. */
+  app.post('/new-website/keywords/:id/sub/delete', async (request, reply) => {
+    const plan = getKeywordPlan(Number((request.params as { id: string }).id) || 0);
+    if (!plan) return reply.redirect('/new-website/keywords', 303);
+    const keyword = text(body(request).keyword, 100);
+    for (const id of deletePlanItem(plan.id, keyword)) clearPictures(id, deps.dataDir);
+    return reply.redirect(`/new-website/keywords?ok=${encodeURIComponent('Sub-keyword deleted.')}#website-${plan.website_id}`, 303);
   });
   return startSeo;
 }

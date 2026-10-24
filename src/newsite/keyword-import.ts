@@ -3,9 +3,11 @@ import type { SitePost } from './client.js';
 import { findSubKeywords, MAX_SUBS, pillarProblem, type Existing, type FindDeps } from './keywords.js';
 import {
   addPlanItems,
+  addPlanRemoved,
   getKeywordPlan,
   getNewWebsite,
   listKeywordPlans,
+  planRemoved,
   saveKeywordPlan,
   setPlanImport,
   websiteApiKey,
@@ -121,6 +123,8 @@ export interface ImportRow {
   websiteName: string;
   niche: string;
   subs: string[];
+  /** Sub-keywords deleted before the import (in Content research): never found again. */
+  removed?: string[];
   /** Why this row cannot be imported. */
   errors: string[];
   /** Imported, but worth knowing. */
@@ -253,6 +257,7 @@ export function importRows(rows: ImportRow[], from: { source: string; reason: st
     const items: PlanItem[] = r.subs.map((k) => ({ keyword: k, intent: 'yours', reason: from.reason, page }));
     const planId = saveKeywordPlan(site.id, r.keyword, items, page);
     const full = items.length >= MAX_SUBS;
+    if (r.removed?.length) addPlanRemoved(planId, r.removed);
     setPlanImport(planId, { niche: r.niche, source: from.source, subsStatus: full ? '' : 'finding' });
     if (full) queuePlanSeo(planId, r.keyword, items, page);
     else finding++;
@@ -300,7 +305,7 @@ export async function findSubsForPlan(plan: KeywordPlan, deps: FinderDeps): Prom
   let error = '';
   try {
     const found = await findSubKeywords(
-      { pillar: plan.pillar, niche: plan.niche || site.niche, nicheContext: site.niche_context, existing: await existingKeywords(site, deps, plan.id), language: site.language, given: given.map((i) => i.keyword) },
+      { pillar: plan.pillar, niche: plan.niche || site.niche, nicheContext: site.niche_context, existing: await existingKeywords(site, deps, plan.id), language: site.language, given: given.map((i) => i.keyword), removed: planRemoved(plan) },
       { suggest: deps.suggest, ask: deps.ask },
     );
     if (found.ok) {

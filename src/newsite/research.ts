@@ -79,6 +79,8 @@ export interface ResearchState {
   error: string;
   /** After approval: what went into the Keywords list. */
   approved?: { plans: number; skipped: string[] };
+  /** Keywords the owner deleted from the plan: the sub-keyword finder never adds them back. */
+  removed?: string[];
   /** While it runs: which of the PHASES it is on (1 to 4), and what it is doing, in words. */
   progress?: { phase: number; text: string };
 }
@@ -396,7 +398,10 @@ export async function editPlan(id: number, edit: TreeEdit, deps: Pick<ResearchDe
     origins: [] as Origin[],
     remove: p.remove,
   }));
+  const removed = [...(state.removed ?? [])];
+  for (const p of edit.pillars) if (p.remove) removed.push(p.pillar);
   for (const s of edit.subs) {
+    if (s.remove || !pillars[s.to] || pillars[s.to]!.remove) removed.push(s.keyword);
     if (s.remove || !pillars[s.to]) continue;
     pillars[s.to]!.subs.push(s.keyword);
     pillars[s.to]!.origins.push(originOf(s.keyword, s.from));
@@ -415,6 +420,9 @@ export async function editPlan(id: number, edit: TreeEdit, deps: Pick<ResearchDe
   const { plan, left } = cleanPlan(pillars.filter((p) => !p.remove), state.found, takenOf(site, posts));
   state.plan = plan;
   state.left = left;
+  // One typed back in is no longer deleted.
+  const inPlan = new Set(plan.flatMap((p) => [p.pillar, ...p.subs.map((x) => x.keyword)]).map(normalizeTitle));
+  state.removed = [...new Map(removed.map((k) => k.trim()).filter((k) => k && !inPlan.has(normalizeTitle(k))).map((k) => [normalizeTitle(k), k])).values()];
   save(id, 'ready', state);
 }
 
@@ -438,7 +446,7 @@ export function approveResearch(id: number): { plans: number; skipped: string[] 
     }
     rows.push({
       line: i + 1, keyword: p.pillar, domain: site.domain, websiteId: site.id, websiteName: site.name, niche: '',
-      subs: p.subs.map((s) => s.keyword), errors: [], notes: [],
+      subs: p.subs.map((s) => s.keyword), removed: state.removed ?? [], errors: [], notes: [],
     });
   });
   const { plans } = importRows(rows, { source: 'research', reason: 'From Content research' });

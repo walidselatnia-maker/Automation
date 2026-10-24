@@ -143,7 +143,40 @@ export interface KeywordPlan {
   /** '' = has its sub-keywords; 'finding' = being found (or more added to the CSV's own); 'failed' = could not be found. */
   subs_status: '' | 'finding' | 'failed';
   subs_error: string;
+  /** Sub-keywords the owner deleted, as a JSON list: the finder never adds them back. */
+  removed_json: string;
   items: PlanItem[];
+}
+
+/** The sub-keywords the owner deleted from a plan. */
+export function planRemoved(plan: Pick<KeywordPlan, 'removed_json'>): string[] {
+  try {
+    const list: unknown = JSON.parse(plan.removed_json || '[]');
+    return Array.isArray(list) ? list.filter((k): k is string => typeof k === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Remember more deleted sub-keywords for a plan. */
+export function addPlanRemoved(planId: number, keywords: string[]): void {
+  const plan = get<{ removed_json: string }>('SELECT removed_json FROM keyword_plans WHERE id = ?', planId);
+  if (!plan || !keywords.length) return;
+  const list = planRemoved(plan);
+  for (const k of keywords) if (!list.some((x) => x.toLowerCase() === k.toLowerCase())) list.push(k);
+  run('UPDATE keyword_plans SET removed_json = ? WHERE id = ?', JSON.stringify(list), planId);
+}
+
+/** Delete one sub-keyword of a plan, and remember it so it is never found again. Returns its SEO row ids. */
+export function deletePlanItem(planId: number, keyword: string): number[] {
+  return transaction(() => {
+    const key = keyword.trim().toLowerCase();
+    const seo = all<{ id: number }>(`SELECT id FROM keyword_seo WHERE plan_id = ? AND role = 'sub' AND lower(trim(keyword)) = ?`, planId, key).map((r) => r.id);
+    run('DELETE FROM keyword_plan_items WHERE plan_id = ? AND lower(trim(keyword)) = ?', planId, key);
+    for (const id of seo) run('DELETE FROM keyword_seo WHERE id = ?', id);
+    addPlanRemoved(planId, [keyword.trim()]);
+    return seo;
+  });
 }
 
 export function listKeywordPlans(websiteId?: number): KeywordPlan[] {
@@ -199,7 +232,7 @@ export function setPlanImport(id: number, fields: { niche?: string; source?: str
 /** Add sub-keywords to a plan (after the platform found them), and set its pillar page. */
 export function addPlanItems(planId: number, items: PlanItem[], pillarPage?: 'recipe' | 'article'): void {
   transaction(() => {
-    const start = get<{ n: number }>('SELECT COUNT(*) AS n FROM keyword_plan_items WHERE plan_id = ?', planId)?.n ?? 0;
+    const start = get<{ n: number }>('SELECT COALESCE(MAX(position) + 1, 0) AS n FROM keyword_plan_items WHERE plan_id = ?', planId)?.n ?? 0;
     items.forEach((item, i) =>
       run(
         'INSERT INTO keyword_plan_items (plan_id, keyword, intent, reason, position, page) VALUES (?, ?, ?, ?, ?, ?)',

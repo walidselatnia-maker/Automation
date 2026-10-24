@@ -147,7 +147,7 @@ describe('keyword routes', () => {
       expect(plan.items.map((i) => i.keyword)).toEqual(['lemon tart filling', 'mini lemon tarts']);
       expect(all('SELECT keyword FROM keyword_seo WHERE plan_id = ?', plan.id)).toHaveLength(0); // waits for the finder
       const page = await app.inject({ method: 'GET', url: '/new-website/keywords' });
-      expect(page.body).toContain('lemon tart filling, mini lemon tarts <span class="ns-badge busy">Finding more</span>');
+      expect(page.body).toMatch(/lemon tart filling<form[^]*mini lemon tarts<form[^]*<\/span> <span class="ns-badge busy">Finding more<\/span>/);
 
       const seeds: string[] = [];
       let sent: Record<string, unknown> = {};
@@ -180,6 +180,34 @@ describe('keyword routes', () => {
       expect(plan.items[0]!.intent).toBe('yours');
       expect(all('SELECT keyword FROM keyword_seo WHERE plan_id = ? ORDER BY position', plan.id).map((r) => (r as { keyword: string }).keyword))
         .toEqual(['lemon tart', 'lemon tart filling', 'mini lemon tarts', 'vegan lemon tart', 'lemon tart with condensed milk']);
+    });
+
+    it('deletes one sub-keyword, and the finder never adds it back', async () => {
+      const csv = 'Main Keyword,Target Website,Subkeywords\nlemon tart,f.longlivo.com,mini lemon tarts;lemon tart filling\n';
+      const check = await post('/new-website/keywords/import/check', { csv });
+      await post('/new-website/keywords/import/save', { draft: draftIn(check.body) });
+      let plan = listKeywordPlans(websiteId)[0]!;
+      const page = await app.inject({ method: 'GET', url: '/new-website/keywords' });
+      expect(page.body).toContain(`action="/new-website/keywords/${plan.id}/sub/delete"`);
+      const gone = await post(`/new-website/keywords/${plan.id}/sub/delete`, { keyword: 'lemon tart filling' });
+      expect(gone.headers.location).toMatch(/Sub-keyword%20deleted/);
+      plan = listKeywordPlans(websiteId)[0]!;
+      expect(plan.items.map((i) => i.keyword)).toEqual(['mini lemon tarts']);
+
+      let sent: Record<string, unknown> = {};
+      await kickSubFinder({
+        suggest: async () => ['lemon tart filling', 'lemon tart fillings', 'vegan lemon tart'],
+        ask: async (_name, vars) => {
+          sent = vars;
+          return JSON.stringify({ picks: [{ keyword: 'lemon tart filling', intent: 'info', reason: 'Deleted.' }, { keyword: 'vegan lemon tart', intent: 'diet', reason: 'No butter.' }] });
+        },
+        listPosts: async () => [],
+        encryptionKey: KEY,
+        startSeo: () => {},
+      });
+      expect(JSON.parse(String(sent.searchesJson))).toEqual(['vegan lemon tart']);
+      plan = listKeywordPlans(websiteId)[0]!;
+      expect(plan.items.map((i) => i.keyword)).toEqual(['mini lemon tarts', 'vegan lemon tart']);
     });
 
     it('keeps the given sub-keywords and goes on when the finder adds nothing', async () => {

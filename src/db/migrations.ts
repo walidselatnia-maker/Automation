@@ -1114,6 +1114,13 @@ export const MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    id: '058-newsite-removed-subs',
+    description: 'New websites: the sub-keywords deleted from a keyword plan, so the finder never adds them back',
+    up(db) {
+      addColumn(db, 'keyword_plans', 'removed_json', "TEXT NOT NULL DEFAULT '[]'");
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */

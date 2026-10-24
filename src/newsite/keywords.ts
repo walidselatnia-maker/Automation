@@ -187,6 +187,8 @@ export interface FindInput {
    * sees them as examples and only adds similar ones, up to MAX_SUBS in all.
    */
   given?: string[];
+  /** Sub-keywords the owner deleted from this plan: never found again. */
+  removed?: string[];
 }
 
 /** How many of the given sub-keywords also seed the Google searches. */
@@ -226,7 +228,9 @@ export async function findSubKeywords(input: FindInput, deps: FindDeps): Promise
   const lists = [await deps.suggest(pillar, input.language)];
   // The owner's own picks widen the Google list, so similar searches show up.
   for (const g of given.slice(0, GIVEN_SEEDS)) lists.push(await deps.suggest(g, input.language));
-  const isTaken = (s: string): boolean => [pillar, ...given].some((t) => t.toLowerCase() === s.trim().toLowerCase());
+  const removed = input.removed ?? [];
+  const isTaken = (s: string): boolean =>
+    [pillar, ...given].some((t) => t.toLowerCase() === s.trim().toLowerCase()) || removed.some((r) => closeness(s, r) >= TOO_CLOSE);
   const searches = [...new Map(lists.flat().filter((s) => !isTaken(s)).map((s) => [s.trim().toLowerCase(), s])).values()];
   if (searches.length === 0) {
     return {
