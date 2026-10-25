@@ -8,6 +8,7 @@ import { pictureMediaUrl } from '../core/media-links.js';
 import { promptsDirectory } from '../pipeline/prompts.js';
 import type { Settings } from '../settings.js';
 import { PLATFORMS, REEL_PLATFORMS, channelTakes, takesReels, websiteChannels } from './channels.js';
+import { withGoogleAccount } from './google-accounts.js';
 import { flowProjectFor, isMainSlot, isStepSlot, listPictures } from './pictures.js';
 import { getKeywordPlan, getNewWebsite, type NewWebsiteRow } from './repo.js';
 import { getSeoRow, type SeoRow } from './seo.js';
@@ -274,9 +275,22 @@ async function make(reel: ReelRow, deps: ReelDeps): Promise<void> {
   run(`UPDATE newsite_reels SET prompt = ?, hook = ?, closing = ? WHERE id = ?`, prompt, script.hook_line, script.closing_line, reel.id);
   const flow = deps.flow ?? flowOf(deps.settings);
   const project = flowProjectFor(site.project_id, site.domain, deps.settings);
-  const jobId = await flow.submitVideo({ prompt, referenceUrls: refs.urls, projectId: project.projectId });
+  // On the first working Google account; a limited, flagged or signed-out one hands the reel to the next.
+  await withGoogleAccount(project.projectId, (projectId) => submitAndWait(reel, prompt, refs.urls, projectId, flow, deps), deps.now);
+}
+
+/** One video job on Flow, waited for and kept. */
+async function submitAndWait(
+  reel: ReelRow,
+  prompt: string,
+  referenceUrls: string[],
+  projectId: string,
+  flow: NonNullable<ReelDeps['flow']> | ImageClient,
+  deps: ReelDeps,
+): Promise<void> {
+  const jobId = await flow.submitVideo({ prompt, referenceUrls, projectId });
   run(`UPDATE newsite_reels SET status = 'making', job_id = ?, error = '' WHERE id = ?`, jobId, reel.id);
-  log.info(`reel ${reel.id}: video job ${jobId} from ${refs.urls.length} picture(s)`);
+  log.info(`reel ${reel.id}: video job ${jobId} from ${referenceUrls.length} picture(s)`);
 
   // A video takes minutes: ask every 15 seconds, for up to 20 minutes.
   const sleep = deps.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));

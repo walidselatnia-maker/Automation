@@ -19,7 +19,17 @@ import { automationOn, automationOnAt } from './autopilot.js';
 import { listNewWebsites } from './repo.js';
 import { listSearchKeys, keyHint } from './search-keys.js';
 import { searchKeysSection } from './research-view.js';
-import { passwordPage, platformPage, platformWizardPage, type PlatformView } from './platform-view.js';
+import { googleAccountPage, passwordPage, platformPage, platformWizardPage, type PlatformView } from './platform-view.js';
+import {
+  addGoogleAccount,
+  changeGoogleAccount,
+  checkAccountFields,
+  getGoogleAccount,
+  listGoogleAccounts,
+  moveGoogleAccount,
+  removeGoogleAccount,
+  startSignIn,
+} from './google-accounts.js';
 import { rejectionReason, storePassword, storedPasswordHash } from '../web/password.js';
 
 export interface PlatformRouteDeps {
@@ -74,6 +84,7 @@ export function registerPlatformRoutes(app: FastifyInstance, deps: PlatformRoute
     imageProblem: await checkImageService(settings.get('image_base_url'), settings.get('image_api_key'), fetchImpl),
     catalogue: await imageCatalogue(settings, fetchImpl),
     password: deps.account ? (storedPasswordHash(deps.encryptionKey) ? 'own' : deps.account.generated ? 'generated' : 'server') : undefined,
+    googleAccounts: listGoogleAccounts(),
   });
 
   /** The AI step's live part: a new key must answer before it is accepted. */
@@ -136,6 +147,60 @@ export function registerPlatformRoutes(app: FastifyInstance, deps: PlatformRoute
       return reply.redirect('/new-website/platform?ok=' + encodeURIComponent('Password changed. Use it from the next sign-in; this session stays open.'), 303);
     });
   }
+
+  /** Google accounts: add, change, sign in, remove and order. */
+  const GA = '/new-website/platform/google-accounts';
+  const showAccount = (account: { id?: number; email: string; flow_project: string }, errors: Record<string, string> = {}) =>
+    newLayout({ title: 'Google account', active: '/new-website/platform', body: googleAccountPage(account, errors), flash: null });
+  const accountId = (request: FastifyRequest): number => Number((request.params as { id?: string }).id);
+  const backToAccounts = (note = '') =>
+    '/new-website/platform' + (note ? '?ok=' + encodeURIComponent(note) : '') + '#google-accounts';
+
+  app.get(`${GA}/add`, async (_request, reply) => reply.type('text/html; charset=utf-8').send(showAccount({ email: '', flow_project: '' })));
+  app.post(`${GA}/add`, async (request, reply) => {
+    const b = body(request);
+    const email = String(b.email ?? '').trim();
+    const project = String(b.flow_project ?? '').trim();
+    const errors = checkAccountFields(email, project);
+    if (Object.keys(errors).length) return reply.type('text/html; charset=utf-8').send(showAccount({ email, flow_project: project }, errors));
+    addGoogleAccount(email, project);
+    return reply.redirect(backToAccounts('Google account added.'), 303);
+  });
+  app.get(`${GA}/:id/change`, async (request, reply) => {
+    const account = getGoogleAccount(accountId(request));
+    if (!account) return reply.redirect(backToAccounts(), 303);
+    return reply.type('text/html; charset=utf-8').send(showAccount(account));
+  });
+  app.post(`${GA}/:id/change`, async (request, reply) => {
+    const account = getGoogleAccount(accountId(request));
+    if (!account) return reply.redirect(backToAccounts(), 303);
+    const b = body(request);
+    const email = String(b.email ?? '').trim();
+    const project = String(b.flow_project ?? '').trim();
+    const errors = checkAccountFields(email, project, account.id);
+    if (Object.keys(errors).length) return reply.type('text/html; charset=utf-8').send(showAccount({ id: account.id, email, flow_project: project }, errors));
+    changeGoogleAccount(account.id, email, project);
+    return reply.redirect(backToAccounts('Google account saved.'), 303);
+  });
+  app.post(`${GA}/:id/sign-in`, async (request, reply) => {
+    const account = getGoogleAccount(accountId(request));
+    if (!account) return reply.redirect(backToAccounts(), 303);
+    const problem = await startSignIn(settings, account, fetchImpl);
+    if (problem) return reply.redirect('/new-website/platform?error=' + encodeURIComponent(problem) + '#google-accounts', 303);
+    return reply.redirect('/browser', 303);
+  });
+  app.post(`${GA}/:id/remove`, async (request, reply) => {
+    removeGoogleAccount(accountId(request));
+    return reply.redirect(backToAccounts('Google account removed.'), 303);
+  });
+  app.post(`${GA}/:id/up`, async (request, reply) => {
+    moveGoogleAccount(accountId(request), -1);
+    return reply.redirect(backToAccounts(), 303);
+  });
+  app.post(`${GA}/:id/down`, async (request, reply) => {
+    moveGoogleAccount(accountId(request), 1);
+    return reply.redirect(backToAccounts(), 303);
+  });
 
   app.get('/new-website/platform/setup', async (request, reply) => {
     const v = await view();

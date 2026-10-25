@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { automationBar, generateBox } from './autopilot-view.js';
-import { html } from '../web/views/layout.js';
+import { html, raw } from '../web/views/layout.js';
 import { askPrompt } from '../llm/ask.js';
 import { expandSeeds } from '../integrations/google-suggest.js';
 import type { Settings } from '../settings.js';
@@ -46,6 +46,7 @@ import { newWebsiteListPage, newWebsiteWizardPage, type WizardChannel } from './
 import { channelsFor, knownCategories, rememberSiteCategories, setWebsiteChannels, takesImages, takesReels, websiteChannels } from './channels.js';
 import { listCategories } from './client.js';
 import { createReels, kickReels } from './reels.js';
+import { NO_WORKING_ACCOUNT, noWorkingAccount } from './google-accounts.js';
 import { sharingChanged } from './sharing-sync.js';
 
 /** The channels a website's wizard offers, ticked when the website already posts to them. */
@@ -283,7 +284,7 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
     const asked = Number((request.query as { days?: string }).days);
     const days: Period = (PERIODS as readonly number[]).includes(asked) ? (asked as Period) : 30;
     const tz = deps.settings?.get('timezone') || 'UTC';
-    const body = dashboardPage(dashboardData(days, tz), Date.now(), html`${automationBar(automationOn(deps.settings), listNewWebsites(), tz, '/new-website/dashboard', Date.now(), deps.settings ? automationOnAt(deps.settings) : 0, deps.settings)}${generateBox(generateChoices(), generateNowLines())}`);
+    const body = dashboardPage(dashboardData(days, tz), Date.now(), html`${automationBar(automationOn(deps.settings), listNewWebsites(), tz, '/new-website/dashboard', Date.now(), deps.settings ? automationOnAt(deps.settings) : 0, deps.settings)}${noWorkingAccount() ? html`<div class="db-problems" role="status"><a href="/new-website/platform#google-accounts">${NO_WORKING_ACCOUNT}</a></div>` : raw('')}${generateBox(generateChoices(), generateNowLines())}`);
     return send(reply, newLayout({ title: 'Dashboard', active: '/new-website/dashboard', body, flash: readFlash(request.query) }));
   });
 

@@ -8,6 +8,7 @@ import { createLogger, errorMessage } from '../lib/logger.js';
 import type { Settings } from '../settings.js';
 import { parseImageSet } from './images.js';
 import { articleColorStyle, withColorStyle } from './color-styles.js';
+import { withGoogleAccount } from './google-accounts.js';
 
 /**
  * The pictures themselves: each AI#4 prompt made into a picture by the image
@@ -351,7 +352,12 @@ export function kickPictureMaker(deps: PictureDeps): Promise<void> {
         try {
           // An article picture (main or step) gets its article's one colour style; a pin's prompt is its own.
           const prompt = pin ? next.prompt : withColorStyle(next.prompt, articleColorStyle(next.seo_id));
-          const { data, contentType } = await make(prompt, project.projectId, (next.shape as PictureShape) || shapeOf(next.slot));
+          // On the first working Google account; a limited, flagged or signed-out one hands the picture to the next.
+          const { data, contentType } = await withGoogleAccount(
+            project.projectId,
+            (projectId) => make(prompt, projectId, (next.shape as PictureShape) || shapeOf(next.slot)),
+            now,
+          );
           lastImageGeneratedAt = now();
           const dir = pictureDir(next.seo_id, dataDir);
           mkdirSync(dir, { recursive: true });

@@ -1121,6 +1121,30 @@ export const MIGRATIONS: Migration[] = [
       addColumn(db, 'keyword_plans', 'removed_json', "TEXT NOT NULL DEFAULT '[]'");
     },
   },
+  {
+    id: '059-google-accounts',
+    description: 'Google accounts for Flow, used in order; the account already signed in becomes the first one',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS google_accounts (
+          id            INTEGER PRIMARY KEY AUTOINCREMENT,
+          email         TEXT NOT NULL DEFAULT '',
+          flow_project  TEXT NOT NULL DEFAULT '',
+          position      INTEGER NOT NULL DEFAULT 0,
+          status        TEXT NOT NULL DEFAULT 'working',
+          credits       TEXT NOT NULL DEFAULT '',
+          last_used_at  TEXT,
+          last_error    TEXT NOT NULL DEFAULT '',
+          retry_at      INTEGER NOT NULL DEFAULT 0,
+          created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+      `);
+      // The one account the platform has used so far: the one signed in on the
+      // Browser page, generating into the websites' own Flow projects.
+      const count = db.prepare('SELECT COUNT(*) AS n FROM google_accounts').get() as { n: number };
+      if (count.n === 0) db.exec(`INSERT INTO google_accounts (email, flow_project, position) VALUES ('', '', 1)`);
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */

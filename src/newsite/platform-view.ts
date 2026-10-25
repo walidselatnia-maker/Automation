@@ -3,6 +3,7 @@ import { AI_MODELS, IMAGE_MODELS, NUMBER_RANGES, TIMEZONES } from './platform.js
 import { field, WIZARD_CSS } from './view.js';
 import { imageModelCards } from './image-model.js';
 import type { ImageModelCatalogue } from './image-model.js';
+import { STATUS_LABEL, type GoogleAccount } from './google-accounts.js';
 
 export interface PlatformView {
   ready: boolean;
@@ -16,6 +17,8 @@ export interface PlatformView {
   catalogue: ImageModelCatalogue | null;
   /** The sign-in password: chosen here, the generated one, or the one set for the server (AUTH_PASSWORD). Absent when not offered. */
   password?: 'own' | 'generated' | 'server';
+  /** The Google accounts Flow jobs use, in order. */
+  googleAccounts?: GoogleAccount[];
 }
 
 const modelLabel = (v: string): string => IMAGE_MODELS.find((m) => m.value === v)?.label ?? v;
@@ -52,6 +55,13 @@ const PAGE_CSS = `
 .pf-advanced summary b { margin-right: 8px; }
 .pf-advanced summary span { color: var(--soft); }
 .pf-advanced .pf-group { border-top: 1px solid var(--line); margin-top: 16px; }
+.ga-wrap { overflow-x: auto; }
+.ga-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.ga-table th { text-align: left; font-weight: 600; color: var(--soft); padding: 6px 10px 6px 0; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.ga-table td { padding: 10px 10px 10px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+.ga-table td.ga-error { max-width: 260px; overflow-wrap: anywhere; color: var(--soft); }
+.ga-table td.ga-actions { white-space: nowrap; text-align: right; padding-right: 0; }
+.ga-table form { display: inline; margin: 0 0 0 6px; }
 @media (max-width: 720px) {
   .pf-card { padding: 4px 20px; }
   .pf-group, .pf-group dl { grid-template-columns: 1fr; gap: 4px; }
@@ -104,6 +114,7 @@ export function platformPage(v: PlatformView, automation: Html = raw(''), search
           ${imageModelCards(v.value('image_model'), v.catalogue)}
         </details>
       </section>
+      ${v.googleAccounts ? googleAccountsSection(v.googleAccounts) : raw('')}
       <section class="pf-group">
         ${head('Timezone', 1, state(true, 'Set', ''), d)}
         <dl><dt>Timezone</dt><dd>${v.value('timezone')}</dd></dl>
@@ -155,6 +166,58 @@ export function platformPage(v: PlatformView, automation: Html = raw(''), search
     </div>
     ${searchKeys ? html`<div class="pf-card pf-ai">${searchKeys}</div>` : raw('')}
   `;
+}
+
+const GA = '/new-website/platform/google-accounts';
+
+/** A plain button that posts to one account's action. */
+const accountButton = (id: number, action: string, label: string, kind = 'quiet'): Html =>
+  html`<form method="post" action="${GA}/${String(id)}/${action}"><button class="ns-btn small ${kind}">${label}</button></form>`;
+
+/** The Google accounts Flow uses, in the order jobs try them. */
+function googleAccountsSection(accounts: GoogleAccount[]): Html {
+  return html`<section class="pf-group" id="google-accounts">
+    <div><h2>Google accounts</h2><a class="ns-btn small pf-change" href="${GA}/add">Add account</a></div>
+    <div class="pf-wide ga-wrap"><table class="ga-table">
+      <thead><tr><th>Email</th><th>Status</th><th>Credits left</th><th>Last used</th><th>Last error</th><th></th></tr></thead>
+      <tbody>${accounts.map((a, i) => html`<tr>
+        <td>${a.email || 'Current account'}</td>
+        <td>${STATUS_LABEL[a.status] ?? a.status}</td>
+        <td class="ns-num">${a.credits}</td>
+        <td>${a.last_used_at ? a.last_used_at.slice(0, 16) : ''}</td>
+        <td class="ga-error">${a.last_error.slice(0, 160)}</td>
+        <td class="ga-actions">${accountButton(a.id, 'sign-in', 'Sign in')}${i > 0 ? accountButton(a.id, 'up', 'Up') : raw('')}${i < accounts.length - 1 ? accountButton(a.id, 'down', 'Down') : raw('')}<a class="ns-btn small quiet" style="margin-left:6px" href="${GA}/${String(a.id)}/change">Change</a>${accountButton(a.id, 'remove', 'Remove', 'danger')}</td>
+      </tr>`)}</tbody>
+    </table></div>
+  </section>`;
+}
+
+/** Add or change one Google account: its email and its Flow project. */
+export function googleAccountPage(account: { id?: number; email: string; flow_project: string }, errors: Record<string, string> = {}): Html {
+  const adding = !account.id;
+  const action = adding ? `${GA}/add` : `${GA}/${String(account.id)}/change`;
+  return html`
+    <style>${raw(WIZARD_CSS)}${raw(PAGE_CSS)}
+      .pw-form { display: grid; gap: 16px; max-width: 560px; }
+      .pw-form label { display: grid; gap: 6px; font-weight: 600; }
+      .pw-form input { height: 42px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: var(--r-ctl); background: var(--page); color: var(--ink); font: inherit; }
+      .pw-form small { font-weight: 500; color: var(--bad); }</style>
+    <div class="wz">
+      <div class="wz-head">
+        <h1>${adding ? 'Add a Google account' : `Google account: ${account.email || 'Current account'}`}</h1>
+      </div>
+      <div class="wz-body">
+        <form id="ga-form" class="pw-form" method="post" action="${action}">
+          <label>Email
+            <input type="email" name="email" value="${account.email}" autocomplete="off" spellcheck="false" required />
+            ${errors.email ? html`<small>${errors.email}</small>` : raw('')}</label>
+          <label>Flow project address
+            <input name="flow_project" value="${account.flow_project}" spellcheck="false" placeholder="https://flow.google.com/u/1/project/…" />
+            ${errors.flow_project ? html`<small>${errors.flow_project}</small>` : raw('')}</label>
+        </form>
+      </div>
+      <div class="wz-foot"><a class="ns-btn quiet" href="/new-website/platform#google-accounts">Cancel</a><button class="ns-btn primary" form="ga-form">${adding ? 'Add account' : 'Save'}</button></div>
+    </div>`;
 }
 
 const STEP_NAMES = ['AI connection', 'Timezone', 'Automation', 'Images', 'Notifications', 'Review'];
