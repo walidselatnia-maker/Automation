@@ -202,3 +202,20 @@ def test_the_wall_holds_when_nothing_new_was_queued(monkeypatch):
     assert asyncio.run(watchdog._check_session_wall(controller)) is True
     assert controller.paused is True
     assert watchdog.state.paused_by == "session expired"
+
+
+def test_the_wall_holds_when_the_queue_lookup_fails(monkeypatch):
+    """A broken lookup must not lift a sign-in pause."""
+    async def recent(limit=10, within_seconds=0):
+        return [{"status": "FAILED", "error_message": "SESSION_EXPIRED",
+                 "updated_at": "2026-10-25T10:00:00Z"}]
+
+    async def queued_since(timestamp):
+        raise RuntimeError("no such table: job")
+
+    monkeypatch.setattr(watchdog, "_recent_failures", recent)
+    monkeypatch.setattr(watchdog.jobs, "queued_since", queued_since)
+    controller = WorkerController()
+
+    assert asyncio.run(watchdog._check_session_wall(controller)) is True
+    assert controller.paused is True

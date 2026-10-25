@@ -134,6 +134,21 @@ async def _recent_failures(limit: int = 10, within_seconds: int = 0) -> list[dic
     return await jobs.recent_finished(limit, within_seconds)
 
 
+async def _moved_on_since(timestamp) -> bool:
+    """Whether work was queued after the wall, i.e. moved to the next account.
+
+    No timestamp means we cannot tell, so the wall stands. A lookup that fails
+    must not lift a pause either: holding work is the safe side of a sign-in wall.
+    """
+    if not timestamp:
+        return False
+    try:
+        return await jobs.queued_since(timestamp)
+    except Exception:
+        logger.exception("Watchdog: could not check for re-queued work")
+        return False
+
+
 async def _check_session_wall(controller) -> bool:
     """Pause and flag if the newest failure is a sign-in wall. True if walled."""
     recent = await _recent_failures(limit=3)
@@ -145,7 +160,7 @@ async def _check_session_wall(controller) -> bool:
             # Queued after the wall: the platform has moved this work to its
             # next Google account. One account signed out must not hold up the
             # others; if this job hits the same wall, the wall applies again.
-            if await jobs.queued_since(request.get("updated_at") or ""):
+            if await _moved_on_since(request.get("updated_at")):
                 if state.needs_human and state.paused_by == "session expired":
                     state.healthy = True
                     state.needs_human = False
