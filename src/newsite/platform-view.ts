@@ -55,13 +55,15 @@ const PAGE_CSS = `
 .pf-advanced summary b { margin-right: 8px; }
 .pf-advanced summary span { color: var(--soft); }
 .pf-advanced .pf-group { border-top: 1px solid var(--line); margin-top: 16px; }
-.ga-wrap { overflow-x: auto; }
 .ga-table { width: 100%; border-collapse: collapse; font-size: 14px; }
 .ga-table th { text-align: left; font-weight: 600; color: var(--soft); padding: 6px 10px 6px 0; border-bottom: 1px solid var(--line); white-space: nowrap; }
 .ga-table td { padding: 10px 10px 10px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
-.ga-table td.ga-error { max-width: 260px; overflow-wrap: anywhere; color: var(--soft); }
-.ga-table td.ga-actions { white-space: nowrap; text-align: right; padding-right: 0; }
-.ga-table form { display: inline; margin: 0 0 0 6px; }
+.ga-table td.ga-error { min-width: 160px; overflow-wrap: anywhere; color: var(--soft); }
+.ga-table td.ga-when { white-space: nowrap; }
+.ga-table td.ga-actions { padding-right: 0; }
+.ga-actions div { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.ga-table form { margin: 0; }
+@media (max-width: 720px) { .ga-table thead { display: none; } .ga-table tr { display: grid; padding: 10px 0; border-bottom: 1px solid var(--line); } .ga-table td { border: 0; padding: 2px 0; } .ga-actions div { justify-content: flex-start; padding-top: 6px; } }
 @media (max-width: 720px) {
   .pf-card { padding: 4px 20px; }
   .pf-group, .pf-group dl { grid-template-columns: 1fr; gap: 4px; }
@@ -178,15 +180,15 @@ const accountButton = (id: number, action: string, label: string, kind = 'quiet'
 function googleAccountsSection(accounts: GoogleAccount[]): Html {
   return html`<section class="pf-group" id="google-accounts">
     <div><h2>Google accounts</h2><a class="ns-btn small pf-change" href="${GA}/add">Add account</a></div>
-    <div class="pf-wide ga-wrap"><table class="ga-table">
+    <div class="pf-wide"><table class="ga-table">
       <thead><tr><th>Email</th><th>Status</th><th>Credits left</th><th>Last used</th><th>Last error</th><th></th></tr></thead>
       <tbody>${accounts.map((a, i) => html`<tr>
         <td>${a.email || 'Current account'}</td>
         <td>${STATUS_LABEL[a.status] ?? a.status}</td>
         <td class="ns-num">${a.credits}</td>
-        <td>${a.last_used_at ? a.last_used_at.slice(0, 16) : ''}</td>
+        <td class="ga-when">${a.last_used_at ? a.last_used_at.slice(0, 16) : ''}</td>
         <td class="ga-error">${a.last_error.slice(0, 160)}</td>
-        <td class="ga-actions">${accountButton(a.id, 'sign-in', 'Sign in')}${i > 0 ? accountButton(a.id, 'up', 'Up') : raw('')}${i < accounts.length - 1 ? accountButton(a.id, 'down', 'Down') : raw('')}<a class="ns-btn small quiet" style="margin-left:6px" href="${GA}/${String(a.id)}/change">Change</a>${accountButton(a.id, 'remove', 'Remove', 'danger')}</td>
+        <td class="ga-actions"><div>${accountButton(a.id, 'sign-in', 'Sign in')}${i > 0 ? accountButton(a.id, 'up', 'Up') : raw('')}${i < accounts.length - 1 ? accountButton(a.id, 'down', 'Down') : raw('')}<a class="ns-btn small quiet" href="${GA}/${String(a.id)}/change">Change</a>${accountButton(a.id, 'remove', 'Remove', 'danger')}</div></td>
       </tr>`)}</tbody>
     </table></div>
   </section>`;
