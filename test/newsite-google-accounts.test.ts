@@ -6,9 +6,11 @@ import { closeDatabase, openDatabase, run } from '../src/db/index.js';
 import { Settings } from '../src/settings.js';
 import { registerNewWebsiteRoutes } from '../src/newsite/routes.js';
 import {
+  accountTrouble,
   addGoogleAccount,
   GOOGLE_ACCOUNT_COOLDOWN_MS,
   listGoogleAccounts,
+  needsProject,
   NO_WORKING_ACCOUNT,
   noWorkingAccount,
   withGoogleAccount,
@@ -99,6 +101,26 @@ describe('Google accounts: Flow jobs move to the next working account', () => {
     })).rejects.toThrow(NO_WORKING_ACCOUNT);
     expect(called).toBe(false);
   });
+
+  it('reads 401 UNAUTHENTICATED as signed out and a 403 reCAPTCHA refusal as limited', () => {
+    expect(accountTrouble('Flow answered HTTP 401: UNAUTHENTICATED')).toBe('signed_out');
+    expect(accountTrouble('HTTP 403: reCAPTCHA evaluation failed')).toBe('limited');
+    expect(accountTrouble('PUBLIC_ERROR_USER_QUOTA_REACHED')).toBe('limited');
+  });
+
+  it('skips a later account with no Flow project address, since it would only repeat the first', async () => {
+    const extra = addGoogleAccount('two@gmail.com', '');
+    addGoogleAccount('three@gmail.com', P3);
+    const accounts = listGoogleAccounts();
+    expect(needsProject(accounts[0]!, accounts)).toBe(false);
+    expect(needsProject(accounts.find((a) => a.id === extra)!, accounts)).toBe(true);
+    const used: string[] = [];
+    await withGoogleAccount('site-project', async (p) => {
+      used.push(p);
+      if (used.length === 1) throw new Error('PUBLIC_ERROR_UNUSUAL_ACTIVITY');
+    });
+    expect(used).toEqual(['site-project', P3]);
+  });
 });
 
 describe('Google accounts: Platform settings and the dashboard', () => {
@@ -141,7 +163,7 @@ describe('Google accounts: Platform settings and the dashboard', () => {
   it('lists the accounts in a plain table', async () => {
     const page = await app.inject({ method: 'GET', url: '/new-website/platform' });
     expect(page.body).toContain('id="google-accounts"');
-    expect(page.body).toContain('<th>Email</th><th>Status</th><th>Credits left</th><th>Last used</th><th>Last error</th>');
+    expect(page.body).toContain('<th>#</th><th>Email</th><th>Status</th><th>Credits left</th><th>Last used</th><th>Last error</th>');
     expect(page.body).toContain('Current account');
     expect(page.body).toContain('Add account');
   });

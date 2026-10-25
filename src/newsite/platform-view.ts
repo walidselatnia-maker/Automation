@@ -3,7 +3,7 @@ import { AI_MODELS, IMAGE_MODELS, NUMBER_RANGES, TIMEZONES } from './platform.js
 import { field, WIZARD_CSS } from './view.js';
 import { imageModelCards } from './image-model.js';
 import type { ImageModelCatalogue } from './image-model.js';
-import { STATUS_LABEL, type GoogleAccount } from './google-accounts.js';
+import { NEEDS_PROJECT, needsProject, STATUS_LABEL, type GoogleAccount } from './google-accounts.js';
 
 export interface PlatformView {
   ready: boolean;
@@ -181,13 +181,14 @@ function googleAccountsSection(accounts: GoogleAccount[]): Html {
   return html`<section class="pf-group" id="google-accounts">
     <div><h2>Google accounts</h2><a class="ns-btn small pf-change" href="${GA}/add">Add account</a></div>
     <div class="pf-wide"><table class="ga-table">
-      <thead><tr><th>Email</th><th>Status</th><th>Credits left</th><th>Last used</th><th>Last error</th><th></th></tr></thead>
+      <thead><tr><th>#</th><th>Email</th><th>Status</th><th>Credits left</th><th>Last used</th><th>Last error</th><th></th></tr></thead>
       <tbody>${accounts.map((a, i) => html`<tr>
+        <td class="ns-num">${String(i + 1)}</td>
         <td>${a.email || 'Current account'}</td>
         <td>${STATUS_LABEL[a.status] ?? a.status}</td>
         <td class="ns-num">${a.credits}</td>
         <td class="ga-when">${a.last_used_at ? a.last_used_at.slice(0, 16) : ''}</td>
-        <td class="ga-error">${a.last_error.slice(0, 160)}</td>
+        <td class="ga-error">${needsProject(a, accounts) ? NEEDS_PROJECT : a.last_error.slice(0, 160)}</td>
         <td class="ga-actions"><div>${accountButton(a.id, 'sign-in', 'Sign in')}${i > 0 ? accountButton(a.id, 'up', 'Up') : raw('')}${i < accounts.length - 1 ? accountButton(a.id, 'down', 'Down') : raw('')}<a class="ns-btn small quiet" href="${GA}/${String(a.id)}/change">Change</a>${accountButton(a.id, 'remove', 'Remove', 'danger')}</div></td>
       </tr>`)}</tbody>
     </table></div>

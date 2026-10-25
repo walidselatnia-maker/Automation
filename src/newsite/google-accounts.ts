@@ -94,9 +94,9 @@ export function moveGoogleAccount(id: number, direction: -1 | 1): void {
  * it gives them, and the service's words where it rewrote them.
  */
 export function accountTrouble(message: string): Exclude<AccountStatus, 'working'> | null {
-  if (/SESSION_EXPIRED|signed this browser out|sign in again/i.test(message)) return 'signed_out';
+  if (/SESSION_EXPIRED|UNAUTHENTICATED|signed this browser out|sign in again|\b401\b/i.test(message)) return 'signed_out';
   if (/UNUSUAL_ACTIVITY|unusual activity/i.test(message)) return 'blocked';
-  if (/USER_QUOTA_REACHED|no video credits left|RESOURCE_EXHAUSTED|quota|rate.?limit|\b429\b/i.test(message)) return 'limited';
+  if (/USER_QUOTA_REACHED|no video credits left|RESOURCE_EXHAUSTED|quota|rate.?limit|\b429\b|recaptcha evaluation failed/i.test(message)) return 'limited';
   return null;
 }
 
@@ -112,9 +112,24 @@ function markTrouble(account: GoogleAccount, trouble: Exclude<AccountStatus, 'wo
   log.warn(`Google account ${account.email || '#' + account.position} is ${STATUS_LABEL[trouble].toLowerCase()}: ${message.slice(0, 200)}`);
 }
 
+export const NEEDS_PROJECT = 'Needs its own Flow project address (Change).';
+
+/**
+ * True for an account Flow cannot be pointed at. Without its own project
+ * address (flow.google.com/u/N/project/…) a job goes into the websites' own
+ * projects, which belong to one account only: the first account without an
+ * address is that one; a later one would only repeat it, so it is skipped.
+ */
+export function needsProject(account: GoogleAccount, accounts: GoogleAccount[]): boolean {
+  return !account.flow_project && accounts.find((a) => !a.flow_project)?.id !== account.id;
+}
+
 /** The accounts a job may use now, in order: working ones, and rested ones whose time is up. */
 export function usableAccounts(now = Date.now()): GoogleAccount[] {
-  return listGoogleAccounts().filter((a) => a.status === 'working' || ((a.status === 'limited' || a.status === 'blocked') && a.retry_at <= now));
+  const accounts = listGoogleAccounts();
+  return accounts.filter(
+    (a) => !needsProject(a, accounts) && (a.status === 'working' || ((a.status === 'limited' || a.status === 'blocked') && a.retry_at <= now)),
+  );
 }
 
 /** True when there are accounts and not one of them can take a job. */
