@@ -13,6 +13,7 @@ import logging
 import os
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
 
 from agent import chrome, image_models
 from agent.auth import require_api_key
@@ -72,6 +73,44 @@ async def chrome_start() -> dict:
     chrome.hold_manually()
     await chrome.ensure_running("asked for by hand")
     return chrome.state()
+
+
+#: How long a sign-in waits for Chrome and its extension to come up.
+SIGN_IN_WAIT_S = 120
+
+
+class SignIn(BaseModel):
+    email: str = Field(default="", max_length=320)
+
+
+async def _open_sign_in(email: str) -> None:
+    """Wait for the extension, then have it open Google's sign-in page."""
+    client = get_flow_client()
+    for _ in range(SIGN_IN_WAIT_S):
+        if client.connected:
+            break
+        await asyncio.sleep(1)
+    result = await client._send("open_sign_in", {"email": email}, timeout=30)
+    if result.get("error"):
+        logger.warning("Sign-in page did not open for %s: %s", email or "the current account", result["error"])
+
+
+@router.post("/sign-in")
+async def sign_in(body: SignIn) -> dict:
+    """Open Google's sign-in for one account in this Chrome, for a person to finish.
+
+    Added next to the accounts already signed in (Google's own multi-account
+    sign-in), so each account is signed in once and keeps its session in the
+    profile. Chrome is pinned the way the Browser page pins it. When Chrome was
+    asleep the page opens once the extension is up, without holding the answer.
+    """
+    chrome.hold_manually()
+    await chrome.ensure_running("a Google sign-in was asked for")
+    if get_flow_client().connected:
+        await _open_sign_in(body.email.strip())
+    else:
+        asyncio.create_task(_open_sign_in(body.email.strip()))
+    return {"ok": True}
 
 
 @router.post("/chrome/stop")

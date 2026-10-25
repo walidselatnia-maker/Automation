@@ -620,6 +620,15 @@ function connectToAgent() {
             result: { ok, reloaded: true, tokenAgeMs: freshAge, flowKeyPresent: !!flowKey },
           });
         }
+      } else if (msg.method === 'open_sign_in') {
+        // A Google account added next to the ones already signed in, in its
+        // own tab, for a person to finish on the Browser page. Google's own
+        // multi-account sign-in: nothing here touches the other sessions.
+        const email = msg.params?.email || '';
+        const url = 'https://accounts.google.com/AddSession?continue=' + encodeURIComponent(FLOW_HOME) +
+          (email ? '&Email=' + encodeURIComponent(email) : '');
+        await chrome.tabs.create({ url, active: true });
+        sendToAgent({ id: msg.id, result: { ok: true } });
       } else if (msg.method === 'get_diagnostics') {
         sendToAgent({ id: msg.id, result: await collectDiagnostics() });
       } else if (msg.type === 'callback_secret') {

@@ -229,3 +229,18 @@ async def recent_finished(limit: int = 10, within_seconds: int = 0) -> list[dict
     async with db.execute(sql, tuple(params)) as cursor:
         rows = await cursor.fetchall()
     return [dict(r) for r in rows]
+
+
+async def queued_since(timestamp: str) -> bool:
+    """Whether a job was queued at or after `timestamp` and has not finished.
+
+    The watchdog asks this after a sign-in wall: the platform moves a job to
+    another Google account by queuing it again, and that job must run rather
+    than wait behind the wall the last account hit.
+    """
+    db = await get_db()
+    async with db.execute(
+        "SELECT 1 FROM job WHERE status IN ('PENDING', 'PROCESSING') AND created_at >= ? LIMIT 1",
+        (timestamp,),
+    ) as cursor:
+        return await cursor.fetchone() is not None

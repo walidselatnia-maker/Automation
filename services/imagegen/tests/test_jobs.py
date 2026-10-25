@@ -336,3 +336,15 @@ def test_a_video_job_keeps_the_presenter_it_was_asked_for(fresh_db):
     assert job["voice_media_id"] == "509a1ad4-e08a-4a9d-87ba-afc4af20a0c1"
     plain = asyncio.run(jobs.create_video("soup", ["https://a/1.jpg"], "P", "VERTICAL"))
     assert plain["character_media_id"] is None and plain["voice_media_id"] is None
+
+
+def test_queued_since_sees_only_unfinished_jobs_from_then_on():
+    async def scenario():
+        job = await jobs.create("p")
+        created = job["created_at"]
+        assert await jobs.queued_since(created) is True
+        assert await jobs.queued_since("2999-01-01T00:00:00Z") is False
+        await jobs.fail(job["id"], "SESSION_EXPIRED")
+        assert await jobs.queued_since(created) is False
+
+    asyncio.run(scenario())

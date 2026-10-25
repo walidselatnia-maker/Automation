@@ -142,12 +142,24 @@ async def _check_session_wall(controller) -> bool:
             break  # a success since then means the session is fine
         message = (request.get("error_message") or "").upper()
         if any(marker in message for marker in _SESSION_MARKERS):
+            # Queued after the wall: the platform has moved this work to its
+            # next Google account. One account signed out must not hold up the
+            # others; if this job hits the same wall, the wall applies again.
+            if await jobs.queued_since(request.get("updated_at") or ""):
+                if state.needs_human and state.paused_by == "session expired":
+                    state.healthy = True
+                    state.needs_human = False
+                    state.reason = None
+                    state.paused_by = None
+                    controller.resume()
+                return False
             state.healthy = False
             state.needs_human = True
             state.reason = (
                 "Google signed this browser out. Open /setup and sign in again — "
                 "restarting will not fix it."
             )
+            state.paused_by = "session expired"
             controller.pause("session expired")
             return True
     return False

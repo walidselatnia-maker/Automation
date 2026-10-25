@@ -160,3 +160,45 @@ def test_it_does_not_lift_a_pause_it_did_not_make(monkeypatch):
 
     assert controller.paused is True
     assert watchdog.state.needs_human is True
+
+
+def test_a_job_queued_after_the_wall_is_not_held_by_it(monkeypatch):
+    """The platform moved the work to its next Google account: let it run."""
+    async def recent(limit=10, within_seconds=0):
+        return [{"status": "FAILED", "error_message": "SESSION_EXPIRED",
+                 "updated_at": "2026-10-25T10:00:00Z"}]
+
+    asked = []
+
+    async def queued_since(timestamp):
+        asked.append(timestamp)
+        return True
+
+    monkeypatch.setattr(watchdog, "_recent_failures", recent)
+    monkeypatch.setattr(watchdog.jobs, "queued_since", queued_since)
+    controller = WorkerController()
+    controller.pause("session expired")
+    watchdog.state.needs_human = True
+    watchdog.state.paused_by = "session expired"
+
+    assert asyncio.run(watchdog._check_session_wall(controller)) is False
+    assert asked == ["2026-10-25T10:00:00Z"]
+    assert controller.paused is False
+    assert watchdog.state.needs_human is False
+
+
+def test_the_wall_holds_when_nothing_new_was_queued(monkeypatch):
+    async def recent(limit=10, within_seconds=0):
+        return [{"status": "FAILED", "error_message": "SESSION_EXPIRED",
+                 "updated_at": "2026-10-25T10:00:00Z"}]
+
+    async def queued_since(timestamp):
+        return False
+
+    monkeypatch.setattr(watchdog, "_recent_failures", recent)
+    monkeypatch.setattr(watchdog.jobs, "queued_since", queued_since)
+    controller = WorkerController()
+
+    assert asyncio.run(watchdog._check_session_wall(controller)) is True
+    assert controller.paused is True
+    assert watchdog.state.paused_by == "session expired"
