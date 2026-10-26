@@ -2304,7 +2304,10 @@ async function pickInMenu(target, tabId, ui, wanted, family) {
           const r = el.getBoundingClientRect();
           return r.width > 0 && r.height > 0 ? { left: r.x, top: r.y, w: r.width, h: r.height } : null;
         };
-        const text = (el) => (el.innerText || el.textContent || '').trim().replace(/\s+/g, ' ');
+        // Icon-only controls carry their words in aria-label or title.
+        const text = (el) => ((el.innerText || el.textContent || '').trim()
+          || el.getAttribute('aria-label') || el.getAttribute('title') || '').replace(/\s+/g, ' ');
+        const esc = (w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         if (how === 'trigger') {
           for (const el of document.querySelectorAll(triggerSel)) {
             const t = text(el);
@@ -2317,10 +2320,12 @@ async function pickInMenu(target, tabId, ui, wanted, family) {
         // The option's own words may run on ("Nano Banana Pro  Best quality"),
         // so it starts with the name; the shortest such text is the option
         // itself rather than a panel that holds it.
+        // Or holds it as words of their own ("Portrait 9:16", "9:16 (Portrait)").
+        const alone = new RegExp(`(^|[\\s(])${esc(want)}($|[\\s)])`);
         let best = null;
         for (const el of document.querySelectorAll(optionSel)) {
           const t = text(el);
-          if (t !== want && !t.startsWith(want + ' ')) continue;
+          if (t.length > 60 || (t !== want && !t.startsWith(want + ' ') && !alone.test(t))) continue;
           const b = box(el);
           if (b && (!best || t.length < best.len)) best = { box: b, len: t.length };
         }
