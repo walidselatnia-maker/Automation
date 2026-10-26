@@ -2230,11 +2230,26 @@ async function pageTiles(tabId) {
     target: { tabId },
     world: 'MAIN',
     func: () => {
+      // A tile still working shows a percent ("45%") and no picture yet; a
+      // finished one holds an img with a src. That is the whole signal -- the
+      // same one a person reads off the grid.
+      const working = (el) => {
+        for (let up = el.parentElement, i = 0; up && i < 4; up = up.parentElement, i++) {
+          if ([...up.querySelectorAll('div, span')].some((d) => /^\s*\d{1,3}\s*%\s*$/.test(d.textContent || ''))) return true;
+        }
+        return false;
+      };
       const srcs = [];
       document.querySelectorAll('img').forEach((el) => {
         const src = el.currentSrc || el.src;
-        if (!src || !el.complete || el.naturalWidth < 200 || el.naturalHeight < 200) return;
-        if (!srcs.includes(src)) srcs.push(src.startsWith('data:') ? src.slice(0, 200) : src);
+        if (!src) return;
+        // Big enough to be a picture, by its pixels or by the space it takes:
+        // a tab in the background may not have decoded it yet.
+        const box = el.getBoundingClientRect();
+        const big = (el.naturalWidth >= 200 && el.naturalHeight >= 200) || (box.width >= 120 && box.height >= 120);
+        if (!big || working(el)) return;
+        const key = src.startsWith('data:') ? src.slice(0, 200) : src;
+        if (!srcs.includes(key)) srcs.push(key);
       });
       return { srcs, url: location.href };
     },
@@ -2475,7 +2490,22 @@ async function uiPageImages() {
 async function uiTileImage({ src = '' } = {}) {
   const tab = (await queryFlowTabs()).find((t) => !t.discarded);
   if (!tab) return { error: 'NO_FLOW_TAB' };
-  return tileImage(tab.id, src).catch((e) => ({ error: String(e?.message || e) }));
+  const inPage = await tileImage(tab.id, src).catch((e) => ({ error: String(e?.message || e) }));
+  if (inPage.dataUrl || !/^https:/.test(src)) return inPage;
+  // A picture on another host can refuse the page's fetch (no CORS); this
+  // worker holds the host permission and the same cookies, so it can read it.
+  try {
+    const res = await fetch(src, { credentials: 'include' });
+    if (!res.ok) return { error: `${inPage.error}; worker HTTP ${res.status}` };
+    const blob = await res.blob();
+    if (!blob.type.startsWith('image/')) return { error: `not a picture: ${blob.type}` };
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    let bin = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    return { dataUrl: `data:${blob.type};base64,${btoa(bin)}` };
+  } catch (e) {
+    return { error: `${inPage.error}; worker: ${e?.message || e}` };
+  }
 }
 
 /** Error messages on the Flow page now, less the ones in `ignore`. */
