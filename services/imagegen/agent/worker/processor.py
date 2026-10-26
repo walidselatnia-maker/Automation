@@ -113,7 +113,9 @@ RETRYABLE = ("quota", "rate_limit", "exhausted", "resource_exhausted", "429",
              "no_injection_result", "injection_failed",
              # Flow showed an error on the page after a submit through the
              # composer. A retry reloads the tab first (reload_before).
-             "flow_ui_error")
+             "flow_ui_error",
+             # The Flow tab or Chrome's window was gone; the retry opens them.
+             "no current window", "no_flow_tab")
 
 
 class WorkerController:

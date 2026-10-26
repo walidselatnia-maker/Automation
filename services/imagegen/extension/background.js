@@ -629,7 +629,7 @@ function connectToAgent() {
         const email = msg.params?.email || '';
         const url = 'https://accounts.google.com/AddSession?continue=' + encodeURIComponent(FLOW_HOME) +
           (email ? '&Email=' + encodeURIComponent(email) : '');
-        await chrome.tabs.create({ url, active: true });
+        await openTab({ url, active: true });
         sendToAgent({ id: msg.id, result: { ok: true } });
       } else if (msg.method === 'get_diagnostics') {
         sendToAgent({ id: msg.id, result: await collectDiagnostics() });
@@ -1037,6 +1037,22 @@ async function flowTabLikelyExists() {
   return loading.some((t) => (t.url || '').startsWith('https://accounts.google.com/'));
 }
 
+/**
+ * chrome.tabs.create, but never "No current window".
+ *
+ * A service worker has no window of its own, so a create without a windowId
+ * goes to the last focused one -- and when the Flow tab was Chrome's last tab
+ * and was closed, Chrome keeps running for this extension with no window at
+ * all, and every create fails with "No current window". So a window is picked,
+ * or made, explicitly.
+ */
+async function openTab(props) {
+  const windows = await chrome.windows.getAll({ windowTypes: ['normal'] }).catch(() => []);
+  if (windows.length) return chrome.tabs.create({ ...props, windowId: windows[0].id });
+  const win = await chrome.windows.create({ url: props.url, focused: !!props.active });
+  return win.tabs?.[0] || (await chrome.tabs.query({ windowId: win.id }))[0];
+}
+
 // The single gate. Returns true if a Flow tab exists or was opened, false if
 // creation was suppressed. Never opens more than one tab per cooldown window.
 async function openFlowTab(reason, url = FLOW_HOME) {
@@ -1057,7 +1073,7 @@ async function openFlowTab(reason, url = FLOW_HOME) {
     _lastFlowTabCreatedAt = Date.now();
     const tabCount = (await chrome.tabs.query({})).length;
     recordTabEvent('created', reason, { url, totalTabsBefore: tabCount });
-    await chrome.tabs.create({ url, active: false });
+    await openTab({ url, active: false });
     return true;
   })();
   try {
@@ -1207,8 +1223,7 @@ async function closeIdleFlowTab() {
   // person editing Chrome's flags cannot take it away by accident.
   const allTabs = await chrome.tabs.query({});
   if (allTabs.length <= tabs.length) {
-    await chrome.tabs
-      .create({ url: 'about:blank', active: true })
+    await openTab({ url: 'about:blank', active: true })
       .catch((e) => console.warn('[FlowAgent] Could not open the blank tab:', e.message));
   }
 
@@ -1477,7 +1492,7 @@ async function runBatchRpc(cmd) {
     // boot: WIZ_global_data is not on the page immediately, and without it
     // `at` comes back empty.
     try {
-      const created = await chrome.tabs.create({
+      const created = await openTab({
         url: cmd.projectId ? projectUrl(cmd.projectId) : FLOW_HOME,
         active: false,
       });
@@ -1650,7 +1665,7 @@ async function discoverImageModels({ known = [] }) {
   let tab = tabs.find((t) => !t.discarded) || tabs[0];
   if (!tab) {
     try {
-      await chrome.tabs.create({ url: FLOW_HOME, active: false });
+      await openTab({ url: FLOW_HOME, active: false });
       await sleep(5000);
       tabs = await queryFlowTabs();
       tab = tabs.find((t) => !t.discarded) || tabs[0];
@@ -2222,6 +2237,13 @@ async function uiGenerateImage({ projectId = null, prompt = '', model = null, as
   if (!prompt.trim()) return { error: 'EMPTY_PROMPT' };
   const ui = uiSelectors(selectors);
 
+  // The tab is closed between runs to save CPU, so the first job after a
+  // quiet spell opens it again -- on the job's project, as a person would.
+  if (!(await queryFlowTabs()).length) {
+    const created = await openTab({ url: projectId ? projectUrl(projectId) : FLOW_HOME, active: false });
+    await waitForTabLoad(created.id, 30000).catch(() => {});
+    await pause(2500, 4500);
+  }
   await ensureFlowTabOnProject(projectId);
   const tabs = await queryFlowTabs();
   const candidate = tabs.find((t) => !t.discarded) || tabs[0];
@@ -2660,7 +2682,7 @@ chrome.runtime.onMessage.addListener((msg, _, reply) => {
         // User-initiated from the popup — deliberately not gated by the
         // cooldown, but recorded so the audit trail stays complete.
         recordTabEvent('created', 'user-popup', { url: FLOW_HOME });
-        chrome.tabs.create({ url: FLOW_HOME })
+        openTab({ url: FLOW_HOME, active: true })
           .then((tab) => reply({ ok: true, tabId: tab.id }))
           .catch((e) => reply({ error: e.message }));
       }
