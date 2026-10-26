@@ -682,6 +682,19 @@ class FlowClient:
         except Exception as e:
             return {"error": f"upload gave no media id: {type(e).__name__}: {e}"}
 
+    async def _send_ui(self, method: str, params: dict, timeout: float) -> dict:
+        """_send for the composer commands, unwrapped.
+
+        Their answer travels as {"id", "result": {...}}, unlike the API calls,
+        which answer flat. Reading it flat is what made every page read come
+        back empty: the submit's settings, the page's errors and its pictures
+        were all there, one level down, and nothing looked.
+        """
+        out = await self._send(method, params, timeout=timeout)
+        if isinstance(out, dict) and isinstance(out.get("result"), dict):
+            return out["result"]
+        return out
+
     async def ui_generate_image(self, prompt: str, project_id: str,
                                 model_label: str | None = None,
                                 aspect_label: str | None = None) -> dict:
@@ -692,7 +705,7 @@ class FlowClient:
         listing afterwards. Generous timeout: this drives a real page at a
         person's pace and waits for the composer to clear.
         """
-        return await self._send(
+        return await self._send_ui(
             "ui_generate_image",
             {"projectId": project_id, "prompt": prompt, "model": model_label,
              "aspect": aspect_label, "selectors": ui_selectors()},
@@ -706,7 +719,7 @@ class FlowClient:
         this the job would wait out the whole poll for a picture that is never
         coming. Never fatal: a read that fails is an empty list.
         """
-        out = await self._send(
+        out = await self._send_ui(
             "ui_page_errors",
             {"projectId": project_id, "ignore": ignore, "selectors": ui_selectors()},
             timeout=30,
@@ -773,8 +786,11 @@ class FlowClient:
         """What the Flow tab shows now: the pictures it names by address, every
         picture-sized tile whatever its address, and what the page last asked
         Google. An unanswered read is an empty page, not a failure."""
-        out = await self._send("ui_page_images", {}, timeout=30)
-        return out if isinstance(out, dict) and "error" not in out else {}
+        out = await self._send_ui("ui_page_images", {}, timeout=30)
+        if not isinstance(out, dict) or "error" in out:
+            logger.warning("Flow UI: could not read the page: %s", str(out)[:200])
+            return {}
+        return out
 
     @staticmethod
     def _images_of(urls) -> list:
@@ -801,7 +817,7 @@ class FlowClient:
             urls = await self.get_media_urls_batch(found.group(0))
             if isinstance(urls, dict) and urls.get("image_url"):
                 return fb.GeneratedImage(media_id=found.group(0), url=urls["image_url"])
-        out = await self._send("ui_tile_image", {"src": src}, timeout=60)
+        out = await self._send_ui("ui_tile_image", {"src": src}, timeout=60)
         data_url = out.get("dataUrl") if isinstance(out, dict) else None
         if isinstance(data_url, str) and data_url.startswith("data:image/"):
             return fb.GeneratedImage(media_id=found.group(0) if found else "", url=data_url)

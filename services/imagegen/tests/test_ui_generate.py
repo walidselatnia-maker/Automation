@@ -61,7 +61,7 @@ class Fake(FlowClient):
         self.media_lookups.append(media_id)
         return {"image_url": f"https://flow-content.google/image/{media_id}?sig=y"}
 
-    async def _send(self, method, params, timeout=30):
+    async def _send_ui(self, method, params, timeout=30):
         assert method == "ui_tile_image"
         return self._tile_pictures.get(params["src"], {"error": "gone"})
 
@@ -277,3 +277,17 @@ def test_a_tile_seen_only_once_is_not_taken(monkeypatch):
     out = run(client, poll_seconds=12)
 
     assert "error" in out
+
+
+def test_composer_answers_are_read_one_level_down():
+    """The extension answers these as {"id", "result": {...}}."""
+    class Wire(FlowClient):
+        def __init__(self):
+            pass
+
+        async def _send(self, method, params, timeout=300):
+            return {"id": "x", "result": {"images": [image("a").url], "tiles": ["blob:t"]}}
+
+    state = asyncio.run(Wire().ui_page_state())
+    assert state["tiles"] == ["blob:t"]
+    assert [i.media_id for i in asyncio.run(Wire().ui_page_images())] == ["a"]
