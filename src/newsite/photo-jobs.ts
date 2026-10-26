@@ -47,6 +47,8 @@ interface PhotoRow {
   error: string;
   file: string;
   media_id: number | null;
+  /** 1 once the website put the photo on its post. */
+  placed: number;
 }
 
 const MAX_TRIES = 2;
@@ -78,9 +80,13 @@ function ensureTables(): void {
       error TEXT NOT NULL DEFAULT '',
       file TEXT NOT NULL DEFAULT '',
       media_id INTEGER,
+      placed INTEGER NOT NULL DEFAULT 0,
       UNIQUE (job_id, slot)
     );
   `);
+  // Databases made before photos were placed one by one.
+  const columns = all<{ name: string }>('PRAGMA table_info(photo_job_photos)').map((c) => c.name);
+  if (!columns.includes('placed')) getDb().exec('ALTER TABLE photo_job_photos ADD COLUMN placed INTEGER NOT NULL DEFAULT 0');
 }
 
 export interface PhotoJobDeps {
@@ -105,7 +111,11 @@ const call = async (deps: PhotoJobDeps, site: NewWebsiteRow, path: string, body?
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     signal: AbortSignal.timeout(60_000),
   });
-  if (!response.ok) throw new Error(`${site.domain} answered HTTP ${response.status} for ${path}`);
+  if (!response.ok) {
+    // The site's own words when it gives them ("Unknown slot …"), else the status.
+    const said = ((await response.json().catch(() => null)) as { error?: unknown } | null)?.error;
+    throw new Error(typeof said === 'string' && said ? `${site.domain}: ${said}` : `${site.domain} answered HTTP ${response.status} for ${path}`);
+  }
   return response.json().catch(() => ({}));
 };
 
@@ -139,9 +149,16 @@ let turn = 0;
 
 /** One look: carry on the job being made, else ask each website for its next job. */
 export async function photoJobTick(deps: PhotoJobDeps): Promise<void> {
-  if (busy || mustWait(deps)) return;
+  if (busy) return;
   busy = true;
   try {
+    // Photos already made go on their posts first. Placing is only a call to
+    // the website, not Flow work, so it does not wait for Pause or articles.
+    for (const { job_id } of all<{ job_id: number }>(`SELECT DISTINCT job_id FROM photo_job_photos WHERE status = 'done' AND placed = 0 AND media_id IS NOT NULL`)) {
+      const pending = get<JobRow>('SELECT * FROM photo_jobs WHERE id = ?', job_id);
+      if (pending) await placeAll(pending, deps);
+    }
+    if (mustWait(deps)) return;
     let job = get<JobRow>(`SELECT * FROM photo_jobs WHERE status = 'making' ORDER BY id LIMIT 1`);
     if (!job) {
       const sites = listNewWebsites().filter((s) => s.status === 'active');
@@ -224,6 +241,8 @@ async function makeJob(job: JobRow, deps: PhotoJobDeps): Promise<void> {
       const mediaId = Number(((await response.json().catch(() => null)) as { media?: { id?: unknown } } | null)?.media?.id);
       if (!Number.isFinite(mediaId)) throw new Error(`${site.domain} took the photo but did not say its id.`);
       run(`UPDATE photo_job_photos SET status = 'done', error = '', file = ?, media_id = ? WHERE id = ?`, file, mediaId, photo.id);
+      // On the post straight away: a later photo that fails holds nothing back.
+      await place({ ...photo, media_id: mediaId }, job, site, deps);
     } catch (err) {
       const message = errorMessage(err).slice(0, 400);
       run(`UPDATE photo_job_photos SET status = ?, error = ? WHERE id = ?`, photo.attempts + 1 >= MAX_TRIES ? 'failed' : 'queued', message, photo.id);
@@ -231,21 +250,44 @@ async function makeJob(job: JobRow, deps: PhotoJobDeps): Promise<void> {
     if (gapMs) await new Promise((r) => setTimeout(r, gapMs));
   }
 
-  const photos = all<PhotoRow>('SELECT * FROM photo_job_photos WHERE job_id = ? ORDER BY id', job.id);
-  const done = photos.filter((p) => p.status === 'done' && p.media_id);
-  const failed = photos.filter((p) => p.status === 'failed');
+  await finishJob(job, site, deps);
+}
+
+/**
+ * Put one made photo on its post (POST /api/v1/photo-jobs/:id/done with that
+ * photo alone). A refusal is kept on the photo; it keeps its media id, so
+ * Try again places it without making it again.
+ */
+async function place(photo: PhotoRow, job: JobRow, site: NewWebsiteRow, deps: PhotoJobDeps): Promise<boolean> {
   try {
-    if (done.length) await call(deps, site, `photo-jobs/${job.site_job_id}/done`, { photos: done.map((p) => ({ slot: p.slot, mediaId: p.media_id })) });
-    if (failed.length) {
-      const error = failed[0]!.error || 'A photo could not be made.';
-      if (!done.length) await call(deps, site, `photo-jobs/${job.site_job_id}/failed`, { error }).catch(() => {});
-      run(`UPDATE photo_jobs SET status = 'failed', error = ? WHERE id = ?`, `${failed.length} of ${photos.length} photos failed: ${error}`, job.id);
-    } else {
-      run(`UPDATE photo_jobs SET status = 'done', error = '' WHERE id = ?`, job.id);
-    }
+    await call(deps, site, `photo-jobs/${job.site_job_id}/done`, { photos: [{ slot: photo.slot, mediaId: photo.media_id }] });
+    run(`UPDATE photo_job_photos SET placed = 1, error = '' WHERE id = ?`, photo.id);
+    return true;
   } catch (err) {
-    run(`UPDATE photo_jobs SET status = 'failed', error = ? WHERE id = ?`, errorMessage(err).slice(0, 400), job.id);
+    run('UPDATE photo_job_photos SET error = ? WHERE id = ?', `Made, but not on the post yet: ${errorMessage(err).slice(0, 300)}`, photo.id);
+    return false;
   }
+}
+
+/** Place every made photo of a job not placed yet, then settle the job if nothing is left to make. */
+async function placeAll(job: JobRow, deps: PhotoJobDeps): Promise<void> {
+  const site = getNewWebsite(job.website_id);
+  if (!site) return;
+  for (const photo of all<PhotoRow>(`SELECT * FROM photo_job_photos WHERE job_id = ? AND status = 'done' AND placed = 0 AND media_id IS NOT NULL ORDER BY id`, job.id)) {
+    await place(photo, job, site, deps);
+  }
+  if (!get<{ n: number }>(`SELECT 1 AS n FROM photo_job_photos WHERE job_id = ? AND status = 'queued'`, job.id)) await finishJob(job, site, deps);
+}
+
+/** Done only when every photo is on the post; otherwise Failed, with Try again for what is left. */
+async function finishJob(job: JobRow, site: NewWebsiteRow, deps: PhotoJobDeps): Promise<void> {
+  const photos = all<PhotoRow>('SELECT * FROM photo_job_photos WHERE job_id = ? ORDER BY id', job.id);
+  const left = photos.filter((p) => !(p.status === 'done' && p.placed));
+  if (!left.length) return void run(`UPDATE photo_jobs SET status = 'done', error = '' WHERE id = ?`, job.id);
+  const error = left.find((p) => p.error)?.error || 'A photo could not be made.';
+  // Nothing reached the post: the website takes the job back and offers it again.
+  if (!photos.some((p) => p.placed)) await call(deps, site, `photo-jobs/${job.site_job_id}/failed`, { error }).catch(() => {});
+  run(`UPDATE photo_jobs SET status = 'failed', error = ? WHERE id = ?`, `${left.length} of ${photos.length} photos not on the post: ${error}`, job.id);
 }
 
 const CSS = `
@@ -328,7 +370,7 @@ export function registerPhotoJobRoutes(app: FastifyInstance, deps: PhotoJobDeps)
   app.get('/new-website/photo-jobs', async (request, reply) => {
     const jobs = all<JobRow & { domain: string; made: number; total: number }>(
       `SELECT j.*, COALESCE(w.domain, '') AS domain,
-              (SELECT COUNT(*) FROM photo_job_photos p WHERE p.job_id = j.id AND p.status = 'done') AS made,
+              (SELECT COUNT(*) FROM photo_job_photos p WHERE p.job_id = j.id AND p.status = 'done' AND p.placed = 1) AS made,
               (SELECT COUNT(*) FROM photo_job_photos p WHERE p.job_id = j.id) AS total
          FROM photo_jobs j LEFT JOIN new_websites w ON w.id = j.website_id ORDER BY j.id DESC LIMIT 200`,
     );
