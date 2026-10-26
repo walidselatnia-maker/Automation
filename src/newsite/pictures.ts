@@ -241,6 +241,11 @@ export interface PictureDeps {
 }
 
 let running: Promise<void> | null = null;
+
+/** Whether article pictures are being made now. Photo jobs wait for it. */
+export function pictureMakerBusy(): boolean {
+  return running !== null;
+}
 let lastImageGeneratedAt: number | null = null;
 let wakeTimer: ReturnType<typeof setTimeout> | null = null;
 

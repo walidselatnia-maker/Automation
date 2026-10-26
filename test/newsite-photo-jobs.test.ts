@@ -93,6 +93,49 @@ describe('Photo jobs and top lists', () => {
     expect(page.body).toContain('Queue all with no photos');
   });
 
+  it('stops after the photo in hand when paused, and waits while article pictures are made', async () => {
+    addSite();
+    const settings = new Settings();
+    settings.set('image_gap_seconds', '0');
+    let mediaId = 100;
+    site = (url) => {
+      if (url.endsWith('/photo-jobs/next')) {
+        return Response.json({
+          job: { id: 8, post: { id: 4, title: 'Rye' }, photos: [{ slot: 'cover', kind: 'cover', text: 'a' }, { slot: 'gallery-0', kind: 'gallery', text: 'b' }] },
+        });
+      }
+      if (url.endsWith('/media')) return Response.json({ media: { id: ++mediaId } });
+      return Response.json({});
+    };
+    let articlesBusy = true;
+    let made = 0;
+    const deps = {
+      settings, encryptionKey: KEY, readFlash, fetchImpl, autoStart: false,
+      dataDir: mkdtempSync(join(tmpdir(), 'pj-')),
+      mainBusy: () => articlesBusy,
+      make: async () => {
+        made++;
+        settings.set('photo_jobs_paused', '1'); // Pause pressed while this photo is being made
+        return { data: Buffer.from('img'), contentType: 'image/png' };
+      },
+    };
+    registerPhotoJobRoutes(app, deps);
+
+    await photoJobTick(deps);
+    expect(calls).toEqual([]); // article pictures first: not even asked for a job
+
+    articlesBusy = false;
+    await photoJobTick(deps);
+    expect(made).toBe(1);
+    expect(calls.some((c) => c.url.endsWith('/done'))).toBe(false);
+    expect(all<{ status: string }>('SELECT status FROM photo_jobs')).toEqual([{ status: 'making' }]);
+
+    settings.set('photo_jobs_paused', '0');
+    deps.make = async () => ({ data: Buffer.from('img'), contentType: 'image/png' });
+    await photoJobTick(deps);
+    expect(all<{ status: string }>('SELECT status FROM photo_jobs')).toEqual([{ status: 'done' }]);
+  });
+
   it('suggests a topic from the posts and publishes the approved top list', async () => {
     addSite();
     const items = ['Zucchini Bread', 'Chocolate Zucchini Bread', 'Lemon Zucchini Bread', 'Banana Bread'].map((title, i) => ({

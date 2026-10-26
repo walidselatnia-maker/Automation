@@ -8,7 +8,7 @@ import { createLogger, errorMessage } from '../lib/logger.js';
 import type { Settings } from '../settings.js';
 import { html, raw } from '../web/views/layout.js';
 import { newLayout, type NewFlash } from './layout.js';
-import { flowProjectFor, type PictureShape } from './pictures.js';
+import { flowProjectFor, pictureMakerBusy, type PictureShape } from './pictures.js';
 import { getNewWebsite, listNewWebsites, websiteApiKey, type NewWebsiteRow } from './repo.js';
 
 /**
@@ -92,6 +92,8 @@ export interface PhotoJobDeps {
   /** Start the poller. Tests turn it off. */
   autoStart?: boolean;
   make?: (prompt: string, projectId: string, shape: PictureShape) => Promise<{ data: Buffer; contentType: string }>;
+  /** Whether article pictures are being made. Tests stand it in. */
+  mainBusy?: () => boolean;
 }
 
 const PAUSED_KEY = 'photo_jobs_paused';
@@ -123,13 +125,21 @@ function promptFor(site: NewWebsiteRow, post: Record<string, unknown>, photo: { 
   return `${what}${ingredients}${style}`.replace(/\s+/g, ' ').trim();
 }
 
+/**
+ * Photo jobs give way: to Pause, and to article pictures. The articles are the
+ * main work, and both send pictures to the one Flow tab, so a photo is only
+ * made when no article picture is being made.
+ */
+const mustWait = (deps: PhotoJobDeps): boolean =>
+  deps.settings.get(PAUSED_KEY) === '1' || (deps.mainBusy ?? pictureMakerBusy)();
+
 let busy = false;
 /** Which website is asked first next time, so every website gets its turn. */
 let turn = 0;
 
 /** One look: carry on the job being made, else ask each website for its next job. */
 export async function photoJobTick(deps: PhotoJobDeps): Promise<void> {
-  if (busy || deps.settings.get(PAUSED_KEY) === '1') return;
+  if (busy || mustWait(deps)) return;
   busy = true;
   try {
     let job = get<JobRow>(`SELECT * FROM photo_jobs WHERE status = 'making' ORDER BY id LIMIT 1`);
@@ -190,6 +200,10 @@ async function makeJob(job: JobRow, deps: PhotoJobDeps): Promise<void> {
   for (;;) {
     const photo = get<PhotoRow>(`SELECT * FROM photo_job_photos WHERE job_id = ? AND status = 'queued' ORDER BY id LIMIT 1`, job.id);
     if (!photo) break;
+    // Checked before every photo, not only before the job: Pause stops it
+    // after the photo in hand, and article pictures go first. The job stays
+    // Making and carries on from here on a later tick.
+    if (mustWait(deps)) return;
     run('UPDATE photo_job_photos SET attempts = attempts + 1 WHERE id = ?', photo.id);
     try {
       const { data, contentType } = await make(photo.prompt, project.projectId, shapeOf(photo.kind));
