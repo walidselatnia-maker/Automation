@@ -807,6 +807,8 @@ function imagesCard(row: SeoRow, intent: string, pictures: PictureRow[]): Html {
                   <summary><span class="kw-img-slot">${im.slot.replace(/-/g, ' ')}</span></summary>
                   <p class="kw-img-prompt">${im.prompt}</p>
                   <div class="kw-img-alt"><b>Alt</b> ${im.alt}</div>
+                  ${im.title ? html`<div class="kw-img-alt"><b>Title</b> ${im.title}</div>` : raw('')}
+                  ${im.description ? html`<div class="kw-img-alt"><b>Description</b> ${im.description}</div>` : raw('')}
                   ${current[i]?.status === 'done' || current[i]?.status === 'failed'
                     ? html`<form method="post" action="/new-website/pictures/${current[i]!.id}/remake"><button class="ns-btn small">Make again</button></form>`
                     : raw('')}

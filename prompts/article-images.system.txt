@@ -37,7 +37,9 @@ Step pictures (slots named step-1, step-2, …) follow the recipe in order, like
 
 Each image also gets alt text: 8 to 12 words saying what the picture shows, the keyword once if natural, never starting with "image of" or "photo of". Follow the alt text pattern you are given.
 
+Each image also gets a title: 3 to 8 words naming what this picture shows, in the article's language. And a description: one or two sentences (15 to 35 words) saying what the picture shows and what it tells the reader in this part of the article. Both describe this picture only, never the article as a whole.
+
 If you are given corrections, your previous answer is shown with them: fix every numbered point exactly as it says, and keep everything else in your previous answer as it is.
 
 Answer with JSON only:
-{"theme": {"surface": "...", "lighting": "...", "palette": "...", "style": "...", "mood": "...", "colorStyle": "...", "pictureStyle": "...", "dish": "..."}, "images": [{"slot": "...", "prompt": "...", "alt": "..."}]}
+{"theme": {"surface": "...", "lighting": "...", "palette": "...", "style": "...", "mood": "...", "colorStyle": "...", "pictureStyle": "...", "dish": "..."}, "images": [{"slot": "...", "prompt": "...", "alt": "...", "title": "...", "description": "..."}]}
