@@ -90,6 +90,8 @@ class WatchdogState:
     disconnected_since: Optional[float] = None
     ever_connected: bool = False
     paused_by: Optional[str] = None
+    # Failures before this (UTC, as the job table writes it) no longer count.
+    breaker_counts_from: Optional[str] = None
 
     def as_dict(self) -> dict:
         return {
@@ -190,6 +192,8 @@ async def _check_circuit_breaker(controller) -> bool:
     came back quiet after every restart, because the failures are on disk.
     """
     recent = await _recent_failures(limit=FAILURE_THRESHOLD, within_seconds=CIRCUIT_WINDOW_S)
+    if state.breaker_counts_from:
+        recent = [r for r in recent if (r.get("updated_at") or "") >= state.breaker_counts_from]
     tripped = (
         len(recent) >= FAILURE_THRESHOLD
         and all(r.get("status") == "FAILED" for r in recent)
@@ -211,6 +215,13 @@ async def _check_circuit_breaker(controller) -> bool:
     state.paused_by = "circuit breaker"
     controller.pause("circuit breaker")
     return True
+
+
+def reset_circuit_breaker(controller) -> None:
+    """Start counting failures afresh, and lift a pause the breaker made."""
+    state.breaker_counts_from = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    state.consecutive_failures = 0
+    _release_circuit_breaker(controller)
 
 
 def _release_circuit_breaker(controller) -> None:

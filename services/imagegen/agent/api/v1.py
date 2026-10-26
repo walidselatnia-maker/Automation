@@ -13,7 +13,7 @@ from urllib.parse import parse_qs, urlparse
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from agent import chrome, image_models, project_links
+from agent import chrome, generation_hold, image_models, project_links
 from agent.auth import require_api_key
 from agent.config import FLOW_PROJECT_ID, FLOW_PROJECT_URL
 from agent.db import jobs
@@ -192,7 +192,12 @@ async def stop_images() -> dict:
     For the platform's Stop and Restart buttons. The reload clears whatever the
     composer was in the middle of; signing in is untouched.
     """
-    stopped = await jobs.stop_images("Stopped by hand.")
+    stopped = await jobs.stop_images()
+    # A person pressing Stop or Restart has seen the failures and is starting
+    # over: the breaker counts only what fails from here on.
+    from agent import watchdog
+    from agent.worker.processor import get_worker_controller
+    watchdog.reset_circuit_breaker(get_worker_controller())
     client = get_flow_client()
     reloaded = await client.ensure_fresh_token(0) if client.connected else {"ok": False}
     logger.info("stopped %d image job(s) by hand; Flow tab reloaded: %s", stopped, reloaded.get("ok"))
@@ -207,6 +212,17 @@ async def get_job(job_id: str) -> JobResponse:
         raise HTTPException(404, f"No job with id {job_id}")
 
     kind = job["kind"] if "kind" in job.keys() else "image"
+    error = job["error_message"]
+    # A job held back says why, so "Making" on the platform is not a mystery.
+    held = generation_hold.active() if job["status"] == "PENDING" else None
+    if held:
+        error = (f"Waiting: {held['reason']}, so nothing is sent to Flow for "
+                 f"{max(1, held['seconds_left'] // 60)} more minutes.")
+    elif job["status"] == "PENDING":
+        from agent import watchdog
+        from agent.worker.processor import get_worker_controller
+        if get_worker_controller().paused:
+            error = f"Waiting: the picture service is paused. {watchdog.state.reason or ''} Press Restart on the Images step to carry on.".strip()
 
     return JobResponse(
         job_id=job["id"],
@@ -216,7 +232,7 @@ async def get_job(job_id: str) -> JobResponse:
         video_url=job["output_url"] if kind == "video" else None,
         image_expires_at=_expires_at(job["output_url"]),
         media_id=job["media_id"],
-        error=job["error_message"],
+        error=error,
         prompt=job["prompt"],
         created_at=job["created_at"],
         updated_at=job["updated_at"],

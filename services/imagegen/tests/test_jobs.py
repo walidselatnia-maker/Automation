@@ -366,3 +366,12 @@ def test_stop_drops_every_unfinished_image_job_and_leaves_the_rest():
     assert waiting["status"] == claimed["status"] == "FAILED"
     assert waiting["error_message"] == "Stopped by hand."
     assert made["status"] == "COMPLETED"
+
+
+def test_jobs_stopped_by_hand_are_not_failures_the_breaker_counts():
+    async def scenario():
+        await jobs.create("one")
+        await jobs.stop_images()
+        return await jobs.recent_finished(10)
+
+    assert asyncio.run(scenario()) == []

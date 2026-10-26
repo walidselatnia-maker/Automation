@@ -128,7 +128,12 @@ async def fail(job_id: str, error: str) -> None:
     await db.commit()
 
 
-async def stop_images(reason: str) -> int:
+#: What a job stopped by a person says. Not a failure of the service: the
+#: watchdog's breaker does not count it.
+STOPPED_BY_HAND = "Stopped by hand."
+
+
+async def stop_images(reason: str = STOPPED_BY_HAND) -> int:
     """Fail every image job not yet finished. Answers how many.
 
     A job already in Flow's hands cannot be taken back, so its worker may still
@@ -235,8 +240,9 @@ async def recent_finished(limit: int = 10, within_seconds: int = 0) -> list[dict
     whole history.
     """
     db = await get_db()
-    sql = """SELECT * FROM job WHERE status IN ('COMPLETED', 'FAILED')"""
-    params: list = []
+    sql = """SELECT * FROM job WHERE status IN ('COMPLETED', 'FAILED')
+               AND COALESCE(error_message, '') != ?"""
+    params: list = [STOPPED_BY_HAND]
     if within_seconds > 0:
         sql += " AND updated_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ?)"
         params.append(f"-{int(within_seconds)} seconds")
