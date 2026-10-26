@@ -319,7 +319,7 @@ let running: Promise<void> | null = null;
 /** Make every waiting reel, one at a time. Calling it while it runs does nothing extra. */
 /** After Google answers UNUSUAL_ACTIVITY, how long reels wait before the next one goes to Flow. */
 export const FLOW_PAUSE_KEY = 'newsite_reels_paused_until';
-export const FLOW_PAUSE_MS = 30 * 60_000;
+export const FLOW_PAUSE_MS = 60 * 60_000;
 
 export function kickReels(deps: ReelDeps): Promise<void> {
   if (running) return running;

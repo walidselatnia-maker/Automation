@@ -227,7 +227,7 @@ describe('reels: one Flow video per article, from one prompt', () => {
     expect((await app.inject({ url: '/new-website/sharing/reel-rules' })).body).toContain('<code>{domain}</code>');
   });
 
-  it('pauses every reel for 30 minutes when Google flags unusual activity, and keeps the pause', async () => {
+  it('pauses every reel for an hour when Google flags unusual activity, and keeps the pause', async () => {
     setWebsiteChannels(websiteId, [channel('facebook', 'f1')]);
     createReels(seoId);
     // A reel from before (one per platform) waits behind it.
@@ -237,12 +237,12 @@ describe('reels: one Flow video per article, from one prompt', () => {
     flagged.flow = { ...flagged.flow!, poll: async () => ({ status: 'FAILED', error: "RpcError: MZZa6b failed: ['PUBLIC_ERROR_UNUSUAL_ACTIVITY']" }) };
     await kickReels(flagged);
     const [first, second] = listPlanReels(planId);
-    expect(first!.error).toMatch(/paused for 30 minutes/);
+    expect(first!.error).toMatch(/paused for 60 minutes/);
     expect(second!.status).toBe('pending'); // not sent: the pause holds it
     expect(submitted).toHaveLength(1);
     await kickReels(flagged); // still paused, even on a new start
     expect(submitted).toHaveLength(1);
-    now += 31 * 60_000;
+    now += 61 * 60_000;
     await kickReels({ ...deps(), now: () => now });
     expect(submitted).toHaveLength(2);
   });

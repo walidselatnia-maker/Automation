@@ -8,6 +8,7 @@ import { registerNewWebsiteRoutes } from '../src/newsite/routes.js';
 import {
   accountTrouble,
   addGoogleAccount,
+  GOOGLE_ACCOUNT_BLOCKED_COOLDOWN_MS,
   GOOGLE_ACCOUNT_COOLDOWN_MS,
   listGoogleAccounts,
   needsProject,
@@ -36,11 +37,11 @@ describe('Google accounts: Flow jobs move to the next working account', () => {
     expect(listGoogleAccounts()[0]!.last_used_at).toBeTruthy();
   });
 
-  it('retries the same job on the next account when one is flagged, limited or signed out', async () => {
+  it('retries the same job on the next account when one is limited or signed out', async () => {
     addGoogleAccount('two@gmail.com', P2);
     addGoogleAccount('three@gmail.com', P3);
     const used: string[] = [];
-    const errors = ['PUBLIC_ERROR_UNUSUAL_ACTIVITY', 'Image job x failed with status FAILED: SESSION_EXPIRED'];
+    const errors = ['RESOURCE_EXHAUSTED', 'Image job x failed with status FAILED: SESSION_EXPIRED'];
     const result = await withGoogleAccount('site-project', async (p) => {
       used.push(p);
       const e = errors.shift();
@@ -50,10 +51,25 @@ describe('Google accounts: Flow jobs move to the next working account', () => {
     expect(result).toBe('made');
     expect(used).toEqual(['site-project', P2, P3]);
     const [one, two, three] = listGoogleAccounts();
-    expect(one).toMatchObject({ status: 'blocked', last_error: 'PUBLIC_ERROR_UNUSUAL_ACTIVITY' });
+    expect(one).toMatchObject({ status: 'limited', last_error: 'RESOURCE_EXHAUSTED' });
     expect(two).toMatchObject({ status: 'signed_out', retry_at: 0 });
     expect(three).toMatchObject({ status: 'working' });
     expect(three!.last_used_at).toBeTruthy();
+  });
+
+  it('stops on unusual activity instead of moving to the next account, and rests the flagged one an hour', async () => {
+    run(`DELETE FROM google_accounts`);
+    addGoogleAccount('one@gmail.com', P2);
+    addGoogleAccount('two@gmail.com', P3);
+    const now = 1_000_000;
+    const used: string[] = [];
+    await expect(withGoogleAccount('x', async (p) => {
+      used.push(p);
+      throw new Error('PUBLIC_ERROR_UNUSUAL_ACTIVITY');
+    }, () => now)).rejects.toThrow('UNUSUAL_ACTIVITY');
+    expect(used).toEqual([P2]);
+    expect(listGoogleAccounts()[0]).toMatchObject({ status: 'blocked', retry_at: now + GOOGLE_ACCOUNT_BLOCKED_COOLDOWN_MS });
+    expect(listGoogleAccounts()[1]).toMatchObject({ status: 'working' });
   });
 
   it('marks an account out of credits, rests it, and uses it again after the cooldown', async () => {
@@ -117,7 +133,7 @@ describe('Google accounts: Flow jobs move to the next working account', () => {
     const used: string[] = [];
     await withGoogleAccount('site-project', async (p) => {
       used.push(p);
-      if (used.length === 1) throw new Error('PUBLIC_ERROR_UNUSUAL_ACTIVITY');
+      if (used.length === 1) throw new Error('RESOURCE_EXHAUSTED');
     });
     expect(used).toEqual(['site-project', P3]);
   });

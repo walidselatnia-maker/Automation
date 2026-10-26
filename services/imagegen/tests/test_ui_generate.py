@@ -28,17 +28,27 @@ def image(n: str) -> GeneratedImage:
 class Fake(FlowClient):
     """A client whose browser is a script: listings in order, submit canned."""
 
-    def __init__(self, listings, submit=None):
+    def __init__(self, listings, submit=None, page_errors=None):
         self._listings = list(listings)
         self._submit = submit or {"ok": True, "submitted": True}
+        self._page_errors = list(page_errors or [])
         self.submitted: list[tuple[str, str]] = []
+        self.picks: list[tuple] = []
+        self.ignored: list[list[str]] = []
 
     async def project_images(self, project_id: str):
         return self._listings.pop(0) if len(self._listings) > 1 else self._listings[0]
 
-    async def ui_generate_image(self, prompt: str, project_id: str) -> dict:
+    async def ui_generate_image(self, prompt: str, project_id: str,
+                                model_label=None, aspect_label=None) -> dict:
         self.submitted.append((prompt, project_id))
+        self.picks.append((model_label, aspect_label))
         return self._submit
+
+    async def ui_page_errors(self, project_id: str, ignore: list[str]) -> list[str]:
+        self.ignored.append(ignore)
+        shown = self._page_errors.pop(0) if self._page_errors else []
+        return [e for e in shown if e not in ignore]
 
 
 def run(client, **kw):
@@ -119,8 +129,46 @@ def test_the_answer_matches_the_shape_the_old_path_returned(monkeypatch):
     assert list(out["data"]["media"][0]["image"]["generatedImage"]) == ["mediaId", "fifeUrl"]
 
 
-def test_the_composer_path_is_off_by_default():
-    """The widget mint is the fix; the composer path is kept for trying by hand."""
+def test_the_composer_path_is_on_by_default():
+    """Flow's own page sends the request; nothing of ours touches reCAPTCHA."""
     import agent.config as config
 
-    assert config.IMAGE_USE_UI is False
+    assert config.IMAGE_USE_UI is True
+
+
+def test_the_model_and_shape_reach_the_composer(monkeypatch):
+    monkeypatch.setattr(asyncio, "sleep", lambda _s: _REAL_SLEEP(0))
+    client = Fake([[], [image("fresh")]])
+
+    run(client, model_label="Nano Banana 2.1", aspect_label="3:4")
+
+    assert client.picks == [("Nano Banana 2.1", "3:4")]
+
+
+def test_an_error_flow_shows_fails_the_job_without_waiting_out_the_poll(monkeypatch):
+    # A failed generation leaves nothing in the listing. Without reading the
+    # page the job would sit for three minutes on a picture that never comes.
+    monkeypatch.setattr(asyncio, "sleep", lambda _s: _REAL_SLEEP(0))
+    client = Fake([[image("old")]], page_errors=[["We noticed some unusual activity."]])
+
+    out = run(client)
+
+    assert out["error"].startswith("FLOW_UI_ERROR")
+    assert "unusual activity" in out["error"]
+
+
+def test_a_message_already_on_the_page_is_not_this_jobs_error(monkeypatch):
+    # An error banner from an earlier attempt can still be showing. It was
+    # there before the click, so it is not about this one.
+    monkeypatch.setattr(asyncio, "sleep", lambda _s: _REAL_SLEEP(0))
+    old = "Something went wrong."
+    client = Fake(
+        [[image("old")], [image("old")], [image("old"), image("new")]],
+        submit={"ok": True, "submitted": True, "pageErrors": [old]},
+        page_errors=[[old]],
+    )
+
+    out = run(client)
+
+    assert out["data"]["media"][0]["name"] == "new"
+    assert client.ignored[0] == [old]

@@ -15,7 +15,7 @@ import os
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from agent import chrome, image_models
+from agent import chrome, generation_hold, image_models
 from agent.auth import require_api_key
 from agent.config import FLOW_PROJECT_ID
 from agent.db import jobs
@@ -45,7 +45,20 @@ async def extension_status() -> dict:
         # together or it will tell people their session is broken every time the
         # container is idle, which is most of the day.
         "chrome": chrome.state(),
+        # Set after Google says "unusual activity": no job is started until it
+        # runs out. None when generating normally.
+        "generation_hold": generation_hold.active(),
     }
+
+
+@router.post("/clear-hold")
+async def clear_hold() -> dict:
+    """Lift the unusual-activity hold by hand.
+
+    Only once a picture made by hand in the Flow tab works again; lifting it
+    while Google is still blocking the account is what the hold is there to stop.
+    """
+    return {"was_held": generation_hold.clear()}
 
 
 @router.get("/ui-scan")

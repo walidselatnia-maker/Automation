@@ -1,0 +1,8 @@
+{
+  "editor": "div.ProseMirror",
+  "generateButton": "button[aria-label=\"Start generation\"]",
+  "menuTriggers": "button, [role=\"button\"], [role=\"combobox\"], [aria-haspopup]",
+  "menuOptions": "[role=\"option\"], [role=\"menuitem\"], [role=\"menuitemradio\"], [role=\"radio\"], [role=\"tab\"], button, li",
+  "errorRegions": "[role=\"alert\"], [role=\"status\"], [aria-live], [data-state=\"error\"]",
+  "errorWords": "unusual activity|something went wrong|couldn.t generate|could not generate|failed to generate|generation failed|violat|against our policies|policy violation|quota|limit reached|try again later|not available in your"
+}

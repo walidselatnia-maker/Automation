@@ -44,6 +44,9 @@ FLOW_PROJECT_URL = (
 POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "5"))
 MAX_RETRIES = int(os.environ.get("MAX_RETRIES", "5"))
 API_COOLDOWN = int(os.environ.get("API_COOLDOWN", "10"))
+# Up to this many seconds more, at random, on top of API_COOLDOWN: a gap that
+# is the same every time is a gap a person never leaves.
+API_COOLDOWN_JITTER = int(os.environ.get("API_COOLDOWN_JITTER", "20"))
 MAX_CONCURRENT_REQUESTS = int(os.environ.get("MAX_CONCURRENT_REQUESTS", "2"))
 STALE_PROCESSING_TIMEOUT = int(os.environ.get("STALE_PROCESSING_TIMEOUT", "600"))
 
@@ -60,11 +63,13 @@ TOKEN_MAX_AGE_BEFORE_BATCH = int(os.environ.get("TOKEN_MAX_AGE_BEFORE_BATCH", "0
 
 # Generate images by driving Flow's composer instead of sending the call.
 #
-# Off. It was the first answer to Google's 2026-09-22 build refusing our
-# captcha-gated calls, and it misses things in practice; upstream also found it
-# refused again after a cold Chrome restart (crisng95/flowkit#58). The widget
-# mint in extension/injected.js is the fix. This stays for trying by hand.
-IMAGE_USE_UI = os.environ.get("IMAGE_USE_UI", "0") not in ("", "0", "false", "False")
+# On. Flow's own page sends the request, so nothing of ours touches reCAPTCHA,
+# and the clicks and typing are paced like a person's (see "Acting like a
+# person" in extension/background.js). Sending the captcha-gated call ourselves
+# is what Google answers with PUBLIC_ERROR_UNUSUAL_ACTIVITY, and upstream saw
+# accounts blocked outright after tools kept doing it (crisng95/flowkit#67).
+# Set to 0 to go back to the batch call with the widget mint in injected.js.
+IMAGE_USE_UI = os.environ.get("IMAGE_USE_UI", "1") not in ("", "0", "false", "False")
 
 # Send images over Flow's batchexecute transport instead of the REST API.
 #

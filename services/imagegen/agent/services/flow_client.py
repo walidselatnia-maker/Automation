@@ -19,6 +19,7 @@ from agent.config import (
 )
 from agent.services import flow_batch as fb
 from agent.services.headers import random_headers
+from agent.ui_selectors import ui_selectors
 
 logger = logging.getLogger(__name__)
 
@@ -676,16 +677,37 @@ class FlowClient:
         except Exception as e:
             return {"error": f"upload gave no media id: {type(e).__name__}: {e}"}
 
-    async def ui_generate_image(self, prompt: str, project_id: str) -> dict:
-        """Type the prompt into Flow's composer and press Generate.
+    async def ui_generate_image(self, prompt: str, project_id: str,
+                                model_label: str | None = None,
+                                aspect_label: str | None = None) -> dict:
+        """Pick the model and shape in Flow's menus, type the prompt, submit.
 
-        Says only that the submit went in; what it made is read from the
-        project listing afterwards. Generous timeout: this drives a real page
-        and waits for the composer to clear.
+        Says only that the submit went in, what was picked, and which error
+        messages the page already showed; what it made is read from the project
+        listing afterwards. Generous timeout: this drives a real page at a
+        person's pace and waits for the composer to clear.
         """
         return await self._send(
-            "ui_generate_image", {"projectId": project_id, "prompt": prompt}, timeout=180,
+            "ui_generate_image",
+            {"projectId": project_id, "prompt": prompt, "model": model_label,
+             "aspect": aspect_label, "selectors": ui_selectors()},
+            timeout=240,
         )
+
+    async def ui_page_errors(self, project_id: str, ignore: list[str]) -> list[str]:
+        """Error messages Flow shows on the page now, less those in `ignore`.
+
+        A failed generation leaves nothing in the project listing, so without
+        this the job would wait out the whole poll for a picture that is never
+        coming. Never fatal: a read that fails is an empty list.
+        """
+        out = await self._send(
+            "ui_page_errors",
+            {"projectId": project_id, "ignore": ignore, "selectors": ui_selectors()},
+            timeout=30,
+        )
+        errors = out.get("errors") if isinstance(out, dict) else None
+        return [e for e in errors or [] if isinstance(e, str)]
 
     async def scan_flow_ui(self, project_id: str | None = None) -> dict:
         """What Flow's generate controls look like on the live page.
@@ -726,6 +748,8 @@ class FlowClient:
             return {"error": f"project listing unreadable: {type(e).__name__}: {e}"}
 
     async def generate_images_ui(self, prompt: str, project_id: str,
+                                 model_label: str | None = None,
+                                 aspect_label: str | None = None,
                                  poll_seconds: float = 180) -> dict:
         """Generate by driving Flow's composer, and read the result back.
 
@@ -747,9 +771,15 @@ class FlowClient:
             return before
         known = {image.media_id for image in before}
 
-        submitted = await self.ui_generate_image(prompt, project_id)
+        submitted = await self.ui_generate_image(prompt, project_id, model_label, aspect_label)
         if submitted.get("error"):
             return {"error": f"the composer would not take it: {submitted['error']}"}
+        for what, picked in (submitted.get("picked") or {}).items():
+            if picked is not True:
+                logger.warning("Flow UI: could not pick the %s (%s); the composer's own was used",
+                               what, picked)
+        # Messages already on the page belong to earlier attempts.
+        stale = [e for e in submitted.get("pageErrors") or [] if isinstance(e, str)]
 
         # Flow's own UI decides how many variants a submit makes, so a submit
         # can bring back more than one. The first new one is this job's; the
@@ -761,6 +791,10 @@ class FlowClient:
             if isinstance(now, dict):
                 continue  # a listing that failed once is not the generation failing
             fresh = [image for image in now if image.media_id not in known]
+            if not fresh:
+                shown = await self.ui_page_errors(project_id, stale)
+                if shown:
+                    return {"error": f"FLOW_UI_ERROR: {shown[0]}"}
             if fresh:
                 first = fresh[0]
                 return {

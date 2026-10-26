@@ -31,8 +31,16 @@ export interface GoogleAccount {
   retry_at: number;
 }
 
-/** How long a limited or flagged account rests before jobs try it again. */
+/** How long a limited account rests before jobs try it again. */
 export const GOOGLE_ACCOUNT_COOLDOWN_MS = 30 * 60_000;
+
+/**
+ * How long an account Google flagged for unusual activity rests. Longer than a
+ * limit: submitting into that verdict is how accounts end up blocked outright
+ * (crisng95/flowkit#67), and the image service holds every job for an hour
+ * after one anyway.
+ */
+export const GOOGLE_ACCOUNT_BLOCKED_COOLDOWN_MS = 60 * 60_000;
 
 export const STATUS_LABEL: Record<AccountStatus, string> = {
   working: 'Working',
@@ -104,7 +112,8 @@ const outOfCredits = (message: string): boolean => /USER_QUOTA_REACHED|no video 
 
 function markTrouble(account: GoogleAccount, trouble: Exclude<AccountStatus, 'working'>, message: string, now: number): void {
   // A signed-out account waits for Sign in; the others rest and are tried again.
-  const retryAt = trouble === 'signed_out' ? 0 : now + GOOGLE_ACCOUNT_COOLDOWN_MS;
+  const retryAt = trouble === 'signed_out' ? 0
+    : now + (trouble === 'blocked' ? GOOGLE_ACCOUNT_BLOCKED_COOLDOWN_MS : GOOGLE_ACCOUNT_COOLDOWN_MS);
   run(
     `UPDATE google_accounts SET status = ?, retry_at = ?, last_error = ?, credits = CASE WHEN ? THEN '0' ELSE credits END WHERE id = ?`,
     trouble, retryAt, message.slice(0, 300), outOfCredits(message) ? 1 : 0, account.id,
@@ -173,6 +182,11 @@ export async function withGoogleAccount<T>(fallbackProject: string, job: (projec
         throw err;
       }
       markTrouble(account, trouble, message, now());
+      // Unusual activity is not moved past. Every account here runs in the
+      // same Chrome on the same connection, which may be what Google judged,
+      // and trying the next one straight away is one more submit into that
+      // verdict. The image service holds all jobs for an hour after it.
+      if (trouble === 'blocked') throw err;
       lastError = err;
     }
   }

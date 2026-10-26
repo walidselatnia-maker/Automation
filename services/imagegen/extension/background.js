@@ -581,6 +581,8 @@ function connectToAgent() {
         } finally {
           releaseFlowTab();
         }
+      } else if (msg.method === 'ui_page_errors') {
+        sendToAgent({ id: msg.id, result: await uiPageErrors(msg.params || {}) });
       } else if (msg.method === 'scan_flow_ui') {
         sendToAgent({ id: msg.id, result: await scanFlowUi(msg.params || {}) });
       } else if (msg.method === 'api_request') {
@@ -1934,31 +1936,126 @@ async function scanFlowUi({ projectId = null } = {}) {
 
 const CDP_VERSION = '1.3';
 
-/** Run `body` with the debugger attached, and always detach afterwards. */
+// Where things are on Flow's page. The agent sends its own copy with every
+// call (agent/ui_selectors.json, overridable from the data folder without a
+// rebuild); these are only for a call that arrives without one.
+const UI_DEFAULTS = {
+  editor: 'div.ProseMirror',
+  generateButton: 'button[aria-label="Start generation"]',
+  menuTriggers: 'button, [role="button"], [role="combobox"], [aria-haspopup]',
+  menuOptions: '[role="option"], [role="menuitem"], [role="menuitemradio"], [role="radio"], [role="tab"], button, li',
+  errorRegions: '[role="alert"], [role="status"], [aria-live], [data-state="error"]',
+  errorWords: 'unusual activity|something went wrong|couldn.t generate|could not generate|failed to generate|generation failed|violat|against our policies|policy violation|quota|limit reached|try again later|not available in your',
+};
+
+function uiSelectors(given) {
+  return { ...UI_DEFAULTS, ...(given && typeof given === 'object' ? given : {}) };
+}
+
+// ─── Acting like a person ───────────────────────────────────
+//
+// Flow's page sends the request, so reCAPTCHA scores the session the page is
+// in -- and how the clicks and keys arrive is part of that session. A pointer
+// that teleports to the exact centre of a button and presses and releases in
+// the same millisecond, every time, is a pattern no person makes. So the
+// pointer travels a curved path from where it last was, lands somewhere inside
+// the control rather than its centre, and holds the button for as long as a
+// finger does. The ranges are ours, chosen to sit inside what people do.
+
+const rand = (lo, hi) => lo + Math.random() * (hi - lo);
+const pause = (lo, hi) => sleep(Math.round(rand(lo, hi)));
+
+/** Last pointer position per tab, so each move starts where the last ended. */
+const pointerAt = new Map();
+
+/** Ease in and out: slow off the mark, fast in the middle, slow onto the target. */
+const ease = (t) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2);
+
+async function humanMove(target, x, y) {
+  const from = pointerAt.get(target.tabId) || { x: x + rand(-250, 250), y: y + rand(-180, 180) };
+  // Two control points off the straight line make the path a gentle curve.
+  const bend = () => ({ x: rand(-80, 80), y: rand(-60, 60) });
+  const b1 = bend();
+  const b2 = bend();
+  const c1 = { x: from.x + (x - from.x) * 0.3 + b1.x, y: from.y + (y - from.y) * 0.3 + b1.y };
+  const c2 = { x: from.x + (x - from.x) * 0.7 + b2.x, y: from.y + (y - from.y) * 0.7 + b2.y };
+  const steps = Math.round(rand(8, 26));
+  for (let i = 1; i <= steps; i++) {
+    const t = ease(i / steps);
+    const u = 1 - t;
+    const px = u * u * u * from.x + 3 * u * u * t * c1.x + 3 * u * t * t * c2.x + t * t * t * x;
+    const py = u * u * u * from.y + 3 * u * u * t * c1.y + 3 * u * t * t * c2.y + t * t * t * y;
+    await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent',
+      { type: 'mouseMoved', x: Math.round(px), y: Math.round(py) });
+    await pause(8, 22);
+  }
+  pointerAt.set(target.tabId, { x, y });
+}
+
+/** A trusted click somewhere inside `box`, reached by moving there first. */
+async function humanClick(target, box) {
+  const x = box.left + box.w * rand(0.3, 0.7);
+  const y = box.top + box.h * rand(0.35, 0.65);
+  await humanMove(target, x, y);
+  await pause(50, 150);
+  const base = { x: Math.round(x), y: Math.round(y), button: 'left', clickCount: 1 };
+  await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', { type: 'mousePressed', ...base });
+  await pause(60, 140);
+  await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', { type: 'mouseReleased', ...base });
+}
+
+async function pressKey(target, key, { code = key, keyCode = 0, modifiers = 0, text, commands } = {}) {
+  const down = { type: text ? 'keyDown' : 'rawKeyDown', key, code, windowsVirtualKeyCode: keyCode, modifiers };
+  if (text) down.text = text;
+  if (commands) down.commands = commands;
+  await chrome.debugger.sendCommand(target, 'Input.dispatchKeyEvent', down);
+  await pause(35, 95);
+  await chrome.debugger.sendCommand(target, 'Input.dispatchKeyEvent',
+    { type: 'keyUp', key, code, windowsVirtualKeyCode: keyCode, modifiers });
+}
+
+// ─── One debugger session per run, not per click ────────────
+//
+// Attaching shows Chrome's "being debugged" bar and resizes the page under it,
+// and doing that around every action is itself a rhythm. So it is attached
+// once and let go only after the tab has been idle for a while.
+
+const DEBUGGER_IDLE_MS = 90_000;
+const attached = new Map(); // tabId -> idle timer
+
+chrome.debugger.onDetach.addListener((source) => {
+  clearTimeout(attached.get(source.tabId));
+  attached.delete(source.tabId);
+  pointerAt.delete(source.tabId);
+});
+
 async function withDebugger(tabId, body) {
   const target = { tabId };
-  try {
-    await chrome.debugger.attach(target, CDP_VERSION);
-  } catch (e) {
-    // Already attached -- by a previous run that died, or by DevTools being
-    // open on this tab. Neither is ours to steal.
-    return { error: `DEBUGGER_ATTACH_FAILED: ${e?.message || e}` };
+  if (!attached.has(tabId)) {
+    try {
+      await chrome.debugger.attach(target, CDP_VERSION);
+    } catch (e) {
+      // Already attached -- by DevTools open on this tab, or a run of ours
+      // that the service worker lost track of across a restart.
+      if (!String(e?.message || e).includes('Another debugger')) {
+        return { error: `DEBUGGER_ATTACH_FAILED: ${e?.message || e}` };
+      }
+    }
   }
+  clearTimeout(attached.get(tabId));
+  attached.set(tabId, null);
   try {
     return await body(target);
   } finally {
-    await chrome.debugger.detach(target).catch(() => {});
+    attached.set(tabId, setTimeout(() => {
+      attached.delete(tabId);
+      pointerAt.delete(tabId);
+      chrome.debugger.detach(target).catch(() => {});
+    }, DEBUGGER_IDLE_MS));
   }
 }
 
-/** One trusted click at viewport coordinates. */
-async function trustedClick(target, x, y) {
-  const base = { x: Math.round(x), y: Math.round(y), button: 'left', clickCount: 1 };
-  await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent',
-    { type: 'mousePressed', ...base });
-  await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent',
-    { type: 'mouseReleased', ...base });
-}
+// ─── Reading the page ───────────────────────────────────────
 
 /**
  * Where the composer and the Generate button are, and whether it is ready.
@@ -1966,17 +2063,18 @@ async function trustedClick(target, x, y) {
  * Read immediately before each click rather than once: the composer grows as
  * text is typed into it and the button moves down the page with it.
  */
-async function composerBox(tabId) {
+async function composerBox(tabId, ui) {
   const [out] = await chrome.scripting.executeScript({
     target: { tabId },
     world: 'MAIN',
-    func: () => {
-      const editor = document.querySelector('div.ProseMirror');
-      const button = document.querySelector('button[aria-label="Start generation"]');
+    args: [ui.editor, ui.generateButton],
+    func: (editorSel, buttonSel) => {
+      const editor = document.querySelector(editorSel);
+      const button = document.querySelector(buttonSel);
       const box = (el) => {
         if (!el) return null;
         const r = el.getBoundingClientRect();
-        return { x: r.x + r.width / 2, y: r.y + r.height / 2, w: r.width, h: r.height };
+        return { left: r.x, top: r.y, w: r.width, h: r.height };
       };
       return {
         editor: box(editor),
@@ -1990,40 +2088,139 @@ async function composerBox(tabId) {
 }
 
 /**
- * Put `prompt` in the composer.
- *
- * insertText through execCommand rather than assigning textContent: the
- * composer is a ProseMirror editor and keeps its own document, so text set
- * on the node is text the editor does not know it has -- the button stays
- * disabled and a submit sends nothing. selectAll first, so a prompt left over
- * from an attempt that failed is replaced rather than appended to.
+ * Error messages showing on the page: alert regions, and any small element
+ * whose own words read like a failure. Leaf-sized only, so a paragraph that
+ * merely mentions "policy" in Flow's help text is not taken for one.
  */
-async function typePrompt(tabId, prompt) {
+async function pageErrors(tabId, ui) {
   const [out] = await chrome.scripting.executeScript({
     target: { tabId },
     world: 'MAIN',
-    args: [prompt],
-    func: (text) => {
-      const editor = document.querySelector('div.ProseMirror');
-      if (!editor) return { error: 'NO_COMPOSER' };
-      editor.focus();
-      document.execCommand('selectAll', false, null);
-      document.execCommand('insertText', false, text);
-      return { text: editor.innerText.trim() };
+    args: [ui.errorRegions, ui.errorWords],
+    func: (regionSel, words) => {
+      const re = new RegExp(words, 'i');
+      const seen = new Set();
+      const visible = (el) => {
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+      };
+      const consider = (el) => {
+        const text = (el.innerText || '').trim().replace(/\s+/g, ' ');
+        if (text && text.length < 300 && re.test(text) && visible(el)) seen.add(text.slice(0, 200));
+      };
+      document.querySelectorAll(regionSel).forEach(consider);
+      document.querySelectorAll('div, span, p').forEach((el) => {
+        if (el.childElementCount <= 2) consider(el);
+      });
+      // A message nested in another that also matched: keep the shortest.
+      return [...seen].filter((t) => ![...seen].some((o) => o !== t && t.includes(o))).slice(0, 5);
     },
   });
-  return out?.result || { error: 'NO_INJECTION_RESULT' };
+  return out?.result || [];
 }
 
 /**
- * Type a prompt into Flow's composer and press Generate.
+ * Pick `wanted` in one of the composer's menus -- the model or the shape.
  *
- * Says only whether the submit went in. What it produced is read from the
- * project listing afterwards, by the agent -- that call carries no captcha,
- * so it is the half of this that never broke.
+ * Done by the words on screen rather than by Flow's markup, which is minified
+ * and changes: the control that shows the current choice is the one whose text
+ * holds one of `family` (every value that menu can show), and the option is
+ * the visible element whose text is `wanted`. Answers true, or why not.
  */
-async function uiGenerateImage({ projectId = null, prompt = '' } = {}) {
+async function pickInMenu(target, tabId, ui, wanted, family) {
+  const find = async (mode) => {
+    const [out] = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      args: [mode, wanted, family, ui.menuTriggers, ui.menuOptions],
+      func: (how, want, names, triggerSel, optionSel) => {
+        const box = (el) => {
+          const r = el.getBoundingClientRect();
+          return r.width > 0 && r.height > 0 ? { left: r.x, top: r.y, w: r.width, h: r.height } : null;
+        };
+        const text = (el) => (el.innerText || el.textContent || '').trim().replace(/\s+/g, ' ');
+        if (how === 'trigger') {
+          for (const el of document.querySelectorAll(triggerSel)) {
+            const t = text(el);
+            if (t.length > 80 || !names.some((n) => t.includes(n))) continue;
+            const b = box(el);
+            if (b) return { box: b, current: t, already: t.includes(want) };
+          }
+          return null;
+        }
+        // The option's own words may run on ("Nano Banana Pro  Best quality"),
+        // so it starts with the name; the shortest such text is the option
+        // itself rather than a panel that holds it.
+        let best = null;
+        for (const el of document.querySelectorAll(optionSel)) {
+          const t = text(el);
+          if (t !== want && !t.startsWith(want + ' ')) continue;
+          const b = box(el);
+          if (b && (!best || t.length < best.len)) best = { box: b, len: t.length };
+        }
+        return best && { box: best.box };
+      },
+    });
+    return out?.result || null;
+  };
+
+  const trigger = await find('trigger');
+  if (!trigger) return `no control showing any of ${family.join(', ')}`;
+  if (trigger.already) return true;
+
+  await humanClick(target, trigger.box);
+  await pause(400, 900);
+  const option = await find('option');
+  if (!option) {
+    await pressKey(target, 'Escape', { keyCode: 27 });
+    return `"${wanted}" was not in the menu`;
+  }
+  await humanClick(target, option.box);
+  await pause(300, 700);
+
+  const after = await find('trigger');
+  if (after && !after.already) {
+    // Some menus stay open after a pick; close it before going on.
+    await pressKey(target, 'Escape', { keyCode: 27 });
+    await pause(200, 400);
+  }
+  return after && after.already ? true : `the control still shows "${after?.current || '?'}"`;
+}
+
+const MODEL_LABELS = ['Nano Banana Pro', 'Nano Banana 2.1', 'Nano Banana 2 Lite', 'Nano Banana 2', 'Imagen'];
+const ASPECT_LABELS = ['16:9', '9:16', '1:1', '3:4', '4:3'];
+
+/**
+ * Type `prompt` into the composer as keyboard input.
+ *
+ * Select-all and then one insertText through the debugger: the browser's own
+ * input path, so ProseMirror sees the change it would see from a person and
+ * the Generate button enables. Whatever an earlier attempt left in the box is
+ * replaced, not appended to.
+ */
+async function typePrompt(target, prompt) {
+  const mac = /Mac/.test(navigator.platform);
+  await pressKey(target, 'a', { code: 'KeyA', keyCode: 65, modifiers: mac ? 4 : 2, commands: ['selectAll'] });
+  await pause(80, 200);
+  await chrome.debugger.sendCommand(target, 'Input.insertText', { text: prompt });
+}
+
+/**
+ * Pick the model and shape, type a prompt into Flow's composer, and submit.
+ *
+ * Says whether the submit went in, what could be picked, and which error
+ * messages the page was already showing -- so the agent, watching for the
+ * result, does not take an old message for this attempt's. What it produced is
+ * read from the project listing afterwards, by the agent.
+ *
+ * Paced like a person: a pause before the prompt box and another before
+ * submitting, and the submit is the Enter key most times and the button the
+ * rest. A page with no composer -- left on the project list, or stuck -- is
+ * reloaded once before giving up.
+ */
+async function uiGenerateImage({ projectId = null, prompt = '', model = null, aspect = null, selectors = null } = {}) {
   if (!prompt.trim()) return { error: 'EMPTY_PROMPT' };
+  const ui = uiSelectors(selectors);
 
   await ensureFlowTabOnProject(projectId);
   const tabs = await queryFlowTabs();
@@ -2032,43 +2229,78 @@ async function uiGenerateImage({ projectId = null, prompt = '' } = {}) {
   const tab = await reviveTabIfNeeded(candidate);
   if (!tab) return { error: 'FLOW_TAB_DISCARDED' };
 
-  // The composer only exists on a project page. A tab that landed on the
-  // project list or Flow's 404 has none, and clicking where it would be
-  // clicks the page behind it.
-  let box = await composerBox(tab.id);
-  if (!box || !box.editor) return { error: 'NO_COMPOSER: the tab is not on a project page' };
+  let box = await composerBox(tab.id, ui);
+  if (!box || !box.editor) {
+    const loaded = waitForTabLoad(tab.id, 30000);
+    await chrome.tabs.reload(tab.id);
+    await loaded.catch(() => {});
+    await pause(2000, 4000);
+    box = await composerBox(tab.id, ui);
+    if (!box || !box.editor) return { error: 'NO_COMPOSER: the tab is not on a project page' };
+  }
+  const before = await pageErrors(tab.id, ui);
 
   return withDebugger(tab.id, async (target) => {
+    const picked = {};
+    if (model) picked.model = await pickInMenu(target, tab.id, ui, model, MODEL_LABELS);
+    if (aspect) picked.aspect = await pickInMenu(target, tab.id, ui, aspect, ASPECT_LABELS);
+
     // Focus by clicking it, not by calling focus(): ProseMirror places the
     // caret from the pointer event, and text inserted without a caret goes
     // nowhere.
-    await trustedClick(target, box.editor.x, box.editor.y);
-    const typed = await typePrompt(tab.id, prompt);
-    if (typed.error) return typed;
-    if (typed.text !== prompt.trim()) {
-      return { error: `COMPOSER_REJECTED_PROMPT: it holds ${JSON.stringify((typed.text || '').slice(0, 80))}` };
+    await pause(1000, 3500);
+    box = await composerBox(tab.id, ui);
+    if (!box?.editor) return { error: 'NO_COMPOSER: it went away while picking settings' };
+    await humanClick(target, box.editor);
+    await pause(150, 400);
+    await typePrompt(target, prompt);
+
+    box = await composerBox(tab.id, ui);
+    if ((box?.text || '') !== prompt.trim()) {
+      return { error: `COMPOSER_REJECTED_PROMPT: it holds ${JSON.stringify((box?.text || '').slice(0, 80))}` };
     }
 
     // The button enables on the editor's own change event, which lands a
     // frame or two after the insert.
-    for (let i = 0; i < 20; i++) {
-      box = await composerBox(tab.id);
-      if (box?.ready) break;
+    for (let i = 0; i < 20 && !box?.ready; i++) {
       await sleep(100);
+      box = await composerBox(tab.id, ui);
     }
     if (!box?.ready) return { error: 'GENERATE_DISABLED: the composer did not accept the prompt' };
 
-    await trustedClick(target, box.button.x, box.button.y);
-
-    // Submitted is the composer going empty again. Without this a caller can
-    // start polling the listing before Flow has sent anything.
-    for (let i = 0; i < 30; i++) {
-      await sleep(200);
-      const after = await composerBox(tab.id);
-      if (after && after.text === '') return { ok: true, submitted: true };
+    await pause(800, 3000);
+    const cleared = async (tries) => {
+      for (let i = 0; i < tries; i++) {
+        await sleep(200);
+        const after = await composerBox(tab.id, ui);
+        if (after && after.text === '') return true;
+      }
+      return false;
+    };
+    // Submitted is the composer going empty again. Enter first most times;
+    // if Enter only made a new line, the button.
+    if (Math.random() < 0.8) {
+      await pressKey(target, 'Enter', { keyCode: 13, text: '\r' });
+      if (await cleared(10)) return { ok: true, submitted: true, picked, pageErrors: before };
+      box = await composerBox(tab.id, ui);
+      if (box?.text && box.text !== prompt.trim()) {
+        await typePrompt(target, prompt); // undo the new line Enter made
+        box = await composerBox(tab.id, ui);
+      }
     }
+    if (!box?.button) return { error: 'SUBMIT_NOT_ACCEPTED: no Generate button' };
+    await humanClick(target, box.button);
+    if (await cleared(30)) return { ok: true, submitted: true, picked, pageErrors: before };
     return { error: 'SUBMIT_NOT_ACCEPTED: the prompt is still in the composer' };
   });
+}
+
+/** Error messages on the Flow page now, less the ones in `ignore`. */
+async function uiPageErrors({ ignore = [], selectors = null } = {}) {
+  const tab = (await queryFlowTabs()).find((t) => !t.discarded);
+  if (!tab) return { errors: [] };
+  const shown = await pageErrors(tab.id, uiSelectors(selectors)).catch(() => []);
+  return { errors: shown.filter((e) => !ignore.includes(e)) };
 }
 
 async function handleBatchRpc(msg) {

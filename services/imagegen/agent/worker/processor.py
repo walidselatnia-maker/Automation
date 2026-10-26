@@ -13,11 +13,13 @@ import asyncio
 import base64
 import json
 import logging
+import random
 
 import httpx
 
 from agent.config import (
     API_COOLDOWN,
+    API_COOLDOWN_JITTER,
     FLOW_PROJECT_ID,
     IMAGE_USE_BATCH,
     IMAGE_USE_UI,
@@ -30,7 +32,7 @@ from agent.config import (
     VIDEO_USE_BATCH,
     VIDEO_POLL_INTERVAL,
 )
-from agent import chrome, image_models, video_models
+from agent import chrome, generation_hold, image_models, video_models
 from agent.db import jobs
 from agent.services.flow_client import get_flow_client
 from agent.worker._parsing import (
@@ -57,6 +59,14 @@ ASPECT_RATIOS = {
     "PORTRAIT_3_4": "IMAGE_ASPECT_RATIO_PORTRAIT_FOUR_THREE",
     # Recipe step pictures on the new websites: 1:1 (1024 x 1024).
     "SQUARE": "IMAGE_ASPECT_RATIO_SQUARE",
+}
+
+# The same shapes as Flow's composer labels them, for picking one by clicking.
+UI_ASPECT_LABELS = {
+    "IMAGE_ASPECT_RATIO_PORTRAIT": "9:16",
+    "IMAGE_ASPECT_RATIO_LANDSCAPE": "16:9",
+    "IMAGE_ASPECT_RATIO_PORTRAIT_FOUR_THREE": "3:4",
+    "IMAGE_ASPECT_RATIO_SQUARE": "1:1",
 }
 
 VIDEO_ASPECT_RATIOS = {
@@ -100,7 +110,10 @@ RETRYABLE = ("quota", "rate_limit", "exhausted", "resource_exhausted", "429",
              # The request cut off inside the Flow tab before Google answered:
              # a page still coming back from a reload, or navigating under the
              # injected fetch. A timeout by another name.
-             "no_injection_result", "injection_failed")
+             "no_injection_result", "injection_failed",
+             # Flow showed an error on the page after a submit through the
+             # composer. A retry reloads the tab first (reload_before).
+             "flow_ui_error")
 
 
 class WorkerController:
@@ -173,11 +186,14 @@ class WorkerController:
                 # waiting -- and treating them as such would hold a browser up
                 # at 170% for a queue nothing is allowed to touch, for as long
                 # as whatever the watchdog paused for goes unattended.
-                waiting = bool(counts.get("PENDING")) and not self.paused
+                # Held after Google's unusual-activity verdict: nothing is
+                # claimed until it runs out, and the browser may go down.
+                held = generation_hold.active() is not None
+                waiting = bool(counts.get("PENDING")) and not self.paused and not held
                 await chrome.reconcile(waiting)
 
                 free = MAX_CONCURRENT_REQUESTS - len(self._running)
-                if free > 0 and not self.paused and get_flow_client().connected:
+                if free > 0 and not self.paused and not held and get_flow_client().connected:
                     claimed = await jobs.claim_pending(free)
                     # Skipped while other jobs are still in flight, since
                     # reloading the tab takes their requests down with it.
@@ -251,8 +267,8 @@ class WorkerController:
             self._running.discard(job_id)
             chrome.release()
             # Spacing between calls, not between loop iterations: bursts are
-            # what earn a rate limit.
-            await asyncio.sleep(API_COOLDOWN)
+            # what earn a rate limit. Never the same gap twice.
+            await asyncio.sleep(API_COOLDOWN + random.uniform(0, API_COOLDOWN_JITTER))
 
     async def _run_image(self, job: dict) -> None:
         job_id = job["id"]
@@ -308,6 +324,8 @@ class WorkerController:
             if IMAGE_USE_UI:
                 result = await client.generate_images_ui(
                     request["prompt"], request["project_id"],
+                    model_label=self._ui_model_label(job),
+                    aspect_label=UI_ASPECT_LABELS.get(request["aspect_ratio"]),
                 )
             else:
                 result = await self._generate_by_model(client, job, job_id, request)
@@ -325,11 +343,22 @@ class WorkerController:
         logger.info("job %s COMPLETED", job_id[:8])
 
 
+    @staticmethod
+    def _ui_model_label(job: dict) -> str | None:
+        """The model to pick in Flow's menu, as the menu names it.
+
+        None for Automatic: the composer keeps whatever it has selected, as a
+        person would, rather than switching models on every image.
+        """
+        plan = image_models.plan(job.get("image_model") or image_models.AUTO)
+        if (job.get("image_model") or image_models.AUTO) == image_models.AUTO or not plan:
+            return None
+        return image_models.label_of(plan[0])
+
     async def _generate_by_model(self, client, job: dict, job_id: str, request: dict) -> dict:
         """The captcha-gated path: walk the models and keep the first Google takes.
 
-        Kept behind IMAGE_USE_UI for a Flow build that honours these calls
-        again, and because video still goes this way.
+        Used when IMAGE_USE_UI is off, and video still goes this way.
         """
         await image_models.ensure_discovered(client)
         choice = job.get("image_model") or image_models.AUTO
@@ -884,6 +913,15 @@ class WorkerController:
 
     async def _handle_failure(self, job: dict, error: str) -> None:
         job_id = job["id"]
+
+        # Google's anti-abuse verdict. Retrying into it is how upstream users
+        # lost their accounts, so the job fails and everything stops for an hour.
+        if generation_hold.is_unusual_activity(error):
+            generation_hold.start("Google said unusual activity")
+            logger.error("job %s FAILED (unusual activity; generation held): %s", job_id[:8], error[:300])
+            await jobs.fail(job_id, error)
+            return
+
         retryable = any(marker in error.lower() for marker in RETRYABLE)
 
         if retryable and job["attempts"] < MAX_RETRIES:
