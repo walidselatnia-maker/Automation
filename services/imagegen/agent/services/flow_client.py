@@ -27,6 +27,8 @@ logger = logging.getLogger(__name__)
 class FlowClient:
     """Sends commands to Chrome extension via WebSocket."""
 
+    _ui_lock: asyncio.Lock | None = None
+
     def __init__(self):
         self._extension_ws = None  # Set by WS server when extension connects
         self._pending: dict[str, asyncio.Future] = {}
@@ -750,7 +752,35 @@ class FlowClient:
     async def generate_images_ui(self, prompt: str, project_id: str,
                                  model_label: str | None = None,
                                  aspect_label: str | None = None,
-                                 poll_seconds: float = 180) -> dict:
+                                 poll_seconds: float = 300) -> dict:
+        """One at a time: there is one composer and one person at it.
+
+        With two jobs in flight, two prompts were typed into the same box and
+        each job watched for the other's picture; a submit and its result now
+        hold the composer together, the way a person waits for one picture
+        before typing the next prompt.
+        """
+        if self._ui_lock is None:
+            self._ui_lock = asyncio.Lock()
+        async with self._ui_lock:
+            return await self._generate_images_ui_once(
+                prompt, project_id, model_label, aspect_label, poll_seconds)
+
+    async def ui_page_images(self) -> list:
+        """The pictures showing in the Flow tab now, as GeneratedImage."""
+        out = await self._send("ui_page_images", {}, timeout=30)
+        urls = out.get("images") if isinstance(out, dict) else None
+        images = []
+        for url in urls or []:
+            if isinstance(url, str) and fb.MEDIA_HOST + "/image/" in url:
+                media_id = url.split("/image/", 1)[1].split("?", 1)[0]
+                images.append(fb.GeneratedImage(media_id=media_id, url=url))
+        return images
+
+    async def _generate_images_ui_once(self, prompt: str, project_id: str,
+                                 model_label: str | None = None,
+                                 aspect_label: str | None = None,
+                                 poll_seconds: float = 300) -> dict:
         """Generate by driving Flow's composer, and read the result back.
 
         The captcha-gated call cannot be sent from here any more -- see
@@ -780,6 +810,8 @@ class FlowClient:
                                what, picked)
         # Messages already on the page belong to earlier attempts.
         stale = [e for e in submitted.get("pageErrors") or [] if isinstance(e, str)]
+        # Pictures already showing on the page, so the page can be read too.
+        on_page_before = set(submitted.get("pageImages") or [])
 
         # Flow's own UI decides how many variants a submit makes, so a submit
         # can bring back more than one. The first new one is this job's; the
@@ -788,9 +820,14 @@ class FlowClient:
         while time.monotonic() < deadline:
             await asyncio.sleep(5)
             now = await self.project_images(project_id)
-            if isinstance(now, dict):
-                continue  # a listing that failed once is not the generation failing
-            fresh = [image for image in now if image.media_id not in known]
+            # A listing that failed once is not the generation failing.
+            fresh = [] if isinstance(now, dict) else [
+                image for image in now if image.media_id not in known]
+            if not fresh:
+                # The listing can lag the page, or miss a picture in a long
+                # project; the tile Flow shows is read as a second source.
+                fresh = [image for image in await self.ui_page_images()
+                         if image.media_id not in known and image.media_id not in on_page_before]
             if not fresh:
                 shown = await self.ui_page_errors(project_id, stale)
                 if shown:

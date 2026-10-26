@@ -28,7 +28,9 @@ def image(n: str) -> GeneratedImage:
 class Fake(FlowClient):
     """A client whose browser is a script: listings in order, submit canned."""
 
-    def __init__(self, listings, submit=None, page_errors=None):
+    def __init__(self, listings, submit=None, page_errors=None, page_images=None):
+        self._ui_lock = None
+        self._page_images = list(page_images or [])
         self._listings = list(listings)
         self._submit = submit or {"ok": True, "submitted": True}
         self._page_errors = list(page_errors or [])
@@ -44,6 +46,9 @@ class Fake(FlowClient):
         self.submitted.append((prompt, project_id))
         self.picks.append((model_label, aspect_label))
         return self._submit
+
+    async def ui_page_images(self):
+        return self._page_images.pop(0) if self._page_images else []
 
     async def ui_page_errors(self, project_id: str, ignore: list[str]) -> list[str]:
         self.ignored.append(ignore)
@@ -172,3 +177,45 @@ def test_a_message_already_on_the_page_is_not_this_jobs_error(monkeypatch):
 
     assert out["data"]["media"][0]["name"] == "new"
     assert client.ignored[0] == [old]
+
+
+
+def test_a_picture_flow_shows_counts_when_the_listing_has_not_caught_up(monkeypatch):
+    # The pictures were in Flow and the job still timed out: the listing never
+    # showed them. The tile on the page is read as well.
+    monkeypatch.setattr(asyncio, "sleep", lambda _s: _REAL_SLEEP(0))
+    client = Fake(
+        [[image("old")]],
+        submit={"ok": True, "submitted": True, "pageImages": ["shown-before"]},
+        page_images=[[image("shown-before")], [image("shown-before"), image("tile")]],
+    )
+
+    out = run(client)
+
+    assert out["data"]["media"][0]["name"] == "tile"
+
+
+def test_two_jobs_take_turns_at_the_composer(monkeypatch):
+    # Two prompts typed into the one box at once, each job watching for the
+    # other's picture, is how a finished picture was never collected.
+    monkeypatch.setattr(asyncio, "sleep", lambda _s: _REAL_SLEEP(0))
+    inside = []
+    most = []
+
+    class Slow(Fake):
+        async def ui_generate_image(self, *a, **kw):
+            inside.append(1)
+            most.append(len(inside))
+            await _REAL_SLEEP(0.01)
+            inside.pop()
+            return await super().ui_generate_image(*a, **kw)
+
+    client = Slow([[], [image("a")], [image("a")], [image("a"), image("b")]])
+
+    async def both():
+        await asyncio.gather(
+            client.generate_images_ui("one", "P"), client.generate_images_ui("two", "P"))
+
+    asyncio.run(both())
+
+    assert max(most) == 1

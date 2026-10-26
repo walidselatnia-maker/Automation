@@ -147,7 +147,7 @@ export const CSS = `
   color: var(--soft); font-size: 13px; aspect-ratio: auto; min-height: 99px; }
 .kw-pic-empty.making { color: var(--idle-ink); background: var(--idle); }
 .kw-pic-empty.failed { color: var(--bad); border-color: var(--bad); }
-.kw-pic-empty small { color: var(--faint); font-size: 12px; line-height: 1.4; max-height: 5.6em; overflow: hidden; overflow-wrap: anywhere; max-width: 100%; }
+.kw-pic-empty small { color: var(--faint); font-size: 12px; line-height: 1.4; max-height: 8.4em; overflow-y: auto; overflow-wrap: anywhere; max-width: 100%; }
 .kw-pic-empty .ns-btn { height: 30px; padding: 0 10px; font-size: 12px; }
 .kw-pic-empty form { margin: 4px 0 0; }
 .kw-failed-bar { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin: 0 0 16px; padding: 10px 16px; border: 1px solid var(--bad); border-left-width: 4px; border-radius: var(--r-ctl); background: var(--bad-tint); color: var(--ink); }
@@ -734,7 +734,7 @@ function pictureBox(picture: PictureRow | undefined, slot: string): Html {
   return html`<div class="kw-pic kw-pic-empty ${picture.status}">
     <span>${PICTURE_STATE[picture.status]}</span>
     ${picture.status === 'failed'
-      ? html`<small>${picture.error}</small>
+      ? html`<small title="${picture.error}">${picture.error}</small>
         <form method="post" action="/new-website/pictures/${picture.id}/retry"><button class="ns-btn small kw-pic-retry">Try again</button></form>`
       : raw('')}
   </div>`;

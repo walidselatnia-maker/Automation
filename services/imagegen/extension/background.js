@@ -581,6 +581,8 @@ function connectToAgent() {
         } finally {
           releaseFlowTab();
         }
+      } else if (msg.method === 'ui_page_images') {
+        sendToAgent({ id: msg.id, result: await uiPageImages() });
       } else if (msg.method === 'ui_page_errors') {
         sendToAgent({ id: msg.id, result: await uiPageErrors(msg.params || {}) });
       } else if (msg.method === 'scan_flow_ui') {
@@ -2134,6 +2136,26 @@ async function pageErrors(tabId, ui) {
   return out?.result || [];
 }
 
+/** Picture addresses showing in the tab: Flow's tiles, read as a person sees them. */
+async function pageImages(tabId) {
+  const [out] = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    func: () => {
+      const urls = new Set();
+      document.querySelectorAll('img, source, video').forEach((el) => {
+        for (const v of [el.currentSrc, el.src, el.getAttribute('src'), el.poster]) {
+          if (v && v.includes('flow-content.google/image/')) urls.add(v);
+        }
+      });
+      return [...urls];
+    },
+  });
+  return out?.result || [];
+}
+
+const mediaIdOf = (url) => url.split('/image/')[1].split('?')[0];
+
 /**
  * Pick `wanted` in one of the composer's menus -- the model or the shape.
  *
@@ -2261,6 +2283,7 @@ async function uiGenerateImage({ projectId = null, prompt = '', model = null, as
     if (!box || !box.editor) return { error: 'NO_COMPOSER: the tab is not on a project page' };
   }
   const before = await pageErrors(tab.id, ui);
+  const imagesBefore = (await pageImages(tab.id).catch(() => [])).map(mediaIdOf);
 
   return withDebugger(tab.id, async (target) => {
     const picked = {};
@@ -2303,7 +2326,7 @@ async function uiGenerateImage({ projectId = null, prompt = '', model = null, as
     // if Enter only made a new line, the button.
     if (Math.random() < 0.8) {
       await pressKey(target, 'Enter', { keyCode: 13, text: '\r' });
-      if (await cleared(10)) return { ok: true, submitted: true, picked, pageErrors: before };
+      if (await cleared(10)) return { ok: true, submitted: true, picked, pageErrors: before, pageImages: imagesBefore };
       box = await composerBox(tab.id, ui);
       if (box?.text && box.text !== prompt.trim()) {
         await typePrompt(target, prompt); // undo the new line Enter made
@@ -2312,9 +2335,16 @@ async function uiGenerateImage({ projectId = null, prompt = '', model = null, as
     }
     if (!box?.button) return { error: 'SUBMIT_NOT_ACCEPTED: no Generate button' };
     await humanClick(target, box.button);
-    if (await cleared(30)) return { ok: true, submitted: true, picked, pageErrors: before };
+    if (await cleared(30)) return { ok: true, submitted: true, picked, pageErrors: before, pageImages: imagesBefore };
     return { error: 'SUBMIT_NOT_ACCEPTED: the prompt is still in the composer' };
   });
+}
+
+/** Pictures showing on the Flow page now. */
+async function uiPageImages() {
+  const tab = (await queryFlowTabs()).find((t) => !t.discarded);
+  if (!tab) return { images: [] };
+  return { images: await pageImages(tab.id).catch(() => []) };
 }
 
 /** Error messages on the Flow page now, less the ones in `ignore`. */
