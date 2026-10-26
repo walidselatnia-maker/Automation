@@ -54,6 +54,9 @@ export interface ImagePrompt {
   slot: string;
   prompt: string;
   alt: string;
+  /** The picture's own title and description, sent with it to the website. Empty in sets written before they were asked for. */
+  title?: string;
+  description?: string;
 }
 
 export interface ImageSet {
@@ -147,7 +150,7 @@ export function parseImageSet(raw: string): ImageSet | null {
     },
     images: o.images.map((im) => {
       const i = (im ?? {}) as Record<string, unknown>;
-      return { slot: clean(i.slot, 40), prompt: clean(i.prompt), alt: clean(i.alt ?? i.altText, 200) };
+      return { slot: clean(i.slot, 40), prompt: clean(i.prompt), alt: clean(i.alt ?? i.altText, 200), title: clean(i.title, 120), description: clean(i.description ?? i.caption, 400) };
     }),
   };
 }

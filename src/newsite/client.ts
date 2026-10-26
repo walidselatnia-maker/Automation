@@ -135,12 +135,14 @@ export interface SiteMedia {
 export async function uploadMedia(
   domain: string,
   apiKey: string,
-  file: { data: Buffer; name: string; type: string; alt: string },
+  file: { data: Buffer; name: string; type: string; alt: string; title?: string; description?: string },
   fetchImpl: Fetch = fetch,
 ): Promise<SiteMedia> {
   const form = new FormData();
   form.set('file', new Blob([new Uint8Array(file.data)], { type: file.type }), file.name);
   form.set('alt', file.alt);
+  if (file.title) form.set('title', file.title);
+  if (file.description) form.set('description', file.description);
   let response: Response;
   try {
     response = await fetchImpl(`https://${domain}/api/v1/media`, {

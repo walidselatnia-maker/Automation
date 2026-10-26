@@ -196,6 +196,11 @@ export function retryFailedPictures(where: { pictureId?: number; seoId?: number;
   return again.length;
 }
 
+/** One picture made again from its prompt, finished or failed, pressed by someone. */
+export function remakePicture(pictureId: number): boolean {
+  return run(`UPDATE newsite_pictures SET status = 'queued', attempts = 0, error = '', by_hand = 1 WHERE id = ? AND status IN ('done', 'failed')`, pictureId).changes > 0;
+}
+
 /**
  * Failed article pictures that still matter: made from an article's prompt as
  * it is now. A failure from an older prompt (since rewritten or remade) and a

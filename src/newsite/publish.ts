@@ -179,10 +179,12 @@ const typeOf = (file: string): string => (file.endsWith('.png') ? 'image/png' : 
 async function mediaIdFor(picture: PictureRow, t: Target, deps: PublishDeps): Promise<number> {
   if (picture.media_id) return picture.media_id;
   const data = readFileSync(join(pictureDir(picture.seo_id, deps.dataDir ?? resolveDataDir()), picture.file));
+  // Its title and description, written with its prompt; the alt text stands in for a set written before they were.
+  const written = parseImageSet(t.row.images_json)?.images.find((im) => im.slot === picture.slot && im.prompt === picture.prompt);
   const media = await uploadMedia(
     t.site.domain,
     t.apiKey,
-    { data, name: picture.file, type: typeOf(picture.file), alt: picture.alt },
+    { data, name: picture.file, type: typeOf(picture.file), alt: picture.alt, title: written?.title || picture.alt, description: written?.description || picture.alt },
     deps.fetchImpl,
   );
   run('UPDATE newsite_pictures SET media_id = ? WHERE id = ?', media.id, picture.id);

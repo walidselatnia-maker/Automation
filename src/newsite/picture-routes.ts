@@ -9,6 +9,7 @@ import {
   kickPictureMaker,
   pictureDir,
   queuePictures,
+  remakePicture,
   resetInterruptedPictures,
   restartPictureMaker,
   retryFailedPictures,
@@ -126,6 +127,16 @@ export function registerPictureRoutes(app: FastifyInstance, deps: PictureRouteDe
     const n = retryFailedPictures({ pictureId: picture.id });
     start();
     return reply.redirect(imagesPage(row.plan_id, retried(n, ` for “${row.keyword}”`)) + `#kw-${row.id}`, 303);
+  });
+
+  /** One picture, finished or failed, made again from its prompt. */
+  app.post('/new-website/pictures/:id/remake', async (request, reply) => {
+    const picture = getPicture(Number((request.params as { id: string }).id) || 0);
+    const row = picture ? getSeoRow(picture.seo_id) : undefined;
+    if (!picture || !row) return reply.redirect('/new-website/keywords', 303);
+    const ok = remakePicture(picture.id);
+    start();
+    return reply.redirect(imagesPage(row.plan_id, ok ? `Making “${picture.slot.replace(/-/g, ' ')}” again.` : 'That picture is already being made.') + `#kw-${row.id}`, 303);
   });
 
   /** Every failed picture of one keyword, made again. */

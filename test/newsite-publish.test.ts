@@ -35,7 +35,7 @@ describe('Publishing to the website', () => {
     const method = init?.method ?? 'GET';
     if (u.endsWith('/api/v1/media')) {
       const form = init!.body as FormData;
-      calls.push({ method, url: u, body: { alt: form.get('alt'), name: (form.get('file') as File).name } });
+      calls.push({ method, url: u, body: { alt: form.get('alt'), title: form.get('title'), description: form.get('description'), name: (form.get('file') as File).name } });
       nextMedia += 1;
       return new Response(JSON.stringify({ media: { id: nextMedia, url: `https://f.longlivo.com/media/${nextMedia}.webp` } }), { status: 201 });
     }
@@ -90,7 +90,7 @@ describe('Publishing to the website', () => {
          recipe_status = 'done', recipe_json = ?, article_status = 'done', article_md = '## Why it works\n\nText.',
          images_status = 'done', images_json = ? WHERE id = ?`,
       JSON.stringify(RECIPE),
-      JSON.stringify({ theme: {}, images: SLOTS.map((slot) => ({ slot, prompt: `prompt ${slot}`, alt: `alt ${slot}` })) }),
+      JSON.stringify({ theme: {}, images: SLOTS.map((slot) => ({ slot, prompt: `prompt ${slot}`, alt: `alt ${slot}`, ...(slot === 'feature' ? { title: 'title feature', description: 'about feature' } : {}) })) }),
       seoId,
     );
     dataDir = mkdtempSync(join(tmpdir(), 'publish-'));
@@ -119,6 +119,9 @@ describe('Publishing to the website', () => {
 
     const uploads = calls.filter((c) => c.url.endsWith('/media'));
     expect(uploads.map((c) => (c.body as { alt: string }).alt)).toEqual(['alt feature', 'alt overhead', 'alt closeup']);
+    // Each picture's own title and description go with it; a picture written without them sends its alt text.
+    expect(uploads.map((c) => (c.body as { title: string }).title)).toEqual(['title feature', 'alt overhead', 'alt closeup']);
+    expect((uploads[0]!.body as { description: string }).description).toBe('about feature');
     const post = calls.find((c) => c.url.endsWith('/api/v1/posts'))!;
     expect(post.method).toBe('POST');
     expect(post.body).toMatchObject({
