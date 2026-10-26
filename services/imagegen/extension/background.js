@@ -2037,13 +2037,60 @@ async function pressKey(target, key, { code = key, keyCode = 0, modifiers = 0, t
 // and doing that around every action is itself a rhythm. So it is attached
 // once and let go only after the tab has been idle for a while.
 
-const DEBUGGER_IDLE_MS = 90_000;
+// Long enough to outlast a generation: the answer to the page's own submit is
+// read through this session (see "What Flow's own answers say" below).
+const DEBUGGER_IDLE_MS = 360_000;
 const attached = new Map(); // tabId -> idle timer
 
 chrome.debugger.onDetach.addListener((source) => {
   clearTimeout(attached.get(source.tabId));
   attached.delete(source.tabId);
   pointerAt.delete(source.tabId);
+  watchedRequests.delete(source.tabId);
+});
+
+// ─── What Flow's own answers say ────────────────────────────
+//
+// When the page submits, Google answers it with the new pictures' addresses.
+// Reading that answer is how a picture is known to be done the moment it is:
+// the project listing lags or misses it, and Flow's tiles are minified markup
+// that changes. Read through the debugger's network view, which only watches --
+// nothing is added to the page.
+
+const MEDIA_URL_RE = /https:\/\/flow-content\.google\/image\/[A-Za-z0-9_\-]+(?:\?[^"'\s\\<>\]]*)?/g;
+const watchedRequests = new Map(); // tabId -> Set(requestId)
+const answeredImages = []; // { url, at }, newest last, bounded
+
+// The answer is JSON inside JSON, so its escapes come doubled: \\u003d is "=".
+const unescapeBody = (text) =>
+  text.replace(/\\+u([0-9a-fA-F]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16))).replace(/\\+\//g, '/');
+
+chrome.debugger.onEvent.addListener(async (source, method, params) => {
+  const tabId = source.tabId;
+  if (method === 'Network.responseReceived') {
+    const url = params?.response?.url || '';
+    if (/batchexecute|flow\.google\.com|labs\.google/.test(url)) {
+      if (!watchedRequests.has(tabId)) watchedRequests.set(tabId, new Set());
+      watchedRequests.get(tabId).add(params.requestId);
+    }
+  } else if (method === 'Network.loadingFinished') {
+    const watched = watchedRequests.get(tabId);
+    if (!watched?.has(params.requestId)) return;
+    watched.delete(params.requestId);
+    try {
+      const { body = '', base64Encoded } = await chrome.debugger.sendCommand(
+        source, 'Network.getResponseBody', { requestId: params.requestId });
+      const text = unescapeBody(base64Encoded ? atob(body) : body);
+      for (const url of text.match(MEDIA_URL_RE) || []) {
+        if (!answeredImages.some((a) => a.url.split('?')[0] === url.split('?')[0])) {
+          answeredImages.push({ url, at: Date.now() });
+        }
+      }
+      if (answeredImages.length > 400) answeredImages.splice(0, answeredImages.length - 400);
+    } catch {
+      // The body is gone (navigated away, or too large to keep): nothing to read.
+    }
+  }
 });
 
 async function withDebugger(tabId, body) {
@@ -2051,6 +2098,7 @@ async function withDebugger(tabId, body) {
   if (!attached.has(tabId)) {
     try {
       await chrome.debugger.attach(target, CDP_VERSION);
+      await chrome.debugger.sendCommand(target, 'Network.enable', {}).catch(() => {});
     } catch (e) {
       // Already attached -- by DevTools open on this tab, or a run of ours
       // that the service worker lost track of across a restart.
@@ -2151,7 +2199,8 @@ async function pageImages(tabId) {
       return [...urls];
     },
   });
-  return out?.result || [];
+  // And every picture Google's answers to this browser have named.
+  return [...(out?.result || []), ...answeredImages.map((a) => a.url)];
 }
 
 const mediaIdOf = (url) => url.split('/image/')[1].split('?')[0];
