@@ -18,6 +18,7 @@ import {
   resetPictureMakerState,
   queueStepPictures,
   retryFailedPictures,
+  remakePicture,
   failedArticlePictures,
   shapeOf,
   NEXT_STEP_KEY,
@@ -106,6 +107,18 @@ describe('Pictures, made the old dashboard way', () => {
     const pictures = listPictures(seoId);
     expect(pictures.map((p) => p.status)).toEqual(['done', 'done', 'done']);
     expect(readFileSync(join(pictureDir(seoId, dataDir), pictures[0]!.file), 'utf8')).toBe('img');
+  });
+
+  it('Make again sends a finished picture once more, and not one already in hand', async () => {
+    setPrompts(['feature', 'overhead']);
+    queuePictures(seoId, dataDir);
+    await kickPictureMaker(deps(ok));
+    const [feature] = listPictures(seoId);
+    expect(remakePicture(feature!.id)).toBe(true);
+    expect(remakePicture(feature!.id)).toBe(false); // queued already
+    await kickPictureMaker(deps(ok));
+    expect(prompts()).toEqual(['prompt for feature', 'prompt for overhead', 'prompt for feature']);
+    expect(listPictures(seoId).map((p) => p.status)).toEqual(['done', 'done']);
   });
 
   it('Stop puts the picture in hand back, drops its answer and sends nothing more; Restart sends it again', async () => {

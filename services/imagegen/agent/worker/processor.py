@@ -349,13 +349,12 @@ class WorkerController:
     def _ui_model_label(job: dict) -> str | None:
         """The model to pick in Flow's menu, as the menu names it.
 
-        None for Automatic: the composer keeps whatever it has selected, as a
-        person would, rather than switching models on every image.
+        Automatic is the first model its plan names, so the composer never
+        keeps whatever it last had selected: it may have been changed in the
+        tab, and the person asked for the best model that works, not that one.
         """
         plan = image_models.plan(job.get("image_model") or image_models.AUTO)
-        if (job.get("image_model") or image_models.AUTO) == image_models.AUTO or not plan:
-            return None
-        return image_models.label_of(plan[0])
+        return image_models.label_of(plan[0]) if plan else None
 
     async def _generate_by_model(self, client, job: dict, job_id: str, request: dict) -> dict:
         """The captcha-gated path: walk the models and keep the first Google takes.
