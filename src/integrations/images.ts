@@ -57,6 +57,15 @@ export class ImageGenerationError extends Error {
 
 const TERMINAL_FAILURES = new Set(['FAILED', 'ERROR', 'CANCELLED', 'CANCELED', 'REJECTED']);
 
+const UNREACHABLE = 'the image service could not be reached';
+
+/** A network failure or a gateway answer, not a verdict on the job. */
+function isUnreachable(err: unknown): boolean {
+  if (err instanceof ImageGenerationError) return /HTTP (502|503|504)\b/.test(err.message);
+  const e = err as { name?: string; message?: string };
+  return e?.name === 'TimeoutError' || e?.name === 'AbortError' || /fetch failed|ECONNREFUSED|ECONNRESET|socket/i.test(e?.message ?? '');
+}
+
 export class ImageClient {
   constructor(private readonly options: ImageClientOptions) {}
 
@@ -187,7 +196,19 @@ export class ImageClient {
     let lastNote: string | null = null;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      const job = await this.poll(jobId);
+      // The service being out of reach for a moment -- rebuilt, restarted,
+      // busy -- is not the job failing: the job is in its database and goes on.
+      // Keep waiting; the attempt still counts, so the wait stays bounded.
+      let job: ImageJob;
+      try {
+        job = await this.poll(jobId);
+      } catch (err) {
+        if (!isUnreachable(err)) throw err;
+        if (lastNote !== UNREACHABLE) log.warn(`Image service out of reach while waiting for job ${jobId}; still waiting.`);
+        lastNote = UNREACHABLE;
+        if (attempt < maxAttempts) await new Promise((r) => setTimeout(r, pollIntervalMs));
+        continue;
+      }
       const status = (job.status ?? '').toUpperCase();
 
       if (status === 'COMPLETED') {

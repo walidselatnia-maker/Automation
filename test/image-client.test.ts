@@ -31,6 +31,17 @@ describe('waiting for an image job', () => {
     await expect(client().waitForCompletion('j')).resolves.toBe('https://cdn/out.webp');
   });
 
+  it('keeps waiting through a moment the service cannot be reached, as when it is rebuilt', async () => {
+    const answers: (() => Response)[] = [
+      () => { throw new TypeError('fetch failed'); },
+      () => json({ error: 'bad gateway' }, 502),
+      () => json({ job_id: 'j', status: 'COMPLETED', error: null, image_url: 'https://cdn/out.webp' }),
+    ];
+    vi.stubGlobal('fetch', vi.fn(async () => answers.shift()!()));
+
+    await expect(client().waitForCompletion('j')).resolves.toBe('https://cdn/out.webp');
+  });
+
   it('stops as soon as the service says the job is finished failing', async () => {
     vi.stubGlobal('fetch', vi.fn(async () =>
       json({ job_id: 'j', status: 'FAILED', error: 'INVALID_ARGUMENT', image_url: null }),
