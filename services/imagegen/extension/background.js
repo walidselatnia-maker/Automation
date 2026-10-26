@@ -2335,16 +2335,41 @@ async function pickInMenu(target, tabId, ui, wanted, family) {
     return out?.result || null;
   };
 
-  const trigger = await find('trigger');
-  if (!trigger) return `no control showing any of ${family.join(', ')}`;
+  let trigger = await find('trigger');
+  if (!trigger) {
+    // The choices can sit behind one settings button by the prompt box, and
+    // show only once that panel is open: open it, and look again.
+    const settings = await composerSettingsButton(tabId, ui);
+    if (settings) {
+      await humanClick(target, settings);
+      await pause(500, 1000);
+      trigger = await find('trigger');
+      if (!trigger) {
+        // An open panel may lay the choices out as buttons of their own.
+        const direct = await find('option');
+        if (direct) {
+          await humanClick(target, direct.box);
+          await pause(300, 700);
+          await pressKey(target, 'Escape', { keyCode: 27 });
+          return true;
+        }
+      }
+    }
+    if (!trigger) {
+      const seen = await visibleControls(tabId, ui);
+      await pressKey(target, 'Escape', { keyCode: 27 });
+      return `no control showing any of ${family.join(', ')}; on screen: ${seen.join(' | ')}`;
+    }
+  }
   if (trigger.already) return true;
 
   await humanClick(target, trigger.box);
   await pause(400, 900);
   const option = await find('option');
   if (!option) {
+    const seen = await visibleControls(tabId, ui);
     await pressKey(target, 'Escape', { keyCode: 27 });
-    return `"${wanted}" was not in the menu`;
+    return `"${wanted}" was not in the menu; on screen: ${seen.join(' | ')}`;
   }
   await humanClick(target, option.box);
   await pause(300, 700);
@@ -2356,6 +2381,55 @@ async function pickInMenu(target, tabId, ui, wanted, family) {
     await pause(200, 400);
   }
   return after && after.already ? true : `the control still shows "${after?.current || '?'}"`;
+}
+
+/** The words of every control on screen, so a failed pick says what it saw. */
+async function visibleControls(tabId, ui) {
+  const [out] = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    args: [ui.menuOptions],
+    func: (sel) => {
+      const seen = [];
+      for (const el of document.querySelectorAll(sel)) {
+        const r = el.getBoundingClientRect();
+        if (!r.width || !r.height) continue;
+        const t = ((el.innerText || '').trim() || el.getAttribute('aria-label') || '').replace(/\s+/g, ' ').slice(0, 40);
+        if (t && !seen.includes(t)) seen.push(t);
+        if (seen.length >= 40) break;
+      }
+      return seen;
+    },
+  }).catch(() => [{ result: [] }]);
+  return out?.result || [];
+}
+
+/**
+ * The button by the prompt box that opens the generation settings, if any:
+ * one close to the editor whose words or label speak of settings, the model
+ * or the shape, or that shows an output count ("x2").
+ */
+async function composerSettingsButton(tabId, ui) {
+  const [out] = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    args: [ui.editor, ui.menuTriggers],
+    func: (editorSel, triggerSel) => {
+      const editor = document.querySelector(editorSel);
+      if (!editor) return null;
+      let scope = editor;
+      for (let i = 0; i < 6 && scope.parentElement; i++) scope = scope.parentElement;
+      const words = /setting|tune|option|model|aspect|ratio|config|banana|imagen|^\s*x\s*\d|\d\s*x\s*$|×/i;
+      for (const el of scope.querySelectorAll(triggerSel)) {
+        const t = `${el.innerText || ''} ${el.getAttribute('aria-label') || ''} ${el.getAttribute('title') || ''}`;
+        if (/start generation|send|submit|attach|upload|add/i.test(t) || !words.test(t)) continue;
+        const r = el.getBoundingClientRect();
+        if (r.width && r.height) return { left: r.x, top: r.y, w: r.width, h: r.height };
+      }
+      return null;
+    },
+  }).catch(() => [{ result: null }]);
+  return out?.result || null;
 }
 
 const MODEL_LABELS = ['Nano Banana Pro', 'Nano Banana 2.1', 'Nano Banana 2 Lite', 'Nano Banana 2', 'Imagen'];
