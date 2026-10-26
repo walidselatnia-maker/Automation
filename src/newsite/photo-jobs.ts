@@ -154,7 +154,8 @@ export async function photoJobTick(deps: PhotoJobDeps): Promise<void> {
   try {
     // Photos already made go on their posts first. Placing is only a call to
     // the website, not Flow work, so it does not wait for Pause or articles.
-    for (const { job_id } of all<{ job_id: number }>(`SELECT DISTINCT job_id FROM photo_job_photos WHERE status = 'done' AND placed = 0 AND media_id IS NOT NULL`)) {
+    // One try on its own: a photo the website refused waits for Try again.
+    for (const { job_id } of all<{ job_id: number }>(`SELECT DISTINCT job_id FROM photo_job_photos WHERE status = 'done' AND placed = 0 AND media_id IS NOT NULL AND error = ''`)) {
       const pending = get<JobRow>('SELECT * FROM photo_jobs WHERE id = ?', job_id);
       if (pending) await placeAll(pending, deps);
     }
@@ -439,6 +440,7 @@ export function registerPhotoJobRoutes(app: FastifyInstance, deps: PhotoJobDeps)
   app.post('/new-website/photo-jobs/:id/retry', async (request, reply) => {
     const id = Number((request.params as { id: string }).id) || 0;
     run(`UPDATE photo_job_photos SET status = 'queued', attempts = 0, error = '' WHERE job_id = ? AND status = 'failed'`, id);
+    run(`UPDATE photo_job_photos SET error = '' WHERE job_id = ? AND status = 'done' AND placed = 0`, id);
     run(`UPDATE photo_jobs SET status = 'making', error = '' WHERE id = ?`, id);
     void photoJobTick(deps);
     return reply.redirect('/new-website/photo-jobs', 303);

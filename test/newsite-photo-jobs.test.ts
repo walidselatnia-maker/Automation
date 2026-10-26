@@ -225,6 +225,11 @@ describe('Photo jobs and top lists', () => {
       const job = all<{ status: string; error: string }>('SELECT status, error FROM photo_jobs')[0]!;
       expect(job.status).toBe('failed');
       expect(job.error).toContain('Unknown slot');
+      // Refused once: not sent again on every look, only on Try again.
+      calls = [];
+      await photoJobTick(deps);
+      expect(placedSlots()).toEqual([]);
+      calls = [];
 
       refuseSlot = '';
       made = [];
@@ -239,7 +244,7 @@ describe('Photo jobs and top lists', () => {
       refuseSlot = 'step-1';
       await photoJobTick(deps);
       // As an older job was left: made, never placed.
-      run('UPDATE photo_job_photos SET placed = 0');
+      run(`UPDATE photo_job_photos SET placed = 0, error = ''`);
       refuseSlot = '';
       mainBusy = true;
       calls = [];
@@ -249,6 +254,27 @@ describe('Photo jobs and top lists', () => {
       expect(placedSlots()).toEqual(['cover', 'step-0', 'step-1']);
       expect(all<{ status: string }>('SELECT status FROM photo_jobs')).toEqual([{ status: 'done' }]);
     });
+  });
+
+  it('places the photos of a job left half done by the older version', async () => {
+    addSite();
+    // The tables as the older version made them, before photos were placed one by one.
+    run(`CREATE TABLE photo_jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, website_id INTEGER NOT NULL, site_job_id TEXT NOT NULL, post_id INTEGER NOT NULL DEFAULT 0,
+      title TEXT NOT NULL DEFAULT '', url TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'making', error TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')), UNIQUE (website_id, site_job_id))`);
+    run(`CREATE TABLE photo_job_photos (id INTEGER PRIMARY KEY AUTOINCREMENT, job_id INTEGER NOT NULL, slot TEXT NOT NULL, kind TEXT NOT NULL DEFAULT '',
+      text TEXT NOT NULL DEFAULT '', prompt TEXT NOT NULL DEFAULT '', alt TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'queued',
+      attempts INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '', file TEXT NOT NULL DEFAULT '', media_id INTEGER, UNIQUE (job_id, slot))`);
+    run(`INSERT INTO photo_jobs (website_id, site_job_id, status, error) VALUES (1, '9', 'failed', '1 of 2 photos failed')`);
+    run(`INSERT INTO photo_job_photos (job_id, slot, status, media_id) VALUES (1, 'cover', 'done', 55)`);
+    run(`INSERT INTO photo_job_photos (job_id, slot, status, error) VALUES (1, 'step-0', 'failed', 'Flow said no')`);
+    site = () => Response.json({ placed: ['cover'], stillMissing: ['step-0'] });
+    const settings = new Settings();
+    const deps = { settings, encryptionKey: KEY, readFlash, fetchImpl, autoStart: false, mainBusy: () => true, make: async () => ({ data: Buffer.from(''), contentType: 'image/png' }) };
+    registerPhotoJobRoutes(app, deps);
+    await photoJobTick(deps);
+    expect(calls.map((c) => [c.url, c.body])).toEqual([['https://bakes.example.com/api/v1/photo-jobs/9/done', { photos: [{ slot: 'cover', mediaId: 55 }] }]]);
+    expect(all<{ placed: number }>(`SELECT placed FROM photo_job_photos WHERE slot = 'cover'`)).toEqual([{ placed: 1 }]);
   });
 
   it('suggests a topic from the posts and publishes the approved top list', async () => {
