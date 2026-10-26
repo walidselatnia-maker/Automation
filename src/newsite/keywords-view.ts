@@ -820,6 +820,7 @@ export function imagesStepPage(
   pictures: PictureRow[] = [],
   nextStepAt = 0,
   now = Date.now(),
+  stopped = false,
 ): Html {
   const all = rows;
   rows = readyFor('images', site, all);
@@ -856,6 +857,12 @@ export function imagesStepPage(
     ${waitingNote('images', all.length - rows.length, busyRows(all), plan.id)}`;
   const foot = html`
     <a class="ns-btn quiet" href="${planHref(plan.id, 'article')}">Previous</a>
+    ${busy && !stopped
+      ? html`<form method="post" action="/new-website/keywords/plan/${plan.id}/pictures/stop" style="margin:0"><button class="ns-btn">Stop</button></form>`
+      : raw('')}
+    ${busy || stopped
+      ? html`<form method="post" action="/new-website/keywords/plan/${plan.id}/pictures/restart" style="margin:0"><button class="ns-btn">${stopped ? 'Start' : 'Restart'}</button></form>`
+      : raw('')}
     ${mainTotal > mainMade
       ? html`<form method="post" action="/new-website/keywords/plan/${plan.id}/pictures/make" style="margin:0">
           <button class="ns-btn primary" ${raw(`onclick="return confirm('Send ${mainTotal - mainMade} main pictures to Google Flow, one at a time? Step pictures follow in the slow queue.')"`)}>Make all main pictures</button>

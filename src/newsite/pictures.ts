@@ -246,6 +246,36 @@ let running: Promise<void> | null = null;
 export function pictureMakerBusy(): boolean {
   return running !== null;
 }
+
+/** Set by Stop: no picture is sent until Restart. */
+export const PICTURES_STOPPED_KEY = 'newsite_pictures_stopped';
+
+/** Bumped by Stop and Restart: a picture that comes back from an older round is dropped. */
+let round = 0;
+
+export const picturesStopped = (settings: Settings): boolean => settings.get(PICTURES_STOPPED_KEY) === '1';
+
+/**
+ * Stop making pictures. The one in hand goes back in the queue at once (its
+ * answer, when it comes, is dropped), and nothing more is sent until Restart.
+ */
+export function stopPictureMaker(settings: Settings): void {
+  settings.set(PICTURES_STOPPED_KEY, '1');
+  round++;
+  running = null;
+  if (wakeTimer) clearTimeout(wakeTimer);
+  wakeTimer = null;
+  resetInterruptedPictures();
+}
+
+/** Start again from the queue, on a fresh round: whatever was in hand is sent again. */
+export function restartPictureMaker(deps: PictureDeps): Promise<void> {
+  deps.settings.set(PICTURES_STOPPED_KEY, '0');
+  round++;
+  running = null;
+  resetInterruptedPictures();
+  return kickPictureMaker(deps);
+}
 let lastImageGeneratedAt: number | null = null;
 let wakeTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -293,6 +323,8 @@ const extension = (contentType: string): string =>
  */
 export function kickPictureMaker(deps: PictureDeps): Promise<void> {
   if (running) return running;
+  if (picturesStopped(deps.settings)) return Promise.resolve();
+  const mine = round;
   const make = deps.make ?? oldDashboardMaker(deps.settings);
   const now = deps.now ?? Date.now;
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
@@ -316,9 +348,11 @@ export function kickPictureMaker(deps: PictureDeps): Promise<void> {
       deps.automationOn?.() ? 1 : 0,
     );
 
-  running = Promise.resolve()
+  const loop = Promise.resolve()
     .then(async () => {
       for (;;) {
+        // Stopped or restarted since this round began: a newer round, if any, carries on.
+        if (round !== mine) break;
         // Main pictures first; a step picture only when the slow queue says so.
         let next = pick(false);
         if (!next) {
@@ -364,6 +398,7 @@ export function kickPictureMaker(deps: PictureDeps): Promise<void> {
             now,
           );
           lastImageGeneratedAt = now();
+          if (round !== mine) break; // stopped while it was being made: it is back in the queue
           const dir = pictureDir(next.seo_id, dataDir);
           mkdirSync(dir, { recursive: true });
           const file = `${next.slot}-${next.id}.${extension(contentType)}`;
@@ -375,6 +410,7 @@ export function kickPictureMaker(deps: PictureDeps): Promise<void> {
             void deps.afterMain?.(next.seo_id).catch((err) => log.warn(`After the main pictures: ${errorMessage(err)}`));
           }
         } catch (err) {
+          if (round !== mine) break; // stopped while it was being made: it is back in the queue
           const message = errorMessage(err).slice(0, 400);
           log.warn(`Picture "${next.slot}" (${next.id}) failed: ${message}`);
           run(`UPDATE newsite_pictures SET status = 'failed', error = ? WHERE id = ?`, message, next.id);
@@ -391,7 +427,8 @@ export function kickPictureMaker(deps: PictureDeps): Promise<void> {
       }
     })
     .finally(() => {
-      running = null;
+      if (running === loop) running = null;
     });
-  return running;
+  running = loop;
+  return loop;
 }

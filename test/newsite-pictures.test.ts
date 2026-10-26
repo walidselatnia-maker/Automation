@@ -21,6 +21,8 @@ import {
   failedArticlePictures,
   shapeOf,
   NEXT_STEP_KEY,
+  restartPictureMaker,
+  stopPictureMaker,
 } from '../src/newsite/pictures.js';
 
 const KEY = randomBytes(32);
@@ -104,6 +106,28 @@ describe('Pictures, made the old dashboard way', () => {
     const pictures = listPictures(seoId);
     expect(pictures.map((p) => p.status)).toEqual(['done', 'done', 'done']);
     expect(readFileSync(join(pictureDir(seoId, dataDir), pictures[0]!.file), 'utf8')).toBe('img');
+  });
+
+  it('Stop puts the picture in hand back, drops its answer and sends nothing more; Restart sends it again', async () => {
+    setPrompts(['feature', 'overhead']);
+    queuePictures(seoId, dataDir);
+    let release!: () => void;
+    const stuck = deps(() => new Promise((r) => { release = () => r({ data: Buffer.from('late'), contentType: 'image/png' }); }));
+    const first = kickPictureMaker(stuck);
+    await vi.waitFor(() => expect(sent).toHaveLength(1));
+
+    stopPictureMaker(settings);
+    expect(listPictures(seoId).map((p) => p.status)).toEqual(['queued', 'queued']);
+    release();
+    await first;
+    expect(sent).toHaveLength(1); // the late answer is dropped and nothing more goes out
+    expect(listPictures(seoId).map((p) => p.status)).toEqual(['queued', 'queued']);
+    await kickPictureMaker(deps(ok));
+    expect(sent).toHaveLength(1); // still stopped
+
+    await restartPictureMaker(deps(ok));
+    expect(prompts()).toEqual(['prompt for feature', 'prompt for feature', 'prompt for overhead']);
+    expect(listPictures(seoId).map((p) => p.status)).toEqual(['done', 'done']);
   });
 
   it('uses the old project rule: the website, else Settings, else the old placeholder', async () => {

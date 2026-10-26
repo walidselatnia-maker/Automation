@@ -185,6 +185,20 @@ async def generate_video(body: GenerateVideoRequest) -> GenerateResponse:
     return GenerateResponse(job_id=job["id"], status=job["status"])
 
 
+@router.post("/jobs/stop-images")
+async def stop_images() -> dict:
+    """Stop: drop every image job not yet made, and reload the Flow tab.
+
+    For the platform's Stop and Restart buttons. The reload clears whatever the
+    composer was in the middle of; signing in is untouched.
+    """
+    stopped = await jobs.stop_images("Stopped by hand.")
+    client = get_flow_client()
+    reloaded = await client.ensure_fresh_token(0) if client.connected else {"ok": False}
+    logger.info("stopped %d image job(s) by hand; Flow tab reloaded: %s", stopped, reloaded.get("ok"))
+    return {"stopped": stopped, "reloaded": bool(reloaded.get("ok"))}
+
+
 @router.get("/jobs/{job_id}", response_model=JobResponse)
 async def get_job(job_id: str) -> JobResponse:
     """Poll a job. image_url is populated once status is COMPLETED."""

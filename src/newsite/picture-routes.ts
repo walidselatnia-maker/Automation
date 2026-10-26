@@ -10,7 +10,9 @@ import {
   pictureDir,
   queuePictures,
   resetInterruptedPictures,
+  restartPictureMaker,
   retryFailedPictures,
+  stopPictureMaker,
   type PictureDeps,
 } from './pictures.js';
 
@@ -78,6 +80,39 @@ export function registerPictureRoutes(app: FastifyInstance, deps: PictureRouteDe
       imagesPage(planId, queuedMessage(queued, '')),
       303,
     );
+  });
+
+  /**
+   * Drop the image service's unfinished image jobs and reload its Flow tab, so
+   * nothing half-done carries on there. Best effort: the platform side stops
+   * either way.
+   */
+  const stopImageService = async (): Promise<void> => {
+    const base = settings.get('image_base_url').replace(/\/+$/, '');
+    if (!base) return;
+    await fetch(`${base}/v1/jobs/stop-images`, {
+      method: 'POST',
+      headers: { 'X-API-Key': settings.get('image_api_key') },
+      signal: AbortSignal.timeout(60_000),
+    }).catch(() => undefined);
+  };
+
+  /** Stop making pictures until Restart. */
+  app.post('/new-website/keywords/plan/:id/pictures/stop', async (request, reply) => {
+    const planId = Number((request.params as { id: string }).id) || 0;
+    stopPictureMaker(settings);
+    await stopImageService();
+    return reply.redirect(imagesPage(planId, 'Pictures stopped.'), 303);
+  });
+
+  /** Drop what is in hand, refresh Flow, and carry on with the queue. */
+  app.post('/new-website/keywords/plan/:id/pictures/restart', async (request, reply) => {
+    const planId = Number((request.params as { id: string }).id) || 0;
+    stopPictureMaker(settings);
+    await stopImageService();
+    if (deps.autoPictures !== false) void restartPictureMaker(maker);
+    else settings.set('newsite_pictures_stopped', '0');
+    return reply.redirect(imagesPage(planId, 'Pictures restarted.'), 303);
   });
 
   const retried = (n: number, what: string): string =>

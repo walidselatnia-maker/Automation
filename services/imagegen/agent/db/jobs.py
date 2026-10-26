@@ -128,6 +128,23 @@ async def fail(job_id: str, error: str) -> None:
     await db.commit()
 
 
+async def stop_images(reason: str) -> int:
+    """Fail every image job not yet finished. Answers how many.
+
+    A job already in Flow's hands cannot be taken back, so its worker may still
+    record a result afterwards; the caller has stopped waiting for it either way.
+    """
+    db = await get_db()
+    async with db.execute(
+        f"""UPDATE job SET status = 'FAILED', error_message = ?, updated_at = {_NOW}
+             WHERE status IN ('PENDING', 'PROCESSING') AND COALESCE(kind, 'image') = 'image'""",
+        (reason,),
+    ) as cursor:
+        count = cursor.rowcount
+    await db.commit()
+    return count
+
+
 async def requeue(job_id: str, error: str) -> None:
     """Return a job to the queue after a retryable failure."""
     db = await get_db()

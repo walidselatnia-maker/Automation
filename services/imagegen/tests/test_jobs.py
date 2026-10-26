@@ -348,3 +348,21 @@ def test_queued_since_sees_only_unfinished_jobs_from_then_on():
         assert await jobs.queued_since(created) is False
 
     asyncio.run(scenario())
+
+
+def test_stop_drops_every_unfinished_image_job_and_leaves_the_rest():
+    async def scenario():
+        waiting = await jobs.create("waiting")
+        claimed = await jobs.create("in flow")
+        made = await jobs.create("made")
+        await jobs.claim_pending(1)  # "waiting" is the oldest
+        await jobs.complete(made["id"], "m", "https://flow-content.google/image/m")
+        stopped = await jobs.stop_images("Stopped by hand.")
+        return stopped, [await jobs.get(j["id"]) for j in (waiting, claimed, made)]
+
+    stopped, (waiting, claimed, made) = asyncio.run(scenario())
+
+    assert stopped == 2
+    assert waiting["status"] == claimed["status"] == "FAILED"
+    assert waiting["error_message"] == "Stopped by hand."
+    assert made["status"] == "COMPLETED"
