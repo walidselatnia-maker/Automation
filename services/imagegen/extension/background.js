@@ -583,6 +583,8 @@ function connectToAgent() {
         }
       } else if (msg.method === 'ui_page_images') {
         sendToAgent({ id: msg.id, result: await uiPageImages() });
+      } else if (msg.method === 'ui_tile_image') {
+        sendToAgent({ id: msg.id, result: await uiTileImage(msg.params || {}) });
       } else if (msg.method === 'ui_page_errors') {
         sendToAgent({ id: msg.id, result: await uiPageErrors(msg.params || {}) });
       } else if (msg.method === 'scan_flow_ui') {
@@ -2057,9 +2059,13 @@ chrome.debugger.onDetach.addListener((source) => {
 // that changes. Read through the debugger's network view, which only watches --
 // nothing is added to the page.
 
-const MEDIA_URL_RE = /https:\/\/flow-content\.google\/image\/[A-Za-z0-9_\-]+(?:\?[^"'\s\\<>\]]*)?/g;
+// Flow's own host, and the storage bucket some answers sign instead.
+const MEDIA_URL_RE = /https:\/\/(?:flow-content\.google|storage\.googleapis\.com\/[A-Za-z0-9_\-.]+)\/image\/[A-Za-z0-9_\-]+(?:\?[^"'\s\\<>\]]*)?/g;
 const watchedRequests = new Map(); // tabId -> Set(requestId)
 const answeredImages = []; // { url, at }, newest last, bounded
+// What the page asked Google lately and how many pictures each answer named,
+// so a picture nobody saw finish can be traced to where it was missed.
+const networkSeen = []; // { at, url, status, found }, newest last, bounded
 
 // The answer is JSON inside JSON, so its escapes come doubled: \\u003d is "=".
 const unescapeBody = (text) =>
@@ -2069,9 +2075,14 @@ chrome.debugger.onEvent.addListener(async (source, method, params) => {
   const tabId = source.tabId;
   if (method === 'Network.responseReceived') {
     const url = params?.response?.url || '';
-    if (/batchexecute|flow\.google\.com|labs\.google/.test(url)) {
+    // Every call the page's code makes, not only batchexecute: where Flow
+    // sends the generate has moved before and will again.
+    if (params?.type === 'XHR' || params?.type === 'Fetch') {
       if (!watchedRequests.has(tabId)) watchedRequests.set(tabId, new Set());
       watchedRequests.get(tabId).add(params.requestId);
+      networkSeen.push({ at: Date.now(), url: url.split('?')[0].slice(0, 160),
+                         status: params.response?.status, found: 0, requestId: params.requestId });
+      if (networkSeen.length > 60) networkSeen.splice(0, networkSeen.length - 60);
     }
   } else if (method === 'Network.loadingFinished') {
     const watched = watchedRequests.get(tabId);
@@ -2081,7 +2092,10 @@ chrome.debugger.onEvent.addListener(async (source, method, params) => {
       const { body = '', base64Encoded } = await chrome.debugger.sendCommand(
         source, 'Network.getResponseBody', { requestId: params.requestId });
       const text = unescapeBody(base64Encoded ? atob(body) : body);
-      for (const url of text.match(MEDIA_URL_RE) || []) {
+      const found = text.match(MEDIA_URL_RE) || [];
+      const seen = networkSeen.find((n) => n.requestId === params.requestId);
+      if (seen) seen.found = found.length;
+      for (const url of found) {
         if (!answeredImages.some((a) => a.url.split('?')[0] === url.split('?')[0])) {
           answeredImages.push({ url, at: Date.now() });
         }
@@ -2193,7 +2207,7 @@ async function pageImages(tabId) {
       const urls = new Set();
       document.querySelectorAll('img, source, video').forEach((el) => {
         for (const v of [el.currentSrc, el.src, el.getAttribute('src'), el.poster]) {
-          if (v && v.includes('flow-content.google/image/')) urls.add(v);
+          if (v && /flow-content\.google\/image\/|storage\.googleapis\.com\/[^/]+\/image\//.test(v)) urls.add(v);
         }
       });
       return [...urls];
@@ -2204,6 +2218,57 @@ async function pageImages(tabId) {
 }
 
 const mediaIdOf = (url) => url.split('/image/')[1].split('?')[0];
+
+/**
+ * Every picture-sized image on the page, whatever its address: a signed link,
+ * a redirect through Flow, or a blob the page made. Read when the addresses
+ * above miss a picture a person can plainly see -- Flow changes how it shows
+ * them more often than what it shows. Icons and avatars are too small to count.
+ */
+async function pageTiles(tabId) {
+  const [out] = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    func: () => {
+      const srcs = [];
+      document.querySelectorAll('img').forEach((el) => {
+        const src = el.currentSrc || el.src;
+        if (!src || !el.complete || el.naturalWidth < 200 || el.naturalHeight < 200) return;
+        if (!srcs.includes(src)) srcs.push(src.startsWith('data:') ? src.slice(0, 200) : src);
+      });
+      return { srcs, url: location.href };
+    },
+  });
+  return out?.result || { srcs: [], url: '' };
+}
+
+/** One tile's picture, fetched by the page itself, as a data: URL. */
+async function tileImage(tabId, src) {
+  const [out] = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    args: [src],
+    func: async (want) => {
+      const el = [...document.querySelectorAll('img')].find(
+        (i) => (i.currentSrc || i.src) === want || (i.currentSrc || i.src).startsWith(want));
+      try {
+        const res = await fetch(el ? (el.currentSrc || el.src) : want, { credentials: 'include' });
+        if (!res.ok) return { error: `HTTP ${res.status}` };
+        const blob = await res.blob();
+        if (!blob.type.startsWith('image/')) return { error: `not a picture: ${blob.type}` };
+        return await new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve({ dataUrl: reader.result });
+          reader.onerror = () => resolve({ error: 'unreadable' });
+          reader.readAsDataURL(blob);
+        });
+      } catch (e) {
+        return { error: String(e?.message || e) };
+      }
+    },
+  });
+  return out?.result || { error: 'no answer from the page' };
+}
 
 /**
  * Pick `wanted` in one of the composer's menus -- the model or the shape.
@@ -2333,6 +2398,9 @@ async function uiGenerateImage({ projectId = null, prompt = '', model = null, as
   }
   const before = await pageErrors(tab.id, ui);
   const imagesBefore = (await pageImages(tab.id).catch(() => [])).map(mediaIdOf);
+  const tilesBefore = (await pageTiles(tab.id).catch(() => ({ srcs: [] }))).srcs;
+  const sent = (picked) => ({ ok: true, submitted: true, picked, pageErrors: before,
+                             pageImages: imagesBefore, pageTiles: tilesBefore, tabUrl: tab.url });
 
   return withDebugger(tab.id, async (target) => {
     const picked = {};
@@ -2375,7 +2443,7 @@ async function uiGenerateImage({ projectId = null, prompt = '', model = null, as
     // if Enter only made a new line, the button.
     if (Math.random() < 0.8) {
       await pressKey(target, 'Enter', { keyCode: 13, text: '\r' });
-      if (await cleared(10)) return { ok: true, submitted: true, picked, pageErrors: before, pageImages: imagesBefore };
+      if (await cleared(10)) return sent(picked);
       box = await composerBox(tab.id, ui);
       if (box?.text && box.text !== prompt.trim()) {
         await typePrompt(target, prompt); // undo the new line Enter made
@@ -2384,7 +2452,7 @@ async function uiGenerateImage({ projectId = null, prompt = '', model = null, as
     }
     if (!box?.button) return { error: 'SUBMIT_NOT_ACCEPTED: no Generate button' };
     await humanClick(target, box.button);
-    if (await cleared(30)) return { ok: true, submitted: true, picked, pageErrors: before, pageImages: imagesBefore };
+    if (await cleared(30)) return sent(picked);
     return { error: 'SUBMIT_NOT_ACCEPTED: the prompt is still in the composer' };
   });
 }
@@ -2392,8 +2460,22 @@ async function uiGenerateImage({ projectId = null, prompt = '', model = null, as
 /** Pictures showing on the Flow page now. */
 async function uiPageImages() {
   const tab = (await queryFlowTabs()).find((t) => !t.discarded);
-  if (!tab) return { images: [] };
-  return { images: await pageImages(tab.id).catch(() => []) };
+  if (!tab) return { images: [], tiles: [], tabUrl: null };
+  const tiles = await pageTiles(tab.id).catch(() => ({ srcs: [], url: tab.url }));
+  return {
+    images: await pageImages(tab.id).catch(() => []),
+    tiles: tiles.srcs,
+    tabUrl: tiles.url,
+    network: networkSeen.slice(-8).map(({ url, status, found }) => ({ url, status, found })),
+    answered: answeredImages.length,
+  };
+}
+
+/** The picture of one tile on the Flow page, as a data: URL. */
+async function uiTileImage({ src = '' } = {}) {
+  const tab = (await queryFlowTabs()).find((t) => !t.discarded);
+  if (!tab) return { error: 'NO_FLOW_TAB' };
+  return tileImage(tab.id, src).catch((e) => ({ error: String(e?.message || e) }));
 }
 
 /** Error messages on the Flow page now, less the ones in `ignore`. */

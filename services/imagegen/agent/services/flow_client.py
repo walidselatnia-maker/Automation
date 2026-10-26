@@ -8,6 +8,7 @@ import asyncio
 import json
 import logging
 import random
+import re
 import time
 import uuid
 from typing import Optional
@@ -22,6 +23,8 @@ from agent.services.headers import random_headers
 from agent.ui_selectors import ui_selectors
 
 logger = logging.getLogger(__name__)
+
+_UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I)
 
 
 class FlowClient:
@@ -766,16 +769,45 @@ class FlowClient:
             return await self._generate_images_ui_once(
                 prompt, project_id, model_label, aspect_label, poll_seconds)
 
-    async def ui_page_images(self) -> list:
-        """The pictures showing in the Flow tab now, as GeneratedImage."""
+    async def ui_page_state(self) -> dict:
+        """What the Flow tab shows now: the pictures it names by address, every
+        picture-sized tile whatever its address, and what the page last asked
+        Google. An unanswered read is an empty page, not a failure."""
         out = await self._send("ui_page_images", {}, timeout=30)
-        urls = out.get("images") if isinstance(out, dict) else None
+        return out if isinstance(out, dict) and "error" not in out else {}
+
+    @staticmethod
+    def _images_of(urls) -> list:
         images = []
         for url in urls or []:
-            if isinstance(url, str) and fb.MEDIA_HOST + "/image/" in url:
+            if isinstance(url, str) and "/image/" in url and url.startswith("https://"):
                 media_id = url.split("/image/", 1)[1].split("?", 1)[0]
                 images.append(fb.GeneratedImage(media_id=media_id, url=url))
         return images
+
+    async def ui_page_images(self) -> list:
+        """The pictures showing in the Flow tab now, as GeneratedImage."""
+        return self._images_of((await self.ui_page_state()).get("images"))
+
+    async def _tile_picture(self, src: str) -> fb.GeneratedImage | None:
+        """A tile the page shows but names by no address we can hand on.
+
+        Its id, when the address carries one, gets the signed link the usual
+        way; otherwise the page fetches the picture itself and it travels as a
+        data: URL, which the platform downloads like any other.
+        """
+        found = _UUID_RE.search(src)
+        if found:
+            urls = await self.get_media_urls_batch(found.group(0))
+            if isinstance(urls, dict) and urls.get("image_url"):
+                return fb.GeneratedImage(media_id=found.group(0), url=urls["image_url"])
+        out = await self._send("ui_tile_image", {"src": src}, timeout=60)
+        data_url = out.get("dataUrl") if isinstance(out, dict) else None
+        if isinstance(data_url, str) and data_url.startswith("data:image/"):
+            return fb.GeneratedImage(media_id=found.group(0) if found else "", url=data_url)
+        logger.warning("Flow UI: could not read the new tile %s: %s", src[:120],
+                       out.get("error") if isinstance(out, dict) else out)
+        return None
 
     async def _generate_images_ui_once(self, prompt: str, project_id: str,
                                  model_label: str | None = None,
@@ -812,6 +844,16 @@ class FlowClient:
         stale = [e for e in submitted.get("pageErrors") or [] if isinstance(e, str)]
         # Pictures already showing on the page, so the page can be read too.
         on_page_before = set(submitted.get("pageImages") or [])
+        tiles_before = set(submitted.get("pageTiles") or [])
+        tab_url = submitted.get("tabUrl") or ""
+        if tab_url and project_id not in tab_url:
+            logger.warning("Flow UI: the tab is on %s, not on project %s; the listing "
+                           "will not hold the picture", tab_url[:120], project_id)
+        # A new tile is taken only once it is still there a poll later: the
+        # spinner Flow shows while working can be a picture-sized image too.
+        tile_seen: dict[str, int] = {}
+        listed = 0
+        state: dict = {}
 
         # Flow's own UI decides how many variants a submit makes, so a submit
         # can bring back more than one. The first new one is this job's; the
@@ -820,14 +862,40 @@ class FlowClient:
         while time.monotonic() < deadline:
             await asyncio.sleep(5)
             now = await self.project_images(project_id)
+            if isinstance(now, dict):
+                logger.warning("Flow UI: project listing failed: %s", str(now.get("error"))[:200])
+            else:
+                listed = len(now)
             # A listing that failed once is not the generation failing.
             fresh = [] if isinstance(now, dict) else [
                 image for image in now if image.media_id not in known]
             if not fresh:
                 # The listing can lag the page, or miss a picture in a long
                 # project; the tile Flow shows is read as a second source.
-                fresh = [image for image in await self.ui_page_images()
+                state = await self.ui_page_state()
+                fresh = [image for image in self._images_of(state.get("images"))
                          if image.media_id not in known and image.media_id not in on_page_before]
+            if not fresh:
+                # Last, any picture-sized tile that was not there before.
+                for src in state.get("tiles") or []:
+                    if src in tiles_before or not isinstance(src, str):
+                        continue
+                    tile_seen[src] = tile_seen.get(src, 0) + 1
+                    if tile_seen[src] >= 2:
+                        picture = await self._tile_picture(src)
+                        if picture:
+                            logger.info("Flow UI: picture read off a new tile (%s)", src[:80])
+                            fresh = [picture]
+                        tiles_before.add(src)
+                        break
+            if not fresh and int(deadline - time.monotonic()) % 30 < 5:
+                logger.info(
+                    "Flow UI: waiting -- listing %d (was %d), page pictures %d, tiles %d "
+                    "(was %d), tab %s, Google answers naming pictures %s, last calls %s",
+                    listed, len(known), len(state.get("images") or []),
+                    len(state.get("tiles") or []), len(tiles_before),
+                    str(state.get("tabUrl"))[:100], state.get("answered"),
+                    state.get("network"))
             if not fresh:
                 shown = await self.ui_page_errors(project_id, stale)
                 if shown:

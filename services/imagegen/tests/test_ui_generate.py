@@ -28,9 +28,13 @@ def image(n: str) -> GeneratedImage:
 class Fake(FlowClient):
     """A client whose browser is a script: listings in order, submit canned."""
 
-    def __init__(self, listings, submit=None, page_errors=None, page_images=None):
+    def __init__(self, listings, submit=None, page_errors=None, page_images=None,
+                 page_tiles=None, tile_pictures=None):
         self._ui_lock = None
         self._page_images = list(page_images or [])
+        self._page_tiles = list(page_tiles or [])
+        self._tile_pictures = dict(tile_pictures or {})
+        self.media_lookups: list[str] = []
         self._listings = list(listings)
         self._submit = submit or {"ok": True, "submitted": True}
         self._page_errors = list(page_errors or [])
@@ -47,8 +51,19 @@ class Fake(FlowClient):
         self.picks.append((model_label, aspect_label))
         return self._submit
 
-    async def ui_page_images(self):
-        return self._page_images.pop(0) if self._page_images else []
+    async def ui_page_state(self):
+        shown = self._page_images.pop(0) if self._page_images else []
+        tiles = self._page_tiles.pop(0) if len(self._page_tiles) > 1 else (
+            self._page_tiles[0] if self._page_tiles else [])
+        return {"images": [i.url for i in shown], "tiles": tiles}
+
+    async def get_media_urls_batch(self, media_id: str):
+        self.media_lookups.append(media_id)
+        return {"image_url": f"https://flow-content.google/image/{media_id}?sig=y"}
+
+    async def _send(self, method, params, timeout=30):
+        assert method == "ui_tile_image"
+        return self._tile_pictures.get(params["src"], {"error": "gone"})
 
     async def ui_page_errors(self, project_id: str, ignore: list[str]) -> list[str]:
         self.ignored.append(ignore)
@@ -219,3 +234,46 @@ def test_two_jobs_take_turns_at_the_composer(monkeypatch):
     asyncio.run(both())
 
     assert max(most) == 1
+
+
+UUID = "0f8e2b1c-3d4a-4b5c-8d6e-7f8091a2b3c4"
+
+
+def test_a_new_tile_with_an_id_gets_its_signed_link(monkeypatch):
+    """Flow can show a picture under an address of its own -- a redirect that
+    names the media id -- which neither the listing nor the page's signed links
+    carry. The id is looked up for the link the platform can download."""
+    monkeypatch.setattr(asyncio, "sleep", lambda _s: _REAL_SLEEP(0))
+    tile = f"https://flow.google.com/fx/api/trpc/media.getMediaUrlRedirect?name={UUID}"
+    client = Fake([[image("old")]],
+                  submit={"ok": True, "submitted": True, "pageTiles": ["https://x/old-tile"]},
+                  page_tiles=[["https://x/old-tile", tile]])
+
+    out = run(client, poll_seconds=30)
+
+    generated = out["data"]["media"][0]["image"]["generatedImage"]
+    assert generated["mediaId"] == UUID
+    assert generated["fifeUrl"] == f"https://flow-content.google/image/{UUID}?sig=y"
+
+
+def test_a_new_tile_without_an_address_is_fetched_by_the_page(monkeypatch):
+    monkeypatch.setattr(asyncio, "sleep", lambda _s: _REAL_SLEEP(0))
+    client = Fake([[image("old")]],
+                  page_tiles=[["blob:https://flow.google.com/abc"]],
+                  tile_pictures={"blob:https://flow.google.com/abc": {"dataUrl": "data:image/png;base64,AAAA"}})
+
+    out = run(client, poll_seconds=30)
+
+    assert out["data"]["media"][0]["image"]["generatedImage"]["fifeUrl"] == "data:image/png;base64,AAAA"
+
+
+def test_a_tile_seen_only_once_is_not_taken(monkeypatch):
+    """Flow's working spinner can be picture-sized; a tile must stay a poll."""
+    monkeypatch.setattr(asyncio, "sleep", lambda _s: _REAL_SLEEP(0))
+    client = Fake([[image("old")]],
+                  page_tiles=[["blob:spinner"], []],
+                  tile_pictures={"blob:spinner": {"dataUrl": "data:image/png;base64,AAAA"}})
+
+    out = run(client, poll_seconds=12)
+
+    assert "error" in out
