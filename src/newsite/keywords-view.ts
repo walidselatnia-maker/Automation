@@ -139,8 +139,16 @@ export const CSS = `
   padding: 14px 16px; background: var(--raised); border-radius: var(--r-ctl); }
 .kw-img-theme dt { color: var(--faint); font-size: 13px; }
 .kw-img-theme dd { margin: 2px 0 0; font-size: 14px; }
-.kw-img-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 0; border-top: 1px solid var(--line); }
-.kw-img-list li { padding: 14px 0; border-bottom: 1px solid var(--line); display: grid; grid-template-columns: minmax(0, 1fr) 176px; gap: 20px; align-items: start; }
+.kw-img-list { margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+.kw-img-list li { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.kw-img-list .kw-pic-empty { aspect-ratio: 3 / 4; min-height: 0; }
+.kw-img-list details { font-size: 13px; }
+.kw-img-list summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 6px; }
+.kw-img-list summary::-webkit-details-marker { display: none; }
+.kw-img-list summary::after { content: '▾'; color: var(--faint); font-size: 11px; }
+.kw-img-list details[open] summary::after { content: '▴'; }
+.kw-img-theme-box { margin: 0 0 16px; }
+.kw-img-theme-box > summary { cursor: pointer; color: var(--soft); font-size: 13px; margin-bottom: 8px; }
 .kw-pic { display: block; border-radius: var(--r-ctl); overflow: hidden; background: var(--raised); border: 1px solid var(--line); }
 .kw-pic img { width: 100%; height: auto; display: block; }
 .kw-pic-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 8px; text-align: center;
@@ -154,7 +162,7 @@ export const CSS = `
 .kw-pic-actions { gap: 8px; align-items: center; }
 .kw-pic-actions form { margin: 0; }
 .kw-img-slot { text-transform: capitalize; display: inline-block; padding: 2px 8px; border-radius: 5px; background: var(--raised); border: 1px solid var(--line); color: var(--soft); font: 600 13px/1.5 var(--body); white-space: nowrap; }
-.kw-img-prompt { margin: 6px 0 8px; font-size: 14px; line-height: 1.6; max-width: 72ch; }
+.kw-img-prompt { margin: 6px 0 6px; font-size: 13px; line-height: 1.5; color: var(--soft); }
 .kw-img-alt { color: var(--soft); font-size: 13px; }
 .kw-img-alt b { color: var(--ink); margin-right: 6px; }
 .kw-article { border-top: 1px solid var(--line); padding-top: 18px; max-width: 68ch; overflow-wrap: anywhere; font-size: 16px; line-height: 1.7; }
@@ -232,7 +240,7 @@ a.kw-step:hover span { text-decoration: underline; }
   .kw-saved-row { grid-template-columns: 1fr; gap: 8px; }
   .kw-recipe-facts { grid-template-columns: repeat(3, 1fr); }
   .kw-recipe-cols { grid-template-columns: 1fr; }
-  .kw-img-list li { grid-template-columns: 1fr; gap: 10px; }
+  .kw-img-list { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
   .kw-pic { max-width: 320px; }
   .kw-row { grid-template-columns: 1fr; }
   .kw-share-post { grid-template-columns: 84px minmax(0, 1fr); }
@@ -782,6 +790,7 @@ function imagesCard(row: SeoRow, intent: string, pictures: PictureRow[]): Html {
     ${row.images_status === 'failed' ? html`${problemList(row.images_problems)}${retryNote(row)}` : keptList(row.images_status, row.images_problems)}
     ${promptsDone
       ? html`<div class="kw-img">
+          <details class="kw-img-theme-box"><summary>Picture style</summary>
           <dl class="kw-img-theme">
             <div><dt>Surface</dt><dd>${set!.theme.surface}</dd></div>
             <div><dt>Lighting</dt><dd>${set!.theme.lighting}</dd></div>
@@ -789,16 +798,16 @@ function imagesCard(row: SeoRow, intent: string, pictures: PictureRow[]): Html {
             <div><dt>Style</dt><dd>${set!.theme.style}</dd></div>
             <div><dt>Mood</dt><dd>${set!.theme.mood}</dd></div>
             ${set!.theme.dish ? html`<div><dt>Dish</dt><dd>${set!.theme.dish}</dd></div>` : raw('')}
-          </dl>
+          </dl></details>
           <ol class="kw-img-list">
             ${set!.images.map(
               (im, i) => html`<li>
-                <div>
-                  <div class="kw-img-slot">${im.slot.replace(/-/g, ' ')}</div>
+                ${pictureBox(current[i], im.slot)}
+                <details>
+                  <summary><span class="kw-img-slot">${im.slot.replace(/-/g, ' ')}</span></summary>
                   <p class="kw-img-prompt">${im.prompt}</p>
                   <div class="kw-img-alt"><b>Alt</b> ${im.alt}</div>
-                </div>
-                ${pictureBox(current[i], im.slot)}
+                </details>
               </li>`,
             )}
           </ol>
