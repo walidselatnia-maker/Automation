@@ -23,6 +23,7 @@ import {
   shapeOf,
   NEXT_STEP_KEY,
   NO_ACCOUNT_WAIT_MS,
+  articleInProgress,
   restartPictureMaker,
   stopPictureMaker,
 } from '../src/newsite/pictures.js';
@@ -119,6 +120,20 @@ describe('Pictures, made the old dashboard way', () => {
     expect(sent).toEqual([]);
     expect(listPictures(seoId)).toMatchObject([{ status: 'queued', attempts: 0 }]);
     expect(wakes).toEqual([NO_ACCOUNT_WAIT_MS]);
+  });
+
+  it('counts an article as under way from its turn to its publish, so photo jobs wait for all of it', () => {
+    setPrompts(['feature']);
+    expect(articleInProgress()).toBe(false);
+    run('UPDATE keyword_seo SET auto_active = 1 WHERE id = ?', seoId);
+    expect(articleInProgress()).toBe(true); // still being written: no picture yet
+    run('UPDATE keyword_seo SET auto_active = 0 WHERE id = ?', seoId);
+    queuePictures(seoId, dataDir);
+    // Queued pictures of a keyword that is not having its turn are not taken: they hold nothing.
+    run('UPDATE newsite_pictures SET by_hand = 0 WHERE seo_id = ?', seoId);
+    expect(articleInProgress()).toBe(false);
+    run('UPDATE newsite_pictures SET by_hand = 1 WHERE seo_id = ?', seoId);
+    expect(articleInProgress()).toBe(true);
   });
 
   it('Make again sends a finished picture once more, and not one already in hand', async () => {

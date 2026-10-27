@@ -254,6 +254,23 @@ export function pictureMakerBusy(): boolean {
   return running !== null;
 }
 
+/**
+ * Whether an article is under way: the keyword Automation is working on,
+ * from its writing to its publish, or an article picture (Automation's,
+ * Generate now's or a button's) waiting or being made. Photo jobs wait the whole time, not only while a
+ * picture is in the making: between two steps of an article was when a photo
+ * slipped in and the article's next picture queued behind it.
+ */
+export function articleInProgress(): boolean {
+  return Boolean(
+    get(`SELECT 1 FROM keyword_seo WHERE auto_active = 1 AND COALESCE(post_status, '') != 'published' LIMIT 1`) ||
+      // Only pictures the maker will take: a stepped-over keyword's leftovers must not hold photos for ever.
+      get(`SELECT 1 FROM newsite_pictures p JOIN keyword_seo k ON k.id = p.seo_id
+           WHERE p.status IN ('queued', 'making') AND (p.by_hand = 1 OR k.auto_active = 1 OR k.generate_now = 1)
+             AND p.slot NOT LIKE 'step-%' AND p.slot NOT LIKE 'pin-%' AND p.slot NOT LIKE 'fb-%' AND p.slot NOT LIKE 'social-%' LIMIT 1`),
+  );
+}
+
 /** Set by Stop: no picture is sent until Restart. */
 export const PICTURES_STOPPED_KEY = 'newsite_pictures_stopped';
 

@@ -8,7 +8,7 @@ import { createLogger, errorMessage } from '../lib/logger.js';
 import type { Settings } from '../settings.js';
 import { html, raw } from '../web/views/layout.js';
 import { newLayout, type NewFlash } from './layout.js';
-import { flowProjectFor, pictureMakerBusy, type PictureShape } from './pictures.js';
+import { articleInProgress, flowProjectFor, pictureMakerBusy, type PictureShape } from './pictures.js';
 import { getNewWebsite, listNewWebsites, websiteApiKey, type NewWebsiteRow } from './repo.js';
 
 /**
@@ -136,12 +136,13 @@ function promptFor(site: NewWebsiteRow, post: Record<string, unknown>, photo: { 
 }
 
 /**
- * Photo jobs give way: to Pause, and to article pictures. The articles are the
- * main work, and both send pictures to the one Flow tab, so a photo is only
- * made when no article picture is being made.
+ * Photo jobs give way: to Pause, and to the articles. The articles are the
+ * main work, and both send pictures to the one Flow tab, so no photo is made
+ * while an article is under way (about ten minutes) or any picture is being
+ * made; the slow queue carries on once it is out.
  */
 const mustWait = (deps: PhotoJobDeps): boolean =>
-  deps.settings.get(PAUSED_KEY) === '1' || (deps.mainBusy ?? pictureMakerBusy)();
+  deps.settings.get(PAUSED_KEY) === '1' || (deps.mainBusy ?? (() => pictureMakerBusy() || articleInProgress()))();
 
 let busy = false;
 /** Which website is asked first next time, so every website gets its turn. */
