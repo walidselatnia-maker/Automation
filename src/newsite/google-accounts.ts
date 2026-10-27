@@ -111,9 +111,11 @@ export function accountTrouble(message: string): Exclude<AccountStatus, 'working
 const outOfCredits = (message: string): boolean => /USER_QUOTA_REACHED|no video credits left/i.test(message);
 
 function markTrouble(account: GoogleAccount, trouble: Exclude<AccountStatus, 'working'>, message: string, now: number): void {
-  // A signed-out account waits for Sign in; the others rest and are tried again.
-  const retryAt = trouble === 'signed_out' ? 0
-    : now + (trouble === 'blocked' ? GOOGLE_ACCOUNT_BLOCKED_COOLDOWN_MS : GOOGLE_ACCOUNT_COOLDOWN_MS);
+  // Every kind rests and is tried again, signed out too: that verdict is read
+  // from error text and can be wrong, and an account left out for good until
+  // someone presses Sign in stopped every picture. A try on an account that
+  // really is signed out fails at once and marks it again.
+  const retryAt = now + (trouble === 'blocked' ? GOOGLE_ACCOUNT_BLOCKED_COOLDOWN_MS : GOOGLE_ACCOUNT_COOLDOWN_MS);
   run(
     `UPDATE google_accounts SET status = ?, retry_at = ?, last_error = ?, credits = CASE WHEN ? THEN '0' ELSE credits END WHERE id = ?`,
     trouble, retryAt, message.slice(0, 300), outOfCredits(message) ? 1 : 0, account.id,
@@ -133,11 +135,11 @@ export function needsProject(account: GoogleAccount, accounts: GoogleAccount[]):
   return !account.flow_project && accounts.find((a) => !a.flow_project)?.id !== account.id;
 }
 
-/** The accounts a job may use now, in order: working ones, and rested ones whose time is up. */
+/** The accounts a job may use now, in order: working ones, and rested ones whose time is up (signed out ones too). */
 export function usableAccounts(now = Date.now()): GoogleAccount[] {
   const accounts = listGoogleAccounts();
   return accounts.filter(
-    (a) => !needsProject(a, accounts) && (a.status === 'working' || ((a.status === 'limited' || a.status === 'blocked') && a.retry_at <= now)),
+    (a) => !needsProject(a, accounts) && (a.status === 'working' || a.retry_at <= now),
   );
 }
 

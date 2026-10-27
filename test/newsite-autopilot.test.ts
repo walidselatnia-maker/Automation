@@ -272,20 +272,25 @@ describe('Automation: one keyword at a time', () => {
     expect(activeIds()).toEqual([ids[1]]);
   });
 
-  it('G: a failed keyword is recorded and stopped, the later ones wait for it, and Try again carries it on', async () => {
+  it('G: a failed keyword is recorded and stopped, and the next keyword goes ahead of it instead of waiting', async () => {
     autopilotTick(deps(), NOW);
-    const [a] = ids as [number];
+    const [a, b] = ids as [number, number];
     await writer(); // the AI cannot be reached: AI#1 fails
     expect(row(a).status).toBe('failed');
     for (let i = 0; i < 5; i++) autopilotTick(deps(), NOW);
     expect(automationLog().find((l) => l.event === 'stopped')).toMatchObject({ seo_id: a, note: 'The seo step failed.' });
-    expect(activeIds()).toEqual([]); // nothing goes ahead of it
-    expect(started()).toEqual([a]);
-    expect(autopilotState(getNewWebsite(siteId)!, 'UTC', NOW, 0, settings).next).toContain('“roses” stopped: press Try again');
+    // One failure does not hold up the line: the next keyword gets the turn, still one at a time.
+    expect(activeIds()).toEqual([b]);
+    expect(started()).toEqual([a, b]);
+    expect(autopilotState(getNewWebsite(siteId)!, 'UTC', NOW, 0, settings).next).not.toContain('wait for it');
+  });
 
-    // With automatic tries left, a failed step keeps its turn.
+  it('G2: with tries left a failed step or picture keeps its turn; with none left it is stepped over, and Try again puts it first again', async () => {
     settings.set('auto_retry_enabled', 'true');
     settings.set('auto_retry_max', '1');
+    autopilotTick(deps(), NOW);
+    const [a, b] = ids as [number, number];
+    await writer();
     autopilotTick(deps(), NOW);
     expect(activeIds()).toEqual([a]);
 
@@ -298,13 +303,14 @@ describe('Automation: one keyword at a time', () => {
     // Automation's own try is not a button press: it is made only while the keyword has its turn.
     expect(all<{ by_hand: number }>('SELECT by_hand FROM newsite_pictures WHERE seo_id = ?', a).map((p) => p.by_hand)).toEqual([0, 0]);
     expect(activeIds()).toEqual([a]);
-    // None left: it stops, and the line waits for it again.
+    // None left: it stops, and the next keyword goes ahead.
     run(`UPDATE newsite_pictures SET status = 'failed' WHERE seo_id = ?`, a);
     for (let i = 0; i < 3; i++) autopilotTick(deps(), NOW);
-    expect(activeIds()).toEqual([]);
-    expect(started()).toEqual([a, a]); // only ever this one
-    // Try again: it carries on, still first.
+    expect(activeIds()).toEqual([b]);
+    expect(started()).toEqual([a, b]);
+    // Try again: it is first in line again once the keyword in hand is out.
     run(`UPDATE newsite_pictures SET status = 'done' WHERE seo_id = ?`, a);
+    publishedAt(b, NOW - 10_000 * MIN);
     autopilotTick(deps(), NOW);
     expect(activeIds()).toEqual([a]);
   });

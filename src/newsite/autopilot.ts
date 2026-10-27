@@ -46,8 +46,9 @@ import { queueNotStartedSteps, type SeoRow } from './seo.js';
  * not be made, is tried again by the platform's retry settings (retries.ts),
  * and the keyword keeps its turn while a try is left. When none is (or the
  * publish failed), the keyword is stopped: it keeps its failed step, with Try
- * again, and its website's line waits for it (other websites carry on).
- * Pressing Try again carries it on from its failed step.
+ * again, and is stepped over: the next keyword of its website gets the turn,
+ * so one failure never holds up the whole line. Pressing Try again puts it
+ * back first in line, and it carries on from its failed step.
  *
  * Turning Automation off: the step being done right now (one AI answer, one
  * picture, one publish) finishes and is kept; nothing after it starts. The
@@ -190,13 +191,13 @@ const generateNowBusy = (settings: Settings): boolean =>
 
 /**
  * A website's keyword whose turn it is: its first one not published yet, in
- * the Keywords page's order. None while that one is stopped, being
- * published, or under way through Generate now: the line waits for it, and
- * no later keyword goes ahead of it.
+ * the Keywords page's order, stepping over stopped ones (they wait for Try
+ * again, and a failed picture must not hold up every keyword after it). None
+ * while that one is being published or under way through Generate now.
  */
 function firstInLine(rows: SeoRow[], settings: Settings): SeoRow | undefined {
-  const first = rows.find((r) => r.post_status !== 'published' && !r.skip_reason);
-  if (!first || first.post_status === 'publishing' || first.generate_now || stoppedReason(first, settings)) return undefined;
+  const first = rows.find((r) => r.post_status !== 'published' && !r.skip_reason && !stoppedReason(r, settings));
+  if (!first || first.post_status === 'publishing' || first.generate_now) return undefined;
   return first;
 }
 
@@ -343,7 +344,6 @@ export function autopilotState(site: NewWebsiteRow, tz: string, now = Date.now()
   let next: string;
   if (site.status !== 'active') next = 'Paused';
   else if (active && rows.some((r) => r.id === active.id)) next = `${stage(active, site, s.due, now, tz)}${stoppedNote}`;
-  else if (waiting[0] && stoppedOf(waiting[0])) next = `“${waiting[0].keyword}” stopped: press Try again. The next keywords wait for it`;
   else if (!waiting.some((r) => !stoppedOf(r) && r.post_status !== 'publishing' && !r.generate_now)) {
     next = stopped.length ? `${plural(stopped.length, 'article')} stopped: open Keywords & articles` : 'No keywords left: add keywords';
   } else if (active) next = `Waits for its turn: one keyword at a time (now “${active.keyword}”)${stoppedNote}`;

@@ -8,7 +8,7 @@ import { createLogger, errorMessage } from '../lib/logger.js';
 import type { Settings } from '../settings.js';
 import { parseImageSet } from './images.js';
 import { articleColorStyle, withColorStyle } from './color-styles.js';
-import { withGoogleAccount } from './google-accounts.js';
+import { NO_WORKING_ACCOUNT, withGoogleAccount } from './google-accounts.js';
 
 /**
  * The pictures themselves: each AI#4 prompt made into a picture by the image
@@ -79,6 +79,8 @@ export const shapeOf = (slot: string): PictureShape => (isStepSlot(slot) ? 'SQUA
 export const STEP_GAP_MINUTES = [15, 30] as const;
 /** When the next step picture may be made (ms since 1970), kept across restarts. */
 export const NEXT_STEP_KEY = 'newsite_next_step_picture_at';
+/** How long pictures wait, when no Google account can take one, before the next look. */
+export const NO_ACCOUNT_WAIT_MS = 5 * 60_000;
 
 /** Where one keyword's pictures are kept. */
 export const pictureDir = (seoId: number, dataDir = resolveDataDir()): string =>
@@ -417,6 +419,14 @@ export function kickPictureMaker(deps: PictureDeps): Promise<void> {
         } catch (err) {
           if (round !== mine) break; // stopped while it was being made: it is back in the queue
           const message = errorMessage(err).slice(0, 400);
+          if (message === NO_WORKING_ACCOUNT) {
+            // Not this picture's fault and nothing was sent: it waits in the
+            // queue, without using a try, until an account has rested.
+            run(`UPDATE newsite_pictures SET status = 'queued', attempts = MAX(0, attempts - 1), error = ? WHERE id = ?`, message, next.id);
+            log.warn(`Picture "${next.slot}" (${next.id}) waits: ${message}`);
+            wakeIn(NO_ACCOUNT_WAIT_MS, () => void kickPictureMaker(deps));
+            break;
+          }
           log.warn(`Picture "${next.slot}" (${next.id}) failed: ${message}`);
           run(`UPDATE newsite_pictures SET status = 'failed', error = ? WHERE id = ?`, message, next.id);
           // Like a failed step in an old run: this article's main pictures

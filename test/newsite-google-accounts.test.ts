@@ -52,7 +52,8 @@ describe('Google accounts: Flow jobs move to the next working account', () => {
     expect(used).toEqual(['site-project', P2, P3]);
     const [one, two, three] = listGoogleAccounts();
     expect(one).toMatchObject({ status: 'limited', last_error: 'RESOURCE_EXHAUSTED' });
-    expect(two).toMatchObject({ status: 'signed_out', retry_at: 0 });
+    expect(two).toMatchObject({ status: 'signed_out' });
+    expect(two!.retry_at).toBeGreaterThan(0); // rests like the others, then is tried again
     expect(three).toMatchObject({ status: 'working' });
     expect(three!.last_used_at).toBeTruthy();
   });
@@ -217,7 +218,7 @@ describe('Google accounts: Platform settings and the dashboard', () => {
   it('shows one line on the dashboard only when no account works', async () => {
     const before = await app.inject({ method: 'GET', url: '/new-website/dashboard' });
     expect(before.body).not.toContain(NO_WORKING_ACCOUNT);
-    run(`UPDATE google_accounts SET status = 'signed_out'`);
+    run(`UPDATE google_accounts SET status = 'signed_out', retry_at = ${Date.now() + 60_000}`);
     const after = await app.inject({ method: 'GET', url: '/new-website/dashboard' });
     expect(after.body).toContain(NO_WORKING_ACCOUNT);
   });

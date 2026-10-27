@@ -22,6 +22,7 @@ import {
   failedArticlePictures,
   shapeOf,
   NEXT_STEP_KEY,
+  NO_ACCOUNT_WAIT_MS,
   restartPictureMaker,
   stopPictureMaker,
 } from '../src/newsite/pictures.js';
@@ -107,6 +108,17 @@ describe('Pictures, made the old dashboard way', () => {
     const pictures = listPictures(seoId);
     expect(pictures.map((p) => p.status)).toEqual(['done', 'done', 'done']);
     expect(readFileSync(join(pictureDir(seoId, dataDir), pictures[0]!.file), 'utf8')).toBe('img');
+  });
+
+  it('with no Google account able to take one, a picture waits in the queue without using a try, and is looked at again later', async () => {
+    run(`UPDATE google_accounts SET status = 'limited', retry_at = ?`, Number.MAX_SAFE_INTEGER);
+    setPrompts(['feature']);
+    queuePictures(seoId, dataDir);
+    const wakes: number[] = [];
+    await kickPictureMaker({ ...deps(ok), wakeIn: (ms: number) => { wakes.push(ms); } });
+    expect(sent).toEqual([]);
+    expect(listPictures(seoId)).toMatchObject([{ status: 'queued', attempts: 0 }]);
+    expect(wakes).toEqual([NO_ACCOUNT_WAIT_MS]);
   });
 
   it('Make again sends a finished picture once more, and not one already in hand', async () => {
