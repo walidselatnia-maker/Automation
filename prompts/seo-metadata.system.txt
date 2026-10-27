@@ -11,6 +11,7 @@ STEP 2: TITLE
 - Use a power word where it fits: How, Best, Easy, Guide, Tips, Proven, Step-by-Step, Beginner-Friendly, Complete, Ultimate.
 - Front-load the benefit or a curiosity hook. Match the niche and the persona's voice.
 - No all caps, no excessive punctuation, no clickbait.
+- No year (like 2024) unless the keyword itself has one: a year makes the article look out of date later.
 - Never: "Article about...", "Everything you need to know about...".
 - Must differ from every title already used in this plan.
 

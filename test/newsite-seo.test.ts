@@ -42,6 +42,7 @@ describe('AI#1 checks', () => {
     ['a short title', { title: 'Vegan Pumpkin Chocolate Chip Cookies' }, /title is \d+ characters/],
     ['a title without the keyword', { title: 'The Softest Egg-Free Autumn Cookies You Will Ever Bake Now' }, /title must contain the focus keyword/],
     ['all caps', { title: 'EASY Vegan Pumpkin Chocolate Chip Cookies for Busy Weekdays' }, /all caps/],
+    ['a year', { title: 'Vegan Pumpkin Chocolate Chip Cookies: Easy Bake for 2024' }, /Remove the year "2024"/],
     ['an exclamation mark', { title: 'Vegan Pumpkin Chocolate Chip Cookies You Will Love Baking!' }, /exclamation/],
     ['a long description', { description: GOOD.description + ' More words here.' }, /description is \d+ characters/],
     ['filler', { description: 'In this guide you learn vegan pumpkin chocolate chip cookies with no eggs or butter, ready in 30 minutes, tested again and again. Learn how to bake them now.' }, /filler phrase/],

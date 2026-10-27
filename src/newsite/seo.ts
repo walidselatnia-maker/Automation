@@ -109,6 +109,9 @@ export function checkSeo(a: SeoAnswer, ctx: SeoContext): string[] {
   if (a.focusKeyword && !hasAllWords(a.title, a.focusKeyword)) problems.push('The title must contain the focus keyword.');
   if (/\b[A-Z]{4,}\b/.test(a.title)) problems.push('The title has a word in all caps.');
   if (a.title.includes('!')) problems.push('The title must not use exclamation marks.');
+  // a year makes the article look out of date a year later (site audits flag it); only kept when the keyword itself has one
+  const year = a.title.match(/\b(19|20)\d{2}\b/);
+  if (year && !ctx.keyword.includes(year[0])) problems.push(`Remove the year "${year[0]}" from the title.`);
   const twin = ctx.otherTitles.find((t) => t.toLowerCase() === a.title.toLowerCase() || similarity(t, a.title) >= 0.8);
   if (twin) problems.push(`The title is too close to "${twin}", already used in this plan.`);
 
