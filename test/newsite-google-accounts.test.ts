@@ -81,7 +81,7 @@ describe('Google accounts: Flow jobs move to the next working account', () => {
     const used: string[] = [];
     await withGoogleAccount('x', async (p) => {
       used.push(p);
-      if (p === P2) throw new Error('This Google account has no video credits left on Flow.');
+      if (p === P2) throw new Error('PUBLIC_ERROR_USER_QUOTA_REACHED: This Google account has no video credits left on Flow.');
     }, () => now);
     expect(listGoogleAccounts()[0]).toMatchObject({ status: 'limited', credits: '0', retry_at: now + GOOGLE_ACCOUNT_COOLDOWN_MS });
 
@@ -119,10 +119,17 @@ describe('Google accounts: Flow jobs move to the next working account', () => {
     expect(called).toBe(false);
   });
 
-  it('reads 401 UNAUTHENTICATED as signed out and a 403 reCAPTCHA refusal as limited', () => {
+  it('marks an account only on Google’s own error codes, never on loose wording', () => {
     expect(accountTrouble('Flow answered HTTP 401: UNAUTHENTICATED')).toBe('signed_out');
-    expect(accountTrouble('HTTP 403: reCAPTCHA evaluation failed')).toBe('limited');
+    expect(accountTrouble('Image job x failed with status FAILED: SESSION_EXPIRED')).toBe('signed_out');
+    expect(accountTrouble('PUBLIC_ERROR_UNUSUAL_ACTIVITY')).toBe('blocked');
     expect(accountTrouble('PUBLIC_ERROR_USER_QUOTA_REACHED')).toBe('limited');
+    expect(accountTrouble('RESOURCE_EXHAUSTED')).toBe('limited');
+    // Not codes: a failed picture, and the account is left as it is.
+    for (const words of ['HTTP 403: reCAPTCHA evaluation failed', 'please sign in again', 'HTTP 401', 'daily quota', 'rate limit 429',
+      'FLOW_UI_ERROR: unusual activity', 'the composer took the prompt but no image appeared in 300s']) {
+      expect(accountTrouble(words)).toBeNull();
+    }
   });
 
   it('skips a later account with no Flow project address, since it would only repeat the first', async () => {

@@ -587,7 +587,7 @@ class WorkerController:
             if video_models.out_of_credits(detail):
                 # Not a hiccup: the account's video credits are spent. A retry
                 # is another upload and another captcha for the same answer.
-                message = ("This Google account has no video credits left on Flow. "
+                message = ("PUBLIC_ERROR_USER_QUOTA_REACHED: This Google account has no video credits left on Flow. "
                            "Nothing was generated. Wait for the credits to reset "
                            "or add more, then run the reel again.")
                 logger.error("job %s FAILED: %s", job_id[:8], message)

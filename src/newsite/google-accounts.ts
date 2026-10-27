@@ -98,17 +98,21 @@ export function moveGoogleAccount(id: number, direction: -1 | 1): void {
 /**
  * Which account trouble an error from Flow names, if any.
  *
- * Read from the text the image service passes on: Google's own codes where
- * it gives them, and the service's words where it rewrote them.
+ * Only Google's own error codes count, word for word. Anything else -- a
+ * timeout, a picture that did not appear, a message read off the page -- is a
+ * failed picture and says nothing about the account, so the account is left
+ * as it is. Reading the account's state out of loose wording ("sign in
+ * again", "quota", a 401 somewhere in a sentence) marked a working account
+ * signed out and stopped every picture.
  */
 export function accountTrouble(message: string): Exclude<AccountStatus, 'working'> | null {
-  if (/SESSION_EXPIRED|UNAUTHENTICATED|signed this browser out|sign in again|\b401\b/i.test(message)) return 'signed_out';
-  if (/UNUSUAL_ACTIVITY|unusual activity/i.test(message)) return 'blocked';
-  if (/USER_QUOTA_REACHED|no video credits left|RESOURCE_EXHAUSTED|quota|rate.?limit|\b429\b|recaptcha evaluation failed/i.test(message)) return 'limited';
+  if (/\b(SESSION_EXPIRED|UNAUTHENTICATED)\b/.test(message)) return 'signed_out';
+  if (/\bPUBLIC_ERROR_UNUSUAL_ACTIVITY\b/.test(message)) return 'blocked';
+  if (/\b(PUBLIC_ERROR_USER_QUOTA_REACHED|RESOURCE_EXHAUSTED)\b/.test(message)) return 'limited';
   return null;
 }
 
-const outOfCredits = (message: string): boolean => /USER_QUOTA_REACHED|no video credits left/i.test(message);
+const outOfCredits = (message: string): boolean => /\bPUBLIC_ERROR_USER_QUOTA_REACHED\b/.test(message);
 
 function markTrouble(account: GoogleAccount, trouble: Exclude<AccountStatus, 'working'>, message: string, now: number): void {
   // Every kind rests and is tried again, signed out too: that verdict is read
