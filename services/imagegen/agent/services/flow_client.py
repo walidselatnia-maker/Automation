@@ -26,6 +26,11 @@ logger = logging.getLogger(__name__)
 
 _UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I)
 
+#: How often the Flow page is looked at while a picture is being made.
+UI_POLL_S = 2
+#: The longest a picture is waited for while Flow still shows it working.
+UI_MAX_WAIT_S = 900
+
 
 class FlowClient:
     """Sends commands to Chrome extension via WebSocket."""
@@ -874,13 +879,23 @@ class FlowClient:
         # Flow's own UI decides how many variants a submit makes, so a submit
         # can bring back more than one. The first new one is this job's; the
         # rest stay in the project and cost nothing to leave there.
-        deadline = time.monotonic() + poll_seconds
+        #
+        # Timed the way a person watches the grid: the page is looked at every
+        # UI_POLL_S, the project listing (a call to Google) only every fifth
+        # look. While a tile still shows its percent, Flow is working and the
+        # wait goes on, up to UI_MAX_WAIT_S; with nothing working and nothing
+        # new, it ends at poll_seconds and the job is tried again on a
+        # reloaded tab.
+        started = time.monotonic()
+        deadline = started + poll_seconds
+        looks = 0
         while time.monotonic() < deadline:
-            await asyncio.sleep(5)
-            now = await self.project_images(project_id)
+            await asyncio.sleep(UI_POLL_S)
+            looks += 1
+            now = await self.project_images(project_id) if looks % 5 == 1 else []
             if isinstance(now, dict):
                 logger.warning("Flow UI: project listing failed: %s", str(now.get("error"))[:200])
-            else:
+            elif now:
                 listed = len(now)
             # A listing that failed once is not the generation failing.
             fresh = [] if isinstance(now, dict) else [
@@ -891,6 +906,8 @@ class FlowClient:
                 state = await self.ui_page_state()
                 fresh = [image for image in self._images_of(state.get("images"))
                          if image.media_id not in known and image.media_id not in on_page_before]
+                if state.get("working"):
+                    deadline = min(max(deadline, time.monotonic() + 60), started + UI_MAX_WAIT_S)
             if not fresh:
                 # Last, any picture-sized tile that was not there before.
                 for src in state.get("tiles") or []:
@@ -904,15 +921,15 @@ class FlowClient:
                             fresh = [picture]
                         tiles_before.add(src)
                         break
-            if not fresh and int(deadline - time.monotonic()) % 30 < 5:
+            if not fresh and looks % 15 == 0:
                 logger.info(
                     "Flow UI: waiting -- listing %d (was %d), page pictures %d, tiles %d "
-                    "(was %d), tab %s, Google answers naming pictures %s, last calls %s",
+                    "(was %d), working %s, tab %s, Google answers naming pictures %s, last calls %s",
                     listed, len(known), len(state.get("images") or []),
-                    len(state.get("tiles") or []), len(tiles_before),
+                    len(state.get("tiles") or []), len(tiles_before), state.get("working"),
                     str(state.get("tabUrl"))[:100], state.get("answered"),
                     state.get("network"))
-            if not fresh:
+            if not fresh and looks % 2 == 0:
                 shown = await self.ui_page_errors(project_id, stale)
                 if shown:
                     return {"error": f"FLOW_UI_ERROR: {shown[0]}"}

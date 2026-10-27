@@ -115,7 +115,12 @@ RETRYABLE = ("quota", "rate_limit", "exhausted", "resource_exhausted", "429",
              # composer. A retry reloads the tab first (reload_before).
              "flow_ui_error",
              # The Flow tab or Chrome's window was gone; the retry opens them.
-             "no current window", "no_flow_tab")
+             "no current window", "no_flow_tab",
+             # The composer path's own misses: the picture never showed, or the
+             # page would not take the prompt. Tried again on a reloaded tab,
+             # up to MAX_RETRIES, the way a person retries a prompt.
+             "no image appeared", "composer would not take", "no_composer",
+             "composer_rejected_prompt", "generate_disabled", "submit_not_accepted")
 
 
 class WorkerController:
@@ -194,7 +199,9 @@ class WorkerController:
                 waiting = bool(counts.get("PENDING")) and not self.paused and not held
                 await chrome.reconcile(waiting)
 
-                free = MAX_CONCURRENT_REQUESTS - len(self._running)
+                # One composer, one picture at a time on the composer path.
+                limit = 1 if IMAGE_USE_UI else MAX_CONCURRENT_REQUESTS
+                free = limit - len(self._running)
                 if free > 0 and not self.paused and not held and get_flow_client().connected:
                     claimed = await jobs.claim_pending(free)
                     # Skipped while other jobs are still in flight, since
@@ -233,7 +240,9 @@ class WorkerController:
         and a fresh session is the known remedy. claim_pending has already
         counted the attempt by the time this sees the row, so 1 is a first try.
         """
-        if not IMAGE_USE_BATCH:
+        # The composer path is a person at the page: the tab is reloaded only
+        # to recover, before a retry, never before every picture.
+        if not IMAGE_USE_BATCH and not IMAGE_USE_UI:
             return True
         return any(int(job.get("attempts") or 0) > 1 for job in claimed)
 

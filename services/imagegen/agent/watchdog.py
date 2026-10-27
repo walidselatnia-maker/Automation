@@ -59,7 +59,7 @@ FAILURE_THRESHOLD = int(os.environ.get("WATCHDOG_FAILURE_THRESHOLD", "5"))
 # thirty seconds after every start, pause the worker, and -- because a paused
 # worker reports no work waiting -- keep Chrome stopped and send nothing, for
 # ever, long after the cause was fixed. That is exactly what happened.
-CIRCUIT_WINDOW_S = int(os.environ.get("WATCHDOG_CIRCUIT_WINDOW", "1800"))
+CIRCUIT_WINDOW_S = int(os.environ.get("WATCHDOG_CIRCUIT_WINDOW", "600"))
 
 CHECK_INTERVAL_S = int(os.environ.get("WATCHDOG_INTERVAL", "30"))
 

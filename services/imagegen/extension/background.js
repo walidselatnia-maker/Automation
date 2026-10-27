@@ -2251,7 +2251,13 @@ async function pageTiles(tabId) {
         const key = src.startsWith('data:') ? src.slice(0, 200) : src;
         if (!srcs.includes(key)) srcs.push(key);
       });
-      return { srcs, url: location.href };
+      // Tiles Flow is still working on: a percent ("45%") on its own.
+      const busy = [...document.querySelectorAll('div, span')].filter((d) => {
+        if (!/^\s*\d{1,3}\s*%\s*$/.test(d.textContent || '')) return false;
+        const r = d.getBoundingClientRect();
+        return r.width > 0 && r.height > 0 && !d.querySelector('div, span');
+      }).length;
+      return { srcs, url: location.href, working: busy };
     },
   });
   return out?.result || { srcs: [], url: '' };
@@ -2476,10 +2482,14 @@ async function uiGenerateImage({ projectId = null, prompt = '', model = null, as
   }
   await ensureFlowTabOnProject(projectId);
   const tabs = await queryFlowTabs();
-  const candidate = tabs.find((t) => !t.discarded) || tabs[0];
+  // The tab that was just moved to this job's project: with two Flow tabs
+  // open, taking any live one typed one website's prompt into another's project.
+  const candidate = (projectId && tabs.find((t) => (t.url || '').includes(projectId)))
+    || tabs.find((t) => !t.discarded) || tabs[0];
   if (!candidate) return { error: 'NO_FLOW_TAB' };
   const tab = await reviveTabIfNeeded(candidate);
   if (!tab) return { error: 'FLOW_TAB_DISCARDED' };
+  composerTabId = tab.id;
 
   let box = await composerBox(tab.id, ui);
   if (!box || !box.editor) {
@@ -2552,14 +2562,22 @@ async function uiGenerateImage({ projectId = null, prompt = '', model = null, as
 }
 
 /** Pictures showing on the Flow page now. */
+/** The tab the last picture was typed into, so its result is read there. */
+let composerTabId = null;
+async function composerTab() {
+  const tabs = await queryFlowTabs();
+  return tabs.find((t) => t.id === composerTabId) || tabs.find((t) => !t.discarded);
+}
+
 async function uiPageImages() {
-  const tab = (await queryFlowTabs()).find((t) => !t.discarded);
+  const tab = await composerTab();
   if (!tab) return { images: [], tiles: [], tabUrl: null };
   const tiles = await pageTiles(tab.id).catch(() => ({ srcs: [], url: tab.url }));
   return {
     images: await pageImages(tab.id).catch(() => []),
     tiles: tiles.srcs,
     tabUrl: tiles.url,
+    working: tiles.working || 0,
     network: networkSeen.slice(-8).map(({ url, status, found }) => ({ url, status, found })),
     answered: answeredImages.length,
   };
@@ -2567,7 +2585,7 @@ async function uiPageImages() {
 
 /** The picture of one tile on the Flow page, as a data: URL. */
 async function uiTileImage({ src = '' } = {}) {
-  const tab = (await queryFlowTabs()).find((t) => !t.discarded);
+  const tab = await composerTab();
   if (!tab) return { error: 'NO_FLOW_TAB' };
   const inPage = await tileImage(tab.id, src).catch((e) => ({ error: String(e?.message || e) }));
   if (inPage.dataUrl || !/^https:/.test(src)) return inPage;
@@ -2589,7 +2607,7 @@ async function uiTileImage({ src = '' } = {}) {
 
 /** Error messages on the Flow page now, less the ones in `ignore`. */
 async function uiPageErrors({ ignore = [], selectors = null } = {}) {
-  const tab = (await queryFlowTabs()).find((t) => !t.discarded);
+  const tab = await composerTab();
   if (!tab) return { errors: [] };
   const shown = await pageErrors(tab.id, uiSelectors(selectors)).catch(() => []);
   return { errors: shown.filter((e) => !ignore.includes(e)) };

@@ -308,18 +308,29 @@ export const flowProjectFor = (siteProjectId: string, domain: string, settings: 
 
 export { describeProjectId };
 
+/**
+ * How long a picture is waited for. The image service tries a picture up to
+ * five times on its own, a reloaded Flow tab each time, and says the job is
+ * still pending meanwhile; giving up before it is done failed the picture here
+ * while the service went on making it, and the next try sent it again.
+ */
+export const PICTURE_WAIT_MS = 60 * 60_000;
+
 /** The old dashboard's image client (PipelineContext), built from the same settings. */
-const oldDashboardMaker = (settings: Settings) => (prompt: string, projectId: string, shape: PictureShape) =>
-  new ImageClient({
+const oldDashboardMaker = (settings: Settings) => (prompt: string, projectId: string, shape: PictureShape) => {
+  // Looked at often, so a finished picture is taken within seconds.
+  const pollIntervalMs = Math.min(5, Math.max(1, settings.getNumber('image_poll_interval_seconds') || 5)) * 1000;
+  return new ImageClient({
     baseUrl: settings.get('image_base_url'),
     apiKey: settings.get('image_api_key'),
-    pollIntervalMs: settings.getNumber('image_poll_interval_seconds') * 1000,
-    maxAttempts: settings.getNumber('image_poll_max_attempts'),
+    pollIntervalMs,
+    maxAttempts: Math.max(settings.getNumber('image_poll_max_attempts'), Math.ceil(PICTURE_WAIT_MS / pollIntervalMs)),
     projectId,
     imageModel: settings.get('image_model'),
   })
     .generate(prompt, shape)
     .then(({ data, contentType }) => ({ data, contentType }));
+};
 
 const extension = (contentType: string): string =>
   contentType.includes('png') ? 'png' : contentType.includes('jpeg') ? 'jpg' : 'webp';
