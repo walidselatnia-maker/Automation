@@ -11,6 +11,12 @@ whole service and not per Google account, because every account here runs in
 the same Chrome on the same connection, and that may well be what was judged.
 
 Reads and polling are not held, only the claim of new jobs.
+
+Through the composer it is different, measured 2026-10-28 in a real Flow tab:
+the refusal comes at the end of one picture (or of one burst of them), and the
+very next submit works -- an identical burst of five two seconds later all came
+back. So a composer refusal only requeues its job, and the service holds only
+when several come in a row with no picture between them, and then for minutes.
 """
 import json
 import logging
@@ -24,6 +30,11 @@ logger = logging.getLogger(__name__)
 
 HOLD_PATH = BASE_DIR / "generation_hold.json"
 UNUSUAL_ACTIVITY_HOLD_S = int(os.environ.get("UNUSUAL_ACTIVITY_HOLD_S", "3600"))
+# Composer refusals in a row before anything is held, and for how long.
+UI_UNUSUAL_HOLD_AFTER = int(os.environ.get("UI_UNUSUAL_HOLD_AFTER", "3"))
+UI_UNUSUAL_HOLD_S = int(os.environ.get("UI_UNUSUAL_HOLD_S", "600"))
+
+_ui_refusals_in_a_row = 0
 
 
 def is_unusual_activity(error: str) -> bool:
@@ -67,6 +78,23 @@ def start(reason: str, seconds: float = UNUSUAL_ACTIVITY_HOLD_S) -> None:
     except OSError as exc:
         logger.warning("Could not save the generation hold: %s", exc)
     logger.warning("Generation held for %.0fs: %s", seconds, reason)
+
+
+def note_ui_refusal() -> bool:
+    """One more composer refusal. Answers whether that started a hold."""
+    global _ui_refusals_in_a_row
+    _ui_refusals_in_a_row += 1
+    if _ui_refusals_in_a_row < UI_UNUSUAL_HOLD_AFTER:
+        return False
+    _ui_refusals_in_a_row = 0
+    start(f"Google said unusual activity {UI_UNUSUAL_HOLD_AFTER} times in a row", UI_UNUSUAL_HOLD_S)
+    return True
+
+
+def note_picture() -> None:
+    """A picture came back: the refusals are no longer in a row."""
+    global _ui_refusals_in_a_row
+    _ui_refusals_in_a_row = 0
 
 
 def clear() -> bool:

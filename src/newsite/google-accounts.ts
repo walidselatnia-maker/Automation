@@ -108,7 +108,9 @@ export function moveGoogleAccount(id: number, direction: -1 | 1): void {
 export function accountTrouble(message: string): Exclude<AccountStatus, 'working'> | null {
   if (/\b(SESSION_EXPIRED|UNAUTHENTICATED)\b/.test(message)) return 'signed_out';
   if (/\bPUBLIC_ERROR_UNUSUAL_ACTIVITY\b/.test(message)) return 'blocked';
-  if (/\b(PUBLIC_ERROR_USER_QUOTA_REACHED|RESOURCE_EXHAUSTED)\b/.test(message)) return 'limited';
+  // The per-model daily quota only reaches here when every model is spent:
+  // the picture service moves to the next model itself.
+  if (/\b(PUBLIC_ERROR_USER_QUOTA_REACHED|PUBLIC_ERROR_PER_MODEL_DAILY_QUOTA_REACHED|RESOURCE_EXHAUSTED)\b/.test(message)) return 'limited';
   return null;
 }
 

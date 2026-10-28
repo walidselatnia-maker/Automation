@@ -55,6 +55,11 @@ KNOWN: tuple[str, ...] = tuple(m["wire"] for m in MODELS if m["wire"])
 # How long a refused model stays skipped before it is tried again.
 RETRY_AFTER_S = 1800
 
+# A model out of its daily quota. Google does not say when the day turns over
+# (a free account showed 11:55 AM), and asking costs two seconds -- the refusal
+# comes back that fast -- so it is asked again every hour rather than guessed.
+DAILY_QUOTA_RETRY_S = 3600
+
 # Names that look like Flow's model enums and nothing else. Not a guarantee --
 # the source is minified JavaScript -- but a floor: it rules out the obvious.
 _MIN_LEN, _MAX_LEN = 4, 40
@@ -150,16 +155,50 @@ def record(wire: str, error: Optional[str]) -> None:
         logger.info("image model %s (%s): accepted by Google", label_of(wire), wire)
 
 
-def refused(wire: str) -> None:
+def refused(wire: str, seconds: Optional[float] = None) -> None:
     """Skip this model for a while. The next automatic plan starts further down."""
-    _skip_until[wire] = time.monotonic() + RETRY_AFTER_S
-    logger.warning("image model %s refused — skipping it for %ds", wire, RETRY_AFTER_S)
+    seconds = RETRY_AFTER_S if seconds is None else seconds
+    _skip_until[wire] = time.monotonic() + seconds
+    logger.warning("image model %s refused — skipping it for %ds", wire, seconds)
 
 
 def is_refusal(error: str) -> bool:
     """Google answering the model by name: may not use it, or no credits for it."""
     text = str(error or "").upper()
-    return "MODEL_ACCESS_DENIED" in text or "USER_QUOTA_REACHED" in text
+    return ("MODEL_ACCESS_DENIED" in text or "USER_QUOTA_REACHED" in text
+            or is_daily_quota(error))
+
+
+def is_daily_quota(error: str) -> bool:
+    """This model is out for today. Measured 2026-10-28: Pro stopped after 17
+    pictures on a free account and about 94 on a paid one, and the next model
+    worked at once -- the limit is per model, not per account."""
+    text = str(error or "")
+    return "DAILY_QUOTA_REACHED" in text.upper() or "usage limit" in text.lower()
+
+
+def walk(choice: Optional[str] = AUTO) -> list[str]:
+    """Every model to try for this choice, in order, when the composer path
+    meets a daily quota: the plan's first, then the rest with Lite first -- it
+    made a picture in about 8 seconds where the others took 20.
+
+    A named choice falls back too, but only on a daily quota (the caller
+    decides that): the person picked a model, not a day without pictures.
+    """
+    first = plan(choice)
+    if not first:
+        return []
+    now = time.monotonic()
+    rest = [m["wire"] for m in MODELS
+            if m["wire"] and m["wire"] not in first
+            and _outcome.get(m["wire"], {}).get("outcome") != REJECTED
+            and _skip_until.get(m["wire"], 0) <= now]
+    order = first + rest
+    lite = _lite()["wire"]
+    tail = order[1:]
+    if lite in tail:
+        tail = [lite] + [w for w in tail if w != lite]
+    return [order[0]] + tail
 
 
 def is_bad_name(error: str) -> bool:

@@ -55,7 +55,8 @@ class Fake(FlowClient):
         shown = self._page_images.pop(0) if self._page_images else []
         tiles = self._page_tiles.pop(0) if len(self._page_tiles) > 1 else (
             self._page_tiles[0] if self._page_tiles else [])
-        return {"images": [i.url for i in shown], "tiles": tiles}
+        return {"images": [i.url for i in shown], "tiles": tiles,
+                "codes": list(getattr(self, "codes", []))}
 
     async def get_media_urls_batch(self, media_id: str):
         self.media_lookups.append(media_id)
@@ -65,9 +66,12 @@ class Fake(FlowClient):
         assert method == "ui_tile_image"
         return self._tile_pictures.get(params["src"], {"error": "gone"})
 
-    async def ui_page_errors(self, project_id: str, ignore: list[str]) -> list[str]:
+    async def ui_page_errors(self, project_id: str, ignore: list[str], before=None) -> list[str]:
         self.ignored.append(ignore)
         shown = self._page_errors.pop(0) if self._page_errors else []
+        if isinstance(before, dict):
+            # `shown` is then a list with one entry per tile showing it.
+            return sorted({e for e in shown if shown.count(e) > before.get(e, 0)})
         return [e for e in shown if e not in ignore]
 
 

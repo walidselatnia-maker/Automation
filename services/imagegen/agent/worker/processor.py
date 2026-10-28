@@ -334,11 +334,7 @@ class WorkerController:
             # is whatever is selected in the Flow UI, and nothing here can
             # refuse a model by name to move down a list.
             if IMAGE_USE_UI:
-                result = await client.generate_images_ui(
-                    request["prompt"], request["project_id"],
-                    model_label=self._ui_model_label(job),
-                    aspect_label=UI_ASPECT_LABELS.get(request["aspect_ratio"]),
-                )
+                result = await self._generate_by_ui(client, job, request)
             else:
                 result = await self._generate_by_model(client, job, job_id, request)
 
@@ -352,19 +348,39 @@ class WorkerController:
             return
 
         await jobs.complete(job_id, extract_media_id(result), url)
+        generation_hold.note_picture()
         logger.info("job %s COMPLETED", job_id[:8])
 
-
     @staticmethod
-    def _ui_model_label(job: dict) -> str | None:
-        """The model to pick in Flow's menu, as the menu names it.
+    async def _generate_by_ui(client, job: dict, request: dict) -> dict:
+        """The composer path, moving to the next model when one is out for today.
 
-        Automatic is the first model its plan names, so the composer never
-        keeps whatever it last had selected: it may have been changed in the
-        tab, and the person asked for the best model that works, not that one.
+        The model is always picked in Flow's menu -- Automatic is the first its
+        plan names -- so the composer never keeps whatever was last selected in
+        the tab. Google's daily quota is per model: when it answers that, the
+        same job picks the next model straight away (Lite first, the fastest)
+        and the spent one is left out of the plan until an hourly re-ask finds
+        it back. Any other failure ends the walk and is the job's.
         """
-        plan = image_models.plan(job.get("image_model") or image_models.AUTO)
-        return image_models.label_of(plan[0]) if plan else None
+        models = image_models.walk(job.get("image_model") or image_models.AUTO)
+        result: dict = {"error": "no image model to pick"}
+        for i, wire in enumerate(models or [None]):
+            result = await client.generate_images_ui(
+                request["prompt"], request["project_id"],
+                model_label=image_models.label_of(wire) if wire else None,
+                aspect_label=UI_ASPECT_LABELS.get(request["aspect_ratio"]),
+            )
+            err = error_text(result) if is_error(result) else None
+            if wire:
+                image_models.record(wire, err)
+            if not (err and wire and image_models.is_daily_quota(err)):
+                break
+            image_models.refused(wire, image_models.DAILY_QUOTA_RETRY_S)
+            if i + 1 < len(models):
+                logger.warning("job %s: %s is out of its daily quota -- picking %s",
+                               job["id"][:8], image_models.label_of(wire),
+                               image_models.label_of(models[i + 1]))
+        return result
 
     async def _generate_by_model(self, client, job: dict, job_id: str, request: dict) -> dict:
         """The captcha-gated path: walk the models and keep the first Google takes.
@@ -387,7 +403,8 @@ class WorkerController:
             if image_models.is_refusal(err):
                 logger.warning("job %s: %s refused (%s) — trying the next model",
                                job_id[:8], model, err[:120])
-                image_models.refused(model)
+                image_models.refused(model, image_models.DAILY_QUOTA_RETRY_S
+                                     if image_models.is_daily_quota(err) else None)
                 continue
             if not image_models.is_known(model) and image_models.is_bad_name(err):
                 logger.warning("job %s: %s is not a model Flow knows (%s) — dropped",
@@ -925,8 +942,26 @@ class WorkerController:
     async def _handle_failure(self, job: dict, error: str) -> None:
         job_id = job["id"]
 
-        # Google's anti-abuse verdict. Retrying into it is how upstream users
-        # lost their accounts, so the job fails and everything stops for an hour.
+        # Through the composer the verdict is on one picture or one burst, and
+        # the next submit works: the job goes back in the queue (the loop's
+        # spacing puts ~10 s before the next), and only refusals in a row hold
+        # the service, for minutes. A job refused that often in all fails.
+        if generation_hold.is_unusual_activity(error) and error.startswith("FLOW_UI_ERROR"):
+            held = generation_hold.note_ui_refusal()
+            if job["attempts"] < MAX_RETRIES * 2:
+                logger.warning("job %s: Google said unusual activity on this picture; "
+                               "trying it again%s", job_id[:8],
+                               " after a short hold" if held else "")
+                await jobs.requeue(job_id, error)
+            else:
+                logger.error("job %s FAILED (unusual activity, %d tries): %s",
+                             job_id[:8], job["attempts"], error[:300])
+                await jobs.fail(job_id, error)
+            return
+
+        # Google's anti-abuse verdict on a call this service built. Retrying
+        # into it is how upstream users lost their accounts, so the job fails
+        # and everything stops for an hour.
         if generation_hold.is_unusual_activity(error):
             generation_hold.start("Google said unusual activity")
             logger.error("job %s FAILED (unusual activity; generation held): %s", job_id[:8], error[:300])

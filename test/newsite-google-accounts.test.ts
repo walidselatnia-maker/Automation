@@ -125,6 +125,7 @@ describe('Google accounts: Flow jobs move to the next working account', () => {
     expect(accountTrouble('PUBLIC_ERROR_UNUSUAL_ACTIVITY')).toBe('blocked');
     expect(accountTrouble('PUBLIC_ERROR_USER_QUOTA_REACHED')).toBe('limited');
     expect(accountTrouble('RESOURCE_EXHAUSTED')).toBe('limited');
+    expect(accountTrouble('FLOW_UI_ERROR: PUBLIC_ERROR_PER_MODEL_DAILY_QUOTA_REACHED: Google refused the picture')).toBe('limited');
     // Not codes: a failed picture, and the account is left as it is.
     for (const words of ['HTTP 403: reCAPTCHA evaluation failed', 'please sign in again', 'HTTP 401', 'daily quota', 'rate limit 429',
       'FLOW_UI_ERROR: unusual activity', 'the composer took the prompt but no image appeared in 300s']) {

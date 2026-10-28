@@ -2066,6 +2066,11 @@ const answeredImages = []; // { url, at }, newest last, bounded
 // What the page asked Google lately and how many pictures each answer named,
 // so a picture nobody saw finish can be traced to where it was missed.
 const networkSeen = []; // { at, url, status, found }, newest last, bounded
+// Google's own verdicts in those answers (PUBLIC_ERROR_...), with when they
+// came. A failed tile reads the same words every time, so the words cannot say
+// whether a failure is this picture's; the time of the answer can.
+const answeredCodes = []; // { code, at }, newest last, bounded
+const CODE_RE = /PUBLIC_ERROR_[A-Z_]+/g;
 
 // The answer is JSON inside JSON, so its escapes come doubled: \\u003d is "=".
 const unescapeBody = (text) =>
@@ -2101,6 +2106,8 @@ chrome.debugger.onEvent.addListener(async (source, method, params) => {
         }
       }
       if (answeredImages.length > 400) answeredImages.splice(0, answeredImages.length - 400);
+      for (const code of new Set(text.match(CODE_RE) || [])) answeredCodes.push({ code, at: Date.now() });
+      if (answeredCodes.length > 100) answeredCodes.splice(0, answeredCodes.length - 100);
     } catch {
       // The body is gone (navigated away, or too large to keep): nothing to read.
     }
@@ -2176,33 +2183,42 @@ async function composerBox(tabId, ui) {
 /**
  * Error messages showing on the page: alert regions, and any small element
  * whose own words read like a failure. Leaf-sized only, so a paragraph that
- * merely mentions "policy" in Flow's help text is not taken for one.
+ * merely mentions "policy" in Flow's help text is not taken for one. Each
+ * message with how many places show it.
  */
-async function pageErrors(tabId, ui) {
+async function pageErrorCounts(tabId, ui) {
   const [out] = await chrome.scripting.executeScript({
     target: { tabId },
     world: 'MAIN',
     args: [ui.errorRegions, ui.errorWords],
     func: (regionSel, words) => {
       const re = new RegExp(words, 'i');
-      const seen = new Set();
+      const matched = new Set();
       const visible = (el) => {
         const r = el.getBoundingClientRect();
         return r.width > 0 && r.height > 0;
       };
+      const textOf = (el) => (el.innerText || '').trim().replace(/\s+/g, ' ');
       const consider = (el) => {
-        const text = (el.innerText || '').trim().replace(/\s+/g, ' ');
-        if (text && text.length < 300 && re.test(text) && visible(el)) seen.add(text.slice(0, 200));
+        const text = textOf(el);
+        if (text && text.length < 300 && re.test(text) && visible(el)) matched.add(el);
       };
       document.querySelectorAll(regionSel).forEach(consider);
       document.querySelectorAll('div, span, p').forEach((el) => {
         if (el.childElementCount <= 2) consider(el);
       });
-      // A message nested in another that also matched: keep the shortest.
-      return [...seen].filter((t) => ![...seen].some((o) => o !== t && t.includes(o))).slice(0, 5);
+      // One per failed tile: an element holding another that matched is the
+      // same message twice. Counted, because every failed tile reads the same.
+      const counts = {};
+      for (const el of matched) {
+        if ([...matched].some((o) => o !== el && el.contains(o))) continue;
+        const text = textOf(el).slice(0, 200);
+        counts[text] = (counts[text] || 0) + 1;
+      }
+      return counts;
     },
   });
-  return out?.result || [];
+  return out?.result || {};
 }
 
 /** Picture addresses showing in the tab: Flow's tiles, read as a person sees them. */
@@ -2622,11 +2638,14 @@ async function uiGenerateImage({ projectId = null, prompt = '', model = null, as
     box = await composerBox(tab.id, ui);
     if (!box || !box.editor) return { error: 'NO_COMPOSER: the tab is not on a project page' };
   }
-  const before = await pageErrors(tab.id, ui);
+  const before = await pageErrorCounts(tab.id, ui);
   const imagesBefore = (await pageImages(tab.id).catch(() => [])).map(mediaIdOf);
   const tilesBefore = (await pageTiles(tab.id).catch(() => ({ srcs: [] }))).srcs;
-  const sent = (picked) => ({ ok: true, submitted: true, picked, pageErrors: before,
-                             pageImages: imagesBefore, pageTiles: tilesBefore, tabUrl: tab.url });
+  const sent = (picked, submittedAt) => ({
+    ok: true, submitted: true, picked, pageErrors: Object.keys(before), pageErrorCounts: before,
+    pageImages: imagesBefore, pageTiles: tilesBefore, tabUrl: tab.url,
+    // On this worker's clock, which is the one answeredCodes are stamped with.
+    submittedAt, now: Date.now() });
 
   return withDebugger(tab.id, async (target) => {
     const picked = {};
@@ -2673,6 +2692,7 @@ async function uiGenerateImage({ projectId = null, prompt = '', model = null, as
     // a Stop button where Generate was, or one more tile showing a percent.
     // Clicking again on any of those would stop the picture or make a second.
     const workingBefore = box.working || 0;
+    const submittedAt = Date.now();
     const cleared = async (tries) => {
       for (let i = 0; i < tries; i++) {
         await sleep(200);
@@ -2684,7 +2704,7 @@ async function uiGenerateImage({ projectId = null, prompt = '', model = null, as
     // Enter first most times; if Enter only made a new line, the button.
     if (Math.random() < 0.8) {
       await pressKey(target, 'Enter', { keyCode: 13, text: '\r' });
-      if (await cleared(10)) return sent(picked);
+      if (await cleared(10)) return sent(picked, submittedAt);
       box = await composerBox(tab.id, ui);
       if (box?.text && box.text !== prompt.trim()) {
         await typePrompt(target, prompt); // undo the new line Enter made
@@ -2693,7 +2713,7 @@ async function uiGenerateImage({ projectId = null, prompt = '', model = null, as
     }
     if (!box?.button) return { error: 'SUBMIT_NOT_ACCEPTED: no Generate button' };
     await humanClick(target, box.button);
-    if (await cleared(30)) return sent(picked);
+    if (await cleared(30)) return sent(picked, submittedAt);
     return { error: 'SUBMIT_NOT_ACCEPTED: the prompt is still in the composer' };
   });
 }
@@ -2706,17 +2726,45 @@ async function composerTab() {
   return tabs.find((t) => t.id === composerTabId) || tabs.find((t) => !t.discarded);
 }
 
+/**
+ * A read of the page that cannot wait for ever. The browser freezes a tab it
+ * is not showing, and a script sent into a frozen tab never comes back: every
+ * read while the picture was being made hung on it. So the tab is put in front
+ * first, and a read that still does not answer brings it forward again and is
+ * tried once more.
+ */
+const READ_LIMIT_MS = 10000;
+async function awake(tab) {
+  if (!tab.active || tab.frozen) await chrome.tabs.update(tab.id, { active: true }).catch(() => {});
+}
+async function readAwake(tab, read, fallback) {
+  const once = () => Promise.race([
+    read().catch(() => fallback),
+    sleep(READ_LIMIT_MS).then(() => 'TIMED_OUT'),
+  ]);
+  await awake(tab);
+  let out = await once();
+  if (out === 'TIMED_OUT') {
+    await chrome.tabs.update(tab.id, { active: true }).catch(() => {});
+    if (tab.windowId) await chrome.windows.update(tab.windowId, { focused: true }).catch(() => {});
+    out = await once();
+  }
+  return out === 'TIMED_OUT' ? fallback : out;
+}
+
 async function uiPageImages() {
   const tab = await composerTab();
-  if (!tab) return { images: [], tiles: [], tabUrl: null };
-  const tiles = await pageTiles(tab.id).catch(() => ({ srcs: [], url: tab.url }));
+  if (!tab) return { images: [], tiles: [], tabUrl: null, codes: answeredCodes.slice(-20), now: Date.now() };
+  const tiles = await readAwake(tab, () => pageTiles(tab.id), { srcs: [], url: tab.url });
   return {
-    images: await pageImages(tab.id).catch(() => []),
+    images: await readAwake(tab, () => pageImages(tab.id), []),
     tiles: tiles.srcs,
     tabUrl: tiles.url,
     working: tiles.working || 0,
     network: networkSeen.slice(-8).map(({ url, status, found }) => ({ url, status, found })),
     answered: answeredImages.length,
+    codes: answeredCodes.slice(-20),
+    now: Date.now(),
   };
 }
 
@@ -2744,11 +2792,16 @@ async function uiTileImage({ src = '' } = {}) {
 }
 
 /** Error messages on the Flow page now, less the ones in `ignore`. */
-async function uiPageErrors({ ignore = [], selectors = null } = {}) {
+async function uiPageErrors({ ignore = [], before = null, selectors = null } = {}) {
   const tab = await composerTab();
   if (!tab) return { errors: [] };
-  const shown = await pageErrors(tab.id, uiSelectors(selectors)).catch(() => []);
-  return { errors: shown.filter((e) => !ignore.includes(e)) };
+  const counts = await readAwake(tab, () => pageErrorCounts(tab.id, uiSelectors(selectors)), {});
+  // With the counts from before the submit, a message is new when more tiles
+  // show it than did then -- the same words on a new failed tile count.
+  if (before && typeof before === 'object') {
+    return { errors: Object.keys(counts).filter((e) => counts[e] > (before[e] || 0)), counts };
+  }
+  return { errors: Object.keys(counts).filter((e) => !ignore.includes(e)), counts };
 }
 
 async function handleBatchRpc(msg) {

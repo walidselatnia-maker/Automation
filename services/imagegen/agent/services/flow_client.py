@@ -724,8 +724,14 @@ class FlowClient:
             timeout=240,
         )
 
-    async def ui_page_errors(self, project_id: str, ignore: list[str]) -> list[str]:
-        """Error messages Flow shows on the page now, less those in `ignore`.
+    async def ui_page_errors(self, project_id: str, ignore: list[str],
+                             before: dict | None = None) -> list[str]:
+        """Error messages Flow shows on the page now that were not there before.
+
+        `before` is how many places showed each message before the submit: a
+        message counts when more show it now. Every failed tile reads the same
+        words, so going by the words alone (`ignore`) took this picture's own
+        failure for an old one and waited out the whole poll.
 
         A failed generation leaves nothing in the project listing, so without
         this the job would wait out the whole poll for a picture that is never
@@ -733,7 +739,8 @@ class FlowClient:
         """
         out = await self._send_ui(
             "ui_page_errors",
-            {"projectId": project_id, "ignore": ignore, "selectors": ui_selectors()},
+            {"projectId": project_id, "ignore": ignore, "before": before,
+             "selectors": ui_selectors()},
             timeout=30,
         )
         errors = out.get("errors") if isinstance(out, dict) else None
@@ -883,8 +890,15 @@ class FlowClient:
             if picked is not True:
                 logger.warning("Flow UI: could not pick the %s (%s); the composer's own was used",
                                what, picked)
-        # Messages already on the page belong to earlier attempts.
+        # Messages already on the page belong to earlier attempts; counted, so
+        # one more tile with the same words is still this picture's.
         stale = [e for e in submitted.get("pageErrors") or [] if isinstance(e, str)]
+        stale_counts = submitted.get("pageErrorCounts")
+        if not isinstance(stale_counts, dict):
+            stale_counts = None
+        # Google's answers are stamped on the extension's clock; this is when
+        # the prompt went in on that clock.
+        submitted_at = submitted.get("submittedAt")
         # Pictures already showing on the page, so the page can be read too.
         on_page_before = set(submitted.get("pageImages") or [])
         tiles_before = set(submitted.get("pageTiles") or [])
@@ -930,6 +944,9 @@ class FlowClient:
                          if image.media_id not in known and image.media_id not in on_page_before]
                 if state.get("working"):
                     deadline = min(max(deadline, time.monotonic() + 60), started + UI_MAX_WAIT_S)
+                code = answered_code(state.get("codes"), submitted_at)
+                if not fresh and code:
+                    return {"error": f"FLOW_UI_ERROR: {code}: Google refused the picture"}
             if not fresh:
                 # Last, any picture-sized tile that was not there before.
                 for src in state.get("tiles") or []:
@@ -952,9 +969,10 @@ class FlowClient:
                     str(state.get("tabUrl"))[:100], state.get("answered"),
                     state.get("network"))
             if not fresh and looks % 2 == 0:
-                shown = await self.ui_page_errors(project_id, stale)
+                shown = await self.ui_page_errors(project_id, stale, stale_counts)
                 if shown:
-                    return {"error": f"FLOW_UI_ERROR: {shown[0]}"}
+                    code = code_of_message(shown[0])
+                    return {"error": f"FLOW_UI_ERROR: {code + ': ' if code else ''}{shown[0]}"}
             if fresh:
                 first = fresh[0]
                 return {
@@ -1169,6 +1187,37 @@ class FlowClient:
                     result["_mediaId"] = media["name"]
 
         return result
+
+
+# What a failed tile says, and the code Google's answer carries for it, for
+# when the answer itself was missed.
+_MESSAGE_CODES = (
+    ("usage limit", "PUBLIC_ERROR_PER_MODEL_DAILY_QUOTA_REACHED"),
+    ("unusual activity", "PUBLIC_ERROR_UNUSUAL_ACTIVITY"),
+)
+
+
+def code_of_message(text: str) -> str | None:
+    lower = str(text or "").lower()
+    for words, code in _MESSAGE_CODES:
+        if words in lower:
+            return code
+    return None
+
+
+def answered_code(codes, submitted_at) -> str | None:
+    """The first PUBLIC_ERROR code Google answered since the submit, if any.
+
+    Both times are the extension's. Without a submit time there is no telling
+    an old answer from this one's, so nothing is taken.
+    """
+    if not isinstance(submitted_at, (int, float)):
+        return None
+    for entry in codes or []:
+        if (isinstance(entry, dict) and isinstance(entry.get("at"), (int, float))
+                and entry["at"] >= submitted_at and isinstance(entry.get("code"), str)):
+            return entry["code"]
+    return None
 
 
 def _is_ws_error(result: dict) -> bool:
