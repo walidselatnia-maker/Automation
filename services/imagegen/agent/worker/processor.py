@@ -120,7 +120,8 @@ RETRYABLE = ("quota", "rate_limit", "exhausted", "resource_exhausted", "429",
              # page would not take the prompt. Tried again on a reloaded tab,
              # up to MAX_RETRIES, the way a person retries a prompt.
              "no image appeared", "composer would not take", "no_composer",
-             "composer_rejected_prompt", "generate_disabled", "submit_not_accepted")
+             "composer_rejected_prompt", "generate_disabled", "submit_not_accepted",
+             "composer_busy", "composer_stuck", "ui_error at")
 
 
 class WorkerController:

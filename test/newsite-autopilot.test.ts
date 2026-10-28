@@ -308,9 +308,23 @@ describe('Automation: one keyword at a time', () => {
     for (let i = 0; i < 3; i++) autopilotTick(deps(), NOW);
     expect(activeIds()).toEqual([b]);
     expect(started()).toEqual([a, b]);
-    // Try again: it is first in line again once the keyword in hand is out.
-    run(`UPDATE newsite_pictures SET status = 'done' WHERE seo_id = ?`, a);
+    // An hour after it stopped it gets its turn back by itself, and its pictures are tried again.
+    run(`UPDATE newsite_automation_log SET at = datetime('now', '-62 minutes') WHERE seo_id = ? AND event != 'stopped'`, a);
+    run(`UPDATE newsite_automation_log SET at = datetime('now', '-61 minutes') WHERE seo_id = ? AND event = 'stopped'`, a);
     publishedAt(b, NOW - 10_000 * MIN);
+    autopilotTick(deps(), NOW);
+    expect(activeIds()).toEqual([a]);
+    autopilotTick(deps(), NOW);
+    expect(all<{ status: string }>('SELECT status FROM newsite_pictures WHERE seo_id = ?', a).map((p) => p.status)).toEqual(['queued', 'queued']);
+    // Failed again: stopped for another hour, not tried again and again.
+    run(`UPDATE newsite_pictures SET status = 'failed' WHERE seo_id = ?`, a);
+    for (let i = 0; i < 3; i++) autopilotTick(deps(), NOW);
+    expect(all<{ status: string }>('SELECT status FROM newsite_pictures WHERE seo_id = ?', a).map((p) => p.status)).toEqual(['failed', 'failed']);
+    const [c] = activeIds();
+    expect(c).not.toBe(a); // the next keyword went ahead meanwhile
+    // Try again: it is first in line again once that one is out.
+    run(`UPDATE newsite_pictures SET status = 'done' WHERE seo_id = ?`, a);
+    publishedAt(c!, NOW - 10_000 * MIN);
     autopilotTick(deps(), NOW);
     expect(activeIds()).toEqual([a]);
   });

@@ -225,6 +225,10 @@ class FlowClient:
             # and character rows, which no longer exist.
             return
 
+        if data.get("type") == "ui_step":
+            logger.info("Flow UI: %s", str(data.get("step"))[:80])
+            return
+
         if data.get("type") == "pong":
             return
 
@@ -855,6 +859,13 @@ class FlowClient:
         known = {image.media_id for image in before}
 
         submitted = await self.ui_generate_image(prompt, project_id, model_label, aspect_label)
+        # An earlier submit is still finishing in the tab: wait for it rather
+        # than spend a try on it.
+        for _ in range(20):
+            if "COMPOSER_BUSY" not in str(submitted.get("error") or ""):
+                break
+            await asyncio.sleep(15)
+            submitted = await self.ui_generate_image(prompt, project_id, model_label, aspect_label)
         if submitted.get("error"):
             return {"error": f"the composer would not take it: {submitted['error']}"}
         for what, picked in (submitted.get("picked") or {}).items():

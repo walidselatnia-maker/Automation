@@ -162,10 +162,27 @@ export function stoppedReason(row: SeoRow, settings: Settings): string {
     const left = settings.getBool('auto_retry_enabled') && (retriesOf(row)[failed[0]] ?? 0) < Math.max(0, settings.getNumber('auto_retry_max'));
     return left ? '' : `The ${failed[0]} step failed.`;
   }
-  if (mainPictures(row).some((p) => p.status === 'failed') && pictureTriesLeft(row, settings) <= 0) return 'A picture failed.';
+  // A failed picture is no fault of the keyword's: an hour after it stopped, it
+  // gets its turn back and its pictures are tried again, until one goes through.
+  if (mainPictures(row).some((p) => p.status === 'failed') && pictureTriesLeft(row, settings) <= 0 && stoppedLately(row.id)) return 'A picture failed.';
   if (row.post_status === 'failed') return `Publishing failed: ${row.post_error}`;
   return '';
 }
+
+/** How long a keyword stopped by a failed picture waits before its pictures are tried again. */
+export const PICTURE_RETRY_AFTER_MINUTES = 60;
+
+/**
+ * Whether a keyword whose picture tries are used up stays stopped: within the
+ * hour after it stopped, or when the try made after that hour failed too (it
+ * then stops again, for another hour). Never stopped before: it stops now.
+ */
+const stoppedLately = (seoId: number): boolean => {
+  const last = get<{ at: string | null }>(`SELECT MAX(at) AS at FROM newsite_automation_log WHERE seo_id = ? AND event = 'stopped'`, seoId)?.at;
+  if (!last) return true;
+  if (get(`SELECT 1 WHERE ? > datetime('now', ?)`, last, `-${PICTURE_RETRY_AFTER_MINUTES} minutes`)) return true;
+  return Boolean(get(`SELECT 1 FROM newsite_automation_log WHERE seo_id = ? AND event = 'pictures again' AND at >= ?`, seoId, last));
+};
 
 /** Automatic picture tries a keyword has left: the platform's retry settings, counted in the automation history. */
 function pictureTriesLeft(row: SeoRow, settings: Settings): number {

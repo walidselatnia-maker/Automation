@@ -575,12 +575,7 @@ function connectToAgent() {
       } else if (msg.method === 'discover_image_models') {
         sendToAgent({ id: msg.id, result: await discoverImageModels(msg.params || {}) });
       } else if (msg.method === 'ui_generate_image') {
-        holdFlowTab();
-        try {
-          sendToAgent({ id: msg.id, result: await uiGenerateImage(msg.params || {}) });
-        } finally {
-          releaseFlowTab();
-        }
+        sendToAgent({ id: msg.id, result: await uiGenerateOnce(msg.params || {}) });
       } else if (msg.method === 'ui_page_images') {
         sendToAgent({ id: msg.id, result: await uiPageImages() });
       } else if (msg.method === 'ui_tile_image') {
@@ -2469,17 +2464,59 @@ async function typePrompt(target, prompt) {
  * rest. A page with no composer -- left on the project list, or stuck -- is
  * reloaded once before giving up.
  */
+/*
+ * One submit at a time, each one bounded. The agent stops waiting for an
+ * answer at 240s and tries again; without this the second try started while
+ * the first was still clicking in the same tab, and a step that never
+ * returned (a frozen tab, a page that never loaded) held the composer for
+ * good. Each step is reported to the agent's log as it starts, so a submit
+ * that hangs says where.
+ */
+const UI_SUBMIT_LIMIT_MS = 200_000;
+let uiSubmit = null; // { done: Promise, since: ms }
+let uiStepName = '';
+
+function uiStep(name) {
+  uiStepName = name;
+  sendToAgent({ type: 'ui_step', step: name });
+}
+
+async function uiGenerateOnce(params) {
+  if (uiSubmit && Date.now() - uiSubmit.since < UI_SUBMIT_LIMIT_MS + 60_000) {
+    return { error: `COMPOSER_BUSY: the previous submit is still at "${uiStepName}"` };
+  }
+  holdFlowTab();
+  const work = uiGenerateImage(params).catch((e) => ({ error: `UI_ERROR at "${uiStepName}": ${e?.message || e}` }));
+  const mine = { done: work, since: Date.now() };
+  uiSubmit = mine;
+  work.finally(() => {
+    if (uiSubmit === mine) uiSubmit = null;
+    releaseFlowTab();
+  });
+  let timer;
+  const limit = new Promise((resolve) => {
+    timer = setTimeout(() => resolve({ error: `COMPOSER_STUCK at "${uiStepName}" after ${UI_SUBMIT_LIMIT_MS / 1000}s` }), UI_SUBMIT_LIMIT_MS);
+  });
+  try {
+    return await Promise.race([work, limit]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function uiGenerateImage({ projectId = null, prompt = '', model = null, aspect = null, selectors = null } = {}) {
   if (!prompt.trim()) return { error: 'EMPTY_PROMPT' };
   const ui = uiSelectors(selectors);
 
   // The tab is closed between runs to save CPU, so the first job after a
   // quiet spell opens it again -- on the job's project, as a person would.
+  uiStep('opening the Flow tab');
   if (!(await queryFlowTabs()).length) {
     const created = await openTab({ url: projectId ? projectUrl(projectId) : FLOW_HOME, active: false });
     await waitForTabLoad(created.id, 30000).catch(() => {});
     await pause(2500, 4500);
   }
+  uiStep('moving the tab to the project');
   await ensureFlowTabOnProject(projectId);
   const tabs = await queryFlowTabs();
   // The tab that was just moved to this job's project: with two Flow tabs
@@ -2490,6 +2527,12 @@ async function uiGenerateImage({ projectId = null, prompt = '', model = null, as
   const tab = await reviveTabIfNeeded(candidate);
   if (!tab) return { error: 'FLOW_TAB_DISCARDED' };
   composerTabId = tab.id;
+  // In front, as a person's tab is: a tab left behind can be frozen by the
+  // browser, and every step on its page then waits for ever.
+  uiStep('bringing the tab to the front');
+  await chrome.tabs.update(tab.id, { active: true }).catch(() => {});
+  if (tab.windowId) await chrome.windows.update(tab.windowId, { focused: true }).catch(() => {});
+  uiStep('finding the prompt box');
 
   let box = await composerBox(tab.id, ui);
   if (!box || !box.editor) {
@@ -2508,7 +2551,9 @@ async function uiGenerateImage({ projectId = null, prompt = '', model = null, as
 
   return withDebugger(tab.id, async (target) => {
     const picked = {};
+    uiStep('picking the model');
     if (model) picked.model = await pickInMenu(target, tab.id, ui, model, MODEL_LABELS);
+    uiStep('picking the shape');
     if (aspect) picked.aspect = await pickInMenu(target, tab.id, ui, aspect, ASPECT_LABELS);
 
     // Focus by clicking it, not by calling focus(): ProseMirror places the
@@ -2517,6 +2562,7 @@ async function uiGenerateImage({ projectId = null, prompt = '', model = null, as
     await pause(1000, 3500);
     box = await composerBox(tab.id, ui);
     if (!box?.editor) return { error: 'NO_COMPOSER: it went away while picking settings' };
+    uiStep('typing the prompt');
     await humanClick(target, box.editor);
     await pause(150, 400);
     await typePrompt(target, prompt);
@@ -2534,6 +2580,7 @@ async function uiGenerateImage({ projectId = null, prompt = '', model = null, as
     }
     if (!box?.ready) return { error: 'GENERATE_DISABLED: the composer did not accept the prompt' };
 
+    uiStep('submitting');
     await pause(800, 3000);
     const cleared = async (tries) => {
       for (let i = 0; i < tries; i++) {
