@@ -8,7 +8,7 @@ import { pictureMediaUrl } from '../core/media-links.js';
 import { promptsDirectory } from '../pipeline/prompts.js';
 import type { Settings } from '../settings.js';
 import { PLATFORMS, REEL_PLATFORMS, channelTakes, takesReels, websiteChannels } from './channels.js';
-import { withGoogleAccount } from './google-accounts.js';
+import { accountTrouble, NO_WORKING_ACCOUNT, withGoogleAccount } from './google-accounts.js';
 import { flowProjectFor, isMainSlot, isStepSlot, listPictures } from './pictures.js';
 import { getKeywordPlan, getNewWebsite, type NewWebsiteRow } from './repo.js';
 import { getSeoRow, type SeoRow } from './seo.js';
@@ -182,6 +182,8 @@ export interface ReelScript {
 }
 
 const words = (s: string): number => s.split(/\s+/).filter(Boolean).length;
+/** The fewest characters a time-marked shot may have: a thin shot makes a flat video. */
+const SHOT_MIN = 300;
 /** The longest a line may be, as the rules say it ("at most 9 words"). */
 const ruleMax = (rules: string, what: string, fallback: number): number =>
   Number(new RegExp(`${what}[^\\n]*?at most (\\d+) words`, 'i').exec(rules)?.[1]) || fallback;
@@ -202,6 +204,17 @@ export function checkReelScript(s: ReelScript, rules: string, domain = ''): stri
   if (/slow[- ]?motion|slowly|cinematic|masterpiece|\b8k\b|hyper-detailed/i.test(s.prompt.replace(/never[^.]*\./gi, ''))) {
     problems.push('The prompt uses a banned word (slow motion, slowly, cinematic, masterpiece, 8k, hyper-detailed).');
   }
+  // Each shot, as the time marks cut the prompt into them.
+  const at = marks.map((m) => ({ m, i: s.prompt.indexOf(`${m}:`) })).filter((x) => x.i >= 0).sort((a, b) => a.i - b.i);
+  const shots = at.map((x, k) => ({ mark: x.m, text: s.prompt.slice(x.i, at[k + 1]?.i ?? s.prompt.length) }));
+  const thin = shots.filter((x) => x.text.trim().length < SHOT_MIN).map((x) => x.mark);
+  if (thin.length) problems.push(`These shots are too thin: ${thin.join(', ')}. Give each one its foreground, midground and background, the lens, angle, framing and depth of field, the light, the mood, the action and the sound (at least ${SHOT_MIN} characters a shot).`);
+  // Flow makes motion too slow unless told otherwise; when the rules ask for
+  // the speed, every shot says it.
+  if (/real-life speed/i.test(rules)) {
+    const unsaid = shots.filter((x) => !/real-life speed/i.test(x.text)).map((x) => x.mark);
+    if (unsaid.length) problems.push(`Say "fast real-life speed" for what moves in every shot; missing in: ${unsaid.join(', ')}.`);
+  }
   const bare = domain ? s.prompt.split(domain).join('') : s.prompt;
   if (/https?:\/\/|www\.|\.com\b/i.test(bare)) problems.push('The prompt must have no link or web address.');
   if (s.prompt.length < 400) problems.push(`The prompt is ${s.prompt.length} characters; write every shot fully (at least 400).`);
@@ -220,6 +233,26 @@ function articleParts(row: SeoRow): { steps: string; things: string } {
   }
   const headings = row.article_md.split('\n').filter((l) => /^#{2,3}\s/.test(l)).map((l, i) => `${i + 1}. ${l.replace(/^#+\s*/, '')}`);
   return { steps: headings.join('\n') || '- (no steps)', things: '- (see the steps)' };
+}
+
+/** How much of the article's own text the prompt writer reads. */
+const ARTICLE_TEXT_MAX = 3000;
+
+/**
+ * The article's words with its pictures, links and markup left out: what a
+ * shot can show. Headings alone made thin shots for an article with no recipe.
+ */
+export function articleText(markdown: string): string {
+  const text = markdown
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/<[^>]+>/g, '')
+    .replace(/^#+\s*/gm, '')
+    .replace(/[*_`>]+/g, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  if (!text) return '(no text)';
+  return text.length > ARTICLE_TEXT_MAX ? `${text.slice(0, ARTICLE_TEXT_MAX).replace(/\s+\S*$/, '')} …` : text;
 }
 
 /** The AI writes the one video prompt from the article, by the reel rules. */
@@ -243,6 +276,7 @@ async function writeScript(reel: ReelRow, row: SeoRow, site: NewWebsiteRow, desc
         steps: parts.steps,
         things: parts.things,
         articleOutline: row.article_md.split('\n').filter((l) => /^#{1,3}\s/.test(l)).map((l) => l.replace(/^#+\s*/, '- ')).join('\n') || '- (no headings)',
+        articleText: articleText(row.article_md),
         references: described,
         problemsJson: corrections,
       }),
@@ -332,7 +366,7 @@ export function kickReels(deps: ReelDeps): Promise<void> {
         const pausedUntil = Number(deps.settings.get(FLOW_PAUSE_KEY)) || 0;
         const now = (deps.now ?? Date.now)();
         if (pausedUntil > now) {
-          log.warn(`reels paused until ${new Date(pausedUntil).toISOString()} after Google flagged unusual activity`);
+          log.warn(`reels paused until ${new Date(pausedUntil).toISOString()} (Google flagged unusual activity, or every account is out of reels for now)`);
           const wake = setTimeout(() => void kickReels(deps), pausedUntil - now + 1000);
           wake.unref?.();
           return;
@@ -345,11 +379,22 @@ export function kickReels(deps: ReelDeps): Promise<void> {
           const message = errorMessage(err);
           if (/UNUSUAL_ACTIVITY|unusual activity/i.test(message)) {
             // Never retried at once: retries are what makes Google's flag worse.
-            // Kept in the settings, so a restart does not end the pause.
+            // Kept in the settings, so a restart does not end the pause. After
+            // it, this reel is tried again by itself, as stopped pictures are.
             deps.settings.set(FLOW_PAUSE_KEY, String(now + FLOW_PAUSE_MS));
             run(
-              `UPDATE newsite_reels SET status = 'failed', error = ? WHERE id = ?`,
-              `${message} Google flagged unusual activity on the account, so reels are paused for ${FLOW_PAUSE_MS / 60_000} minutes. Try again after that, one reel at a time.`,
+              `UPDATE newsite_reels SET status = 'pending', job_id = '', error = ? WHERE id = ?`,
+              `${message} Google flagged unusual activity on the account, so reels are paused for ${FLOW_PAUSE_MS / 60_000} minutes. This reel is tried again after that, one reel at a time.`,
+              next.id,
+            );
+          } else if (accountTrouble(message) === 'limited' || message.includes(NO_WORKING_ACCOUNT)) {
+            // Every Google account is out of reels for now (Flow's daily limit
+            // is per model, and reels have one): wait an hour and try again,
+            // as the pictures do, rather than stopping until someone notices.
+            deps.settings.set(FLOW_PAUSE_KEY, String(now + FLOW_PAUSE_MS));
+            run(
+              `UPDATE newsite_reels SET status = 'pending', job_id = '', error = ? WHERE id = ?`,
+              `${message} Every Google account has reached its limit for now, so this reel is tried again in ${FLOW_PAUSE_MS / 60_000} minutes.`,
               next.id,
             );
           } else {

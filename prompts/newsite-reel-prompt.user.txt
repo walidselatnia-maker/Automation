@@ -16,6 +16,9 @@ Its main things (for a recipe: the ingredients):
 Its headings:
 {{articleOutline}}
 
+What the article says (the start of its text; take the details of every shot from here):
+{{articleText}}
+
 The reference photos sent with your prompt, in order:
 {{references}}
 

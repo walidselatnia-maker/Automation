@@ -1507,6 +1507,12 @@ async function runBatchRpc(cmd) {
 
   const tab = await reviveTabIfNeeded(candidate);
   if (!tab) return { error: 'FLOW_TAB_DISCARDED' };
+  // A reel is polled from this tab for up to twenty minutes, and the browser
+  // freezes a tab it is not showing: a script sent into a frozen tab never
+  // comes back. So the tab is put in front first, as the composer reads do.
+  // No shorter time limit here: a project listing can take most of its two
+  // minutes, and the agent bounds every call already.
+  await awake(tab);
 
   let freq = cmd.freq;
   if (cmd.captchaAction) {

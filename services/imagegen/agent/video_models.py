@@ -168,3 +168,16 @@ def out_of_credits(error: str) -> bool:
     charged; retrying only spends captchas until the credits reset.
     """
     return "USER_QUOTA_REACHED" in str(error or "").upper()
+
+
+def out_for_today(error: str) -> bool:
+    """Google's answer when the reel model is spent for today on this account.
+
+    Measured for pictures on 2026-10-28 (PUBLIC_ERROR_PER_MODEL_DAILY_QUOTA_REACHED,
+    "You've reached your usage limit"): retrying does not clear it, only another
+    model or another day does. Reels have one model -- the 10-second one their
+    timeline is written for -- so the reel goes to the next Google account
+    instead, and a retry here would only spend uploads and captchas.
+    """
+    text = str(error or "")
+    return "DAILY_QUOTA_REACHED" in text.upper() or "usage limit" in text.lower()

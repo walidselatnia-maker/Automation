@@ -11,7 +11,7 @@ import { configurePrompts } from '../src/pipeline/prompts.js';
 import { createNewWebsite, saveKeywordPlan } from '../src/newsite/repo.js';
 import { listPlanSeo, queuePlanSeo } from '../src/newsite/seo.js';
 import { saveBufferChannel, setWebsiteChannels } from '../src/newsite/channels.js';
-import { checkReelScript, createReels, getReel, kickReels, listPlanReels, onReelMade, reelDir, reelRules, withDomain, type ReelDeps } from '../src/newsite/reels.js';
+import { articleText, checkReelScript, createReels, getReel, kickReels, listPlanReels, onReelMade, reelDir, reelRules, withDomain, type ReelDeps } from '../src/newsite/reels.js';
 import { registerSocialRoutes } from '../src/newsite/social-routes.js';
 
 const KEY = randomBytes(32);
@@ -31,8 +31,11 @@ describe('reels: one Flow video per article, from one prompt', () => {
   const goodScript = (rules: string, hook = 'This cake needs no oven, watch this'): string => {
     const closing = /closing line, word for word: "([^"]+)"/i.exec(rules)![1]!;
     const marks = rules.match(/^- (\d+-\d+s):/gm)!.map((m) => m.slice(2, -1));
+    // Every shot as full as the rules ask: its layers, camera, light, mood, action at fast real-life speed, and sound.
+    const look =
+      ' Foreground: a blurred linen napkin edge; midground: the cake on a white plate, sharp; background: a sunny kitchen counter. 50mm lens, eye level, close-up, shallow depth of field. Soft window light from the left, warm and golden, gentle shadows on the right. Bright, cosy mood. Every hand moves at fast real-life speed with quick, snappy motion. Sound: a knife on the plate.';
     const shots = marks.map((m, i) =>
-      `${m}: ${i === 0 ? `The finished strawberry cake in full, a hand cuts the first slice. A warm voice says "${hook}".` : i === marks.length - 1 ? `The slice lifted toward the lens. The voice says "${closing}".` : 'Real hands do the next step of the recipe at natural speed, phone camera, close and handheld, warm kitchen light from the left.'}`,
+      `${m}: ${i === 0 ? `The finished strawberry cake in full, a hand cuts the first slice. A warm voice says "${hook}".` : i === marks.length - 1 ? `The slice lifted toward the lens. The voice says "${closing}".` : 'Real hands do the next step of the recipe, phone camera, close and handheld.'}${look}`,
     );
     return JSON.stringify({ hook_line: hook, closing_line: closing, prompt: `A 10-second vertical reel of a strawberry cake.\n${shots.join('\n')}\nReal cooking sound, no music, no on-screen text.` });
   };
@@ -105,7 +108,7 @@ describe('reels: one Flow video per article, from one prompt', () => {
     expect(writes.map((w) => w.vars.label)).toEqual(['Facebook, Threads and Pinterest']);
     expect(String(writes[0]!.vars.reelRules)).toContain('0-2s: THE HOOK');
     expect(String(writes[0]!.vars.references)).toMatch(/^1\. The finished result/);
-    expect(submitted[0]!.prompt).toContain('"Full recipe on f.longlivo.com."');
+    expect(submitted[0]!.prompt).toContain('"Full guide on f.longlivo.com."');
     expect(reels[0]!.hook).toBe('This cake needs no oven, watch this');
     expect(submitted[0]!.referenceUrls).toHaveLength(2);
     expect(submitted[0]!.referenceUrls[0]).toMatch(/^https:\/\/dash\.example\.com\/media\/picture\//);
@@ -156,7 +159,7 @@ describe('reels: one Flow video per article, from one prompt', () => {
     });
     const problems = String(asked[1]!.vars.problemsJson);
     expect(problems).toMatch(/hook_line has 13 words; at most 9/);
-    expect(problems).toMatch(/closing_line must be exactly: "Full recipe on f\.longlivo\.com\."/);
+    expect(problems).toMatch(/closing_line must be exactly: "Full guide on f\.longlivo\.com\."/);
     expect(problems).toMatch(/missing: 0-2s, 2-4s, 4-6s, 6-8s, 8-10s/);
     expect(submitted).toHaveLength(1);
     expect(listPlanReels(planId)[0]).toMatchObject({ status: 'done', hook: 'No oven. Three ingredients. Watch.' });
@@ -177,24 +180,24 @@ describe('reels: one Flow video per article, from one prompt', () => {
     expect((await form({ text: own, back: '/new-website/sharing/reels' })).headers.location).toMatch(/^\/new-website\/sharing\/reels\?ok=Reel%20rules%20saved/);
     expect(reelRules(settings)).toBe(own);
     await form({ text: own, reset: '1' });
-    expect(reelRules(settings)).toContain('Full recipe on {domain}.');
+    expect(reelRules(settings)).toContain('Full guide on {domain}.');
   });
 
   it('fills in {domain} in the reel rules with the website’s address, and lets the reel name it in its call to action', async () => {
     settings.set('newsite_reel_rules', [
       '- 0-3s: the finished cake in full.',
       '- 3-10s: the steps, and the call to action.',
-      'The hook line: at most 9 words. The closing line, word for word: "Full recipe on {domain}."',
+      'The hook line: at most 9 words. The closing line, word for word: "Full guide on {domain}."',
     ].join('\n'));
     setWebsiteChannels(websiteId, [channel('facebook', 'f1')]);
     createReels(seoId);
     await kickReels(deps());
     const write = asked.find((a) => a.name === 'newsite-reel-prompt')!;
-    expect(String(write.vars.reelRules)).toContain('"Full recipe on f.longlivo.com."');
+    expect(String(write.vars.reelRules)).toContain('"Full guide on f.longlivo.com."');
     expect(String(write.vars.reelRules)).not.toContain('{domain}');
     expect(submitted).toHaveLength(1);
-    expect(submitted[0]!.prompt).toContain('"Full recipe on f.longlivo.com."');
-    expect(listPlanReels(planId)[0]).toMatchObject({ status: 'done', closing: 'Full recipe on f.longlivo.com.' });
+    expect(submitted[0]!.prompt).toContain('"Full guide on f.longlivo.com."');
+    expect(listPlanReels(planId)[0]).toMatchObject({ status: 'done', closing: 'Full guide on f.longlivo.com.' });
   });
 
   it('default reel rules are an exact timeline in seconds, from 0 to 10, ending on a call to action naming the website', () => {
@@ -204,7 +207,7 @@ describe('reels: one Flow video per article, from one prompt', () => {
     expect(marks.at(-1)![1]).toBe(10);
     marks.slice(1).forEach(([from], i) => expect(from).toBe(marks[i]![1])); // no gap, no overlap
     expect(rules).toMatch(/^- 8-10s: THE CALL TO ACTION/m);
-    expect(rules).toContain('The closing line, word for word: "Full recipe on {domain}."');
+    expect(rules).toContain('The closing line, word for word: "Full guide on {domain}."');
   });
 
   it('keeps reel rules saved on the dashboard over the default file', () => {
@@ -218,6 +221,20 @@ describe('reels: one Flow video per article, from one prompt', () => {
     const script = (end: string) => ({ hook_line: 'No oven needed', closing_line: '', prompt: `0-10s: "No oven needed". ${'Real hands at work, close and handheld. '.repeat(12)}${end}` });
     expect(checkReelScript(script('More on g.example.com.'), rules, 'g.example.com')).toEqual([]);
     expect(checkReelScript(script('More on other.com.'), rules, 'g.example.com')).toContain('The prompt must have no link or web address.');
+  });
+
+  it('sends back a thin shot, and a shot that does not say its fast real-life speed when the rules ask for it', () => {
+    const rules = '- 0-2s: hook.\n- 2-4s: next.\nMove at fast real-life speed.\nThe hook line: at most 9 words.';
+    const full = 'Foreground, midground and background, 35mm lens, low angle, close-up, shallow depth of field, window light from the left, warm and soft, cheerful mood. '.repeat(2);
+    const prompt = (second: string) => `0-2s: "Watch this dog fly". ${full}The dog runs at fast real-life speed.\n2-4s: ${second}`;
+    expect(checkReelScript({ hook_line: 'Watch this dog fly', closing_line: '', prompt: prompt(`${full}Paws move at fast real-life speed. Never slow motion.`) }, rules)).toEqual([]);
+    expect(checkReelScript({ hook_line: 'Watch this dog fly', closing_line: '', prompt: prompt('A dog sits.') }, rules).join(' ')).toMatch(/too thin: 2-4s/);
+    expect(checkReelScript({ hook_line: 'Watch this dog fly', closing_line: '', prompt: prompt(`${full}The dog runs.`) }, rules).join(' ')).toMatch(/missing in: 2-4s/);
+  });
+
+  it('gives the prompt writer the article’s own words, without pictures, links or markup', () => {
+    expect(articleText('## Pick the size\n![dog](x.png)\nA **small** dog needs [less room](https://x.com).')).toBe('Pick the size\n\nA small dog needs less room.');
+    expect(articleText('word '.repeat(2000)).length).toBeLessThan(3010);
   });
 
   it('shows {domain} as a placeholder where the reel rules are edited', async () => {
@@ -238,13 +255,36 @@ describe('reels: one Flow video per article, from one prompt', () => {
     await kickReels(flagged);
     const [first, second] = listPlanReels(planId);
     expect(first!.error).toMatch(/paused for 60 minutes/);
+    // Not failed for good: it is tried again by itself once the pause is over.
+    expect(first!.status).toBe('pending');
     expect(second!.status).toBe('pending'); // not sent: the pause holds it
     expect(submitted).toHaveLength(1);
     await kickReels(flagged); // still paused, even on a new start
     expect(submitted).toHaveLength(1);
     now += 61 * 60_000;
+    jobStatus = 'COMPLETED';
     await kickReels({ ...deps(), now: () => now });
-    expect(submitted).toHaveLength(2);
+    expect(submitted).toHaveLength(3);
+    expect(listPlanReels(planId).map((r) => r.status)).toEqual(['done', 'done']);
+  });
+
+  it('waits an hour and tries again when every Google account is out of reels for today', async () => {
+    run(`INSERT INTO google_accounts (email, position, flow_project) VALUES ('a@example.com', 1, '')`);
+    setWebsiteChannels(websiteId, [channel('facebook', 'f1')]);
+    createReels(seoId);
+    let now = 1_000_000;
+    const spent = { ...deps(), now: () => now };
+    spent.flow = { ...spent.flow!, poll: async () => ({ status: 'FAILED', error: 'PUBLIC_ERROR_PER_MODEL_DAILY_QUOTA_REACHED: out for today' }) };
+    await kickReels(spent);
+    const [reel] = listPlanReels(planId);
+    expect(reel!.status).toBe('pending');
+    expect(reel!.error).toMatch(/tried again in 60 minutes/);
+    expect(submitted).toHaveLength(1);
+    now += 61 * 60_000;
+    jobStatus = 'COMPLETED';
+    run(`UPDATE google_accounts SET retry_at = 0, status = 'working'`);
+    await kickReels({ ...deps(), now: () => now });
+    expect(listPlanReels(planId)[0]!.status).toBe('done');
   });
 
   it('needs the public address so Flow can fetch the pictures', async () => {

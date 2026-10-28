@@ -198,6 +198,7 @@ export const STEP_CONTEXTS: Record<string, Record<string, unknown>> = {
     steps: 's',
     things: 'i',
     articleOutline: 'o',
+    articleText: 'a',
     references: 'p',
     problemsJson: '[]',
   },
