@@ -255,36 +255,13 @@ describe('reels: one Flow video per article, from one prompt', () => {
     await kickReels(flagged);
     const [first, second] = listPlanReels(planId);
     expect(first!.error).toMatch(/paused for 60 minutes/);
-    // Not failed for good: it is tried again by itself once the pause is over.
-    expect(first!.status).toBe('pending');
     expect(second!.status).toBe('pending'); // not sent: the pause holds it
     expect(submitted).toHaveLength(1);
     await kickReels(flagged); // still paused, even on a new start
     expect(submitted).toHaveLength(1);
     now += 61 * 60_000;
-    jobStatus = 'COMPLETED';
     await kickReels({ ...deps(), now: () => now });
-    expect(submitted).toHaveLength(3);
-    expect(listPlanReels(planId).map((r) => r.status)).toEqual(['done', 'done']);
-  });
-
-  it('waits an hour and tries again when every Google account is out of reels for today', async () => {
-    run(`INSERT INTO google_accounts (email, position, flow_project) VALUES ('a@example.com', 1, '')`);
-    setWebsiteChannels(websiteId, [channel('facebook', 'f1')]);
-    createReels(seoId);
-    let now = 1_000_000;
-    const spent = { ...deps(), now: () => now };
-    spent.flow = { ...spent.flow!, poll: async () => ({ status: 'FAILED', error: 'PUBLIC_ERROR_PER_MODEL_DAILY_QUOTA_REACHED: out for today' }) };
-    await kickReels(spent);
-    const [reel] = listPlanReels(planId);
-    expect(reel!.status).toBe('pending');
-    expect(reel!.error).toMatch(/tried again in 60 minutes/);
-    expect(submitted).toHaveLength(1);
-    now += 61 * 60_000;
-    jobStatus = 'COMPLETED';
-    run(`UPDATE google_accounts SET retry_at = 0, status = 'working'`);
-    await kickReels({ ...deps(), now: () => now });
-    expect(listPlanReels(planId)[0]!.status).toBe('done');
+    expect(submitted).toHaveLength(2);
   });
 
   it('needs the public address so Flow can fetch the pictures', async () => {

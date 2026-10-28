@@ -1085,8 +1085,6 @@ class FlowClient:
             "done": operation.done,
             "status": operation.status,
             "complaint": operation.error,
-            # A complaint alone is survivable; Google's own code is not.
-            "code": fb.public_error_code(out["payload"]),
         }
         if not operation.status:
             # No status in the slot we read. Keep the record so the log shows

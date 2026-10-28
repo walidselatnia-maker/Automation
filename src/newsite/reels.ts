@@ -8,7 +8,7 @@ import { pictureMediaUrl } from '../core/media-links.js';
 import { promptsDirectory } from '../pipeline/prompts.js';
 import type { Settings } from '../settings.js';
 import { PLATFORMS, REEL_PLATFORMS, channelTakes, takesReels, websiteChannels } from './channels.js';
-import { accountTrouble, NO_WORKING_ACCOUNT, withGoogleAccount } from './google-accounts.js';
+import { withGoogleAccount } from './google-accounts.js';
 import { flowProjectFor, isMainSlot, isStepSlot, listPictures } from './pictures.js';
 import { getKeywordPlan, getNewWebsite, type NewWebsiteRow } from './repo.js';
 import { getSeoRow, type SeoRow } from './seo.js';
@@ -366,7 +366,7 @@ export function kickReels(deps: ReelDeps): Promise<void> {
         const pausedUntil = Number(deps.settings.get(FLOW_PAUSE_KEY)) || 0;
         const now = (deps.now ?? Date.now)();
         if (pausedUntil > now) {
-          log.warn(`reels paused until ${new Date(pausedUntil).toISOString()} (Google flagged unusual activity, or every account is out of reels for now)`);
+          log.warn(`reels paused until ${new Date(pausedUntil).toISOString()} after Google flagged unusual activity`);
           const wake = setTimeout(() => void kickReels(deps), pausedUntil - now + 1000);
           wake.unref?.();
           return;
@@ -379,22 +379,11 @@ export function kickReels(deps: ReelDeps): Promise<void> {
           const message = errorMessage(err);
           if (/UNUSUAL_ACTIVITY|unusual activity/i.test(message)) {
             // Never retried at once: retries are what makes Google's flag worse.
-            // Kept in the settings, so a restart does not end the pause. After
-            // it, this reel is tried again by itself, as stopped pictures are.
+            // Kept in the settings, so a restart does not end the pause.
             deps.settings.set(FLOW_PAUSE_KEY, String(now + FLOW_PAUSE_MS));
             run(
-              `UPDATE newsite_reels SET status = 'pending', job_id = '', error = ? WHERE id = ?`,
-              `${message} Google flagged unusual activity on the account, so reels are paused for ${FLOW_PAUSE_MS / 60_000} minutes. This reel is tried again after that, one reel at a time.`,
-              next.id,
-            );
-          } else if (accountTrouble(message) === 'limited' || message.includes(NO_WORKING_ACCOUNT)) {
-            // Every Google account is out of reels for now (Flow's daily limit
-            // is per model, and reels have one): wait an hour and try again,
-            // as the pictures do, rather than stopping until someone notices.
-            deps.settings.set(FLOW_PAUSE_KEY, String(now + FLOW_PAUSE_MS));
-            run(
-              `UPDATE newsite_reels SET status = 'pending', job_id = '', error = ? WHERE id = ?`,
-              `${message} Every Google account has reached its limit for now, so this reel is tried again in ${FLOW_PAUSE_MS / 60_000} minutes.`,
+              `UPDATE newsite_reels SET status = 'failed', error = ? WHERE id = ?`,
+              `${message} Google flagged unusual activity on the account, so reels are paused for ${FLOW_PAUSE_MS / 60_000} minutes. Try again after that, one reel at a time.`,
               next.id,
             );
           } else {

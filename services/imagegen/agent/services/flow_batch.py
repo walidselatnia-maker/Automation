@@ -515,23 +515,6 @@ def read_operation_error(record: list) -> Optional[str]:
     return "operation failed without a message"
 
 
-_PUBLIC_ERROR = re.compile(r"PUBLIC_ERROR_[A-Z_]+")
-
-
-def public_error_code(payload: Any) -> Optional[str]:
-    """Google's own verdict anywhere in an answer (PUBLIC_ERROR_...), if any.
-
-    Unlike the complaint above, these codes mean the work was refused: the
-    daily quota, unusual activity, no credits. The picture stress test of
-    2026-10-28 saw no PUBLIC_ERROR code on any picture that came back.
-    """
-    for text in _walk_strings(payload):
-        found = _PUBLIC_ERROR.search(text)
-        if found:
-            return found.group(0)
-    return None
-
-
 def find_media_id(payload: Any, operation_id: str) -> Optional[str]:
     """Look an operation up in the project listing and take its media id.
 

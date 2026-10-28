@@ -620,15 +620,6 @@ class WorkerController:
                 logger.error("job %s FAILED: %s", job_id[:8], message)
                 await jobs.fail(job_id, message)
                 return True
-            if video_models.out_for_today(detail):
-                # Kept with Google's code, so the platform rests this account
-                # and gives the reel to the next one.
-                message = ("PUBLIC_ERROR_PER_MODEL_DAILY_QUOTA_REACHED: This Google account has made "
-                           "all the reels Flow allows it today. Nothing was generated. "
-                           f"Google said: {str(detail)[:300]}")
-                logger.error("job %s FAILED: %s", job_id[:8], message)
-                await jobs.fail(job_id, message)
-                return True
             await self._handle_failure(job, f"Clip submit failed: {detail}")
             return True
 
@@ -668,19 +659,6 @@ class WorkerController:
             if state.get("error"):
                 logger.warning("job %s poll %d: %s", job_id[:8], attempt, state["error"])
                 continue
-
-            # Google's own verdict in the answer (PUBLIC_ERROR_...): the video
-            # will not come, so the job does not wait out the twenty minutes.
-            # Never sent back to the queue, which would submit it again.
-            code = state.get("code")
-            if code:
-                error = f"FLOW_VIDEO_ERROR: {code}: Google refused the video"
-                if generation_hold.is_unusual_activity(error):
-                    await self._handle_failure(job, error)
-                else:
-                    logger.error("job %s FAILED: %s", job_id[:8], error)
-                    await jobs.fail(job_id, error)
-                return
 
             # Once per change, not once per poll: eighty polls of "still
             # pending" is noise, and a video that never leaves its first status
