@@ -1,6 +1,8 @@
 {
   "editor": "div.ProseMirror",
   "generateButton": "button[aria-label=\"Start generation\"]",
+  "stopButton": "button[aria-label=\"Stop\"]",
+  "agentToggle": "button.agent-mode-chip",
   "menuTriggers": "button, [role=\"button\"], [role=\"combobox\"], [aria-haspopup]",
   "menuOptions": "[role=\"option\"], [role=\"menuitem\"], [role=\"menuitemradio\"], [role=\"radio\"], [role=\"tab\"], button, li",
   "errorRegions": "[role=\"alert\"], [role=\"status\"], [aria-live], [data-state=\"error\"]",

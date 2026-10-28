@@ -30,6 +30,9 @@ _UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]
 UI_POLL_S = 2
 #: The longest a picture is waited for while Flow still shows it working.
 UI_MAX_WAIT_S = 900
+#: A tile smaller than this on its long side is a preview, not the picture.
+#: Flow's smallest picture, 1K square, is 1024.
+UI_MIN_PICTURE_SIDE = 1000
 
 
 class FlowClient:
@@ -828,6 +831,14 @@ class FlowClient:
                 return fb.GeneratedImage(media_id=found.group(0), url=urls["image_url"])
         out = await self._send_ui("ui_tile_image", {"src": src}, timeout=60)
         data_url = out.get("dataUrl") if isinstance(out, dict) else None
+        # After a reload Flow's tiles load small previews (286x512 for a
+        # 768x1376 picture); one of those is not the picture, which the listing
+        # or Google's answer still brings at full size.
+        side = max(out.get("width") or 0, out.get("height") or 0) if isinstance(out, dict) else 0
+        if side and side < UI_MIN_PICTURE_SIDE:
+            logger.warning("Flow UI: the new tile %s is a %sx%s preview, not the picture; "
+                           "waiting for the full one", src[:120], out.get("width"), out.get("height"))
+            return None
         if isinstance(data_url, str) and data_url.startswith("data:image/"):
             return fb.GeneratedImage(media_id=found.group(0) if found else "", url=data_url)
         logger.warning("Flow UI: could not read the new tile %s: %s", src[:120],

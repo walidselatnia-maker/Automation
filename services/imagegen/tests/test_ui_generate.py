@@ -267,6 +267,20 @@ def test_a_new_tile_without_an_address_is_fetched_by_the_page(monkeypatch):
     assert out["data"]["media"][0]["image"]["generatedImage"]["fifeUrl"] == "data:image/png;base64,AAAA"
 
 
+def test_a_tile_that_is_only_a_preview_is_not_the_picture(monkeypatch):
+    """After a reload Flow's tiles are previews (286x512); the listing has the picture."""
+    monkeypatch.setattr(asyncio, "sleep", lambda _s: _REAL_SLEEP(0))
+    preview = "https://flow.google.com/asb/ANqvLOarsCz471"
+    client = Fake([[image("old")], [image("old")], [image("old"), image("full")]],
+                  page_tiles=[[preview]],
+                  tile_pictures={preview: {"dataUrl": "data:image/jpeg;base64,AAAA",
+                                           "width": 286, "height": 512}})
+
+    out = run(client, poll_seconds=30)
+
+    assert out["data"]["media"][0]["name"] == "full"
+
+
 def test_a_tile_seen_only_once_is_not_taken(monkeypatch):
     """Flow's working spinner can be picture-sized; a tile must stay a poll."""
     monkeypatch.setattr(asyncio, "sleep", lambda _s: _REAL_SLEEP(0))

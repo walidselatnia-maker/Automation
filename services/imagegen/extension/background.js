@@ -1956,6 +1956,11 @@ const CDP_VERSION = '1.3';
 const UI_DEFAULTS = {
   editor: 'div.ProseMirror',
   generateButton: 'button[aria-label="Start generation"]',
+  // While Flow works on a submit, a Stop button sits where Generate was.
+  stopButton: 'button[aria-label="Stop"]',
+  // Flow's Agent mode, on when pressed. It answers a prompt with its own
+  // settings (shape, count, model) and hides the composer's, so it is turned off.
+  agentToggle: 'button.agent-mode-chip',
   menuTriggers: 'button, [role="button"], [role="combobox"], [aria-haspopup]',
   menuOptions: '[role="option"], [role="menuitem"], [role="menuitemradio"], [role="radio"], [role="tab"], button, li',
   errorRegions: '[role="alert"], [role="status"], [aria-live], [data-state="error"]',
@@ -2141,8 +2146,8 @@ async function composerBox(tabId, ui) {
   const [out] = await chrome.scripting.executeScript({
     target: { tabId },
     world: 'MAIN',
-    args: [ui.editor, ui.generateButton],
-    func: (editorSel, buttonSel) => {
+    args: [ui.editor, ui.generateButton, ui.stopButton],
+    func: (editorSel, buttonSel, stopSel) => {
       const editor = document.querySelector(editorSel);
       const button = document.querySelector(buttonSel);
       const box = (el) => {
@@ -2150,11 +2155,18 @@ async function composerBox(tabId, ui) {
         const r = el.getBoundingClientRect();
         return { left: r.x, top: r.y, w: r.width, h: r.height };
       };
+      const stop = [...document.querySelectorAll(stopSel)].some((el) => el.getBoundingClientRect().width > 0);
+      // Tiles still working, each showing a percent ("45%") on its own.
+      const working = [...document.querySelectorAll('div, span')].filter((d) =>
+        /^\s*\d{1,3}\s*%\s*$/.test(d.textContent || '') && !d.querySelector('div, span')
+        && d.getBoundingClientRect().width > 0).length;
       return {
         editor: box(editor),
         button: box(button),
         ready: !!button && !button.disabled,
         text: editor ? editor.innerText.trim() : null,
+        stop,
+        working,
       };
     },
   });
@@ -2272,9 +2284,13 @@ async function tileImage(tabId, src) {
         if (!res.ok) return { error: `HTTP ${res.status}` };
         const blob = await res.blob();
         if (!blob.type.startsWith('image/')) return { error: `not a picture: ${blob.type}` };
+        // Its real size, so a preview is not taken for the picture: after a
+        // reload Flow's tiles load through flow.google.com/asb/ links, and a
+        // portrait one there is 286x512 where the picture is 768x1376.
+        const { width, height } = await createImageBitmap(blob).catch(() => ({}));
         return await new Promise((resolve) => {
           const reader = new FileReader();
-          reader.onload = () => resolve({ dataUrl: reader.result });
+          reader.onload = () => resolve({ dataUrl: reader.result, width, height });
           reader.onerror = () => resolve({ error: 'unreadable' });
           reader.readAsDataURL(blob);
         });
@@ -2287,12 +2303,21 @@ async function tileImage(tabId, src) {
 }
 
 /**
- * Pick `wanted` in one of the composer's menus -- the model or the shape.
+ * Pick `wanted` among the composer's settings -- the model, the shape, the
+ * count, or Image over Video.
  *
  * Done by the words on screen rather than by Flow's markup, which is minified
- * and changes: the control that shows the current choice is the one whose text
- * holds one of `family` (every value that menu can show), and the option is
- * the visible element whose text is `wanted`. Answers true, or why not.
+ * and changes. As measured on 2026-10-28: the settings sit behind one button by
+ * the prompt box ("🍌 Nano Banana 2.1 crop_portrait x1", labelled "Settings
+ * trigger"), which opens a panel where the shape, the count and Image/Video are
+ * radios and the model is a dropdown of its own ("Select model family") holding
+ * menu items. So the panel is opened, `wanted` is clicked if it shows, and
+ * otherwise the control in the panel showing one of `family` (every value that
+ * setting can take) is opened and `wanted` picked from it.
+ *
+ * Picked is read off the page: the radio is checked, or the dropdown names it.
+ * The chip by the prompt box is not trusted for it -- it shows the shape only as
+ * an icon name ("crop_9_16"). Answers true, or why not.
  */
 async function pickInMenu(target, tabId, ui, wanted, family) {
   const find = async (mode) => {
@@ -2309,79 +2334,131 @@ async function pickInMenu(target, tabId, ui, wanted, family) {
         const text = (el) => ((el.innerText || el.textContent || '').trim()
           || el.getAttribute('aria-label') || el.getAttribute('title') || '').replace(/\s+/g, ' ');
         const esc = (w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        // The name as words of its own: "Nano Banana 2" is not in "Nano Banana
+        // 2.1", and "9:16" is in "crop_9_16 9:16".
+        const named = (t, n) => new RegExp(`(^|[\\s(])${esc(n)}($|[\\s)])`).test(t);
         if (how === 'trigger') {
+          // A dropdown that shows the current choice. One that opens a menu is
+          // preferred, so the model's own dropdown wins over the chip by the
+          // prompt box, which names the model too.
+          let best = null;
           for (const el of document.querySelectorAll(triggerSel)) {
             const t = text(el);
-            if (t.length > 80 || !names.some((n) => t.includes(n))) continue;
+            if (t.length > 80 || !names.some((n) => named(t, n))) continue;
             const b = box(el);
-            if (b) return { box: b, current: t, already: t.includes(want) };
+            const rank = el.hasAttribute('aria-haspopup') ? 0 : 1;
+            if (b && (!best || rank < best.rank)) best = { box: b, current: t, already: named(t, want), rank };
           }
-          return null;
+          return best;
         }
-        // The option's own words may run on ("Nano Banana Pro  Best quality"),
-        // so it starts with the name; the shortest such text is the option
-        // itself rather than a panel that holds it.
-        // Or holds it as words of their own ("Portrait 9:16", "9:16 (Portrait)").
-        const alone = new RegExp(`(^|[\\s(])${esc(want)}($|[\\s)])`);
+        // The option's own words may run on ("🍌 Nano Banana Pro", "crop_9_16
+        // 9:16"); the shortest such text is the option itself rather than a
+        // panel that holds it. Only a radio, menu item or the like: the chip by
+        // the prompt box is a plain button that names the model and the count
+        // too, and clicking it is opening the panel, not picking.
         let best = null;
         for (const el of document.querySelectorAll(optionSel)) {
           const t = text(el);
-          if (t.length > 60 || (t !== want && !t.startsWith(want + ' ') && !alone.test(t))) continue;
+          if (!el.hasAttribute('role') || t.length > 60 || !named(t, want)) continue;
           const b = box(el);
-          if (b && (!best || t.length < best.len)) best = { box: b, len: t.length };
+          if (b && (!best || t.length < best.len)) {
+            best = { box: b, len: t.length, checked: el.getAttribute('aria-checked') };
+          }
         }
-        return best && { box: best.box };
+        // checked: 'true', 'false', or null for an item that keeps no state.
+        return best && { box: best.box, checked: best.checked };
       },
     });
     return out?.result || null;
   };
+  const close = async () => {
+    await pressKey(target, 'Escape', { keyCode: 27 });
+    await pause(200, 400);
+  };
 
-  let trigger = await find('trigger');
-  if (!trigger) {
-    // The choices can sit behind one settings button by the prompt box, and
-    // show only once that panel is open: open it, and look again.
+  // The panel, opened by the button by the prompt box -- unless it is open.
+  let option = await find('option');
+  if (!option) {
     const settings = await composerSettingsButton(tabId, ui);
-    if (settings) {
-      await humanClick(target, settings);
-      await pause(500, 1000);
-      trigger = await find('trigger');
-      if (!trigger) {
-        // An open panel may lay the choices out as buttons of their own.
-        const direct = await find('option');
-        if (direct) {
-          await humanClick(target, direct.box);
-          await pause(300, 700);
-          await pressKey(target, 'Escape', { keyCode: 27 });
-          return true;
-        }
-      }
-    }
-    if (!trigger) {
+    if (!settings) {
       const seen = await visibleControls(tabId, ui);
-      await pressKey(target, 'Escape', { keyCode: 27 });
-      return `no control showing any of ${family.join(', ')}; on screen: ${seen.join(' | ')}`;
+      return `no settings button by the prompt box; on screen: ${seen.join(' | ')}`;
     }
+    await humanClick(target, settings);
+    await pause(500, 1000);
+    option = await find('option');
   }
-  if (trigger.already) return true;
 
+  if (option) {
+    // Shown in the panel as a choice of its own: a radio.
+    if (option.checked !== 'true') {
+      await humanClick(target, option.box);
+      await pause(300, 700);
+      option = await find('option');
+    }
+    await close();
+    // A menu item that closed its menu, or keeps no state, was picked by the click.
+    return !option || option.checked !== 'false' || `"${wanted}" did not stay selected`;
+  }
+
+  // Behind a dropdown in the panel.
+  const trigger = await find('trigger');
+  if (!trigger) {
+    const seen = await visibleControls(tabId, ui);
+    await close();
+    return `no control showing any of ${family.join(', ')}; on screen: ${seen.join(' | ')}`;
+  }
+  if (trigger.already) {
+    await close();
+    return true;
+  }
   await humanClick(target, trigger.box);
   await pause(400, 900);
-  const option = await find('option');
+  option = await find('option');
   if (!option) {
     const seen = await visibleControls(tabId, ui);
-    await pressKey(target, 'Escape', { keyCode: 27 });
+    await close();
+    await close();
     return `"${wanted}" was not in the menu; on screen: ${seen.join(' | ')}`;
   }
   await humanClick(target, option.box);
   await pause(300, 700);
-
   const after = await find('trigger');
-  if (after && !after.already) {
-    // Some menus stay open after a pick; close it before going on.
-    await pressKey(target, 'Escape', { keyCode: 27 });
-    await pause(200, 400);
-  }
+  await close();
   return after && after.already ? true : `the control still shows "${after?.current || '?'}"`;
+}
+
+/**
+ * Turn Flow's Agent mode off, as a person would: one click on its chip.
+ *
+ * With it on, a prompt goes to Flow's agent, which makes pictures with its own
+ * settings (16:9, two at a time, its own model) and keeps the composer's
+ * hidden; the composer's prompt box goes away while it works. It stays on
+ * across reloads. Answers true, or why not.
+ */
+async function agentModeOff(target, tabId, ui) {
+  const find = async () => {
+    const [out] = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      args: [ui.agentToggle],
+      func: (sel) => {
+        const chips = [...document.querySelectorAll(sel), ...[...document.querySelectorAll('button')]
+          .filter((b) => (b.innerText || '').trim() === 'Agent')];
+        const on = chips.find((el) => el.getAttribute('aria-pressed') === 'true'
+          && el.getBoundingClientRect().width > 0);
+        if (!on) return null;
+        const r = on.getBoundingClientRect();
+        return { left: r.x, top: r.y, w: r.width, h: r.height };
+      },
+    }).catch(() => [{ result: null }]);
+    return out?.result || null;
+  };
+  const chip = await find();
+  if (!chip) return true;
+  await humanClick(target, chip);
+  await pause(500, 1000);
+  return (await find()) ? 'Agent mode stayed on' : true;
 }
 
 /** The words of every control on screen, so a failed pick says what it saw. */
@@ -2435,6 +2512,8 @@ async function composerSettingsButton(tabId, ui) {
 
 const MODEL_LABELS = ['Nano Banana Pro', 'Nano Banana 2.1', 'Nano Banana 2 Lite', 'Nano Banana 2', 'Imagen'];
 const ASPECT_LABELS = ['16:9', '9:16', '1:1', '3:4', '4:3'];
+const KIND_LABELS = ['Image', 'Video'];
+const COUNT_LABELS = ['x1', 'x2', 'x3', 'x4'];
 
 /**
  * Type `prompt` into the composer as keyboard input.
@@ -2551,6 +2630,13 @@ async function uiGenerateImage({ projectId = null, prompt = '', model = null, as
 
   return withDebugger(tab.id, async (target) => {
     const picked = {};
+    uiStep('turning Agent mode off');
+    picked.agentOff = await agentModeOff(target, tab.id, ui);
+    // A picture, one per prompt: Video would make a clip, and x2 spends twice
+    // for a second picture nobody takes.
+    uiStep('picking a picture, one per prompt');
+    picked.kind = await pickInMenu(target, tab.id, ui, 'Image', KIND_LABELS);
+    picked.count = await pickInMenu(target, tab.id, ui, 'x1', COUNT_LABELS);
     uiStep('picking the model');
     if (model) picked.model = await pickInMenu(target, tab.id, ui, model, MODEL_LABELS);
     uiStep('picking the shape');
@@ -2582,16 +2668,20 @@ async function uiGenerateImage({ projectId = null, prompt = '', model = null, as
 
     uiStep('submitting');
     await pause(800, 3000);
+    // Submitted is the composer going empty again, or -- when Flow keeps the
+    // prompt ("Clear prompt on submit" off) or hides the box while it works --
+    // a Stop button where Generate was, or one more tile showing a percent.
+    // Clicking again on any of those would stop the picture or make a second.
+    const workingBefore = box.working || 0;
     const cleared = async (tries) => {
       for (let i = 0; i < tries; i++) {
         await sleep(200);
         const after = await composerBox(tab.id, ui);
-        if (after && after.text === '') return true;
+        if (after && (after.text === '' || after.stop || after.working > workingBefore)) return true;
       }
       return false;
     };
-    // Submitted is the composer going empty again. Enter first most times;
-    // if Enter only made a new line, the button.
+    // Enter first most times; if Enter only made a new line, the button.
     if (Math.random() < 0.8) {
       await pressKey(target, 'Enter', { keyCode: 13, text: '\r' });
       if (await cleared(10)) return sent(picked);
@@ -2643,10 +2733,11 @@ async function uiTileImage({ src = '' } = {}) {
     if (!res.ok) return { error: `${inPage.error}; worker HTTP ${res.status}` };
     const blob = await res.blob();
     if (!blob.type.startsWith('image/')) return { error: `not a picture: ${blob.type}` };
+    const { width, height } = await createImageBitmap(blob).catch(() => ({}));
     const bytes = new Uint8Array(await blob.arrayBuffer());
     let bin = '';
     for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-    return { dataUrl: `data:${blob.type};base64,${btoa(bin)}` };
+    return { dataUrl: `data:${blob.type};base64,${btoa(bin)}`, width, height };
   } catch (e) {
     return { error: `${inPage.error}; worker: ${e?.message || e}` };
   }
