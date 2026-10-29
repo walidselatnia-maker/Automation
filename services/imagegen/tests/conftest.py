@@ -15,6 +15,8 @@ from agent.worker import processor
 @pytest.fixture(autouse=True)
 def captcha_image_path(monkeypatch):
     monkeypatch.setattr(processor, "IMAGE_USE_UI", False)
+    # Clips by clicking have their own tests, which turn it back on.
+    monkeypatch.setattr(processor, "VIDEO_USE_UI", False)
 
 
 @pytest.fixture(autouse=True)

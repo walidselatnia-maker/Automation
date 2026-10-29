@@ -435,3 +435,74 @@ async def test_an_image_job_without_references_never_uploads(monkeypatch):
     job = await jobs.create("soup", "VERTICAL", "P")
     await processor.WorkerController()._run(job)
     assert (await jobs.get(job["id"]))["status"] == "COMPLETED"
+
+
+# --- Filming by clicking ------------------------------------------------
+# With VIDEO_USE_UI the clip is asked for in Flow's composer: each reference
+# goes into the project under a name of the job's own, which the extension
+# finds in the "+" picker. Frames starts the clip from the first reference.
+
+class _Composer:
+    connected = True
+
+    def __init__(self, answer=None):
+        self.uploaded: list[str] = []
+        self.asked: dict = {}
+        self.answer = answer or {"status": 200, "media_id": "clip-1", "video_url": "https://v/1.mp4"}
+
+    async def upload_image_batch(self, image_base64, project_id, mime_type, file_name):
+        self.uploaded.append(file_name)
+        return {"media_id": f"m-{len(self.uploaded)}"}
+
+    async def generate_ui(self, prompt, project_id, **kw):
+        self.asked = dict(prompt=prompt, project_id=project_id, **kw)
+        return self.answer
+
+
+async def _film(monkeypatch, client, **video):
+    monkeypatch.setattr(processor, "VIDEO_USE_UI", True)
+    monkeypatch.setattr(processor, "get_flow_client", lambda: client)
+    controller = processor.WorkerController()
+
+    async def fetched(url):
+        return {"bytes": b"jpg", "mime": "image/jpeg"}
+
+    monkeypatch.setattr(controller, "_fetch_reference", fetched)
+    job = await jobs.create_video("the dish steams", ["https://a/1.jpg", "https://a/2.jpg"],
+                                  "P", "VERTICAL", **video)
+    await controller._run_video(job)
+    return job, await jobs.get(job["id"])
+
+
+@pytest.mark.asyncio
+async def test_a_frames_clip_starts_from_the_first_reference(monkeypatch):
+    client = _Composer()
+    job, after = await _film(monkeypatch, client, video_mode="frames")
+
+    assert client.asked["kind"] == "video"
+    assert client.asked["video_mode"] == "Frames"
+    assert client.asked["aspect_label"] == "9:16"
+    assert client.asked["job_id"] == job["id"]
+    assert client.asked["references"] == [{"name": f"ref-{job['id'][:8]}-1"}]
+    assert client.uploaded == [f"ref-{job['id'][:8]}-1.jpg", f"ref-{job['id'][:8]}-2.jpg"]
+    assert after["status"] == "COMPLETED"
+    assert after["output_url"] == "https://v/1.mp4"
+
+
+@pytest.mark.asyncio
+async def test_a_clip_without_a_mode_is_made_from_every_reference(monkeypatch):
+    client = _Composer()
+    job, _ = await _film(monkeypatch, client)
+
+    assert client.asked["video_mode"] == "Ingredients"
+    assert [r["name"] for r in client.asked["references"]] == [
+        f"ref-{job['id'][:8]}-1", f"ref-{job['id'][:8]}-2"]
+
+
+@pytest.mark.asyncio
+async def test_a_clip_that_could_not_be_followed_is_failed_not_requeued(monkeypatch):
+    client = _Composer({"error": "VIDEO_NOT_TRACKED: Flow took the clip but its tile could not be found"})
+    _, after = await _film(monkeypatch, client)
+
+    assert after["status"] == "FAILED"
+    assert "VIDEO_NOT_TRACKED" in after["error_message"]

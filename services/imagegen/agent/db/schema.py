@@ -103,6 +103,10 @@ ADDED_COLUMNS = [
     ("job", "reference_urls", "TEXT NOT NULL DEFAULT '[]'"),
     ("job", "operation_json", "TEXT"),
     ("job", "image_model", "TEXT NOT NULL DEFAULT 'auto'"),
+    # How a clip starts from its references: 'frames' (the first picture is
+    # its first frame) or 'ingredients' (composed from up to three). NULL is
+    # ingredients, which is what every clip was before.
+    ("job", "video_mode", "TEXT"),
 ]
 
 

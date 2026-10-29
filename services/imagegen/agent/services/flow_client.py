@@ -709,19 +709,26 @@ class FlowClient:
 
     async def ui_generate_image(self, prompt: str, project_id: str,
                                 model_label: str | None = None,
-                                aspect_label: str | None = None) -> dict:
+                                aspect_label: str | None = None,
+                                **options) -> dict:
         """Pick the model and shape in Flow's menus, type the prompt, submit.
 
         Says only that the submit went in, what was picked, and which error
         messages the page already showed; what it made is read from the project
         listing afterwards. Generous timeout: this drives a real page at a
         person's pace and waits for the composer to clear.
+
+        `options` are the extension's own: kind, videoMode, references,
+        jobId, reloadFirst (see uiGenerateImage). Each reference adds time:
+        one found in the picker a little, one uploaded through the page a lot.
         """
+        references = options.get("references") or []
+        timeout = 240 + sum(260 if r.get("dataUrl") else 60 for r in references)
         return await self._send_ui(
             "ui_generate_image",
             {"projectId": project_id, "prompt": prompt, "model": model_label,
-             "aspect": aspect_label, "selectors": ui_selectors()},
-            timeout=240,
+             "aspect": aspect_label, "selectors": ui_selectors(), **options},
+            timeout=timeout,
         )
 
     async def ui_page_errors(self, project_id: str, ignore: list[str],
@@ -787,14 +794,24 @@ class FlowClient:
     async def generate_images_ui(self, prompt: str, project_id: str,
                                  model_label: str | None = None,
                                  aspect_label: str | None = None,
-                                 poll_seconds: float = 300) -> dict:
+                                 poll_seconds: float = 300,
+                                 job_id: str | None = None,
+                                 references: list[dict] | None = None) -> dict:
         """One at a time: there is one composer and one person at it.
 
         With two jobs in flight, two prompts were typed into the same box and
         each job watched for the other's picture; a submit and its result now
         hold the composer together, the way a person waits for one picture
         before typing the next prompt.
+
+        With a job id the submit marks its own tiles, and only the submit
+        holds the composer: the picture is read off those tiles while the next
+        prompt goes in (generate_ui).
         """
+        if job_id:
+            return await self.generate_ui(
+                prompt, project_id, job_id=job_id, kind="image", model_label=model_label,
+                aspect_label=aspect_label, references=references, poll_seconds=poll_seconds)
         if self._ui_lock is None:
             self._ui_lock = asyncio.Lock()
         async with self._ui_lock:
@@ -886,10 +903,23 @@ class FlowClient:
             submitted = await self.ui_generate_image(prompt, project_id, model_label, aspect_label)
         if submitted.get("error"):
             return {"error": f"the composer would not take it: {submitted['error']}"}
+        self._log_picks(submitted)
+        return await self._watch_page(project_id, submitted, known, poll_seconds)
+
+    @staticmethod
+    def _log_picks(submitted: dict) -> None:
         for what, picked in (submitted.get("picked") or {}).items():
             if picked is not True:
                 logger.warning("Flow UI: could not pick the %s (%s); the composer's own was used",
                                what, picked)
+
+    async def _watch_page(self, project_id: str, submitted: dict, known: set,
+                          poll_seconds: float) -> dict:
+        """Find the picture a submit made by what is new in the project and on the page.
+
+        The way when this prompt's own tiles cannot be told apart: one prompt
+        at a time, its picture being whatever was not there before.
+        """
         # Messages already on the page belong to earlier attempts; counted, so
         # one more tile with the same words is still this picture's.
         stale = [e for e in submitted.get("pageErrors") or [] if isinstance(e, str)]
@@ -988,6 +1018,202 @@ class FlowClient:
                     },
                 }
 
+        return {"error": f"the composer took the prompt but no image appeared in {poll_seconds:.0f}s"}
+
+    # ─── Prompts that render side by side ───────────────────────
+    #
+    # The composer is one box, so submits take turns; rendering is Flow's and
+    # takes a minute or more, so it need not. Each submit marks the tiles it
+    # added as its job's, and the job reads its result off them -- never off
+    # "whatever is new", which with two prompts out is either one's.
+
+    #: Tiles that went blank -- no percent, nothing in them -- for this many
+    #: looks in a row (UI_POLL_S apart) are a submit Flow dropped without a word.
+    UI_SILENT_LOOKS = 15
+    #: Looks with this job's tiles gone from the page before a picture is given up on.
+    UI_LOST_LOOKS = 60
+
+    _reload_next = False
+    _watching = 0
+    #: The last submit's tiles could not be found: one prompt at a time until they can.
+    tiles_unreliable = False
+
+    async def generate_ui(self, prompt: str, project_id: str, *, job_id: str,
+                          kind: str = "image", model_label: str | None = None,
+                          aspect_label: str | None = None, video_mode: str | None = None,
+                          references: list[dict] | None = None,
+                          poll_seconds: float = 300) -> dict:
+        """Submit through the composer, then watch this job's own tiles.
+
+        Answers an image in the REST shape generate_images_batch answers in,
+        and a clip as {"status": 200, "media_id", "video_url"}.
+        """
+        if self._ui_lock is None:
+            self._ui_lock = asyncio.Lock()
+        known: set = set()
+        async with self._ui_lock:
+            if kind == "image":
+                # Only for the way back when the tiles cannot be found.
+                before = await self.project_images(project_id)
+                if isinstance(before, dict):
+                    return before
+                known = {image.media_id for image in before}
+            # A reload takes every prompt still rendering on the page with it.
+            reload_first = self._reload_next and not self._watching
+            options = {"kind": kind, "videoMode": video_mode, "references": references or [],
+                       "jobId": job_id, "reloadFirst": reload_first}
+            submitted = await self.ui_generate_image(
+                prompt, project_id, model_label, aspect_label, **options)
+            for _ in range(20):
+                if "COMPOSER_BUSY" not in str(submitted.get("error") or ""):
+                    break
+                await asyncio.sleep(15)
+                submitted = await self.ui_generate_image(
+                    prompt, project_id, model_label, aspect_label, **options)
+            if reload_first:
+                self._reload_next = False
+            if submitted.get("error"):
+                return {"error": f"the composer would not take it: {submitted['error']}"}
+            self._log_picks(submitted)
+
+            if not submitted.get("tiles"):
+                if kind == "video":
+                    # A clip is paid for when it is submitted: trying again
+                    # without knowing would pay for a second one.
+                    return {"error": "VIDEO_NOT_TRACKED: Flow took the clip but its tile could "
+                                     "not be found on the page. Not tried again, so it is not "
+                                     "paid for twice; look for it in the Flow project."}
+                logger.warning("Flow UI: no tile of job %s found on the page; reading the "
+                               "project for what is new, one prompt at a time", job_id[:8])
+                self.tiles_unreliable = True
+                return await self._watch_page(project_id, submitted, known, poll_seconds)
+
+        self.tiles_unreliable = False
+        self._watching += 1
+        try:
+            return await self._watch_tiles(job_id, kind, project_id, submitted, known,
+                                           poll_seconds)
+        finally:
+            self._watching -= 1
+
+    async def ui_job_tiles(self, job_id: str) -> dict:
+        out = await self._send_ui("ui_job_tiles", {"jobId": job_id, "selectors": ui_selectors()},
+                                  timeout=30)
+        return out if isinstance(out, dict) else {"error": str(out)}
+
+    @staticmethod
+    def _image_answer(image: fb.GeneratedImage) -> dict:
+        return {
+            "status": 200,
+            "data": {
+                "media": [{
+                    "name": image.media_id,
+                    "image": {"generatedImage": {
+                        "mediaId": image.media_id,
+                        "fifeUrl": image.url,
+                    }},
+                }],
+            },
+        }
+
+    async def _video_from_ids(self, ids) -> dict | None:
+        """The finished clip among these media ids, if one is ready."""
+        for media_id in ids:
+            urls = await self.get_media_urls_batch(media_id)
+            if isinstance(urls, dict) and urls.get("video_url"):
+                return {"status": 200, "media_id": media_id, "video_url": urls["video_url"]}
+        return None
+
+    async def _tile_result(self, kind: str, tile: dict, ids: set) -> dict | None:
+        """A finished tile's result, or None while it is not to be had yet."""
+        if kind == "video":
+            found = _UUID_RE.findall(" ".join(str(tile.get(k) or "") for k in ("video", "still", "poster")))
+            ordered = [m.lower() for m in found] + sorted(i for i in ids if i not in found)
+            return await self._video_from_ids(dict.fromkeys(ordered))
+        src = tile.get("image") or ""
+        named = self._images_of([src])
+        picture = named[0] if named else await self._tile_picture(src)
+        return self._image_answer(picture) if picture else None
+
+    async def _watch_tiles(self, job_id: str, kind: str, project_id: str, submitted: dict,
+                           known: set, poll_seconds: float) -> dict:
+        """Read this job's result off the tiles its submit marked.
+
+        Done is a tile holding the picture or the clip. Failed is a tile
+        showing Flow's words for it, or every tile blank for UI_SILENT_LOOKS
+        -- then the tab is reloaded before the next submit, the way a person
+        clears it, and the job is tried again. Tiles that leave the page (a
+        reload, the grid drawn anew) are followed by the media ids they
+        carried, and for a picture by what is new in the project.
+        """
+        submitted_at = submitted.get("submittedAt")
+        started = time.monotonic()
+        deadline = started + poll_seconds
+        ids: set = set()
+        blank = lost = looks = 0
+        while time.monotonic() < deadline:
+            await asyncio.sleep(UI_POLL_S)
+            looks += 1
+            state = await self.ui_job_tiles(job_id)
+            if state.get("error"):
+                continue
+            tiles = [t for t in state.get("tiles") or [] if isinstance(t, dict)]
+            for tile in tiles:
+                ids.update(i.lower() for i in tile.get("ids") or [] if isinstance(i, str))
+
+            if not state.get("found"):
+                lost += 1
+                if lost % 5 == 1:
+                    if kind == "video" and ids:
+                        found = await self._video_from_ids(sorted(ids))
+                        if found:
+                            return found
+                    # What is new in the project is this job's only while no
+                    # other prompt is out.
+                    if kind == "image" and self._watching <= 1:
+                        now = await self.project_images(project_id)
+                        fresh = [] if isinstance(now, dict) else [
+                            image for image in now if image.media_id not in known]
+                        if fresh:
+                            logger.info("Flow UI: job %s's tiles left the page; its picture was "
+                                        "found in the project", job_id[:8])
+                            return self._image_answer(fresh[0])
+                if lost >= self.UI_LOST_LOOKS and kind == "image":
+                    return {"error": "no image appeared: this prompt's tiles left the page"}
+                continue
+            lost = 0
+
+            done = [t for t in tiles if t.get("image") or t.get("video") or t.get("still")]
+            for tile in done:
+                result = await self._tile_result(kind, tile, ids)
+                if result:
+                    return result
+            failed = [t["error"] for t in tiles if t.get("error")]
+            if failed and not done:
+                code = code_of_message(failed[0]) or answered_code(state.get("codes"), submitted_at)
+                return {"error": f"FLOW_UI_ERROR: {code + ': ' if code else ''}{failed[0]}"}
+
+            working = any(t.get("percent") is not None or t.get("queued") for t in tiles)
+            if working or done:
+                blank = 0
+                deadline = min(max(deadline, time.monotonic() + 60), started + UI_MAX_WAIT_S)
+            else:
+                blank += 1
+                if blank >= self.UI_SILENT_LOOKS:
+                    code = answered_code(state.get("codes"), submitted_at)
+                    if code:
+                        return {"error": f"FLOW_UI_ERROR: {code}: Google refused it"}
+                    self._reload_next = True
+                    return {"error": "SILENT_FAILURE: this prompt's tiles went blank with no word "
+                                     "from Flow; the tab is reloaded before the next prompt"}
+            if looks % 15 == 0:
+                logger.info("Flow UI: job %s waiting -- %d tile(s), %s", job_id[:8], len(tiles),
+                            [t.get("percent") for t in tiles])
+
+        if kind == "video":
+            return {"error": f"VIDEO_TIMED_OUT: the clip did not finish in "
+                             f"{time.monotonic() - started:.0f}s. Not tried again, so it is not "
+                             f"paid for twice; look for it in the Flow project."}
         return {"error": f"the composer took the prompt but no image appeared in {poll_seconds:.0f}s"}
 
     async def generate_images_batch(self, prompt: str, project_id: str,

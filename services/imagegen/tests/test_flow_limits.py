@@ -80,7 +80,8 @@ class Composer:
         self.answers = answers
         self.asked = []
 
-    async def generate_images_ui(self, prompt, project_id, model_label=None, aspect_label=None):
+    async def generate_images_ui(self, prompt, project_id, model_label=None, aspect_label=None,
+                                 job_id=None, references=None):
         self.asked.append(model_label)
         return self.answers.get(model_label, OK)
 

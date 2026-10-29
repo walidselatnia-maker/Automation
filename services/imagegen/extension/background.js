@@ -578,6 +578,8 @@ function connectToAgent() {
         sendToAgent({ id: msg.id, result: await uiGenerateOnce(msg.params || {}) });
       } else if (msg.method === 'ui_page_images') {
         sendToAgent({ id: msg.id, result: await uiPageImages() });
+      } else if (msg.method === 'ui_job_tiles') {
+        sendToAgent({ id: msg.id, result: await uiJobTiles(msg.params || {}) });
       } else if (msg.method === 'ui_tile_image') {
         sendToAgent({ id: msg.id, result: await uiTileImage(msg.params || {}) });
       } else if (msg.method === 'ui_page_errors') {
@@ -1965,6 +1967,21 @@ const UI_DEFAULTS = {
   menuOptions: '[role="option"], [role="menuitem"], [role="menuitemradio"], [role="radio"], [role="tab"], button, li',
   errorRegions: '[role="alert"], [role="status"], [aria-live], [data-state="error"]',
   errorWords: 'unusual activity|something went wrong|couldn.t generate|could not generate|failed to generate|generation failed|violat|against our policies|policy violation|quota|limit reached|try again later|not available in your',
+  // Ingredients stay in the prompt box after a submit; this empties it.
+  clearPromptButton: 'button[aria-label="Clear prompt"]',
+  // The "+" by the prompt box: a picker of the project's media with a search
+  // box. A row clicked there attaches it, and a chip shows in the box.
+  addMediaButton: 'button[aria-label="Add ingredients to the prompt box"]',
+  assetSearch: 'input[aria-label="Search assets"]',
+  assetList: 'flow-add-menu-asset-list',
+  assetRow: '.asset-item-container',
+  ingredientChip: 'flow-ingredient-chip',
+  uploadWords: 'upload media',
+  // One generation slot in the results grid: a percent while it renders,
+  // then the picture or the clip. The element stays from one to the other.
+  tile: 'flow-tile-container',
+  tileVideo: 'flow-video-tile video',
+  tileImage: 'flow-image-tile img.image',
 };
 
 function uiSelectors(given) {
@@ -2527,9 +2544,269 @@ async function composerSettingsButton(tabId, ui) {
 }
 
 const MODEL_LABELS = ['Nano Banana Pro', 'Nano Banana 2.1', 'Nano Banana 2 Lite', 'Nano Banana 2', 'Imagen'];
+const VIDEO_MODEL_LABELS = ['Veo 3.1 - Fast', 'Veo 3.1 - Quality', 'Veo 3.1 - Lite', 'Veo 3.1', 'Veo 3', 'Veo 2'];
 const ASPECT_LABELS = ['16:9', '9:16', '1:1', '3:4', '4:3'];
 const KIND_LABELS = ['Image', 'Video'];
+// Video's two ways in, as measured: Frames starts the clip from a picture,
+// Ingredients composes it from up to three.
+const VIDEO_MODE_LABELS = ['Frames', 'Ingredients'];
 const COUNT_LABELS = ['x1', 'x2', 'x3', 'x4'];
+
+// ─── References: attaching pictures to the prompt ───────────
+//
+// The agent puts each reference into the project first (an upload that needs
+// no captcha) under a name of its own, so here it is only found in the "+"
+// picker by that name and clicked, the way a person reuses an upload. When the
+// agent could not upload it, the bytes come along and go in through Flow's own
+// file input instead.
+
+/** Where the first visible element matching `sel` is, optionally only one whose words hold `text`. */
+async function boxOf(tabId, sel, { text = '', within = '' } = {}) {
+  const [out] = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    args: [sel, text, within],
+    func: (s, words, scopeSel) => {
+      const scopes = scopeSel ? [...document.querySelectorAll(scopeSel)] : [document];
+      const want = words.toLowerCase();
+      for (const scope of scopes) {
+        for (const el of scope.querySelectorAll(s)) {
+          const r = el.getBoundingClientRect();
+          if (!r.width || !r.height) continue;
+          const t = `${el.innerText || ''} ${el.getAttribute('aria-label') || ''} ${el.getAttribute('title') || ''}`.toLowerCase();
+          if (want && !t.includes(want)) continue;
+          return { left: r.x, top: r.y, w: r.width, h: r.height };
+        }
+      }
+      return null;
+    },
+  }).catch(() => [{ result: null }]);
+  return out?.result || null;
+}
+
+async function countOf(tabId, sel) {
+  const [out] = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    args: [sel],
+    func: (s) => document.querySelectorAll(s).length,
+  }).catch(() => [{ result: 0 }]);
+  return out?.result || 0;
+}
+
+/** Wait up to `ms` for `check` to answer something truthy. */
+async function waitUntil(check, ms, every = 250) {
+  const until = Date.now() + ms;
+  for (;;) {
+    const got = await check();
+    if (got || Date.now() > until) return got;
+    await sleep(every);
+  }
+}
+
+/** Empty the prompt box of text and ingredients an earlier prompt left. */
+async function clearComposer(target, tabId, ui) {
+  const clear = await boxOf(tabId, ui.clearPromptButton);
+  if (!clear) return false;
+  await humanClick(target, clear);
+  await pause(300, 700);
+  return true;
+}
+
+/** The picker open, its search box showing. */
+async function openPicker(target, tabId, ui) {
+  if (await boxOf(tabId, ui.assetSearch)) return true;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const plus = await boxOf(tabId, ui.addMediaButton);
+    if (!plus) return false;
+    await humanClick(target, plus);
+    // A first click can land while another overlay closes and only raise a tooltip.
+    if (await waitUntil(() => boxOf(tabId, ui.assetSearch), 3000)) return true;
+  }
+  return false;
+}
+
+/** Search the picker for `name`, click the row, and see a chip appear. */
+async function pickAsset(target, tabId, ui, name, waitMs) {
+  const search = await boxOf(tabId, ui.assetSearch);
+  if (!search) return false;
+  await humanClick(target, search);
+  await pause(120, 300);
+  await typePrompt(target, name);
+  const row = await waitUntil(
+    () => boxOf(tabId, ui.assetRow, { text: name, within: ui.assetList }), waitMs, 500);
+  if (!row) return false;
+  const chips = await countOf(tabId, ui.ingredientChip);
+  await humanClick(target, row);
+  return !!(await waitUntil(async () => (await countOf(tabId, ui.ingredientChip)) > chips, 4000));
+}
+
+/**
+ * Hold the next click on a file input and hand it these bytes instead of
+ * opening the system's file dialog -- which nothing could answer in this
+ * browser. Installed once per page, in the page's own world, where Flow's
+ * file input lives.
+ */
+async function armUpload(tabId, ref) {
+  const [out] = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    args: [ref.dataUrl, ref.name, ref.mime || 'image/jpeg'],
+    func: (dataUrl, filename, mimeType) => {
+      if (!window.__vpsUpload) {
+        const nativeClick = HTMLInputElement.prototype.click;
+        window.__vpsUpload = { file: null };
+        HTMLInputElement.prototype.click = function (...args) {
+          const pending = window.__vpsUpload.file;
+          if (this.type !== 'file' || !pending) return nativeClick.apply(this, args);
+          window.__vpsUpload.file = null;
+          const transfer = new DataTransfer();
+          transfer.items.add(pending);
+          this.files = transfer.files;
+          this.dispatchEvent(new Event('change', { bubbles: true }));
+          return undefined;
+        };
+      }
+      const bytes = atob(String(dataUrl).split(',').pop());
+      const buffer = new Uint8Array(bytes.length);
+      for (let i = 0; i < bytes.length; i++) buffer[i] = bytes.charCodeAt(i);
+      window.__vpsUpload.file = new File([buffer], filename, { type: mimeType });
+      return true;
+    },
+  }).catch((e) => [{ result: String(e?.message || e) }]);
+  return out?.result === true || out?.result;
+}
+
+/**
+ * Attach one reference to the prompt box. `ref` is { name } for a picture
+ * already in the project, with { dataUrl, mime } when it has to be uploaded
+ * here. Answers true, or why not.
+ */
+async function attachReference(target, tabId, ui, ref) {
+  if (!(await openPicker(target, tabId, ui))) return 'the "+" picker did not open';
+  if (await pickAsset(target, tabId, ui, ref.name, 5000)) {
+    if (await boxOf(tabId, ui.assetSearch)) await pressKey(target, 'Escape', { keyCode: 27 });
+    return true;
+  }
+  if (!ref.dataUrl) {
+    await pressKey(target, 'Escape', { keyCode: 27 });
+    return `"${ref.name}" is not in the project's media`;
+  }
+  const armed = await armUpload(tabId, ref);
+  if (armed !== true) return `could not prepare the upload: ${armed}`;
+  const upload = await boxOf(tabId, '[role="button"], button, [role="menuitem"]', { text: ui.uploadWords });
+  if (!upload) return 'no "Upload media" in the picker';
+  const chips = await countOf(tabId, ui.ingredientChip);
+  await humanClick(target, upload);
+  // Flow attaches a fresh upload itself, or lists it once it has gone up.
+  const done = await waitUntil(async () => {
+    if ((await countOf(tabId, ui.ingredientChip)) > chips) return true;
+    return !!(await boxOf(tabId, ui.assetRow, { text: ref.name, within: ui.assetList }));
+  }, 180_000, 1000);
+  if (!done) return `"${ref.name}" did not finish uploading`;
+  const attached = (await countOf(tabId, ui.ingredientChip)) > chips
+    || (await pickAsset(target, tabId, ui, ref.name, 5000));
+  if (await boxOf(tabId, ui.assetSearch)) await pressKey(target, 'Escape', { keyCode: 27 });
+  return attached || `"${ref.name}" uploaded but would not attach`;
+}
+
+// ─── Tiles: which results are whose ─────────────────────────
+//
+// A submit adds placeholder tiles to the grid at once, and the element stays
+// from the percent to the finished picture or clip. So the tiles that were not
+// there before a submit are that prompt's, and are marked with its job: the
+// result is then read off its own tiles, never guessed from the project, and
+// two prompts can render at the same time without taking each other's.
+
+/** Mark every tile now on the page as seen. Answers how many there are. */
+async function markTilesSeen(tabId, ui) {
+  const [out] = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    args: [ui.tile],
+    func: (sel) => {
+      const tiles = [...document.querySelectorAll(sel)];
+      tiles.forEach((t) => t.setAttribute('data-vps-seen', '1'));
+      return tiles.length;
+    },
+  }).catch(() => [{ result: -1 }]);
+  return out?.result ?? -1;
+}
+
+/** Give the tiles that appeared since markTilesSeen to `jobId`. Answers how many. */
+async function claimNewTiles(tabId, ui, jobId) {
+  const [out] = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    args: [ui.tile, jobId],
+    func: (sel, job) => {
+      // Still working, too: a finished tile Flow re-rendered is new to the
+      // page but not this prompt's; a new one starts as a placeholder -- a
+      // percent, a queue note, or nothing in it yet (a clip's may show its
+      // start frame while it works).
+      const working = (t) => [...t.querySelectorAll('div, span')].some((d) => !d.childElementCount
+        && /^\s*\d{1,3}\s*%\s*$|queue|waiting|starting/i.test(d.textContent || ''));
+      const filled = (t) => [...t.querySelectorAll('img, video')].some((m) => (m.currentSrc || m.src)
+        && m.getBoundingClientRect().width >= 120);
+      const fresh = [...document.querySelectorAll(sel)].filter((t) => !t.hasAttribute('data-vps-seen')
+        && (working(t) || !filled(t)));
+      fresh.forEach((t) => {
+        t.setAttribute('data-vps-seen', '1');
+        t.setAttribute('data-vps-job', job);
+      });
+      return fresh.length;
+    },
+  }).catch(() => [{ result: 0 }]);
+  return out?.result || 0;
+}
+
+/**
+ * The state of `jobId`'s tiles: per tile, its percent, the picture or clip
+ * once there, every id-shaped string the tile carries (its media id), and any
+ * failure words it shows.
+ */
+async function jobTiles(tabId, ui, jobId) {
+  const [out] = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    args: [ui.tile, ui.tileVideo, ui.tileImage, ui.errorWords, jobId],
+    func: (sel, videoSel, imageSel, words, job) => {
+      const errorRe = new RegExp(words, 'i');
+      const uuidRe = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+      return [...document.querySelectorAll(sel)]
+        .filter((t) => t.getAttribute('data-vps-job') === job)
+        .map((tile) => {
+          const video = [...tile.querySelectorAll(videoSel)].find((v) => v.currentSrc || v.src);
+          const image = [...tile.querySelectorAll(imageSel)].find((i) => i.currentSrc || i.src);
+          const pct = [...tile.querySelectorAll('div, span')].find(
+            (d) => !d.childElementCount && /^\s*\d{1,3}\s*%\s*$/.test(d.textContent || ''));
+          const text = (tile.innerText || '').trim().replace(/\s+/g, ' ').slice(0, 300);
+          const ids = new Set();
+          for (const el of [tile, ...tile.querySelectorAll('*')]) {
+            for (const a of el.attributes) {
+              for (const m of a.value.match(uuidRe) || []) ids.add(m.toLowerCase());
+            }
+          }
+          // A clip's tile shows a still until its <video> loads; the still
+          // says the clip is there, and its media id is in the tile.
+          const clip = tile.querySelector('flow-video-tile');
+          const still = clip && [...clip.querySelectorAll('img')].find((i) => i.currentSrc || i.src);
+          return {
+            percent: pct ? parseInt(pct.textContent, 10) : null,
+            clip: !!clip,
+            still: still ? (still.currentSrc || still.src) : null,
+            video: video ? (video.currentSrc || video.src) : null,
+            poster: video ? video.poster || null : null,
+            image: image ? (image.currentSrc || image.src) : null,
+            error: !video && !image && !still && errorRe.test(text) ? text : null,
+            queued: !pct && /queue|waiting|starting/i.test(text),
+            ids: [...ids],
+          };
+        });
+    },
+  }).catch(() => [{ result: null }]);
+  return out?.result;
+}
 
 /**
  * Type `prompt` into the composer as keyboard input.
@@ -2576,13 +2853,20 @@ function uiStep(name) {
   sendToAgent({ type: 'ui_step', step: name });
 }
 
+/** How long one submit may take: more for each reference, most for one uploaded here. */
+function submitLimitMs(params) {
+  const refs = Array.isArray(params?.references) ? params.references : [];
+  return UI_SUBMIT_LIMIT_MS + refs.reduce((ms, r) => ms + (r?.dataUrl ? 200_000 : 40_000), 0);
+}
+
 async function uiGenerateOnce(params) {
-  if (uiSubmit && Date.now() - uiSubmit.since < UI_SUBMIT_LIMIT_MS + 60_000) {
+  const limitMs = submitLimitMs(params);
+  if (uiSubmit && Date.now() - uiSubmit.since < uiSubmit.limitMs + 60_000) {
     return { error: `COMPOSER_BUSY: the previous submit is still at "${uiStepName}"` };
   }
   holdFlowTab();
   const work = uiGenerateImage(params).catch((e) => ({ error: `UI_ERROR at "${uiStepName}": ${e?.message || e}` }));
-  const mine = { done: work, since: Date.now() };
+  const mine = { done: work, since: Date.now(), limitMs };
   uiSubmit = mine;
   work.finally(() => {
     if (uiSubmit === mine) uiSubmit = null;
@@ -2590,7 +2874,7 @@ async function uiGenerateOnce(params) {
   });
   let timer;
   const limit = new Promise((resolve) => {
-    timer = setTimeout(() => resolve({ error: `COMPOSER_STUCK at "${uiStepName}" after ${UI_SUBMIT_LIMIT_MS / 1000}s` }), UI_SUBMIT_LIMIT_MS);
+    timer = setTimeout(() => resolve({ error: `COMPOSER_STUCK at "${uiStepName}" after ${limitMs / 1000}s` }), limitMs);
   });
   try {
     return await Promise.race([work, limit]);
@@ -2599,9 +2883,21 @@ async function uiGenerateOnce(params) {
   }
 }
 
-async function uiGenerateImage({ projectId = null, prompt = '', model = null, aspect = null, selectors = null } = {}) {
+/**
+ * `kind` is 'image' or 'video'; a video starts from its references as Frames
+ * (one picture, its first frame) or Ingredients (up to three). `references`
+ * are attached before the prompt is typed. With a `jobId`, the tiles the
+ * submit adds are marked as that job's and `tiles` says how many; the agent
+ * then reads the result off them (uiJobTiles). `reloadFirst` reloads the tab
+ * before anything, after the agent saw a submit fail without a word.
+ */
+async function uiGenerateImage({
+  projectId = null, prompt = '', model = null, aspect = null, selectors = null,
+  kind = 'image', videoMode = null, references = [], jobId = null, reloadFirst = false,
+} = {}) {
   if (!prompt.trim()) return { error: 'EMPTY_PROMPT' };
   const ui = uiSelectors(selectors);
+  const video = kind === 'video';
 
   // The tab is closed between runs to save CPU, so the first job after a
   // quiet spell opens it again -- on the job's project, as a person would.
@@ -2627,6 +2923,15 @@ async function uiGenerateImage({ projectId = null, prompt = '', model = null, as
   uiStep('bringing the tab to the front');
   await chrome.tabs.update(tab.id, { active: true }).catch(() => {});
   if (tab.windowId) await chrome.windows.update(tab.windowId, { focused: true }).catch(() => {});
+  if (reloadFirst) {
+    // The last submit's tiles all went blank with no message from Flow; a
+    // fresh page is what clears that, as it would for a person.
+    uiStep('reloading the tab after a silent failure');
+    const loaded = waitForTabLoad(tab.id, 30000);
+    await chrome.tabs.reload(tab.id);
+    await loaded.catch(() => {});
+    await pause(2500, 4500);
+  }
   uiStep('finding the prompt box');
 
   let box = await composerBox(tab.id, ui);
@@ -2641,25 +2946,59 @@ async function uiGenerateImage({ projectId = null, prompt = '', model = null, as
   const before = await pageErrorCounts(tab.id, ui);
   const imagesBefore = (await pageImages(tab.id).catch(() => [])).map(mediaIdOf);
   const tilesBefore = (await pageTiles(tab.id).catch(() => ({ srcs: [] }))).srcs;
-  const sent = (picked, submittedAt) => ({
-    ok: true, submitted: true, picked, pageErrors: Object.keys(before), pageErrorCounts: before,
-    pageImages: imagesBefore, pageTiles: tilesBefore, tabUrl: tab.url,
-    // On this worker's clock, which is the one answeredCodes are stamped with.
-    submittedAt, now: Date.now() });
+  const sent = async (picked, submittedAt) => {
+    // Placeholders show at once; the ones that were not there before are this
+    // prompt's. None after a while: Flow's grid changed, and the agent falls
+    // back to reading the project for what is new.
+    let tiles = 0;
+    if (jobId) {
+      uiStep('marking this prompt\'s tiles');
+      await waitUntil(async () => {
+        tiles += await claimNewTiles(tab.id, ui, jobId);
+        return tiles > 0;
+      }, 20000, 500);
+    }
+    return {
+      ok: true, submitted: true, picked, pageErrors: Object.keys(before), pageErrorCounts: before,
+      pageImages: imagesBefore, pageTiles: tilesBefore, tabUrl: tab.url, tiles,
+      // On this worker's clock, which is the one answeredCodes are stamped with.
+      submittedAt, now: Date.now() };
+  };
 
   return withDebugger(tab.id, async (target) => {
     const picked = {};
     uiStep('turning Agent mode off');
     picked.agentOff = await agentModeOff(target, tab.id, ui);
-    // A picture, one per prompt: Video would make a clip, and x2 spends twice
-    // for a second picture nobody takes.
-    uiStep('picking a picture, one per prompt');
-    picked.kind = await pickInMenu(target, tab.id, ui, 'Image', KIND_LABELS);
+    // One result per prompt: x2 spends twice for a second one nobody takes.
+    uiStep(video ? 'picking a clip, one per prompt' : 'picking a picture, one per prompt');
+    picked.kind = await pickInMenu(target, tab.id, ui, video ? 'Video' : 'Image', KIND_LABELS);
+    if (video) {
+      const mode = videoMode || (references.length === 1 ? 'Frames' : 'Ingredients');
+      picked.videoMode = await pickInMenu(target, tab.id, ui, mode, VIDEO_MODE_LABELS);
+    }
     picked.count = await pickInMenu(target, tab.id, ui, 'x1', COUNT_LABELS);
     uiStep('picking the model');
-    if (model) picked.model = await pickInMenu(target, tab.id, ui, model, MODEL_LABELS);
+    if (model) {
+      const family = video ? VIDEO_MODEL_LABELS : MODEL_LABELS;
+      picked.model = await pickInMenu(target, tab.id, ui, model,
+        family.includes(model) ? family : [model, ...family]);
+    }
     uiStep('picking the shape');
     if (aspect) picked.aspect = await pickInMenu(target, tab.id, ui, aspect, ASPECT_LABELS);
+
+    // What the last prompt left in the box -- its ingredients above all --
+    // would ride along with this one.
+    uiStep('clearing the prompt box');
+    picked.cleared = await clearComposer(target, tab.id, ui);
+    for (let i = 0; i < references.length; i++) {
+      uiStep(`attaching reference ${i + 1} of ${references.length}`);
+      picked[`reference${i + 1}`] = await attachReference(target, tab.id, ui, references[i]);
+      await pause(400, 1200);
+    }
+    const attached = references.filter((_, i) => picked[`reference${i + 1}`] === true).length;
+    if (references.length && !attached) {
+      return { error: `REFERENCES_NOT_ATTACHED: ${picked.reference1}` };
+    }
 
     // Focus by clicking it, not by calling focus(): ProseMirror places the
     // caret from the pointer event, and text inserted without a caret goes
@@ -2686,6 +3025,7 @@ async function uiGenerateImage({ projectId = null, prompt = '', model = null, as
     if (!box?.ready) return { error: 'GENERATE_DISABLED: the composer did not accept the prompt' };
 
     uiStep('submitting');
+    if (jobId) await markTilesSeen(tab.id, ui);
     await pause(800, 3000);
     // Submitted is the composer going empty again, or -- when Flow keeps the
     // prompt ("Clear prompt on submit" off) or hides the box while it works --
@@ -2704,7 +3044,7 @@ async function uiGenerateImage({ projectId = null, prompt = '', model = null, as
     // Enter first most times; if Enter only made a new line, the button.
     if (Math.random() < 0.8) {
       await pressKey(target, 'Enter', { keyCode: 13, text: '\r' });
-      if (await cleared(10)) return sent(picked, submittedAt);
+      if (await cleared(10)) return await sent(picked, submittedAt);
       box = await composerBox(tab.id, ui);
       if (box?.text && box.text !== prompt.trim()) {
         await typePrompt(target, prompt); // undo the new line Enter made
@@ -2713,7 +3053,7 @@ async function uiGenerateImage({ projectId = null, prompt = '', model = null, as
     }
     if (!box?.button) return { error: 'SUBMIT_NOT_ACCEPTED: no Generate button' };
     await humanClick(target, box.button);
-    if (await cleared(30)) return sent(picked, submittedAt);
+    if (await cleared(30)) return await sent(picked, submittedAt);
     return { error: 'SUBMIT_NOT_ACCEPTED: the prompt is still in the composer' };
   });
 }
@@ -2789,6 +3129,20 @@ async function uiTileImage({ src = '' } = {}) {
   } catch (e) {
     return { error: `${inPage.error}; worker: ${e?.message || e}` };
   }
+}
+
+/**
+ * A job's tiles as they are now. `found: false` when none carry its mark any
+ * more -- a reload, or Flow drawing its grid anew -- so the agent knows to look
+ * for the result another way.
+ */
+async function uiJobTiles({ jobId = '', selectors = null } = {}) {
+  const tab = await composerTab();
+  if (!tab) return { error: 'NO_FLOW_TAB' };
+  const ui = uiSelectors(selectors);
+  const tiles = await readAwake(tab, () => jobTiles(tab.id, ui, jobId), null);
+  if (!Array.isArray(tiles)) return { error: 'the page did not answer' };
+  return { found: tiles.length > 0, tiles, codes: answeredCodes.slice(-20), now: Date.now() };
 }
 
 /** Error messages on the Flow page now, less the ones in `ignore`. */

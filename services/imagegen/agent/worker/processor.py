@@ -21,6 +21,7 @@ from agent.config import (
     API_COOLDOWN,
     API_COOLDOWN_JITTER,
     FLOW_PROJECT_ID,
+    IMAGE_UI_IN_FLIGHT,
     IMAGE_USE_BATCH,
     IMAGE_USE_UI,
     MAX_CONCURRENT_REQUESTS,
@@ -30,6 +31,8 @@ from agent.config import (
     TOKEN_MAX_AGE_BEFORE_BATCH,
     VIDEO_MAX_POLLS,
     VIDEO_USE_BATCH,
+    VIDEO_USE_UI,
+    VIDEO_UI_MODEL,
     VIDEO_POLL_INTERVAL,
 )
 from agent import chrome, generation_hold, image_models, video_models
@@ -68,6 +71,8 @@ UI_ASPECT_LABELS = {
     "IMAGE_ASPECT_RATIO_PORTRAIT_FOUR_THREE": "3:4",
     "IMAGE_ASPECT_RATIO_SQUARE": "1:1",
 }
+
+UI_VIDEO_ASPECT_LABELS = {"VERTICAL": "9:16", "HORIZONTAL": "16:9"}
 
 VIDEO_ASPECT_RATIOS = {
     "VERTICAL": "VIDEO_ASPECT_RATIO_PORTRAIT",
@@ -121,7 +126,12 @@ RETRYABLE = ("quota", "rate_limit", "exhausted", "resource_exhausted", "429",
              # up to MAX_RETRIES, the way a person retries a prompt.
              "no image appeared", "composer would not take", "no_composer",
              "composer_rejected_prompt", "generate_disabled", "submit_not_accepted",
-             "composer_busy", "composer_stuck", "ui_error at")
+             "composer_busy", "composer_stuck", "ui_error at",
+             # Every tile of the submit went blank with no word from Flow; the
+             # tab is reloaded before the next prompt, and this one goes again.
+             "silent_failure",
+             # The "+" picker would not give the references; tried again.
+             "references_not_attached")
 
 
 class WorkerController:
@@ -200,8 +210,14 @@ class WorkerController:
                 waiting = bool(counts.get("PENDING")) and not self.paused and not held
                 await chrome.reconcile(waiting)
 
-                # One composer, one picture at a time on the composer path.
-                limit = 1 if IMAGE_USE_UI else MAX_CONCURRENT_REQUESTS
+                # On the composer path submits take turns at the one prompt box
+                # and up to IMAGE_UI_IN_FLIGHT render at once, each read off its
+                # own tiles; one at a time while those cannot be found.
+                if IMAGE_USE_UI:
+                    unsure = getattr(get_flow_client(), "tiles_unreliable", False)
+                    limit = 1 if unsure else IMAGE_UI_IN_FLIGHT
+                else:
+                    limit = MAX_CONCURRENT_REQUESTS
                 free = limit - len(self._running)
                 if free > 0 and not self.paused and not held and get_flow_client().connected:
                     claimed = await jobs.claim_pending(free)
@@ -318,11 +334,19 @@ class WorkerController:
             # is unlimited, so a person picks it there and runs one article.
             # References go up first, so the image can follow them. An image
             # job with none -- every article image -- skips this entirely.
-            ref_media_ids = await self._upload_references_batch(job, request["project_id"])
-            if ref_media_ids is None:
-                return
-            if ref_media_ids:
-                request["ref_media_ids"] = ref_media_ids
+            if IMAGE_USE_UI:
+                # Attached in the prompt box by clicking, the way the picture
+                # itself is asked for.
+                references = await self._ui_references(job, request["project_id"])
+                if references is None:
+                    return
+                request["references"] = references
+            else:
+                ref_media_ids = await self._upload_references_batch(job, request["project_id"])
+                if ref_media_ids is None:
+                    return
+                if ref_media_ids:
+                    request["ref_media_ids"] = ref_media_ids
 
             # Google's frontend build of 2026-09-22 refuses every captcha-gated
             # call we send -- PUBLIC_ERROR_UNUSUAL_ACTIVITY -- while the same
@@ -369,6 +393,7 @@ class WorkerController:
                 request["prompt"], request["project_id"],
                 model_label=image_models.label_of(wire) if wire else None,
                 aspect_label=UI_ASPECT_LABELS.get(request["aspect_ratio"]),
+                job_id=job["id"], references=request.get("references") or [],
             )
             err = error_text(result) if is_error(result) else None
             if wire:
@@ -412,6 +437,43 @@ class WorkerController:
                 continue
             break
         return result
+
+    async def _ui_references(self, job: dict, project_id: str) -> list[dict] | None:
+        """The job's references, ready to attach in Flow's prompt box.
+
+        Each goes into the project first under a name of this job's own
+        ("ref-1a2b3c4d-1.jpg"), an upload that needs no captcha, so the
+        extension only has to find it in the "+" picker by that name. One that
+        will not go up that way travels as bytes and is uploaded through the
+        page instead. None means the job was failed here.
+        """
+        try:
+            reference_urls = json.loads(job.get("reference_urls") or "[]")
+        except (TypeError, ValueError):
+            await self._handle_failure(job, "reference_urls is not valid JSON")
+            return None
+        client = get_flow_client()
+        references: list[dict] = []
+        for i, url in enumerate(reference_urls[:3], start=1):
+            fetched = await self._fetch_reference(url)
+            if "error" in fetched:
+                await self._handle_failure(job, fetched["error"])
+                return None
+            ext = {"image/png": "png", "image/webp": "webp"}.get(fetched["mime"], "jpg")
+            name = f"ref-{job['id'][:8]}-{i}"
+            encoded = base64.b64encode(fetched["bytes"]).decode("ascii")
+            uploaded = await client.upload_image_batch(
+                image_base64=encoded, project_id=project_id,
+                mime_type=fetched["mime"], file_name=f"{name}.{ext}",
+            )
+            reference = {"name": name}
+            if uploaded.get("error"):
+                logger.warning("job %s: reference %d did not go up (%s); uploading it through "
+                               "the page", job["id"][:8], i, str(uploaded["error"])[:120])
+                reference.update(dataUrl=f"data:{fetched['mime']};base64,{encoded}",
+                                 mime=fetched["mime"])
+            references.append(reference)
+        return references
 
     async def _upload_references_batch(self, job: dict, project_id: str) -> list[str] | None:
         """Every reference on the job, uploaded into the project; their media ids.
@@ -468,6 +530,10 @@ class WorkerController:
 
         if not reference_urls:
             await jobs.fail(job_id, "A video needs at least one reference image")
+            return
+
+        if VIDEO_USE_UI:
+            await self._run_video_ui(job, project_id)
             return
 
         # The transport Flow actually uses for video now. The REST path below is
@@ -536,6 +602,55 @@ class WorkerController:
             f"still have run and the credits are spent. Reply carried: {shape}.\n\n"
             f"{json.dumps(submitted, default=str)[:6000]}",
         )
+
+    async def _run_video_ui(self, job: dict, project_id: str) -> None:
+        """A clip through Flow's composer: Video in its settings, the references
+        attached in the prompt box, the clip read off its own tile.
+
+        Frames when the job asks for it (the first reference becomes the first
+        frame), Ingredients otherwise. Failures that might have produced a clip
+        (VIDEO_NOT_TRACKED, VIDEO_TIMED_OUT) are not retried: a second submit
+        is a second clip paid for.
+        """
+        job_id = job["id"]
+        if job.get("character_media_id") or job.get("voice_media_id"):
+            logger.warning("job %s: the presenter's character and voice are not attached "
+                           "when clicking yet; the clip is made from the pictures alone",
+                           job_id[:8])
+        references = await self._ui_references(job, project_id)
+        if references is None:
+            return
+        mode = "Frames" if (job.get("video_mode") or "") == "frames" else "Ingredients"
+        if mode == "Frames":
+            references = references[:1]
+        # Still alive while Flow renders, so the stale reset does not hand the
+        # job back to the queue -- which would submit, and pay for, it again.
+        async def heartbeat():
+            while True:
+                await jobs.touch(job_id)
+                await asyncio.sleep(60)
+
+        beating = asyncio.create_task(heartbeat())
+        try:
+            result = await get_flow_client().generate_ui(
+                job["prompt"], project_id, job_id=job_id, kind="video",
+                model_label=VIDEO_UI_MODEL or None,
+                aspect_label=UI_VIDEO_ASPECT_LABELS.get(job["orientation"], "9:16"),
+                video_mode=mode, references=references,
+                poll_seconds=VIDEO_POLL_INTERVAL * VIDEO_MAX_POLLS,
+            )
+        finally:
+            beating.cancel()
+        if is_error(result):
+            detail = error_text(result)
+            if video_models.out_of_credits(detail):
+                await jobs.fail(job_id, "PUBLIC_ERROR_USER_QUOTA_REACHED: This Google account has "
+                                        "no video credits left on Flow. " + detail)
+                return
+            await self._handle_failure(job, detail)
+            return
+        await jobs.complete(job_id, result["media_id"], result["video_url"])
+        logger.info("job %s COMPLETED (clip by clicking)", job_id[:8])
 
     async def _fetch_reference(self, url: str):
         """The image bytes and their type. {"error": ...} if it cannot be had.

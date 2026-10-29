@@ -71,6 +71,20 @@ TOKEN_MAX_AGE_BEFORE_BATCH = int(os.environ.get("TOKEN_MAX_AGE_BEFORE_BATCH", "0
 # Set to 0 to go back to the batch call with the widget mint in injected.js.
 IMAGE_USE_UI = os.environ.get("IMAGE_USE_UI", "1") not in ("", "0", "false", "False")
 
+# How many prompts may render at once on the composer path. Submits still take
+# turns at the one prompt box; each job then reads its result off the tiles its
+# own submit added, so a second prompt can go in while the first renders. Falls
+# to one by itself whenever a submit's tiles cannot be found on the page.
+IMAGE_UI_IN_FLIGHT = max(1, int(os.environ.get("IMAGE_UI_IN_FLIGHT", "2")))
+
+# Clips through the composer too: Video in Flow's settings, the references
+# attached in the prompt box, the clip read off its tile. On, for the same
+# reason as IMAGE_USE_UI. The presenter's character and voice are not attached
+# this way yet. Set to 0 for the batch call (VIDEO_USE_BATCH).
+VIDEO_USE_UI = os.environ.get("VIDEO_USE_UI", "1") not in ("", "0", "false", "False")
+# The model picked in Flow's menu for a clip, by the words it shows.
+VIDEO_UI_MODEL = os.environ.get("VIDEO_UI_MODEL", "Veo 3.1 - Fast").strip()
+
 # Send images over Flow's batchexecute transport instead of the REST API.
 #
 # On by default because REST images started answering

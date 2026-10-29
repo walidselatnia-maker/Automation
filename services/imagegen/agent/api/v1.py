@@ -80,6 +80,9 @@ class GenerateVideoRequest(BaseModel):
     voice_media_id: Optional[str] = Field(default=None, max_length=200)
     orientation: Literal["VERTICAL", "HORIZONTAL"] = "VERTICAL"
     project_id: Optional[str] = Field(default=None, max_length=500)
+    # 'frames': the first reference is the clip's first frame (a scene's
+    # picture brought to life). 'ingredients', the default: composed from all.
+    video_mode: Optional[Literal["frames", "ingredients"]] = None
 
 
 class GenerateResponse(BaseModel):
@@ -177,6 +180,7 @@ async def generate_video(body: GenerateVideoRequest) -> GenerateResponse:
         body.prompt, body.reference_urls, project_id, body.orientation,
         character_media_id=body.character_media_id,
         voice_media_id=body.voice_media_id,
+        video_mode=body.video_mode,
     )
     logger.info(
         "queued video job %s for project %s (%d reference image(s))",
