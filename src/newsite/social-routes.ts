@@ -6,7 +6,7 @@ import { createSocialPosts, getSocialPost, kickSocial, listPlanSocialPosts, rema
 import { getSeoRow, listPlanSeo } from './seo.js';
 import { getKeywordPlan, listKeywordPlans, listNewWebsites } from './repo.js';
 import { listPlanSocialPictures } from './pictures.js';
-import { createReels, getReel, kickReels, listPlanReels, onReelMade, REEL_RULES_KEY, reelDir, reelRules, remakeReel, resetInterruptedReels, type ReelDeps } from './reels.js';
+import { createReels, getReel, kickReels, listPlanReels, onReelMade, REEL_RULES_KEY, reelDir, reelRules, remakeReel, resetInterruptedReels, resumeStoppedLongReels, type ReelDeps } from './reels.js';
 import { createReadStream, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { readyFor } from './keywords-view.js';
@@ -55,7 +55,8 @@ export function registerSocialRoutes(
     kickAll();
     setInterval(() => {
       void refreshPostLinks(links).catch(() => {});
-      if (syncSharing().added) kickAll();
+      // A long reel an image service deploy stopped goes on without a restart here.
+      if (syncSharing().added || resumeStoppedLongReels()) kickAll();
       void renewThreadsTokens(deps.encryptionKey);
     }, 15 * 60_000).unref();
   }

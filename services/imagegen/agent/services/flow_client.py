@@ -1099,6 +1099,11 @@ class FlowClient:
                                    project_id[:8], str(before.get("error"))[:120])
                     before, listed = [], False
                 known = {image.media_id for image in before}
+            else:
+                # Every media id in the project now, so a clip whose tile leaves
+                # the page before it carried an id is found as the new one.
+                listing = await self.project_titles(project_id)
+                known = set(listing.get("titles") or {})
             # A reload takes every prompt still rendering on the page with it.
             reload_first = self._reload_next and not self._watching
             if any(r.get("uploaded") for r in references or []):
@@ -1221,6 +1226,9 @@ class FlowClient:
             looks += 1
             state = await self.ui_job_tiles(job_id)
             if state.get("error"):
+                if looks % 30 == 0:
+                    logger.warning("Flow UI: job %s: the page did not answer (%s)", job_id[:8],
+                                   str(state.get("error"))[:120])
                 continue
             tiles = [t for t in state.get("tiles") or [] if isinstance(t, dict)]
             for tile in tiles:
@@ -1228,11 +1236,24 @@ class FlowClient:
 
             if not state.get("found"):
                 lost += 1
+                if lost % 30 == 1:
+                    logger.info("Flow UI: job %s's tiles are not on the page (%d looks)",
+                                job_id[:8], lost)
                 if lost % 5 == 1:
                     if kind == "video" and ids:
                         found = await self._video_from_ids(sorted(ids))
                         if found:
                             return found
+                    if kind == "video" and known and lost > 15:
+                        # Gone before it showed an id: the clip is the new media
+                        # in the project, while no other prompt of it is out.
+                        listing = await self.project_titles(project_id)
+                        fresh = [m for m in listing.get("titles") or {} if m not in known]
+                        if fresh and self._watched_projects.get(project_id, 0) <= 1:
+                            found = await self._video_from_ids(fresh)
+                            if found:
+                                logger.info("Flow UI: job %s's clip found in the project", job_id[:8])
+                                return found
                     # What is new in the project is this job's only while no
                     # other prompt is out.
                     if kind == "image" and self._watching <= 1:

@@ -398,8 +398,18 @@ export function kickReels(deps: ReelDeps): Promise<void> {
  */
 export function resetInterruptedReels(): void {
   run(`UPDATE newsite_reels SET status = 'pending', job_id = '' WHERE status = 'making'`);
-  run(`UPDATE newsite_reels SET status = 'pending', error = ''
+  resumeStoppedLongReels(true);
+}
+
+/**
+ * The long reels stopped by an image service restart -- and with `refused`,
+ * by a prompt the composer would not take -- back to work; how many. Only a
+ * start of the platform takes the refused ones, so one Flow keeps refusing
+ * is not sent round and round.
+ */
+export function resumeStoppedLongReels(refused = false): number {
+  return Number(run(`UPDATE newsite_reels SET status = 'pending', error = ''
        WHERE status = 'failed' AND kind = 'long' AND stage != ''
          AND (error LIKE '%Extension disconnected%' OR error LIKE '%fetch failed%'
-              OR error LIKE '%the composer would not take it%')`);
+              OR (? AND error LIKE '%the composer would not take it%'))`, refused ? 1 : 0).changes ?? 0);
 }

@@ -72,6 +72,10 @@ class Tiles(FlowClient):
     async def project_images(self, project_id):
         return self._listings.pop(0) if len(self._listings) > 1 else self._listings[0]
 
+    async def project_titles(self, project_id):
+        titles = getattr(self, "titles", [{}])
+        return {"titles": titles.pop(0) if len(titles) > 1 else titles[0]}
+
     async def get_media_urls_batch(self, media_id):
         return {"video_url": self._videos.get(media_id), "image_url": picture(media_id)}
 
@@ -233,3 +237,14 @@ def test_errors_the_worker_retries_and_the_ones_it_does_not():
     assert retried("the composer would not take it: REFERENCES_NOT_ATTACHED: no picker")
     assert not retried("VIDEO_NOT_TRACKED: Flow took the clip")
     assert not retried("VIDEO_TIMED_OUT: the clip did not finish")
+
+
+def test_a_clip_whose_tile_left_before_showing_an_id_is_found_in_the_project():
+    client = Tiles({"job-v": [None]}, videos={CLIP: "https://v/clip.mp4"})
+    client.titles = [{ID_A: "Puppy on rug"}, {ID_A: "Puppy on rug", CLIP: "Puppy brushed"}]
+
+    out = asyncio.run(client.generate_ui("brush", "P1", job_id="job-v", kind="video",
+                                         poll_seconds=600))
+
+    assert out == {"status": 200, "media_id": CLIP, "video_url": "https://v/clip.mp4"}
+    assert len(client.submits) == 1
