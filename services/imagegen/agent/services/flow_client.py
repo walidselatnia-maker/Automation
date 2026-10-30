@@ -804,6 +804,19 @@ class FlowClient:
         except Exception as e:
             return {"error": f"project listing unreadable: {type(e).__name__}: {e}"}
 
+    async def project_titles(self, project_id: str) -> dict:
+        """Each media id in the project and the title its picker row shows."""
+        out = await self._batch_payload(
+            fb.RPC_PROJECT_MEDIA, fb.project_media_request(project_id),
+            timeout=120, project_id=project_id,
+        )
+        if "error" in out:
+            return out
+        try:
+            return {"titles": fb.read_titles(out["payload"])}
+        except Exception as e:
+            return {"error": f"project listing unreadable: {type(e).__name__}: {e}"}
+
     async def generate_images_ui(self, prompt: str, project_id: str,
                                  model_label: str | None = None,
                                  aspect_label: str | None = None,
@@ -1073,6 +1086,20 @@ class FlowClient:
                 known = {image.media_id for image in before}
             # A reload takes every prompt still rendering on the page with it.
             reload_first = self._reload_next and not self._watching
+            if any(r.get("uploaded") for r in references or []):
+                # An open page does not list a picture uploaded beside it until
+                # it is loaded again (measured 2026-10-30), so it is reloaded --
+                # once the prompts already out have finished. The lock keeps any
+                # new one from going out meanwhile.
+                for _ in range(int(poll_seconds // 5) + 1):
+                    if not self._watching:
+                        break
+                    await asyncio.sleep(5)
+                reload_first = not self._watching
+                if not reload_first:
+                    logger.warning("Flow UI: job %s: prompts still rendering, the tab is not "
+                                   "reloaded; its uploaded references may not be listed",
+                                   job_id[:8])
             options = {"kind": kind, "videoMode": video_mode, "references": references or [],
                        "jobId": job_id, "reloadFirst": reload_first}
             if seconds:

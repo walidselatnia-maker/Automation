@@ -2552,8 +2552,8 @@ const KIND_LABELS = ['Image', 'Video'];
 // Video's two ways in, as measured: Frames starts the clip from a picture,
 // Ingredients composes it from up to three.
 const VIDEO_MODE_LABELS = ['Frames', 'Ingredients'];
-/** The clip lengths Flow offers for a video. */
-const DURATION_LABELS = ['4s', '6s', '8s'];
+/** The clip lengths Flow offers for a video: radios, as measured 2026-10-30. */
+const DURATION_LABELS = ['4s', '6s', '8s', '10s'];
 const COUNT_LABELS = ['x1', 'x2', 'x3', 'x4'];
 
 // ─── References: attaching pictures to the prompt ───────────
@@ -2630,63 +2630,45 @@ async function openPicker(target, tabId, ui) {
   return false;
 }
 
-/** Search the picker for `name`, click the row, and see a chip appear. */
-async function pickAsset(target, tabId, ui, name, waitMs) {
+/**
+ * Search the picker for `name`, click the row, and see a chip appear. With
+ * `exact`, only a row whose title is `name` itself counts: a caption Flow wrote
+ * can be the start of another's.
+ */
+async function pickAsset(target, tabId, ui, name, waitMs, exact = false) {
   const search = await boxOf(tabId, ui.assetSearch);
   if (!search) return false;
   await humanClick(target, search);
   await pause(120, 300);
   await typePrompt(target, name);
   const row = await waitUntil(
-    () => boxOf(tabId, ui.assetRow, { text: name, within: ui.assetList }), waitMs, 500);
+    () => (exact ? titledRow(tabId, ui, name) : boxOf(tabId, ui.assetRow, { text: name, within: ui.assetList })),
+    waitMs, 500);
   if (!row) return false;
   const chips = await countOf(tabId, ui.ingredientChip);
   await humanClick(target, row);
   return !!(await waitUntil(async () => (await countOf(tabId, ui.ingredientChip)) > chips, 4000));
 }
 
-/**
- * The picker's row of a picture already in the project, found by its Flow
- * media id: its thumbnail's address carries it. Flow's own pictures have no
- * name of ours to search for. The list is scrolled a few times when the row
- * is further down. Clicked, and true when a chip appears.
- */
-async function pickAssetByMedia(target, tabId, ui, mediaId) {
-  const find = async () => {
-    const [out] = await chrome.scripting.executeScript({
-      target: { tabId },
-      world: 'MAIN',
-      args: [mediaId.toLowerCase(), ui.assetList, ui.assetRow],
-      func: (id, listSel, rowSel) => {
-        const list = document.querySelector(listSel);
-        if (!list) return { gone: true };
-        for (const row of list.querySelectorAll(rowSel)) {
-          if (!row.outerHTML.toLowerCase().includes(id)) continue;
-          row.scrollIntoView({ block: 'center' });
-          const r = row.getBoundingClientRect();
-          if (r.width > 0 && r.height > 0) return { box: { left: r.x, top: r.y, w: r.width, h: r.height } };
-        }
-        // Further down: show the next part of the list, as a person scrolls.
-        const scroller = [list, ...list.querySelectorAll('*')].find((el) => el.scrollHeight > el.clientHeight + 4);
-        if (!scroller || scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 2) return { end: true };
-        scroller.scrollTop += scroller.clientHeight * 0.8;
-        return {};
-      },
-    }).catch(() => [{ result: { gone: true } }]);
-    return out?.result || {};
-  };
-  for (let i = 0; i < 12; i++) {
-    const found = await find();
-    if (found.box) {
-      await pause(200, 500);
-      const chips = await countOf(tabId, ui.ingredientChip);
-      await humanClick(target, found.box);
-      return !!(await waitUntil(async () => (await countOf(tabId, ui.ingredientChip)) > chips, 4000));
-    }
-    if (found.gone || found.end) return false;
-    await pause(400, 900);
-  }
-  return false;
+/** Where the one picker row titled exactly `title` is; null when none or several. */
+async function titledRow(tabId, ui, title) {
+  const [out] = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    args: [title.trim().toLowerCase(), ui.assetList, ui.assetRow],
+    func: (want, listSel, rowSel) => {
+      const list = document.querySelector(listSel);
+      if (!list) return null;
+      const rows = [...list.querySelectorAll(rowSel)].filter((row) => {
+        const t = row.querySelector('.asset-title')?.innerText || '';
+        return t.replace(/\s+/g, ' ').trim().toLowerCase() === want;
+      });
+      if (rows.length !== 1) return null;
+      const r = rows[0].getBoundingClientRect();
+      return r.width && r.height ? { left: r.x, top: r.y, w: r.width, h: r.height } : null;
+    },
+  }).catch(() => [{ result: null }]);
+  return out?.result || null;
 }
 
 /**
@@ -2857,13 +2839,14 @@ async function armUpload(tabId, ref) {
  */
 async function attachReference(target, tabId, ui, ref) {
   if (!(await openPicker(target, tabId, ui))) return 'the "+" picker did not open';
-  if (ref.mediaId) {
-    // Made in this project: picked as it is, never uploaded again.
-    const picked = await pickAssetByMedia(target, tabId, ui, ref.mediaId);
+  if (ref.inProject) {
+    // Made in this project: picked by the title Flow shows it under, never
+    // uploaded again. Not there: the agent uploads it and asks again.
+    const picked = await pickAsset(target, tabId, ui, ref.name, 8000, true);
     if (await boxOf(tabId, ui.assetSearch)) await pressKey(target, 'Escape', { keyCode: 27 });
-    return picked || `MEDIA_NOT_FOUND: ${ref.mediaId} is not in the "+" picker`;
+    return picked || `MEDIA_NOT_FOUND: "${ref.name}" is not in the "+" picker`;
   }
-  if (await pickAsset(target, tabId, ui, ref.name, 5000)) {
+  if (await pickAsset(target, tabId, ui, ref.name, 8000)) {
     if (await boxOf(tabId, ui.assetSearch)) await pressKey(target, 'Escape', { keyCode: 27 });
     return true;
   }

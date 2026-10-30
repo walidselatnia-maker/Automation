@@ -445,10 +445,14 @@ async def test_an_image_job_without_references_never_uploads(monkeypatch):
 class _Composer:
     connected = True
 
-    def __init__(self, answer=None):
+    def __init__(self, answer=None, titles=None):
         self.uploaded: list[str] = []
         self.asked: dict = {}
         self.answer = answer or {"status": 200, "media_id": "clip-1", "video_url": "https://v/1.mp4"}
+        self.titles = titles or {}
+
+    async def project_titles(self, project_id):
+        return {"titles": self.titles}
 
     async def upload_image_batch(self, image_base64, project_id, mime_type, file_name):
         self.uploaded.append(file_name)
@@ -484,7 +488,7 @@ async def test_a_frames_clip_starts_from_the_first_reference(monkeypatch):
     assert client.asked["video_mode"] == "Frames"
     assert client.asked["aspect_label"] == "9:16"
     assert client.asked["job_id"] == job["id"]
-    assert client.asked["references"] == [{"name": f"ref-{job['id'][:8]}-1"}]
+    assert client.asked["references"] == [{"name": f"ref-{job['id'][:8]}-1", "uploaded": True}]
     assert client.uploaded == [f"ref-{job['id'][:8]}-1.jpg", f"ref-{job['id'][:8]}-2.jpg"]
     assert after["status"] == "COMPLETED"
     assert after["output_url"] == "https://v/1.mp4"
@@ -512,14 +516,26 @@ async def test_a_clip_that_could_not_be_followed_is_failed_not_requeued(monkeypa
 
 @pytest.mark.asyncio
 async def test_a_reference_made_in_the_project_is_picked_not_uploaded(monkeypatch):
-    client = _Composer()
+    client = _Composer(titles={"abc-123": "Puppy sitting on rug", "abc-456": "Puppy on a sofa"})
     job, after = await _film(monkeypatch, client, video_mode="frames",
                              reference_media_ids=["abc-123", ""])
 
-    assert client.asked["references"] == [{"name": f"ref-{job['id'][:8]}-1", "mediaId": "abc-123"}]
+    # Found by the title the picker shows it under.
+    assert client.asked["references"] == [
+        {"name": "Puppy sitting on rug", "exact": True, "inProject": True}]
     # Only the one with no media id went up.
     assert client.uploaded == [f"ref-{job['id'][:8]}-2.jpg"]
     assert after["status"] == "COMPLETED"
+
+
+@pytest.mark.asyncio
+async def test_a_picture_whose_title_another_shares_is_uploaded(monkeypatch):
+    client = _Composer(titles={"abc-123": "Puppy on rug", "abc-999": "puppy on rug"})
+    job, _ = await _film(monkeypatch, client, video_mode="frames",
+                         reference_media_ids=["abc-123"])
+
+    assert client.asked["references"] == [{"name": f"ref-{job['id'][:8]}-1", "uploaded": True}]
+    assert f"ref-{job['id'][:8]}-1.jpg" in client.uploaded
 
 
 @pytest.mark.asyncio
@@ -533,11 +549,23 @@ async def test_a_reference_the_picker_does_not_show_is_uploaded_and_asked_again(
                 return {"error": "the composer would not take it: MEDIA_NOT_FOUND: abc-123"}
             return await super().generate_ui(prompt, project_id, **kw)
 
-    client = _Missing()
+    client = _Missing(titles={"abc-123": "Puppy sitting on rug"})
     job, after = await _film(monkeypatch, client, video_mode="frames",
                              reference_media_ids=["abc-123"])
 
     assert client.calls == 2
-    assert client.asked["references"] == [{"name": f"ref-{job['id'][:8]}-1"}]
+    assert client.asked["references"] == [{"name": f"ref-{job['id'][:8]}-1", "uploaded": True}]
     assert f"ref-{job['id'][:8]}-1.jpg" in client.uploaded
     assert after["status"] == "COMPLETED"
+
+
+def test_titles_are_read_off_the_project_listing():
+    from agent.services import flow_batch as fb
+    listing = [[["op-1", None, None, ["Puppy sitting on rug", [1, 2], None, None,
+                                       "bef10b16-03e6-4946-8ec9-2c10caeea8c6", "c", True], "P"],
+                ["op-2", None, None, ["ref-ab12cd34-1.jpg", [1, 2], None, None,
+                                       "27c82d36-ce12-416d-8822-64be87029a38", "c", True], "P"]]]
+    assert fb.read_titles(listing) == {
+        "bef10b16-03e6-4946-8ec9-2c10caeea8c6": "Puppy sitting on rug",
+        "27c82d36-ce12-416d-8822-64be87029a38": "ref-ab12cd34-1.jpg",
+    }

@@ -110,6 +110,10 @@ async def picker_probe(body: PickerProbe) -> dict:
             project_id=body.project_id, mime_type=fetched["mime"], file_name=f"{name}.jpg")
         if report["upload"].get("media_id"):
             media_ids.append(report["upload"]["media_id"])
+    if media_ids:
+        listed = await client.project_titles(body.project_id)
+        report["titles"] = listed.get("error") or {m: listed["titles"].get(m) for m in media_ids}
+        report["listed"] = len(listed.get("titles") or {})
     report["picker"] = await client.probe_picker(
         body.project_id, search=body.search, media_ids=media_ids,
         durations=body.durations, reload=body.reload)

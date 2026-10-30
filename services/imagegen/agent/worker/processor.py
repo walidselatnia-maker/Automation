@@ -360,7 +360,7 @@ class WorkerController:
             if IMAGE_USE_UI:
                 result = await self._generate_by_ui(client, job, request)
                 if self._media_missing(result):
-                    # A picture of the project the picker did not show: up it goes.
+                    # Nothing was submitted: up it goes, and the job asks again.
                     references = await self._ui_references(job, request["project_id"], reuse=False)
                     if references is None:
                         return
@@ -381,15 +381,6 @@ class WorkerController:
         await jobs.complete(job_id, extract_media_id(result), url)
         generation_hold.note_picture()
         logger.info("job %s COMPLETED", job_id[:8])
-
-    @staticmethod
-    def _media_missing(result) -> bool:
-        """A reference sent by its media id was not in the project's picker."""
-        if not is_error(result) or "MEDIA_NOT_FOUND" not in error_text(result):
-            return False
-        logger.warning("a reference was not found in the project's media (%s); uploading it",
-                       error_text(result)[:160])
-        return True
 
     @staticmethod
     async def _generate_by_ui(client, job: dict, request: dict) -> dict:
@@ -458,16 +449,20 @@ class WorkerController:
                              reuse: bool = True) -> list[dict] | None:
         """The job's references, ready to attach in Flow's prompt box.
 
-        A reference made in this same project comes with its Flow media id: it
-        is picked from the project's media as it is, nothing uploaded
-        (`reuse`). The others, or all of them when the picker could not find
-        one (reuse=False), go up as below.
-
         Each goes into the project first under a name of this job's own
         ("ref-1a2b3c4d-1.jpg"), an upload that needs no captcha, so the
         extension only has to find it in the "+" picker by that name. One that
         will not go up that way travels as bytes and is uploaded through the
         page instead. None means the job was failed here.
+
+        A picture made in this same project (its media id sent beside its link)
+        is not uploaded again when it can be found as it is (`reuse`). The
+        picker's rows carry no media id -- their thumbnails are opaque
+        flow.google.com/asb/ links -- only the title Flow shows, a caption of
+        its own for a picture it made (measured 2026-10-30). That title is read
+        off the project listing and the row picked by it, when no other
+        picture in the project has the same one. Otherwise, or when the picker
+        does not show it (MEDIA_NOT_FOUND, reuse=False), it goes up like the rest.
         """
         try:
             reference_urls = json.loads(job.get("reference_urls") or "[]")
@@ -475,15 +470,19 @@ class WorkerController:
             await self._handle_failure(job, "reference_urls is not valid JSON")
             return None
         try:
-            media_ids = json.loads(job.get("reference_media_ids") or "[]")
+            media_ids = json.loads(job.get("reference_media_ids") or "[]") if reuse else []
         except (TypeError, ValueError):
             media_ids = []
         client = get_flow_client()
+        titles = await self._unique_titles(client, project_id, media_ids)
         references: list[dict] = []
         for i, url in enumerate(reference_urls[:3], start=1):
-            media_id = media_ids[i - 1] if reuse and i <= len(media_ids) else ""
-            if isinstance(media_id, str) and media_id.strip():
-                references.append({"name": f"ref-{job['id'][:8]}-{i}", "mediaId": media_id.strip()})
+            media_id = media_ids[i - 1] if i <= len(media_ids) else ""
+            title = titles.get(media_id) if isinstance(media_id, str) else None
+            if title:
+                logger.info("job %s: reference %d is already in the project, as \"%s\"",
+                            job["id"][:8], i, title[:60])
+                references.append({"name": title, "exact": True, "inProject": True})
                 continue
             fetched = await self._fetch_reference(url)
             if "error" in fetched:
@@ -492,11 +491,19 @@ class WorkerController:
             ext = {"image/png": "png", "image/webp": "webp"}.get(fetched["mime"], "jpg")
             name = f"ref-{job['id'][:8]}-{i}"
             encoded = base64.b64encode(fetched["bytes"]).decode("ascii")
-            uploaded = await client.upload_image_batch(
-                image_base64=encoded, project_id=project_id,
-                mime_type=fetched["mime"], file_name=f"{name}.{ext}",
-            )
-            reference = {"name": name}
+            for attempt in range(2):
+                # A tab moving between projects at that moment answers nothing;
+                # a second go a little later finds it settled.
+                uploaded = await client.upload_image_batch(
+                    image_base64=encoded, project_id=project_id,
+                    mime_type=fetched["mime"], file_name=f"{name}.{ext}",
+                )
+                if not uploaded.get("error") or attempt:
+                    break
+                await asyncio.sleep(5)
+            # `uploaded`: the extension reloads the tab before picking it, since
+            # an open page does not list an upload made beside it.
+            reference = {"name": name, "uploaded": not uploaded.get("error")}
             if uploaded.get("error"):
                 logger.warning("job %s: reference %d did not go up (%s); uploading it through "
                                "the page", job["id"][:8], i, str(uploaded["error"])[:120])
@@ -504,6 +511,33 @@ class WorkerController:
                                  mime=fetched["mime"])
             references.append(reference)
         return references
+
+    @staticmethod
+    async def _unique_titles(client, project_id: str, media_ids: list) -> dict[str, str]:
+        """The picker title of each of `media_ids` no other picture shares."""
+        wanted = [m for m in media_ids if isinstance(m, str) and m.strip()]
+        if not wanted:
+            return {}
+        listed = await client.project_titles(project_id)
+        if "error" in listed:
+            logger.warning("project listing for reuse failed (%s); references go up",
+                           str(listed["error"])[:120])
+            return {}
+        titles = listed["titles"]
+        counts: dict[str, int] = {}
+        for title in titles.values():
+            counts[title.lower()] = counts.get(title.lower(), 0) + 1
+        return {m: titles[m] for m in wanted
+                if m in titles and counts[titles[m].lower()] == 1}
+
+    @staticmethod
+    def _media_missing(result) -> bool:
+        """A picture of the project was not in the picker under its title."""
+        if not is_error(result) or "MEDIA_NOT_FOUND" not in error_text(result):
+            return False
+        logger.warning("a reference was not found in the project's media (%s); uploading it",
+                       error_text(result)[:160])
+        return True
 
     async def _upload_references_batch(self, job: dict, project_id: str) -> list[str] | None:
         """Every reference on the job, uploaded into the project; their media ids.
