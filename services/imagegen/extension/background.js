@@ -2644,6 +2644,50 @@ async function pickAsset(target, tabId, ui, name, waitMs) {
 }
 
 /**
+ * The picker's row of a picture already in the project, found by its Flow
+ * media id: its thumbnail's address carries it. Flow's own pictures have no
+ * name of ours to search for. The list is scrolled a few times when the row
+ * is further down. Clicked, and true when a chip appears.
+ */
+async function pickAssetByMedia(target, tabId, ui, mediaId) {
+  const find = async () => {
+    const [out] = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      args: [mediaId.toLowerCase(), ui.assetList, ui.assetRow],
+      func: (id, listSel, rowSel) => {
+        const list = document.querySelector(listSel);
+        if (!list) return { gone: true };
+        for (const row of list.querySelectorAll(rowSel)) {
+          if (!row.outerHTML.toLowerCase().includes(id)) continue;
+          row.scrollIntoView({ block: 'center' });
+          const r = row.getBoundingClientRect();
+          if (r.width > 0 && r.height > 0) return { box: { left: r.x, top: r.y, w: r.width, h: r.height } };
+        }
+        // Further down: show the next part of the list, as a person scrolls.
+        const scroller = [list, ...list.querySelectorAll('*')].find((el) => el.scrollHeight > el.clientHeight + 4);
+        if (!scroller || scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 2) return { end: true };
+        scroller.scrollTop += scroller.clientHeight * 0.8;
+        return {};
+      },
+    }).catch(() => [{ result: { gone: true } }]);
+    return out?.result || {};
+  };
+  for (let i = 0; i < 12; i++) {
+    const found = await find();
+    if (found.box) {
+      await pause(200, 500);
+      const chips = await countOf(tabId, ui.ingredientChip);
+      await humanClick(target, found.box);
+      return !!(await waitUntil(async () => (await countOf(tabId, ui.ingredientChip)) > chips, 4000));
+    }
+    if (found.gone || found.end) return false;
+    await pause(400, 900);
+  }
+  return false;
+}
+
+/**
  * Hold the next click on a file input and hand it these bytes instead of
  * opening the system's file dialog -- which nothing could answer in this
  * browser. Installed once per page, in the page's own world, where Flow's
@@ -2686,6 +2730,12 @@ async function armUpload(tabId, ref) {
  */
 async function attachReference(target, tabId, ui, ref) {
   if (!(await openPicker(target, tabId, ui))) return 'the "+" picker did not open';
+  if (ref.mediaId) {
+    // Made in this project: picked as it is, never uploaded again.
+    const picked = await pickAssetByMedia(target, tabId, ui, ref.mediaId);
+    if (await boxOf(tabId, ui.assetSearch)) await pressKey(target, 'Escape', { keyCode: 27 });
+    return picked || `MEDIA_NOT_FOUND: ${ref.mediaId} is not in the "+" picker`;
+  }
   if (await pickAsset(target, tabId, ui, ref.name, 5000)) {
     if (await boxOf(tabId, ui.assetSearch)) await pressKey(target, 'Escape', { keyCode: 27 });
     return true;
@@ -3000,6 +3050,14 @@ async function uiGenerateImage({
       uiStep(`attaching reference ${i + 1} of ${references.length}`);
       picked[`reference${i + 1}`] = await attachReference(target, tab.id, ui, references[i]);
       await pause(400, 1200);
+    }
+    // A picture sent by its media id and not found: the agent uploads it and
+    // asks again, so nothing is submitted without it.
+    const missing = references.map((_, i) => picked[`reference${i + 1}`])
+      .find((r) => typeof r === 'string' && r.startsWith('MEDIA_NOT_FOUND'));
+    if (missing) {
+      await clearComposer(target, tab.id, ui);
+      return { error: missing };
     }
     const attached = references.filter((_, i) => picked[`reference${i + 1}`] === true).length;
     if (references.length && !attached) {

@@ -48,8 +48,8 @@ describe('long reels: a story in scenes, one picture and one clip each, edited t
   let planId: number;
   let websiteId: number;
   let asked: string[];
-  let pictures: { prompt: string; referenceUrls: string[] }[];
-  let clips: { prompt: string; referenceUrls: string[]; seconds: number }[];
+  let pictures: { prompt: string; referenceUrls: string[]; referenceMediaIds: string[] }[];
+  let clips: { prompt: string; referenceUrls: string[]; referenceMediaIds: string[]; seconds: number }[];
   let edits: EditInput[];
   let failClip: number;
 
@@ -65,7 +65,7 @@ describe('long reels: a story in scenes, one picture and one clip each, edited t
     poll: async (jobId) => {
       if (jobId === `clip-${failClip}`) return { status: 'FAILED', error: 'policy' };
       return jobId.startsWith('pic')
-        ? { status: 'COMPLETED', image_url: `https://flow/${jobId}.png` }
+        ? { status: 'COMPLETED', image_url: `https://flow/${jobId}.png`, media_id: `media-${jobId}` }
         : { status: 'COMPLETED', video_url: `https://flow/${jobId}.mp4` };
     },
   });
@@ -163,6 +163,10 @@ describe('long reels: a story in scenes, one picture and one clip each, edited t
     expect(pictures[0]!.referenceUrls[0]).toMatch(/\/media\/picture\//);
     expect(pictures[1]!.referenceUrls[0]).toMatch(/^https:\/\/dash\.example\.com\/media\/reel-scene\/\d+\/\d+\/[\w-]+\.png$/);
     expect(pictures[1]!.referenceUrls[1]).toMatch(/\/media\/picture\//);
+    // Pictures already in the Flow project go by their media id, not as an upload.
+    expect(pictures[0]!.referenceMediaIds).toEqual(['']);
+    expect(pictures[1]!.referenceMediaIds).toEqual(['media-pic-1', '']);
+    expect(clips.map((c) => c.referenceMediaIds)).toEqual([['media-pic-1'], ['media-pic-2'], ['media-pic-3'], ['media-pic-4']]);
     // Each clip starts from its own scene's picture, at its own length, with the voice and its words.
     expect(clips.map((c) => c.seconds)).toEqual([8, 8, 8, 6]);
     expect(clips.every((c) => c.prompt.includes(VOICE))).toBe(true);

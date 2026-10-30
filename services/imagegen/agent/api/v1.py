@@ -61,6 +61,10 @@ class GenerateRequest(BaseModel):
     # Uploaded into the project and sent as references, the way Flow's own UI
     # keeps a subject the same from image to image. Empty means none.
     reference_urls: list[str] = Field(default_factory=list, max_length=3)
+    # Beside each url, the picture's Flow media id when it was made in this
+    # same project: it is then picked from the project's media in the "+"
+    # picker instead of uploaded again. Empty or "" for one that has none.
+    reference_media_ids: list[str] = Field(default_factory=list, max_length=3)
 
 
 class GenerateVideoRequest(BaseModel):
@@ -85,6 +89,8 @@ class GenerateVideoRequest(BaseModel):
     video_mode: Optional[Literal["frames", "ingredients"]] = None
     # The clip's length, when the job asks for one: Flow offers 4, 6 and 8.
     video_seconds: Optional[Literal[4, 6, 8]] = None
+    # As on an image: each url's Flow media id, when it is already in the project.
+    reference_media_ids: list[str] = Field(default_factory=list, max_length=3)
 
 
 class GenerateResponse(BaseModel):
@@ -162,7 +168,8 @@ async def generate(body: GenerateRequest) -> GenerateResponse:
         choice = image_models.AUTO
 
     job = await jobs.create(body.prompt, body.orientation, project_id, choice,
-                            reference_urls=body.reference_urls)
+                            reference_urls=body.reference_urls,
+                            reference_media_ids=body.reference_media_ids)
     logger.info("queued job %s for project %s (%s)", job["id"][:8], project_id, choice)
     return GenerateResponse(job_id=job["id"], status=job["status"])
 
@@ -184,6 +191,7 @@ async def generate_video(body: GenerateVideoRequest) -> GenerateResponse:
         voice_media_id=body.voice_media_id,
         video_mode=body.video_mode,
         video_seconds=body.video_seconds,
+        reference_media_ids=body.reference_media_ids,
     )
     logger.info(
         "queued video job %s for project %s (%d reference image(s))",

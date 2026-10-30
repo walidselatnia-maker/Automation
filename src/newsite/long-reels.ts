@@ -72,6 +72,9 @@ export interface SceneRow {
   picture_prompt: string;
   picture_job: string;
   picture_file: string;
+  /** The picture's Flow media id, and the Flow project it is in. */
+  picture_media: string;
+  picture_project: string;
   video_prompt: string;
   video_job: string;
   video_file: string;
@@ -97,9 +100,10 @@ export interface Story {
 
 /** Flow, for a long reel's pictures and clips. Tests pass their own. */
 export interface LongReelFlow {
-  submitPicture(input: { prompt: string; referenceUrls: string[]; projectId: string }): Promise<string>;
-  submitClip(input: { prompt: string; referenceUrls: string[]; projectId: string; seconds: number }): Promise<string>;
-  poll(jobId: string): Promise<{ status?: string; image_url?: string | null; video_url?: string | null; error?: string | null }>;
+  /** `referenceMediaIds`: beside each url, its Flow media id when it is in this project already ('' when not). */
+  submitPicture(input: { prompt: string; referenceUrls: string[]; referenceMediaIds: string[]; projectId: string }): Promise<string>;
+  submitClip(input: { prompt: string; referenceUrls: string[]; referenceMediaIds: string[]; projectId: string; seconds: number }): Promise<string>;
+  poll(jobId: string): Promise<{ status?: string; image_url?: string | null; video_url?: string | null; media_id?: string | null; error?: string | null }>;
 }
 
 /** Where a long reel's scene pictures and clips are kept. */
@@ -242,10 +246,10 @@ function flowOf(settings: Settings): LongReelFlow {
   };
   const shared = new ImageClient(options);
   return {
-    submitPicture: ({ prompt, referenceUrls, projectId }) =>
-      new ImageClient({ ...options, projectId, imageModel: settings.get('image_model') }).submit(prompt, 'VERTICAL', { referenceUrls }),
-    submitClip: ({ prompt, referenceUrls, projectId, seconds }) =>
-      shared.submitVideo({ prompt, referenceUrls, projectId, videoMode: 'frames', seconds }),
+    submitPicture: ({ prompt, referenceUrls, referenceMediaIds, projectId }) =>
+      new ImageClient({ ...options, projectId, imageModel: settings.get('image_model') }).submit(prompt, 'VERTICAL', { referenceUrls, referenceMediaIds }),
+    submitClip: ({ prompt, referenceUrls, referenceMediaIds, projectId, seconds }) =>
+      shared.submitVideo({ prompt, referenceUrls, referenceMediaIds, projectId, videoMode: 'frames', seconds }),
     poll: (jobId) => shared.poll(jobId),
   };
 }
@@ -326,15 +330,21 @@ async function writeStory(ctx: Ctx, described: string): Promise<void> {
   log.info(`reel ${reel.id}: story of ${story.scenes.length} scenes, ${seconds}s`);
 }
 
-/** Wait for a Flow job and hand back its file's address. */
-async function waitFor(ctx: Ctx, jobId: string, everyMs: number, tries: number, what: string): Promise<string> {
+interface Made {
+  url: string;
+  /** Its media id in the Flow project it was made in. */
+  mediaId: string;
+}
+
+/** Wait for a Flow job and hand back its file's address and media id. */
+async function waitFor(ctx: Ctx, jobId: string, everyMs: number, tries: number, what: string): Promise<Made> {
   const sleep = ctx.deps.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
   for (let i = 0; i < tries; i++) {
     await sleep(everyMs);
     const job = await ctx.flow.poll(jobId);
     const status = (job.status ?? '').toUpperCase();
     const url = job.video_url || job.image_url;
-    if (status === 'COMPLETED' && url) return url;
+    if (status === 'COMPLETED' && url) return { url, mediaId: job.media_id ?? '' };
     if (FAILED.has(status)) throw new Error(`Flow could not make ${what}: ${job.error ?? status}`);
   }
   throw new Error(`Flow took more than ${Math.round((everyMs * tries) / 60_000)} minutes to make ${what}.`);
@@ -352,7 +362,7 @@ async function flowJob(
   everyMs: number,
   tries: number,
   what: string,
-): Promise<string> {
+): Promise<Made> {
   const sent = scene[column];
   if (sent) {
     try {
@@ -367,6 +377,7 @@ async function flowJob(
     async (projectId) => {
       const jobId = await submit(projectId);
       run(`UPDATE newsite_reel_scenes SET ${column} = ? WHERE id = ?`, jobId, scene.id);
+      if (column === 'picture_job') run('UPDATE newsite_reel_scenes SET picture_project = ? WHERE id = ?', projectId, scene.id);
       try {
         return await waitFor(ctx, jobId, everyMs, tries, what);
       } catch (err) {
@@ -379,6 +390,14 @@ async function flowJob(
     ctx.deps.now,
   );
 }
+
+/**
+ * A scene picture's Flow media id when it is in this project, so Flow uses it
+ * as it is; '' when it was made on another account's project (it is then
+ * fetched by its link and uploaded).
+ */
+const inProject = (scene: SceneRow, projectId: string): string =>
+  scene.picture_media && scene.picture_project === projectId ? scene.picture_media : '';
 
 function sceneUrl(ctx: Ctx, scene: SceneRow): string {
   const base = ctx.deps.settings.get('public_base_url').trim();
@@ -446,20 +465,22 @@ export async function makeLongReel(reel: ReelRow, deps: ReelDeps): Promise<void>
   for (const scene of scenes) {
     if (scene.picture_file) continue;
     const first = scene.position === 1 ? undefined : getScene(scenes[0]!.id);
-    const referenceUrls = [...(first?.picture_file ? [sceneUrl(ctx, first)] : []), refs.urls[0]!].filter(Boolean);
-    const url = await flowJob(
+    const fromFirst = first?.picture_file ? [first] : [];
+    const referenceUrls = [...fromFirst.map((s) => sceneUrl(ctx, s)), refs.urls[0]!];
+    const made = await flowJob(
       ctx,
       scene,
       'picture_job',
-      (projectId) => ctx.flow.submitPicture({ prompt: scene.picture_prompt, referenceUrls, projectId }),
+      (projectId) =>
+        ctx.flow.submitPicture({ prompt: scene.picture_prompt, referenceUrls, referenceMediaIds: [...fromFirst.map((s) => inProject(s, projectId)), ''], projectId }),
       5_000,
       120,
       `the picture of scene ${scene.position}`,
     );
-    const data = await download(url);
+    const data = await download(made.url);
     const file = `scene-${scene.position}.${pictureExt(data)}`;
     writeFileSync(join(dir, file), data);
-    run('UPDATE newsite_reel_scenes SET picture_file = ? WHERE id = ?', file, scene.id);
+    run('UPDATE newsite_reel_scenes SET picture_file = ?, picture_media = ? WHERE id = ?', file, made.mediaId, scene.id);
     log.info(`reel ${reel.id}: picture of scene ${scene.position} of ${scenes.length}`);
   }
 
@@ -495,17 +516,24 @@ export async function makeLongReel(reel: ReelRow, deps: ReelDeps): Promise<void>
   scenes = listScenes(reel.id);
   for (const scene of scenes) {
     if (scene.video_file) continue;
-    const url = await flowJob(
+    const made = await flowJob(
       ctx,
       scene,
       'video_job',
-      (projectId) => ctx.flow.submitClip({ prompt: scene.video_prompt, referenceUrls: [sceneUrl(ctx, scene)], projectId, seconds: scene.seconds }),
+      (projectId) =>
+        ctx.flow.submitClip({
+          prompt: scene.video_prompt,
+          referenceUrls: [sceneUrl(ctx, scene)],
+          referenceMediaIds: [inProject(scene, projectId)],
+          projectId,
+          seconds: scene.seconds,
+        }),
       15_000,
       100,
       `the clip of scene ${scene.position}`,
     );
     const file = `clip-${scene.position}.mp4`;
-    writeFileSync(join(dir, file), await download(url));
+    writeFileSync(join(dir, file), await download(made.url));
     run('UPDATE newsite_reel_scenes SET video_file = ? WHERE id = ?', file, scene.id);
     log.info(`reel ${reel.id}: clip of scene ${scene.position} of ${scenes.length}`);
   }

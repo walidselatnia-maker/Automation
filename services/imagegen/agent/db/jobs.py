@@ -18,7 +18,8 @@ _NOW = "strftime('%Y-%m-%dT%H:%M:%SZ', 'now')"
 
 async def create(prompt: str, orientation: str = "VERTICAL", project_id: str = "",
                  image_model: str = "auto",
-                 reference_urls: list[str] | None = None) -> dict:
+                 reference_urls: list[str] | None = None,
+                 reference_media_ids: list[str] | None = None) -> dict:
     """Queue a generation. Returns the new row.
 
     reference_urls sit in the same column video jobs use: an image that
@@ -27,10 +28,10 @@ async def create(prompt: str, orientation: str = "VERTICAL", project_id: str = "
     job_id = str(uuid.uuid4())
     db = await get_db()
     await db.execute(
-        "INSERT INTO job (id, prompt, orientation, project_id, image_model, reference_urls) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO job (id, prompt, orientation, project_id, image_model, reference_urls, "
+        "reference_media_ids) VALUES (?, ?, ?, ?, ?, ?, ?)",
         (job_id, prompt, orientation, project_id, image_model or "auto",
-         json.dumps(list(reference_urls or []))),
+         json.dumps(list(reference_urls or [])), json.dumps(list(reference_media_ids or []))),
     )
     await db.commit()
     return await get(job_id)
@@ -45,17 +46,19 @@ async def create_video(
     voice_media_id: str | None = None,
     video_mode: str | None = None,
     video_seconds: int | None = None,
+    reference_media_ids: list[str] | None = None,
 ) -> dict:
     """Queue one clip from reference images and, optionally, a presenter and voice."""
     job_id = str(uuid.uuid4())
     db = await get_db()
     await db.execute(
         """INSERT INTO job (id, prompt, orientation, project_id, kind, reference_urls,
-                            character_media_id, voice_media_id, video_mode, video_seconds)
-                VALUES (?, ?, ?, ?, 'video', ?, ?, ?, ?, ?)""",
+                            character_media_id, voice_media_id, video_mode, video_seconds,
+                            reference_media_ids)
+                VALUES (?, ?, ?, ?, 'video', ?, ?, ?, ?, ?, ?)""",
         (job_id, prompt, orientation, project_id, json.dumps(reference_urls),
          character_media_id or None, voice_media_id or None, video_mode or None,
-         video_seconds or None),
+         video_seconds or None, json.dumps(list(reference_media_ids or []))),
     )
     await db.commit()
     return await get(job_id)

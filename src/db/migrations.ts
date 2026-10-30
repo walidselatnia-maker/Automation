@@ -1186,6 +1186,14 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    id: '061-newsite-reel-scene-media',
+    description: 'Long reels: each scene picture\'s Flow media id and project, so Flow reuses it instead of an upload',
+    up(db) {
+      addColumn(db, 'newsite_reel_scenes', 'picture_media', "TEXT NOT NULL DEFAULT ''");
+      addColumn(db, 'newsite_reel_scenes', 'picture_project', "TEXT NOT NULL DEFAULT ''");
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */

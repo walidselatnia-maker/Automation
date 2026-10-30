@@ -20,6 +20,8 @@ export interface ImageJob {
   /** Populated for video jobs; the same URL also arrives as image_url. */
   video_url?: string | null;
   image_expires_at: string | null;
+  /** The picture's or clip's media id in its Flow project. */
+  media_id?: string | null;
   error: string | null;
   prompt?: string;
 }
@@ -91,7 +93,7 @@ export class ImageClient {
   async submit(
     prompt: string,
     orientation = 'VERTICAL',
-    options: { referenceUrls?: string[] } = {},
+    options: { referenceUrls?: string[]; referenceMediaIds?: string[] } = {},
   ): Promise<string> {
     const response = await fetch(this.url('/v1/generate'), {
       method: 'POST',
@@ -100,6 +102,8 @@ export class ImageClient {
         prompt,
         orientation,
         ...(options.referenceUrls?.length ? { reference_urls: options.referenceUrls } : {}),
+        // Beside each url, its Flow media id when it is in the project already: picked, not uploaded.
+        ...(options.referenceMediaIds?.some(Boolean) ? { reference_media_ids: options.referenceMediaIds } : {}),
         // Omitted rather than sent empty, so the service falls back to its own
         // configured project instead of being told to use nothing.
         ...(this.options.projectId ? { project_id: this.options.projectId } : {}),
@@ -147,6 +151,8 @@ export class ImageClient {
     videoMode?: 'frames' | 'ingredients';
     /** The clip's length: 4, 6 or 8. Unset: Flow's own default. */
     seconds?: number;
+    /** Beside each reference url, its Flow media id when it is in the project already. */
+    referenceMediaIds?: string[];
   }): Promise<string> {
     const response = await fetch(this.url('/v1/generate-video'), {
       method: 'POST',
@@ -160,6 +166,7 @@ export class ImageClient {
         ...(input.projectId ? { project_id: input.projectId } : {}),
         ...(input.videoMode ? { video_mode: input.videoMode } : {}),
         ...(input.seconds ? { video_seconds: input.seconds } : {}),
+        ...(input.referenceMediaIds?.some(Boolean) ? { reference_media_ids: input.referenceMediaIds } : {}),
       }),
       signal: AbortSignal.timeout(60_000),
     });

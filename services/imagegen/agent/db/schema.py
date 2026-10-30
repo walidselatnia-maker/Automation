@@ -108,6 +108,7 @@ ADDED_COLUMNS = [
     # ingredients, which is what every clip was before.
     ("job", "video_mode", "TEXT"),
     ("job", "video_seconds", "INTEGER"),
+    ("job", "reference_media_ids", "TEXT"),
 ]
 
 

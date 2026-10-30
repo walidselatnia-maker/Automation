@@ -508,3 +508,36 @@ async def test_a_clip_that_could_not_be_followed_is_failed_not_requeued(monkeypa
 
     assert after["status"] == "FAILED"
     assert "VIDEO_NOT_TRACKED" in after["error_message"]
+
+
+@pytest.mark.asyncio
+async def test_a_reference_made_in_the_project_is_picked_not_uploaded(monkeypatch):
+    client = _Composer()
+    job, after = await _film(monkeypatch, client, video_mode="frames",
+                             reference_media_ids=["abc-123", ""])
+
+    assert client.asked["references"] == [{"name": f"ref-{job['id'][:8]}-1", "mediaId": "abc-123"}]
+    # Only the one with no media id went up.
+    assert client.uploaded == [f"ref-{job['id'][:8]}-2.jpg"]
+    assert after["status"] == "COMPLETED"
+
+
+@pytest.mark.asyncio
+async def test_a_reference_the_picker_does_not_show_is_uploaded_and_asked_again(monkeypatch):
+    class _Missing(_Composer):
+        calls = 0
+
+        async def generate_ui(self, prompt, project_id, **kw):
+            self.calls += 1
+            if self.calls == 1:
+                return {"error": "the composer would not take it: MEDIA_NOT_FOUND: abc-123"}
+            return await super().generate_ui(prompt, project_id, **kw)
+
+    client = _Missing()
+    job, after = await _film(monkeypatch, client, video_mode="frames",
+                             reference_media_ids=["abc-123"])
+
+    assert client.calls == 2
+    assert client.asked["references"] == [{"name": f"ref-{job['id'][:8]}-1"}]
+    assert f"ref-{job['id'][:8]}-1.jpg" in client.uploaded
+    assert after["status"] == "COMPLETED"

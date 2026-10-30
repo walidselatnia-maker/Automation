@@ -359,6 +359,13 @@ class WorkerController:
             # refuse a model by name to move down a list.
             if IMAGE_USE_UI:
                 result = await self._generate_by_ui(client, job, request)
+                if self._media_missing(result):
+                    # A picture of the project the picker did not show: up it goes.
+                    references = await self._ui_references(job, request["project_id"], reuse=False)
+                    if references is None:
+                        return
+                    request["references"] = references
+                    result = await self._generate_by_ui(client, job, request)
             else:
                 result = await self._generate_by_model(client, job, job_id, request)
 
@@ -374,6 +381,15 @@ class WorkerController:
         await jobs.complete(job_id, extract_media_id(result), url)
         generation_hold.note_picture()
         logger.info("job %s COMPLETED", job_id[:8])
+
+    @staticmethod
+    def _media_missing(result) -> bool:
+        """A reference sent by its media id was not in the project's picker."""
+        if not is_error(result) or "MEDIA_NOT_FOUND" not in error_text(result):
+            return False
+        logger.warning("a reference was not found in the project's media (%s); uploading it",
+                       error_text(result)[:160])
+        return True
 
     @staticmethod
     async def _generate_by_ui(client, job: dict, request: dict) -> dict:
@@ -438,8 +454,14 @@ class WorkerController:
             break
         return result
 
-    async def _ui_references(self, job: dict, project_id: str) -> list[dict] | None:
+    async def _ui_references(self, job: dict, project_id: str,
+                             reuse: bool = True) -> list[dict] | None:
         """The job's references, ready to attach in Flow's prompt box.
+
+        A reference made in this same project comes with its Flow media id: it
+        is picked from the project's media as it is, nothing uploaded
+        (`reuse`). The others, or all of them when the picker could not find
+        one (reuse=False), go up as below.
 
         Each goes into the project first under a name of this job's own
         ("ref-1a2b3c4d-1.jpg"), an upload that needs no captcha, so the
@@ -452,9 +474,17 @@ class WorkerController:
         except (TypeError, ValueError):
             await self._handle_failure(job, "reference_urls is not valid JSON")
             return None
+        try:
+            media_ids = json.loads(job.get("reference_media_ids") or "[]")
+        except (TypeError, ValueError):
+            media_ids = []
         client = get_flow_client()
         references: list[dict] = []
         for i, url in enumerate(reference_urls[:3], start=1):
+            media_id = media_ids[i - 1] if reuse and i <= len(media_ids) else ""
+            if isinstance(media_id, str) and media_id.strip():
+                references.append({"name": f"ref-{job['id'][:8]}-{i}", "mediaId": media_id.strip()})
+                continue
             fetched = await self._fetch_reference(url)
             if "error" in fetched:
                 await self._handle_failure(job, fetched["error"])
@@ -631,15 +661,24 @@ class WorkerController:
                 await asyncio.sleep(60)
 
         beating = asyncio.create_task(heartbeat())
-        try:
-            result = await get_flow_client().generate_ui(
+        def film(refs):
+            return get_flow_client().generate_ui(
                 job["prompt"], project_id, job_id=job_id, kind="video",
                 model_label=VIDEO_UI_MODEL or None,
                 aspect_label=UI_VIDEO_ASPECT_LABELS.get(job["orientation"], "9:16"),
-                video_mode=mode, references=references,
+                video_mode=mode, references=refs,
                 seconds=job.get("video_seconds") or None,
                 poll_seconds=VIDEO_POLL_INTERVAL * VIDEO_MAX_POLLS,
             )
+
+        try:
+            result = await film(references)
+            if self._media_missing(result):
+                # Nothing was submitted: the picker is checked before the prompt goes.
+                references = await self._ui_references(job, project_id, reuse=False)
+                if references is None:
+                    return
+                result = await film(references[:1] if mode == "Frames" else references)
         finally:
             beating.cancel()
         if is_error(result):
