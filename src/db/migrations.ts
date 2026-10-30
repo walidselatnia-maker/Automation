@@ -1145,6 +1145,47 @@ export const MIGRATIONS: Migration[] = [
       if (count.n === 0) db.exec(`INSERT INTO google_accounts (email, flow_project, position) VALUES ('', '', 1)`);
     },
   },
+  {
+    id: '060-newsite-long-reels',
+    description: 'New websites: long reels made of scenes (a picture and a clip each), and a music library for them',
+    up(db) {
+      // 'short' is the one 10-second video; 'long' is scenes edited together.
+      addColumn(db, 'newsite_reels', 'kind', "TEXT NOT NULL DEFAULT 'short'");
+      // The long reel's story (hook, voice, closing line, caption) as the AI wrote it.
+      addColumn(db, 'newsite_reels', 'story_json', "TEXT NOT NULL DEFAULT ''");
+      // Where a long reel is: story, pictures, clips, edit.
+      addColumn(db, 'newsite_reels', 'stage', "TEXT NOT NULL DEFAULT ''");
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS newsite_reel_scenes (
+          id             INTEGER PRIMARY KEY AUTOINCREMENT,
+          reel_id        INTEGER NOT NULL REFERENCES newsite_reels(id) ON DELETE CASCADE,
+          position       INTEGER NOT NULL,
+          seconds        INTEGER NOT NULL,
+          purpose        TEXT NOT NULL DEFAULT '',
+          subject        TEXT NOT NULL DEFAULT '',
+          action         TEXT NOT NULL DEFAULT '',
+          setting        TEXT NOT NULL DEFAULT '',
+          link           TEXT NOT NULL DEFAULT '',
+          script         TEXT NOT NULL DEFAULT '',
+          picture_prompt TEXT NOT NULL DEFAULT '',
+          picture_job    TEXT NOT NULL DEFAULT '',
+          picture_file   TEXT NOT NULL DEFAULT '',
+          video_prompt   TEXT NOT NULL DEFAULT '',
+          video_job      TEXT NOT NULL DEFAULT '',
+          video_file     TEXT NOT NULL DEFAULT '',
+          UNIQUE (reel_id, position)
+        );
+        CREATE TABLE IF NOT EXISTS newsite_music (
+          id         INTEGER PRIMARY KEY AUTOINCREMENT,
+          name       TEXT NOT NULL DEFAULT '',
+          file       TEXT NOT NULL,
+          -- 1 = picked for reels; a reel takes one of the picked tracks at random.
+          used       INTEGER NOT NULL DEFAULT 1,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+      `);
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */

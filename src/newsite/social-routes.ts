@@ -10,13 +10,15 @@ import { createReels, getReel, kickReels, listPlanReels, onReelMade, REEL_RULES_
 import { createReadStream, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { readyFor } from './keywords-view.js';
-import { reelsPage, shareArticlesStep, sharingChannelPage, sharingSitePage, sharingSitesPage, shareWebsiteStep, reelRulesPage, type ChannelTab, type SharingSite } from './sharing-view.js';
+import { musicPage, reelsPage, shareArticlesStep, sharingChannelPage, sharingSitePage, sharingSitesPage, shareWebsiteStep, reelRulesPage, type ChannelTab, type SharingSite } from './sharing-view.js';
 import { checkPlatformRules, listPlatformRules } from './platform-rules.js';
 import { refreshPostLinks, refreshPostLinksSoon, type PostLinkDeps } from './post-links.js';
 import { onSharingChanged, syncSharing } from './sharing-sync.js';
 import { renewThreadsTokens } from './threads-token.js';
 import { createReelShares, getReelShare, kickReelShares, listPlanReelShares, retryReelShare, shareReelOn, type ReelShareDeps } from './reel-shares.js';
 import { markdownToHtml } from './markdown.js';
+import { LONG_REEL_SECONDS, reelKindFor, reelKindKey, reelSecondsFor, reelSecondsKey } from './long-reels.js';
+import { MUSIC_TYPES, addMusic, deleteMusic, getMusic, listMusic, musicDir, setMusicUsed } from './music.js';
 
 export function registerSocialRoutes(
   app: FastifyInstance,
@@ -204,7 +206,70 @@ export function registerSocialRoutes(
   app.get('/new-website/sharing/reels', async (request, reply) => {
     linksOnView();
     const websiteId = Number((request.query as { website?: string }).website) || 0;
-    return reply.type('text/html; charset=utf-8').send(page('Reels', reelsPage(sharingSites(), websiteId), request.query));
+    return reply.type('text/html; charset=utf-8').send(page('Reels', reelsPage(sharingSites(), websiteId, choiceOf), request.query));
+  });
+
+  const choiceOf = (id: number) => ({ kind: reelKindFor(deps.settings, id), seconds: reelSecondsFor(deps.settings, id) });
+  const reelsBack = (v: unknown): string => {
+    const s = String(v ?? '');
+    return s.startsWith('/new-website/sharing/reels') ? s : '/new-website/sharing/reels';
+  };
+  const withMessage = (back: string, kind: 'ok' | 'error', msg: string) => `${back}${back.includes('?') ? '&' : '?'}${kind}=${encodeURIComponent(msg)}`;
+
+  /** A website's reel type (10 seconds or long) and a long reel's length, for its next reels. */
+  app.post('/new-website/sharing/reels/kind/:id', async (request, reply) => {
+    const id = Number((request.params as { id: string }).id) || 0;
+    const b = (request.body ?? {}) as { kind?: string; seconds?: string; back?: string };
+    const back = reelsBack(b.back);
+    if (!listNewWebsites().some((s) => s.id === id)) return reply.redirect(back, 303);
+    deps.settings.set(reelKindKey(id), b.kind === 'long' ? 'long' : 'short');
+    const seconds = Number(b.seconds);
+    if ((LONG_REEL_SECONDS as readonly number[]).includes(seconds)) deps.settings.set(reelSecondsKey(id), String(seconds));
+    return reply.redirect(withMessage(back, 'ok', 'Saved.'), 303);
+  });
+
+  /* -- Music for long reels ---------------------------------------------------- */
+
+  app.get('/new-website/sharing/music', async (request, reply) =>
+    reply.type('text/html; charset=utf-8').send(page('Reels: music', musicPage(listMusic()), request.query)));
+
+  app.get('/new-website/sharing/music/:id/file', async (request, reply) => {
+    const track = getMusic(Number((request.params as { id: string }).id) || 0);
+    // The file name is the platform's own (track-<id>.<ext>), never a request's.
+    const path = track?.file && !/[\\/]/.test(track.file) ? join(musicDir(deps.dataDir), track.file) : '';
+    if (!path || !existsSync(path)) return reply.code(404).send('Not found');
+    const type = MUSIC_TYPES[track!.file.split('.').pop() ?? ''] ?? 'application/octet-stream';
+    return reply.type(type).header('Cache-Control', 'private, max-age=86400').send(createReadStream(path));
+  });
+
+  app.post('/new-website/sharing/music/upload', async (request, reply) => {
+    const added: string[] = [];
+    const refused: string[] = [];
+    try {
+      for await (const part of request.parts()) {
+        if (part.type !== 'file' || !part.filename) continue;
+        const data = await part.toBuffer();
+        try {
+          addMusic(part.filename, data, deps.dataDir);
+          added.push(part.filename);
+        } catch {
+          refused.push(part.filename);
+        }
+      }
+    } catch (err) {
+      return reply.redirect(withMessage('/new-website/sharing/music', 'error', `The upload stopped: ${(err as Error).message}`), 303);
+    }
+    const msg = [added.length ? `${added.length} added.` : '', refused.length ? `Not music: ${refused.join(', ')}.` : ''].filter(Boolean).join(' ') || 'Nothing uploaded.';
+    return reply.redirect(withMessage('/new-website/sharing/music', refused.length && !added.length ? 'error' : 'ok', msg), 303);
+  });
+
+  app.post('/new-website/sharing/music/bulk', async (request, reply) => {
+    const b = (request.body ?? {}) as { id?: string | string[]; action?: string };
+    const ids = (Array.isArray(b.id) ? b.id : b.id ? [b.id] : []).map(Number).filter((n) => Number.isInteger(n) && n > 0);
+    if (!ids.length) return reply.redirect(withMessage('/new-website/sharing/music', 'error', 'Tick at least one track.'), 303);
+    const n = b.action === 'delete' ? deleteMusic(ids, deps.dataDir) : setMusicUsed(ids, b.action === 'use');
+    const word = b.action === 'delete' ? 'deleted' : b.action === 'use' ? 'used' : 'not used';
+    return reply.redirect(withMessage('/new-website/sharing/music', 'ok', `${n} ${word}.`), 303);
   });
 
   /** The reel rules: edited in place, saved for the next reel. */

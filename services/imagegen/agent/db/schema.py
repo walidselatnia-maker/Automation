@@ -107,6 +107,7 @@ ADDED_COLUMNS = [
     # its first frame) or 'ingredients' (composed from up to three). NULL is
     # ingredients, which is what every clip was before.
     ("job", "video_mode", "TEXT"),
+    ("job", "video_seconds", "INTEGER"),
 ]
 
 

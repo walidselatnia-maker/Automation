@@ -102,8 +102,13 @@ export const PROMPT_STAGES: PromptStage[] = [
   },
   {
     title: 'Reels',
-    about: 'The one video made for each article.',
-    prompts: [{ key: 'newsite-reel-prompt', name: 'Video prompt', about: 'Writes the prompt Google Flow turns into the reel, following the reel rules.' }],
+    about: 'The video made for each article.',
+    prompts: [
+      { key: 'newsite-reel-prompt', name: 'Video prompt', about: 'Writes the prompt Google Flow turns into the reel, following the reel rules.' },
+      { key: 'newsite-reel-story', name: 'Long reel story', about: 'Writes the scenes of a long reel: what each shows and the words said in it.' },
+      { key: 'newsite-reel-scene-picture', name: 'Long reel scene picture', about: 'Writes the picture prompt of one scene.' },
+      { key: 'newsite-reel-scene-video', name: 'Long reel scene clip', about: 'Writes the clip prompt of one scene.' },
+    ],
     link: { href: '/new-website/sharing/reel-rules?back=/new-website/prompts', name: 'Reel rules', about: 'The structure, pace and closing line every reel follows.' },
   },
 ];

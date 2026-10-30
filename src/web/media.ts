@@ -21,6 +21,7 @@ import { get } from '../db/index.js';
 import { pictureDir } from '../newsite/pictures.js';
 import { instagramFileOf } from '../newsite/instagram-picture.js';
 import { reelDir } from '../newsite/reels.js';
+import { sceneDir } from '../newsite/long-reels.js';
 import { resolveDataDir } from '../config.js';
 import { createLogger } from '../lib/logger.js';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
@@ -171,6 +172,35 @@ export function registerMedia(app: FastifyInstance, options: MediaOptions): void
    */
   app.get<{ Params: { id: string; expires: string; file: string } }>('/media/picture/:id/:expires/:file', servePicture('picture'));
   app.get<{ Params: { id: string; expires: string; file: string } }>('/media/ig-picture/:id/:expires/:file', servePicture('ig-picture'));
+
+  /**
+   * The picture of one long-reel scene, for Flow to fetch: the first frame of
+   * that scene's clip, and from scene 2 on what keeps the others alike.
+   */
+  app.get<{ Params: { id: string; expires: string; file: string } }>('/media/reel-scene/:id/:expires/:file', async (request, reply) => {
+    const { id: rawId, expires: rawExpires, file: rawFile } = request.params;
+    const match = /^([A-Za-z0-9_-]{1,100})\.(png|jpg|jpeg|webp)$/.exec(rawFile);
+    if (!/^\d+$/.test(rawId) || !/^\d+$/.test(rawExpires) || !match) return notFound(reply);
+    const id = Number(rawId);
+    const check = checkMediaToken({ kind: 'reel-scene', id, expiresAt: Number(rawExpires), signature: match[1]! }, options.secret);
+    if (!check.ok) {
+      if (check.reason === 'expired') return reply.code(410).type('text/plain; charset=utf-8').send('Gone');
+      return notFound(reply);
+    }
+    const scene = get<{ reel_id: number; picture_file: string }>('SELECT reel_id, picture_file FROM newsite_reel_scenes WHERE id = ?', id);
+    if (!scene?.picture_file || /[\\/]/.test(scene.picture_file)) return notFound(reply);
+    const path = join(sceneDir(scene.reel_id, options.dataDir ?? resolveDataDir()), scene.picture_file);
+    const info = await stat(path).catch(() => null);
+    if (!info?.isFile()) return notFound(reply);
+    log.info(`reel scene ${id}: serving its picture to ${request.ip}`);
+    const type = path.endsWith('.png') ? 'image/png' : path.endsWith('.webp') ? 'image/webp' : 'image/jpeg';
+    return reply
+      .type(type)
+      .header('cache-control', 'private, no-store')
+      .header('x-robots-tag', 'noindex, nofollow, noarchive')
+      .header('content-length', info.size)
+      .send(createReadStream(path));
+  });
 
   /**
    * A new-website reel (newsite_reels), for Buffer to fetch when it posts the

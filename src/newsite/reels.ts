@@ -14,6 +14,8 @@ import { getKeywordPlan, getNewWebsite, type NewWebsiteRow } from './repo.js';
 import { getSeoRow, type SeoRow } from './seo.js';
 import { parseRecipe } from './recipe.js';
 import { correctUntilRight } from './rounds.js';
+import { clearLongReel, makeLongReel, reelKindFor, type LongReelFlow } from './long-reels.js';
+import type { EditInput } from './reel-edit.js';
 
 /**
  * The reel of a published article: ONE 10-second vertical video, made once in
@@ -51,6 +53,10 @@ export interface ReelRow {
   error: string;
   hook: string;
   closing: string;
+  /** 'short': one 10-second video. 'long': scenes edited together (long-reels.ts). */
+  kind: 'short' | 'long';
+  story_json: string;
+  stage: string;
   created_at: string;
   done_at: string | null;
 }
@@ -85,11 +91,19 @@ export function createReels(seoId: number, always = false): number {
   return Number(run(`INSERT OR IGNORE INTO newsite_reels (seo_id, platform) VALUES (?, ?)`, seoId, ALL_PLATFORMS).changes ?? 0);
 }
 
-/** Make a reel again from its prompt file (a failed one, or one you want redone). */
-export function remakeReel(id: number): boolean {
+/**
+ * Make a reel again (a failed one, or one you want redone). A failed long
+ * reel goes on from the scene it stopped at; a finished one starts over.
+ */
+export function remakeReel(id: number, dataDir?: string): boolean {
   const reel = getReel(id);
   if (!reel || reel.status === 'making') return false;
-  run(`UPDATE newsite_reels SET status = 'pending', job_id = '', error = '', prompt = '' WHERE id = ?`, id);
+  if (reel.kind === 'long' && reel.status === 'failed' && reel.stage) {
+    run(`UPDATE newsite_reels SET status = 'pending', error = '' WHERE id = ?`, id);
+    return true;
+  }
+  if (reel.kind === 'long') clearLongReel(id, dataDir);
+  run(`UPDATE newsite_reels SET status = 'pending', job_id = '', error = '', prompt = '', kind = 'short' WHERE id = ?`, id);
   return true;
 }
 
@@ -109,6 +123,10 @@ export interface ReelDeps {
   ask?: (name: string, vars: Record<string, unknown>) => Promise<string>;
   /** A reel's video is made: it is shared on its channels. Unset, the listener set by onReelMade runs. */
   onDone?: (reelId: number) => void;
+  /** Flow for a long reel's pictures and clips. Tests pass their own. */
+  longFlow?: LongReelFlow;
+  /** The edit of a long reel. Tests pass their own. */
+  edit?: (input: EditInput) => Promise<void>;
 }
 
 const flowOf = (settings: Settings) =>
@@ -130,7 +148,7 @@ const defaultDownload = async (url: string): Promise<Buffer> => {
  * shows it), then up to two of the article's step pictures, in order (the
  * stages). Each with what it shows, for the prompt writer.
  */
-function references(seoId: number, deps: ReelDeps): { urls: string[]; described: string } {
+export function articleReferences(seoId: number, deps: ReelDeps): { urls: string[]; described: string } {
   const base = deps.settings.get('public_base_url').trim();
   if (!base) {
     throw new Error('This platform has no public address yet, so Flow cannot fetch the article pictures. Open the dashboard once at its https address, or set it in Platform settings → Images.');
@@ -210,7 +228,7 @@ export function checkReelScript(s: ReelScript, rules: string, domain = ''): stri
 }
 
 /** The article's steps and main things: from its recipe when it has one, else its headings. */
-function articleParts(row: SeoRow): { steps: string; things: string } {
+export function articleParts(row: SeoRow): { steps: string; things: string } {
   const recipe = row.recipe_json ? parseRecipe(row.recipe_json) : null;
   if (recipe?.steps.length) {
     return {
@@ -269,7 +287,13 @@ async function make(reel: ReelRow, deps: ReelDeps): Promise<void> {
   const plan = row ? getKeywordPlan(row.plan_id) : undefined;
   const site = plan ? getNewWebsite(plan.website_id) : undefined;
   if (!row || !site) throw new Error('Its article is gone.');
-  const refs = references(reel.seo_id, deps);
+  // A long reel half made goes on as one; a new reel follows its website's choice.
+  if (reel.stage || reelKindFor(deps.settings, site.id) === 'long') {
+    await makeLongReel(reel, deps);
+    (deps.onDone ?? madeListener)?.(reel.id);
+    return;
+  }
+  const refs = articleReferences(reel.seo_id, deps);
   const script = await writeScript(reel, row, site, refs.described, deps);
   const prompt = script.prompt;
   run(`UPDATE newsite_reels SET prompt = ?, hook = ?, closing = ? WHERE id = ?`, prompt, script.hook_line, script.closing_line, reel.id);

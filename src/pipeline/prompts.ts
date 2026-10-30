@@ -164,6 +164,10 @@ export const PROMPT_MODELS: Record<string, { model: string; format: 'json' | nul
   // Social sharing: one pin's words, the board it goes to, one Facebook post.
   'newsite-social-post': { model: 'gpt-oss:120b', format: 'json' },
   'newsite-reel-prompt': { model: 'gpt-oss:120b', format: 'json' },
+  // Long reels: the storyboard, then one call per scene for its picture and its clip.
+  'newsite-reel-story': { model: 'gpt-oss:120b', format: 'json' },
+  'newsite-reel-scene-picture': { model: 'gpt-oss:120b', format: 'json' },
+  'newsite-reel-scene-video': { model: 'gpt-oss:120b', format: 'json' },
   'newsite-pick-board': { model: 'gpt-oss:120b', format: 'json' },
   // Top lists: a round-up post of the website's own posts about one topic.
   'top-list-post': { model: 'gpt-oss:120b', format: 'json' },

@@ -637,6 +637,7 @@ class WorkerController:
                 model_label=VIDEO_UI_MODEL or None,
                 aspect_label=UI_VIDEO_ASPECT_LABELS.get(job["orientation"], "9:16"),
                 video_mode=mode, references=references,
+                seconds=job.get("video_seconds") or None,
                 poll_seconds=VIDEO_POLL_INTERVAL * VIDEO_MAX_POLLS,
             )
         finally:

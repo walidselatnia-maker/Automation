@@ -1,0 +1,24 @@
+The reel: {{seconds}} seconds, vertical 9:16, for {{domain}}.
+
+The article
+Title: {{title}}
+Keyword: {{keyword}}
+Website niche: {{niche}}
+About the website: {{nicheContext}}
+
+Its steps, in order (for a recipe: the method):
+{{steps}}
+
+Its main things (for a recipe: the ingredients):
+{{things}}
+
+Its headings:
+{{articleOutline}}
+
+What the article's own photos show:
+{{references}}
+
+Corrections to make to your previous answer (none on your first try):
+{{problemsJson}}
+
+Answer with the JSON only.

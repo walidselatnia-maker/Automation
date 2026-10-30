@@ -477,9 +477,10 @@ async def _film(monkeypatch, client, **video):
 @pytest.mark.asyncio
 async def test_a_frames_clip_starts_from_the_first_reference(monkeypatch):
     client = _Composer()
-    job, after = await _film(monkeypatch, client, video_mode="frames")
+    job, after = await _film(monkeypatch, client, video_mode="frames", video_seconds=6)
 
     assert client.asked["kind"] == "video"
+    assert client.asked["seconds"] == 6
     assert client.asked["video_mode"] == "Frames"
     assert client.asked["aspect_label"] == "9:16"
     assert client.asked["job_id"] == job["id"]
@@ -495,6 +496,7 @@ async def test_a_clip_without_a_mode_is_made_from_every_reference(monkeypatch):
     job, _ = await _film(monkeypatch, client)
 
     assert client.asked["video_mode"] == "Ingredients"
+    assert client.asked["seconds"] is None
     assert [r["name"] for r in client.asked["references"]] == [
         f"ref-{job['id'][:8]}-1", f"ref-{job['id'][:8]}-2"]
 

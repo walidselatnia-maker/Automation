@@ -1,0 +1,18 @@
+The reel: {{title}} ({{niche}}). Scene {{position}} of {{count}}, a {{seconds}}-second clip.
+
+The whole story, scene by scene:
+{{storyboard}}
+
+This scene:
+{{scene}}
+
+The photograph it starts from (its prompt):
+{{picturePrompt}}
+
+The scene before: {{previous}}
+The scene after: {{next}}
+
+Corrections to make to your previous answer (none on your first try):
+{{problemsJson}}
+
+Answer with the JSON only: {"prompt": "..."}

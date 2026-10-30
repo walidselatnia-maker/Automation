@@ -34,9 +34,10 @@ const PURPOSE = 'media-link-v1';
 
 /**
  * What a link may point at: a reel video, a new-website picture (a pin, an
- * image post), Instagram's 4:5 copy of one, or a new-website reel.
+ * image post), Instagram's 4:5 copy of one, a new-website reel, or the
+ * picture of one scene of a long reel (newsite_reel_scenes id), for Flow.
  */
-export type MediaKind = 'reel' | 'picture' | 'ig-picture' | 'newsite-reel';
+export type MediaKind = 'reel' | 'picture' | 'ig-picture' | 'newsite-reel' | 'reel-scene';
 
 export type MediaCheck =
   | { ok: true }
@@ -220,4 +221,19 @@ export function newsiteReelMediaUrl(
   if (!base) throw new Error('No public address for this platform yet.');
   const expiresAt = now + linkDays(days) * 86_400_000;
   return `${base}${mediaPath('newsite-reel', reelId, expiresAt, secret)}`;
+}
+
+/** The absolute address of one long-reel scene's picture (newsite_reel_scenes id), for Flow to fetch. */
+export function reelSceneMediaUrl(
+  baseUrl: string,
+  sceneId: number,
+  ext: string,
+  days: string | number,
+  secret: Buffer,
+  now: number = Date.now(),
+): string {
+  const base = baseUrl.trim().replace(/\/+$/, '');
+  if (!base) throw new Error('No public address for this platform yet.');
+  const expiresAt = now + linkDays(days) * 86_400_000;
+  return `${base}${mediaPath('reel-scene', sceneId, expiresAt, secret, ext)}`;
 }

@@ -5,6 +5,8 @@ import { PLATFORMS, channelColor, channelPageLink, postLinkOf, takesReels, type 
 import type { SocialPostRow } from './social.js';
 import type { PictureRow } from './pictures.js';
 import type { ReelRow } from './reels.js';
+import { LONG_REEL_SECONDS, longReelProgress, type ReelKind } from './long-reels.js';
+import type { MusicRow } from './music.js';
 import type { ReelShareRow } from './reel-shares.js';
 import { WIZARD_CSS } from './view.js';
 import { CSS, OVERVIEW_CSS, labelOf, missingChannels, sharePostRow, sharingBusy } from './keywords-view.js';
@@ -128,6 +130,12 @@ const SHARING_CSS = `
 .rl-body { padding: 0 18px 18px; }
 .rl-actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 4px 0 16px; border-bottom: 1px solid var(--line); margin-bottom: 16px; }
 .rl-actions form { margin: 0; }
+.rl-kind { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 14px; }
+.rl-kind select, .mu-list select { font: inherit; padding: 6px 8px; border: 1px solid var(--line-strong); border-radius: var(--r-ctl); background: var(--surface); color: var(--ink); }
+.mu-list { list-style: none; padding: 0; margin: 0 0 16px; }
+.mu-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.mu-list audio { height: 32px; max-width: 100%; }
+.mu-bar { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 14px; }
 .rl-grid { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 24px; align-items: start; }
 .rl-grid .sh-reel-media video, .rl-grid .sh-reel-media .sh-reel-empty { width: 200px; }
 .rl-main { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
@@ -522,7 +530,7 @@ function reelItem(r: ReelRow, s: SharingSite): Html {
         <div class="sh-reel-media">
           ${r.status === 'done'
             ? html`<video src="/new-website/reels/${String(r.id)}/file" controls preload="metadata" playsinline></video>`
-            : html`<div class="sh-reel-empty ${r.status === 'failed' ? 'bad' : ''}">${r.status === 'failed' ? 'No video' : 'Being made in Flow. A few minutes.'}</div>`}
+            : html`<div class="sh-reel-empty ${r.status === 'failed' ? 'bad' : ''}">${r.status === 'failed' ? 'No video' : r.kind === 'long' || r.stage ? `Long reel: ${longReelProgress(r.id, r.stage)}` : 'Being made in Flow. A few minutes.'}</div>`}
         </div>
         <div class="rl-main">
           ${r.hook ? html`<div class="sh-hook"><small>Hook</small>“${r.hook}”</div>` : raw('')}
@@ -575,7 +583,24 @@ const REELS_SCRIPT = `<script>
  * sent to the channels that take reels. Published articles with no reel yet
  * can get one.
  */
-export function reelsPage(sites: SharingSite[], websiteId = 0): Html {
+export interface ReelChoice {
+  kind: ReelKind;
+  seconds: number;
+}
+
+/** A website's reel type and length, saved for its next reels. */
+function reelChoiceForm(s: SharingSite, choice: ReelChoice, websiteId: number): Html {
+  const opt = (value: string, label: string, on: boolean) => html`<option value="${value}" ${on ? 'selected' : ''}>${label}</option>`;
+  return html`<form class="rl-kind" method="post" action="/new-website/sharing/reels/kind/${String(s.site.id)}">
+    <input type="hidden" name="back" value="${reelsHref(websiteId)}" />
+    <b>${s.site.name}</b>
+    <select name="kind" aria-label="Reel type">${opt('short', '10 seconds', choice.kind === 'short')}${opt('long', 'Long', choice.kind === 'long')}</select>
+    <select name="seconds" aria-label="Length">${LONG_REEL_SECONDS.map((n) => opt(String(n), `${n}s`, choice.seconds === n))}</select>
+    <button class="ns-btn small">Save</button>
+  </form>`;
+}
+
+export function reelsPage(sites: SharingSite[], websiteId = 0, choiceOf?: (websiteId: number) => ReelChoice): Html {
   const shown = websiteId ? sites.filter((s) => s.site.id === websiteId) : sites;
   const withReel = (s: SharingSite) => new Set(s.reels.map((r) => r.seo_id));
   const noReel = shown.flatMap((s) => s.articles.filter((a) => !withReel(s).has(a.row.id)).map((a) => ({ s, a })));
@@ -586,7 +611,10 @@ export function reelsPage(sites: SharingSite[], websiteId = 0): Html {
         <h1 class="ns-title">Reels</h1>
         <p class="ns-lede">Each published article gets one reel: a short Google Flow video, made once, here. The same video then goes by itself to every social channel its website posts reels to (chosen in the website’s settings), and each channel shows its own status.</p>
       </div>
-      <a class="ns-btn" href="/new-website/sharing/reel-rules?back=${encodeURIComponent(reelsHref(websiteId))}">Edit reel rules</a>
+      <div class="mu-bar">
+        <a class="ns-btn" href="/new-website/sharing/music">Music</a>
+        <a class="ns-btn" href="/new-website/sharing/reel-rules?back=${encodeURIComponent(reelsHref(websiteId))}">Edit reel rules</a>
+      </div>
     </div>
     ${sites.length > 1
       ? html`<nav class="sh-tabs" aria-label="Websites">
@@ -595,6 +623,7 @@ export function reelsPage(sites: SharingSite[], websiteId = 0): Html {
         </nav>`
       : raw('')}
     <div class="sh-panel">
+      ${choiceOf ? shown.map((s) => reelChoiceForm(s, choiceOf(s.site.id), websiteId)) : raw('')}
       ${shown.some((s) => s.reels.length)
         ? shown.filter((s) => s.reels.length).map((s) => html`${shown.length > 1 ? html`<h2 class="rl-site">${s.site.name}</h2>` : raw('')}<ul class="acc-list rl-list">${s.reels.map((r) => reelItem(r, s))}</ul>`)
         : html`<p class="sh-empty">No reel yet. A reel is made for each article once it is published, when its website has a channel that takes reels.</p>`}
@@ -631,4 +660,45 @@ export function reelRulesPage(text: string, isDefault: boolean, back: string, er
       </div>
       <div class="wz-foot"><a class="ns-btn quiet" href="${back}">Cancel</a><button class="ns-btn primary" form="rr-form">Save</button></div>
     </div>`;
+}
+
+/* -- The music long reels play under their clips ---------------------------- */
+
+export function musicPage(tracks: MusicRow[]): Html {
+  return html`
+    <style>${raw(CSS)}${raw(SHARING_CSS)}</style>
+    <div class="ns-head">
+      <div><h1 class="ns-title">Music</h1></div>
+      <a class="ns-btn" href="/new-website/sharing/reels">Reels</a>
+    </div>
+    <div class="sh-panel">
+      <form class="mu-bar" method="post" action="/new-website/sharing/music/upload" enctype="multipart/form-data">
+        <input type="file" name="files" accept=".mp3,.m4a,.aac,.wav,.ogg,audio/*" multiple required />
+        <button class="ns-btn small primary">Upload</button>
+      </form>
+      ${tracks.length
+        ? html`<form method="post" action="/new-website/sharing/music/bulk">
+            <div class="mu-bar">
+              <label><input type="checkbox" data-mu-all /> All</label>
+              <button class="ns-btn small" name="action" value="use">Use</button>
+              <button class="ns-btn small" name="action" value="unuse">Don’t use</button>
+              <button class="ns-btn small" name="action" value="delete">Delete</button>
+            </div>
+            <ul class="mu-list">${tracks.map((t) => html`<li>
+              <input type="checkbox" name="id" value="${String(t.id)}" aria-label="${t.name}" />
+              <b>${t.name}</b>
+              <span class="ns-badge ${t.used ? 'ok' : ''}">${t.used ? 'Used' : 'Not used'}</span>
+              <audio src="/new-website/sharing/music/${String(t.id)}/file" controls preload="none"></audio>
+            </li>`)}</ul>
+          </form>`
+        : html`<p class="sh-empty">No music yet.</p>`}
+    </div>
+    <script>
+      (function () {
+        var all = document.querySelector('[data-mu-all]');
+        if (all) all.addEventListener('change', function () {
+          document.querySelectorAll('.mu-list input[type=checkbox]').forEach(function (b) { b.checked = all.checked; });
+        });
+      })();
+    </script>`;
 }

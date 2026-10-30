@@ -143,6 +143,10 @@ export class ImageClient {
     voiceMediaId?: string;
     projectId?: string;
     orientation?: string;
+    /** 'frames': the first reference is the clip's first frame. Unset: composed from all of them. */
+    videoMode?: 'frames' | 'ingredients';
+    /** The clip's length: 4, 6 or 8. Unset: Flow's own default. */
+    seconds?: number;
   }): Promise<string> {
     const response = await fetch(this.url('/v1/generate-video'), {
       method: 'POST',
@@ -154,6 +158,8 @@ export class ImageClient {
         ...(input.voiceMediaId ? { voice_media_id: input.voiceMediaId } : {}),
         orientation: input.orientation ?? 'VERTICAL',
         ...(input.projectId ? { project_id: input.projectId } : {}),
+        ...(input.videoMode ? { video_mode: input.videoMode } : {}),
+        ...(input.seconds ? { video_seconds: input.seconds } : {}),
       }),
       signal: AbortSignal.timeout(60_000),
     });

@@ -49,7 +49,7 @@ export async function askPrompt(
  */
 export function languageRule(promptName: string, language: string): string {
   if (!language || language === 'English') return '';
-  const pictures = promptName === 'article-images' || promptName === 'newsite-reel-prompt';
+  const pictures = ['article-images', 'newsite-reel-prompt', 'newsite-reel-scene-picture', 'newsite-reel-scene-video'].includes(promptName);
   return (
     `\n\nLANGUAGE: this website is written in ${language}. ` +
     (pictures

@@ -719,7 +719,7 @@ class FlowClient:
         person's pace and waits for the composer to clear.
 
         `options` are the extension's own: kind, videoMode, references,
-        jobId, reloadFirst (see uiGenerateImage). Each reference adds time:
+        jobId, reloadFirst, seconds (see uiGenerateImage). Each reference adds time:
         one found in the picker a little, one uploaded through the page a lot.
         """
         references = options.get("references") or []
@@ -1041,7 +1041,7 @@ class FlowClient:
     async def generate_ui(self, prompt: str, project_id: str, *, job_id: str,
                           kind: str = "image", model_label: str | None = None,
                           aspect_label: str | None = None, video_mode: str | None = None,
-                          references: list[dict] | None = None,
+                          references: list[dict] | None = None, seconds: int | None = None,
                           poll_seconds: float = 300) -> dict:
         """Submit through the composer, then watch this job's own tiles.
 
@@ -1062,6 +1062,8 @@ class FlowClient:
             reload_first = self._reload_next and not self._watching
             options = {"kind": kind, "videoMode": video_mode, "references": references or [],
                        "jobId": job_id, "reloadFirst": reload_first}
+            if seconds:
+                options["seconds"] = seconds
             submitted = await self.ui_generate_image(
                 prompt, project_id, model_label, aspect_label, **options)
             for _ in range(20):

@@ -2550,6 +2550,8 @@ const KIND_LABELS = ['Image', 'Video'];
 // Video's two ways in, as measured: Frames starts the clip from a picture,
 // Ingredients composes it from up to three.
 const VIDEO_MODE_LABELS = ['Frames', 'Ingredients'];
+/** The clip lengths Flow offers for a video. */
+const DURATION_LABELS = ['4s', '6s', '8s'];
 const COUNT_LABELS = ['x1', 'x2', 'x3', 'x4'];
 
 // ─── References: attaching pictures to the prompt ───────────
@@ -2893,7 +2895,7 @@ async function uiGenerateOnce(params) {
  */
 async function uiGenerateImage({
   projectId = null, prompt = '', model = null, aspect = null, selectors = null,
-  kind = 'image', videoMode = null, references = [], jobId = null, reloadFirst = false,
+  kind = 'image', videoMode = null, references = [], jobId = null, reloadFirst = false, seconds = null,
 } = {}) {
   if (!prompt.trim()) return { error: 'EMPTY_PROMPT' };
   const ui = uiSelectors(selectors);
@@ -2975,6 +2977,10 @@ async function uiGenerateImage({
     if (video) {
       const mode = videoMode || (references.length === 1 ? 'Frames' : 'Ingredients');
       picked.videoMode = await pickInMenu(target, tab.id, ui, mode, VIDEO_MODE_LABELS);
+      if (seconds) {
+        uiStep(`picking a ${seconds}s clip`);
+        picked.seconds = await pickInMenu(target, tab.id, ui, `${seconds}s`, DURATION_LABELS);
+      }
     }
     picked.count = await pickInMenu(target, tab.id, ui, 'x1', COUNT_LABELS);
     uiStep('picking the model');

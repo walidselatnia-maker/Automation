@@ -83,6 +83,8 @@ class GenerateVideoRequest(BaseModel):
     # 'frames': the first reference is the clip's first frame (a scene's
     # picture brought to life). 'ingredients', the default: composed from all.
     video_mode: Optional[Literal["frames", "ingredients"]] = None
+    # The clip's length, when the job asks for one: Flow offers 4, 6 and 8.
+    video_seconds: Optional[Literal[4, 6, 8]] = None
 
 
 class GenerateResponse(BaseModel):
@@ -181,6 +183,7 @@ async def generate_video(body: GenerateVideoRequest) -> GenerateResponse:
         character_media_id=body.character_media_id,
         voice_media_id=body.voice_media_id,
         video_mode=body.video_mode,
+        video_seconds=body.video_seconds,
     )
     logger.info(
         "queued video job %s for project %s (%d reference image(s))",
