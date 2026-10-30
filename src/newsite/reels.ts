@@ -391,12 +391,15 @@ export function kickReels(deps: ReelDeps): Promise<void> {
 
 /**
  * A restart leaves a reel half made: it starts again. So does a long reel
- * stopped only because the image service was itself restarting (a deploy):
- * it goes on from the scene it was at, as Try again would.
+ * stopped only because the image service was itself restarting (a deploy),
+ * or because Flow's composer would not take a prompt -- nothing was sent to
+ * Flow then, so nothing is paid twice: it goes on from the scene it was at,
+ * as Try again would.
  */
 export function resetInterruptedReels(): void {
   run(`UPDATE newsite_reels SET status = 'pending', job_id = '' WHERE status = 'making'`);
   run(`UPDATE newsite_reels SET status = 'pending', error = ''
        WHERE status = 'failed' AND kind = 'long' AND stage != ''
-         AND (error LIKE '%Extension disconnected%' OR error LIKE '%fetch failed%')`);
+         AND (error LIKE '%Extension disconnected%' OR error LIKE '%fetch failed%'
+              OR error LIKE '%the composer would not take it%')`);
 }

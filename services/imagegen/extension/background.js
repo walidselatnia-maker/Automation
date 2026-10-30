@@ -3127,6 +3127,9 @@ async function uiGenerateImage({
   kind = 'image', videoMode = null, references = [], jobId = null, reloadFirst = false, seconds = null,
 } = {}) {
   if (!prompt.trim()) return { error: 'EMPTY_PROMPT' };
+  // One line: a new line typed into the box is a paragraph (or a submit) and
+  // the box then held only the first line of a clip's labelled prompt.
+  prompt = prompt.replace(/\s*\n\s*/g, ' ').trim();
   const ui = uiSelectors(selectors);
   const video = kind === 'video';
 
