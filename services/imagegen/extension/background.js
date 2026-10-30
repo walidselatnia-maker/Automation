@@ -2789,6 +2789,24 @@ async function uiProbePicker({ projectId = null, search = '', mediaIds = [], dur
           await pressKey(target, 'Escape', { keyCode: 27 });
           await pause(300, 600);
         }
+        // The composer's controls in Frames mode, where a clip starts from a picture.
+        report.framesMode = await pickInMenu(target, tab.id, ui, 'Frames', VIDEO_MODE_LABELS);
+        await pause(800, 1200);
+        const [btns] = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          world: 'MAIN',
+          args: [ui.editor],
+          func: (editorSel) => {
+            const editor = document.querySelector(editorSel);
+            let scope = editor || document.body;
+            for (let i = 0; editor && i < 8 && scope.parentElement; i++) scope = scope.parentElement;
+            return [...scope.querySelectorAll('button, [role="button"], input[type="file"]')]
+              .filter((el) => el.getBoundingClientRect().width > 0 || el.type === 'file')
+              .map((el) => `${el.tagName.toLowerCase()} aria="${el.getAttribute('aria-label') || ''}" text="${(el.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 50)}"`)
+              .slice(0, 60);
+          },
+        }).catch((e) => [{ result: String(e?.message || e) }]);
+        report.framesControls = btns?.result;
         report.kindImage = await pickInMenu(target, tab.id, ui, 'Image', KIND_LABELS);
       }
       return report;
