@@ -2618,10 +2618,53 @@ async function clearComposer(target, tabId, ui) {
 }
 
 /** The picker open, its search box showing. */
+/** Where the Frames-mode button worded exactly `words` is ("Start", "End"). */
+async function frameSlot(tabId, words) {
+  const [out] = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    args: [words.toLowerCase()],
+    func: (want) => {
+      for (const el of document.querySelectorAll('button, [role="button"]')) {
+        if ((el.innerText || '').trim().toLowerCase() !== want) continue;
+        const r = el.getBoundingClientRect();
+        if (r.width && r.height) return { left: r.x, top: r.y, w: r.width, h: r.height };
+      }
+      return null;
+    },
+  }).catch(() => [{ result: null }]);
+  return out?.result || null;
+}
+
+/**
+ * How many pictures the prompt box holds: ingredient chips, and pictures in
+ * the composer itself -- a Frames clip's start frame shows there, not as a chip.
+ */
+async function attachedCount(tabId, ui) {
+  const [out] = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    args: [ui.ingredientChip, ui.editor, ui.assetList],
+    func: (chipSel, editorSel, listSel) => {
+      const chips = document.querySelectorAll(chipSel).length;
+      const editor = document.querySelector(editorSel);
+      let scope = editor;
+      for (let i = 0; scope && i < 8 && scope.parentElement; i++) scope = scope.parentElement;
+      const pictures = scope ? [...scope.querySelectorAll('img')]
+        .filter((img) => !img.closest(chipSel) && !img.closest(listSel) && !img.closest('.cdk-overlay-container')
+          && img.getBoundingClientRect().width > 0).length : 0;
+      return chips + pictures;
+    },
+  }).catch(() => [{ result: 0 }]);
+  return out?.result || 0;
+}
+
 async function openPicker(target, tabId, ui) {
   if (await boxOf(tabId, ui.assetSearch)) return true;
   for (let attempt = 0; attempt < 3; attempt++) {
-    const plus = await boxOf(tabId, ui.addMediaButton);
+    // In Frames mode there is no "+": the clip's first frame is its own
+    // button, worded "Start" (measured 2026-10-30).
+    const plus = await boxOf(tabId, ui.addMediaButton) || await frameSlot(tabId, 'Start');
     if (!plus) return false;
     await humanClick(target, plus);
     // A first click can land while another overlay closes and only raise a tooltip.
@@ -2645,9 +2688,9 @@ async function pickAsset(target, tabId, ui, name, waitMs, exact = false) {
     () => (exact ? titledRow(tabId, ui, name) : boxOf(tabId, ui.assetRow, { text: name, within: ui.assetList })),
     waitMs, 500);
   if (!row) return false;
-  const chips = await countOf(tabId, ui.ingredientChip);
+  const chips = await attachedCount(tabId, ui);
   await humanClick(target, row);
-  return !!(await waitUntil(async () => (await countOf(tabId, ui.ingredientChip)) > chips, 4000));
+  return !!(await waitUntil(async () => (await attachedCount(tabId, ui)) > chips, 4000));
 }
 
 /** Where the one picker row titled exactly `title` is; null when none or several. */
@@ -2807,6 +2850,12 @@ async function uiProbePicker({ projectId = null, search = '', mediaIds = [], dur
           },
         }).catch((e) => [{ result: String(e?.message || e) }]);
         report.framesControls = btns?.result;
+        report.framesPicker = await openPicker(target, tab.id, ui);
+        if (report.framesPicker) {
+          report.framesRows = (await pickerRows(tab.id, ui)).length;
+          await pressKey(target, 'Escape', { keyCode: 27 });
+          await pause(300, 600);
+        }
         report.kindImage = await pickInMenu(target, tab.id, ui, 'Image', KIND_LABELS);
       }
       return report;
@@ -2878,15 +2927,15 @@ async function attachReference(target, tabId, ui, ref) {
   if (armed !== true) return `could not prepare the upload: ${armed}`;
   const upload = await boxOf(tabId, '[role="button"], button, [role="menuitem"]', { text: ui.uploadWords });
   if (!upload) return 'no "Upload media" in the picker';
-  const chips = await countOf(tabId, ui.ingredientChip);
+  const chips = await attachedCount(tabId, ui);
   await humanClick(target, upload);
   // Flow attaches a fresh upload itself, or lists it once it has gone up.
   const done = await waitUntil(async () => {
-    if ((await countOf(tabId, ui.ingredientChip)) > chips) return true;
+    if ((await attachedCount(tabId, ui)) > chips) return true;
     return !!(await boxOf(tabId, ui.assetRow, { text: ref.name, within: ui.assetList }));
   }, 180_000, 1000);
   if (!done) return `"${ref.name}" did not finish uploading`;
-  const attached = (await countOf(tabId, ui.ingredientChip)) > chips
+  const attached = (await attachedCount(tabId, ui)) > chips
     || (await pickAsset(target, tabId, ui, ref.name, 5000));
   if (await boxOf(tabId, ui.assetSearch)) await pressKey(target, 'Escape', { keyCode: 27 });
   return attached || `"${ref.name}" uploaded but would not attach`;
