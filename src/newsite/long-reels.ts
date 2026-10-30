@@ -361,6 +361,24 @@ async function waitFor(ctx: Ctx, jobId: string, everyMs: number, tries: number, 
 }
 
 /**
+ * `send`, asked again while the image service cannot be reached at all (it
+ * is restarting: a deploy) rather than failing the reel for it.
+ */
+async function untilReachable<T>(ctx: Ctx, send: () => Promise<T>, what: string): Promise<T> {
+  const sleep = ctx.deps.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
+  for (let i = 0; ; i++) {
+    try {
+      return await send();
+    } catch (err) {
+      const message = (err as Error).message;
+      if (i >= 20 || !/fetch failed|ECONNREFUSED|ECONNRESET|socket hang up/i.test(message)) throw err;
+      log.warn(`reel ${ctx.reel.id}: could not send ${what} (${message}); trying again`);
+      await sleep(15_000);
+    }
+  }
+}
+
+/**
  * One Flow job for a scene: the one already sent when there is one (after a
  * restart), else a new one on the first working Google account.
  */
@@ -385,7 +403,7 @@ async function flowJob(
   return withGoogleAccount(
     ctx.projectId,
     async (projectId) => {
-      const jobId = await submit(projectId);
+      const jobId = await untilReachable(ctx, () => submit(projectId), what);
       run(`UPDATE newsite_reel_scenes SET ${column} = ? WHERE id = ?`, jobId, scene.id);
       if (column === 'picture_job') run('UPDATE newsite_reel_scenes SET picture_project = ? WHERE id = ?', projectId, scene.id);
       try {

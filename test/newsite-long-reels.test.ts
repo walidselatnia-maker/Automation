@@ -56,6 +56,10 @@ describe('long reels: a story in scenes, one picture and one clip each, edited t
 
   const flow = (): LongReelFlow => ({
     submitPicture: async (input) => {
+      if (unreachable > 0) {
+        unreachable--;
+        throw new Error('fetch failed');
+      }
       pictures.push(input);
       return `pic-${pictures.length}`;
     },
