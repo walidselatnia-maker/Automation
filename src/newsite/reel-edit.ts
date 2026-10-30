@@ -170,7 +170,7 @@ export async function editReel(input: EditInput): Promise<void> {
   const graph: string[] = [];
   scenes.forEach((s, i) => {
     graph.push(
-      `[${i}:v]trim=0:${s.seconds},setpts=PTS-STARTPTS,scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=increase,crop=${WIDTH}:${HEIGHT},fps=${FPS},setsar=1,format=yuv420p[v${i}]`,
+      `[${i}:v]tpad=stop_mode=clone:stop_duration=${s.seconds},trim=0:${s.seconds},setpts=PTS-STARTPTS,scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=increase,crop=${WIDTH}:${HEIGHT},fps=${FPS},setsar=1,format=yuv420p[v${i}]`,
     );
     const src = silenceIndex.has(i) ? `${silenceIndex.get(i)}:a` : `${i}:a`;
     graph.push(`[${src}]atrim=0:${s.seconds},asetpts=PTS-STARTPTS,aresample=44100,aformat=channel_layouts=stereo,apad=whole_dur=${s.seconds}[a${i}]`);
