@@ -2660,8 +2660,10 @@ async function titledRow(tabId, ui, title) {
       const list = document.querySelector(listSel);
       if (!list) return null;
       const rows = [...list.querySelectorAll(rowSel)].filter((row) => {
-        const t = row.querySelector('.asset-title')?.innerText || '';
-        return t.replace(/\s+/g, ' ').trim().toLowerCase() === want;
+        const t = (row.querySelector('.asset-title')?.innerText || '').replace(/\s+/g, ' ').trim().toLowerCase();
+        // A long title is cut short on screen, ending in an ellipsis.
+        const cut = t.endsWith('…') ? t.slice(0, -1).trim() : '';
+        return t === want || (cut.length >= 12 && want.length > cut.length && want.startsWith(cut));
       });
       if (rows.length !== 1) return null;
       const r = rows[0].getBoundingClientRect();
