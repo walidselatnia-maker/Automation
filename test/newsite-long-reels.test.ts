@@ -11,7 +11,7 @@ import { Settings } from '../src/settings.js';
 import { configurePrompts } from '../src/pipeline/prompts.js';
 import { createNewWebsite, saveKeywordPlan } from '../src/newsite/repo.js';
 import { listPlanSeo, queuePlanSeo } from '../src/newsite/seo.js';
-import { createReels, getReel, kickReels, listPlanReels, remakeReel, type ReelDeps } from '../src/newsite/reels.js';
+import { createReels, getReel, kickReels, listPlanReels, remakeReel, resetInterruptedReels, type ReelDeps } from '../src/newsite/reels.js';
 import {
   CLIP_LABELS, checkClipPrompt, checkStory, clipPrompt, listScenes, reelKindKey, reelSecondsKey, type LongReelFlow, type Story,
 } from '../src/newsite/long-reels.js';
@@ -213,6 +213,20 @@ describe('long reels: a story in scenes, one picture and one clip each, edited t
     await kickReels(deps());
     expect(listPlanReels(planId)[0]!.status).toBe('done');
     expect(pictures).toHaveLength(4);
+  });
+
+  it('goes on after a restart when it stopped only because the image service restarted', async () => {
+    failClip = 2;
+    createReels(seoId, true);
+    await kickReels(deps());
+    const id = listPlanReels(planId)[0]!.id;
+    run(`UPDATE newsite_reels SET error = 'Flow could not make the clip of scene 2: the composer would not take it: Extension disconnected' WHERE id = ?`, id);
+    resetInterruptedReels();
+    expect(getReel(id)!.status).toBe('pending');
+
+    run(`UPDATE newsite_reels SET status = 'failed', error = 'Flow could not make the clip of scene 2: policy' WHERE id = ?`, id);
+    resetInterruptedReels();
+    expect(getReel(id)!.status).toBe('failed');
   });
 
   it('keeps the 10-second reel for a website that has not picked long', async () => {
