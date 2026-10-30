@@ -478,6 +478,7 @@ class WorkerController:
         listing = await self._project_titles(client, project_id) if reference_urls else {}
         titles = self._unique_titles(listing, media_ids)
         listed = {t.lower() for t in listing.values()}
+        fresh: list[str] = []
         references: list[dict] = []
         for i, url in enumerate(reference_urls[:3], start=1):
             media_id = media_ids[i - 1] if i <= len(media_ids) else ""
@@ -522,7 +523,32 @@ class WorkerController:
                                  mime=fetched["mime"])
             references.append(reference)
             listed.add(f"{name}.{ext}")
+            if reference["uploaded"]:
+                fresh.append(f"{name}.{ext}")
+        if fresh and not await self._wait_listed(client, project_id, fresh):
+            logger.warning("job %s: %s not listed in the project yet; trying anyway",
+                           job["id"][:8], ", ".join(fresh))
         return references
+
+    @classmethod
+    async def _wait_listed(cls, client, project_id: str, names: list[str],
+                           wait_s: float = 90, every_s: float = 6) -> bool:
+        """Wait until the project lists every one of `names`.
+
+        An upload answers before Flow lists it: a page loaded straight after
+        did not show it, and the same page loaded half a minute later did
+        (measured 2026-10-30).
+        """
+        want = {n.lower() for n in names}
+        loop = asyncio.get_running_loop()
+        until = loop.time() + wait_s
+        while True:
+            titles = await cls._project_titles(client, project_id)
+            if want <= {t.lower() for t in titles.values()}:
+                return True
+            if not titles or loop.time() > until:
+                return False
+            await asyncio.sleep(every_s)
 
     @staticmethod
     async def _project_titles(client, project_id: str) -> dict[str, str]:

@@ -456,6 +456,7 @@ class _Composer:
 
     async def upload_image_batch(self, image_base64, project_id, mime_type, file_name):
         self.uploaded.append(file_name)
+        self.titles[f"m-{len(self.uploaded)}"] = file_name
         return {"media_id": f"m-{len(self.uploaded)}"}
 
     async def generate_ui(self, prompt, project_id, **kw):

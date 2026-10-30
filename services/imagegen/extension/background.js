@@ -2620,7 +2620,7 @@ async function clearComposer(target, tabId, ui) {
 /** The picker open, its search box showing. */
 async function openPicker(target, tabId, ui) {
   if (await boxOf(tabId, ui.assetSearch)) return true;
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (let attempt = 0; attempt < 3; attempt++) {
     const plus = await boxOf(tabId, ui.addMediaButton);
     if (!plus) return false;
     await humanClick(target, plus);
@@ -3171,9 +3171,12 @@ async function uiGenerateImage({
       await clearComposer(target, tab.id, ui);
       return { error: missing };
     }
-    const attached = references.filter((_, i) => picked[`reference${i + 1}`] === true).length;
-    if (references.length && !attached) {
-      return { error: `REFERENCES_NOT_ATTACHED: ${picked.reference1}` };
+    // Every reference or none: a scene made without one of its pictures is
+    // not the scene asked for, and nothing has been spent yet.
+    const notAttached = references.map((_, i) => picked[`reference${i + 1}`]).find((r) => r !== true);
+    if (references.length && notAttached !== undefined) {
+      await clearComposer(target, tab.id, ui);
+      return { error: `REFERENCES_NOT_ATTACHED: ${notAttached}` };
     }
 
     // Focus by clicking it, not by calling focus(): ProseMirror places the
