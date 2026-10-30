@@ -463,13 +463,19 @@ class _Composer:
         return self.answer
 
 
+def _ref(n: int) -> str:
+    """The name a reference goes up under: its bytes' hash (here, its url's)."""
+    import hashlib
+    return "ref-" + hashlib.sha256(f"https://a/{n}.jpg".encode()).hexdigest()[:12]
+
+
 async def _film(monkeypatch, client, **video):
     monkeypatch.setattr(processor, "VIDEO_USE_UI", True)
     monkeypatch.setattr(processor, "get_flow_client", lambda: client)
     controller = processor.WorkerController()
 
     async def fetched(url):
-        return {"bytes": b"jpg", "mime": "image/jpeg"}
+        return {"bytes": url.encode(), "mime": "image/jpeg"}
 
     monkeypatch.setattr(controller, "_fetch_reference", fetched)
     job = await jobs.create_video("the dish steams", ["https://a/1.jpg", "https://a/2.jpg"],
@@ -488,8 +494,8 @@ async def test_a_frames_clip_starts_from_the_first_reference(monkeypatch):
     assert client.asked["video_mode"] == "Frames"
     assert client.asked["aspect_label"] == "9:16"
     assert client.asked["job_id"] == job["id"]
-    assert client.asked["references"] == [{"name": f"ref-{job['id'][:8]}-1", "uploaded": True}]
-    assert client.uploaded == [f"ref-{job['id'][:8]}-1.jpg", f"ref-{job['id'][:8]}-2.jpg"]
+    assert client.asked["references"] == [{"name": _ref(1), "uploaded": True}]
+    assert client.uploaded == [f"{_ref(1)}.jpg", f"{_ref(2)}.jpg"]
     assert after["status"] == "COMPLETED"
     assert after["output_url"] == "https://v/1.mp4"
 
@@ -502,7 +508,7 @@ async def test_a_clip_without_a_mode_is_made_from_every_reference(monkeypatch):
     assert client.asked["video_mode"] == "Ingredients"
     assert client.asked["seconds"] is None
     assert [r["name"] for r in client.asked["references"]] == [
-        f"ref-{job['id'][:8]}-1", f"ref-{job['id'][:8]}-2"]
+        _ref(1), _ref(2)]
 
 
 @pytest.mark.asyncio
@@ -524,7 +530,17 @@ async def test_a_reference_made_in_the_project_is_picked_not_uploaded(monkeypatc
     assert client.asked["references"] == [
         {"name": "Puppy sitting on rug", "exact": True, "inProject": True}]
     # Only the one with no media id went up.
-    assert client.uploaded == [f"ref-{job['id'][:8]}-2.jpg"]
+    assert client.uploaded == [f"{_ref(2)}.jpg"]
+    assert after["status"] == "COMPLETED"
+
+
+@pytest.mark.asyncio
+async def test_a_picture_already_uploaded_is_not_uploaded_again(monkeypatch):
+    client = _Composer(titles={"m-old": f"{_ref(1)}.jpg"})
+    job, after = await _film(monkeypatch, client)
+
+    assert client.asked["references"][0] == {"name": _ref(1), "uploaded": True}
+    assert client.uploaded == [f"{_ref(2)}.jpg"]
     assert after["status"] == "COMPLETED"
 
 
@@ -534,8 +550,8 @@ async def test_a_picture_whose_title_another_shares_is_uploaded(monkeypatch):
     job, _ = await _film(monkeypatch, client, video_mode="frames",
                          reference_media_ids=["abc-123"])
 
-    assert client.asked["references"] == [{"name": f"ref-{job['id'][:8]}-1", "uploaded": True}]
-    assert f"ref-{job['id'][:8]}-1.jpg" in client.uploaded
+    assert client.asked["references"] == [{"name": _ref(1), "uploaded": True}]
+    assert f"{_ref(1)}.jpg" in client.uploaded
 
 
 @pytest.mark.asyncio
@@ -554,8 +570,8 @@ async def test_a_reference_the_picker_does_not_show_is_uploaded_and_asked_again(
                              reference_media_ids=["abc-123"])
 
     assert client.calls == 2
-    assert client.asked["references"] == [{"name": f"ref-{job['id'][:8]}-1", "uploaded": True}]
-    assert f"ref-{job['id'][:8]}-1.jpg" in client.uploaded
+    assert client.asked["references"] == [{"name": _ref(1), "uploaded": True}]
+    assert f"{_ref(1)}.jpg" in client.uploaded
     assert after["status"] == "COMPLETED"
 
 

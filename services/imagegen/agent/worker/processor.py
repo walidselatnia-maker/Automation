@@ -10,6 +10,7 @@ That polling happens inside the job's own task rather than by returning it to
 the queue, so a half-generated video is never re-submitted and paid for twice.
 """
 import asyncio
+import hashlib
 import base64
 import json
 import logging
@@ -474,7 +475,9 @@ class WorkerController:
         except (TypeError, ValueError):
             media_ids = []
         client = get_flow_client()
-        titles = await self._unique_titles(client, project_id, media_ids)
+        listing = await self._project_titles(client, project_id) if reference_urls else {}
+        titles = self._unique_titles(listing, media_ids)
+        listed = {t.lower() for t in listing.values()}
         references: list[dict] = []
         for i, url in enumerate(reference_urls[:3], start=1):
             media_id = media_ids[i - 1] if i <= len(media_ids) else ""
@@ -489,7 +492,15 @@ class WorkerController:
                 await self._handle_failure(job, fetched["error"])
                 return None
             ext = {"image/png": "png", "image/webp": "webp"}.get(fetched["mime"], "jpg")
-            name = f"ref-{job['id'][:8]}-{i}"
+            # Named by its bytes: the same picture -- the article's photo every
+            # scene starts from, a reference of a job tried again -- goes up
+            # once, and is then found under that name.
+            name = f"ref-{hashlib.sha256(fetched['bytes']).hexdigest()[:12]}"
+            if f"{name}.{ext}" in listed:
+                logger.info("job %s: reference %d is already in the project, as %s.%s",
+                            job["id"][:8], i, name, ext)
+                references.append({"name": name, "uploaded": True})
+                continue
             encoded = base64.b64encode(fetched["bytes"]).decode("ascii")
             for attempt in range(2):
                 # A tab moving between projects at that moment answers nothing;
@@ -510,20 +521,25 @@ class WorkerController:
                 reference.update(dataUrl=f"data:{fetched['mime']};base64,{encoded}",
                                  mime=fetched["mime"])
             references.append(reference)
+            listed.add(f"{name}.{ext}")
         return references
 
     @staticmethod
-    async def _unique_titles(client, project_id: str, media_ids: list) -> dict[str, str]:
-        """The picker title of each of `media_ids` no other picture shares."""
-        wanted = [m for m in media_ids if isinstance(m, str) and m.strip()]
-        if not wanted:
-            return {}
+    async def _project_titles(client, project_id: str) -> dict[str, str]:
+        """Each media id in the project and its picker title; empty when unread."""
         listed = await client.project_titles(project_id)
         if "error" in listed:
             logger.warning("project listing for reuse failed (%s); references go up",
                            str(listed["error"])[:120])
             return {}
-        titles = listed["titles"]
+        return listed["titles"]
+
+    @staticmethod
+    def _unique_titles(titles: dict[str, str], media_ids: list) -> dict[str, str]:
+        """The picker title of each of `media_ids` no other picture shares."""
+        wanted = [m for m in media_ids if isinstance(m, str) and m.strip()]
+        if not wanted:
+            return {}
         counts: dict[str, int] = {}
         for title in titles.values():
             counts[title.lower()] = counts.get(title.lower(), 0) + 1

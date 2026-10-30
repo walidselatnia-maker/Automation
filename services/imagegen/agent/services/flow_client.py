@@ -1077,12 +1077,17 @@ class FlowClient:
         if self._ui_lock is None:
             self._ui_lock = asyncio.Lock()
         known: set = set()
+        listed = True
         async with self._ui_lock:
             if kind == "image":
-                # Only for the way back when the tiles cannot be found.
+                # Only for the way back when the tiles cannot be found, so a
+                # listing that cannot be read -- a big project's runs past what
+                # the tab hands back -- does not stop the picture.
                 before = await self.project_images(project_id)
                 if isinstance(before, dict):
-                    return before
+                    logger.warning("Flow UI: project %s listing unread before the submit (%s)",
+                                   project_id[:8], str(before.get("error"))[:120])
+                    before, listed = [], False
                 known = {image.media_id for image in before}
             # A reload takes every prompt still rendering on the page with it.
             reload_first = self._reload_next and not self._watching
@@ -1125,9 +1130,13 @@ class FlowClient:
                     return {"error": "VIDEO_NOT_TRACKED: Flow took the clip but its tile could "
                                      "not be found on the page. Not tried again, so it is not "
                                      "paid for twice; look for it in the Flow project."}
+                self.tiles_unreliable = True
+                if not listed:
+                    # With nothing to tell new from old, any picture would be taken.
+                    return {"error": "no tile of this prompt was found on the page, and the "
+                                     "project listing could not be read to find it"}
                 logger.warning("Flow UI: no tile of job %s found on the page; reading the "
                                "project for what is new, one prompt at a time", job_id[:8])
-                self.tiles_unreliable = True
                 return await self._watch_page(project_id, submitted, known, poll_seconds)
 
         self.tiles_unreliable = False
