@@ -10,6 +10,7 @@ That polling happens inside the job's own task rather than by returning it to
 the queue, so a half-generated video is never re-submitted and paid for twice.
 """
 import asyncio
+import time
 import hashlib
 import base64
 import json
@@ -719,6 +720,24 @@ class WorkerController:
         is a second clip paid for.
         """
         job_id = job["id"]
+        try:
+            sent = json.loads(job.get("operation_json") or "{}")
+        except (TypeError, ValueError):
+            sent = {}
+        if isinstance(sent, dict) and sent.get("ui_submitted"):
+            # Already in Flow (the service restarted while it rendered): it is
+            # looked for in the project, never sent -- and paid for -- again.
+            found = await get_flow_client().find_new_clip(
+                project_id, set(sent.get("known") or []), VIDEO_POLL_INTERVAL * VIDEO_MAX_POLLS)
+            if not found:
+                await jobs.fail(job_id, "VIDEO_NOT_TRACKED: the clip was sent to Flow before a "
+                                        "restart and could not be found in the project after it. "
+                                        "Not sent again, so it is not paid for twice.")
+                return
+            await jobs.complete(job_id, found["media_id"], found["video_url"])
+            logger.info("job %s COMPLETED (clip sent before a restart, found in the project)",
+                        job_id[:8])
+            return
         if job.get("character_media_id") or job.get("voice_media_id"):
             logger.warning("job %s: the presenter's character and voice are not attached "
                            "when clicking yet; the clip is made from the pictures alone",
@@ -737,6 +756,9 @@ class WorkerController:
                 await asyncio.sleep(60)
 
         beating = asyncio.create_task(heartbeat())
+        async def submitted(known):
+            await jobs.set_operation(job_id, {"ui_submitted": time.time(), "known": known})
+
         def film(refs):
             return get_flow_client().generate_ui(
                 job["prompt"], project_id, job_id=job_id, kind="video",
@@ -745,6 +767,7 @@ class WorkerController:
                 video_mode=mode, references=refs,
                 seconds=job.get("video_seconds") or None,
                 poll_seconds=VIDEO_POLL_INTERVAL * VIDEO_MAX_POLLS,
+                on_submitted=submitted,
             )
 
         try:
@@ -759,6 +782,9 @@ class WorkerController:
             beating.cancel()
         if is_error(result):
             detail = error_text(result)
+            if "FLOW_UI_ERROR" in detail or "SILENT_FAILURE" in detail:
+                # Flow said no on the tile: nothing was made, so another try may send it.
+                await jobs.set_operation(job_id, {})
             if video_models.out_of_credits(detail):
                 await jobs.fail(job_id, "PUBLIC_ERROR_USER_QUOTA_REACHED: This Google account has "
                                         "no video credits left on Flow. " + detail)

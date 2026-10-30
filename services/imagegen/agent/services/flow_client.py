@@ -30,6 +30,8 @@ _UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]
 UI_POLL_S = 2
 #: The longest a picture is waited for while Flow still shows it working.
 UI_MAX_WAIT_S = 900
+#: How often a clip sent before a restart is looked for in the project.
+VIDEO_FIND_EVERY_S = 20
 #: A tile smaller than this on its long side is a preview, not the picture.
 #: Flow's smallest picture, 1K square, is 1024.
 UI_MIN_PICTURE_SIDE = 1000
@@ -1071,7 +1073,7 @@ class FlowClient:
                           kind: str = "image", model_label: str | None = None,
                           aspect_label: str | None = None, video_mode: str | None = None,
                           references: list[dict] | None = None, seconds: int | None = None,
-                          poll_seconds: float = 300) -> dict:
+                          poll_seconds: float = 300, on_submitted=None) -> dict:
         """Submit through the composer, then watch this job's own tiles.
 
         Answers an image in the REST shape generate_images_batch answers in,
@@ -1137,6 +1139,9 @@ class FlowClient:
             if submitted.get("error"):
                 return {"error": f"the composer would not take it: {submitted['error']}"}
             self._log_picks(submitted)
+            if on_submitted:
+                # It is in Flow now: whatever happens next, it is not sent again.
+                await on_submitted(sorted(known))
 
             if not submitted.get("tiles"):
                 if kind == "video":
@@ -1165,6 +1170,18 @@ class FlowClient:
             self._watching -= 1
             self._watched_projects = {**self._watched_projects,
                                       project_id: self._watched_projects.get(project_id, 1) - 1}
+
+    async def find_new_clip(self, project_id: str, known: set, wait_s: float) -> dict | None:
+        """A clip sent before -- its watch lost to a restart -- found as new media
+        in the project (not in `known`) that has a video, waiting up to `wait_s`."""
+        until = time.monotonic() + wait_s
+        while True:
+            listing = await self.project_titles(project_id)
+            fresh = [m for m in listing.get("titles") or {} if m not in known]
+            found = await self._video_from_ids(fresh) if fresh else None
+            if found or time.monotonic() > until:
+                return found
+            await asyncio.sleep(VIDEO_FIND_EVERY_S)
 
     async def ui_job_tiles(self, job_id: str) -> dict:
         out = await self._send_ui("ui_job_tiles", {"jobId": job_id, "selectors": ui_selectors()},

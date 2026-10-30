@@ -1,5 +1,6 @@
 """The worker's decisions: what counts as a failure, and what is worth retrying."""
 import asyncio
+import json
 
 import pytest
 
@@ -460,8 +461,16 @@ class _Composer:
         return {"media_id": f"m-{len(self.uploaded)}"}
 
     async def generate_ui(self, prompt, project_id, **kw):
+        on_submitted = kw.pop("on_submitted", None)
         self.asked = dict(prompt=prompt, project_id=project_id, **kw)
+        self.submits = getattr(self, "submits", 0) + 1
+        if on_submitted and not str(self.answer.get("error") or "").startswith("the composer"):
+            await on_submitted(["old-1"])
         return self.answer
+
+    async def find_new_clip(self, project_id, known, wait_s):
+        self.looked_for = (project_id, sorted(known))
+        return getattr(self, "found", None)
 
 
 def _ref(n: int) -> str:
@@ -586,3 +595,21 @@ def test_titles_are_read_off_the_project_listing():
         "bef10b16-03e6-4946-8ec9-2c10caeea8c6": "Puppy sitting on rug",
         "27c82d36-ce12-416d-8822-64be87029a38": "ref-ab12cd34-1.jpg",
     }
+
+
+@pytest.mark.asyncio
+async def test_a_clip_sent_before_a_restart_is_found_not_sent_again(monkeypatch):
+    client = _Composer()
+    job, _ = await _film(monkeypatch, client, video_mode="frames")
+    assert json.loads((await jobs.get(job["id"]))["operation_json"])["known"] == ["old-1"]
+
+    # The service restarted while it rendered: the job comes round again.
+    again = await jobs.get(job["id"])
+    client.found = {"status": 200, "media_id": "clip-9", "video_url": "https://v/9.mp4"}
+    controller = processor.WorkerController()
+    await controller._run_video_ui(again, "P")
+
+    assert client.submits == 1
+    assert client.looked_for == ("P", ["old-1"])
+    after = await jobs.get(job["id"])
+    assert after["status"] == "COMPLETED" and after["output_url"] == "https://v/9.mp4"
