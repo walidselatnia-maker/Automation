@@ -120,6 +120,35 @@ def test_two_prompts_render_side_by_side_and_each_gets_its_own():
     assert client.events.index("submit job-b") > client.events.index("submit job-a")
 
 
+def test_another_projects_prompt_waits_until_the_first_has_rendered():
+    client = Tiles({
+        "job-a": [rendering(10)] * 4 + [finished(ID_A)],
+        "job-b": [finished(ID_B)],
+    })
+
+    async def both():
+        first = asyncio.create_task(client.generate_images_ui("a", "P1", job_id="job-a"))
+        await _REAL_SLEEP(0)
+        return await asyncio.gather(
+            first, client.generate_images_ui("b", "P2", job_id="job-b"))
+
+    a, b = asyncio.run(both())
+
+    assert fife(a) == picture(ID_A) and fife(b) == picture(ID_B)
+    # The tab stayed on P1 until its picture was there.
+    assert client.events.index("submit job-b") > max(
+        i for i, e in enumerate(client.events) if e == "look job-a")
+
+
+def test_a_reference_uploaded_beside_the_page_reloads_it_first():
+    client = Tiles({"job-a": [finished(ID_A)]})
+
+    asyncio.run(client.generate_images_ui(
+        "a", "P1", job_id="job-a", references=[{"name": "ref-1", "uploaded": True}]))
+
+    assert client.submits[0]["reloadFirst"] is True
+
+
 def test_tiles_not_found_falls_back_to_one_at_a_time():
     client = Tiles({}, submit={"ok": True, "submitted": True, "tiles": 0},
                    listings=[[], [GeneratedImage(media_id=ID_A, url=picture(ID_A))]])

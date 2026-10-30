@@ -1061,6 +1061,9 @@ class FlowClient:
 
     _reload_next = False
     _watching = 0
+    #: The project of each prompt still rendering: there is one tab, and
+    #: moving it to another project takes those prompts' tiles off the page.
+    _watched_projects: dict = {}
     #: The last submit's tiles could not be found: one prompt at a time until they can.
     tiles_unreliable = False
 
@@ -1079,6 +1082,13 @@ class FlowClient:
         known: set = set()
         listed = True
         async with self._ui_lock:
+            # Another project's prompt still rendering keeps the tab there:
+            # moved away, its tiles leave the page and it is lost or made
+            # twice (seen on a long reel). The lock holds new prompts meanwhile.
+            for _ in range(int(UI_MAX_WAIT_S // 5) + 1):
+                if not any(p != project_id and n > 0 for p, n in self._watched_projects.items()):
+                    break
+                await asyncio.sleep(5)
             if kind == "image":
                 # Only for the way back when the tiles cannot be found, so a
                 # listing that cannot be read -- a big project's runs past what
@@ -1141,11 +1151,15 @@ class FlowClient:
 
         self.tiles_unreliable = False
         self._watching += 1
+        self._watched_projects = {**self._watched_projects,
+                                  project_id: self._watched_projects.get(project_id, 0) + 1}
         try:
             return await self._watch_tiles(job_id, kind, project_id, submitted, known,
                                            poll_seconds)
         finally:
             self._watching -= 1
+            self._watched_projects = {**self._watched_projects,
+                                      project_id: self._watched_projects.get(project_id, 1) - 1}
 
     async def ui_job_tiles(self, job_id: str) -> dict:
         out = await self._send_ui("ui_job_tiles", {"jobId": job_id, "selectors": ui_selectors()},
