@@ -339,9 +339,19 @@ interface Made {
 /** Wait for a Flow job and hand back its file's address and media id. */
 async function waitFor(ctx: Ctx, jobId: string, everyMs: number, tries: number, what: string): Promise<Made> {
   const sleep = ctx.deps.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
-  for (let i = 0; i < tries; i++) {
+  for (let i = 0, unreachable = 0; i < tries; i++) {
     await sleep(everyMs);
-    const job = await ctx.flow.poll(jobId);
+    let job: Awaited<ReturnType<LongReelFlow['poll']>>;
+    try {
+      job = await ctx.flow.poll(jobId);
+      unreachable = 0;
+    } catch (err) {
+      // The image service restarting (a deploy) is not Flow saying no: the
+      // job is still in its queue, so it is asked again, for a while.
+      if (++unreachable >= 20) throw err;
+      log.warn(`reel ${ctx.reel.id}: could not ask after ${what} (${(err as Error).message}); asking again`);
+      continue;
+    }
     const status = (job.status ?? '').toUpperCase();
     const url = job.video_url || job.image_url;
     if (status === 'COMPLETED' && url) return { url, mediaId: job.media_id ?? '' };

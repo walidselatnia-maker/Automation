@@ -52,6 +52,7 @@ describe('long reels: a story in scenes, one picture and one clip each, edited t
   let clips: { prompt: string; referenceUrls: string[]; referenceMediaIds: string[]; seconds: number }[];
   let edits: EditInput[];
   let failClip: number;
+  let unreachable: number;
 
   const flow = (): LongReelFlow => ({
     submitPicture: async (input) => {
@@ -63,6 +64,10 @@ describe('long reels: a story in scenes, one picture and one clip each, edited t
       return `clip-${clips.length}`;
     },
     poll: async (jobId) => {
+      if (unreachable > 0) {
+        unreachable--;
+        throw new Error('fetch failed');
+      }
       if (jobId === `clip-${failClip}`) return { status: 'FAILED', error: 'policy' };
       return jobId.startsWith('pic')
         ? { status: 'COMPLETED', image_url: `https://flow/${jobId}.png`, media_id: `media-${jobId}` }
@@ -114,6 +119,7 @@ describe('long reels: a story in scenes, one picture and one clip each, edited t
     clips = [];
     edits = [];
     failClip = 0;
+    unreachable = 0;
   });
 
   afterEach(() => {
@@ -199,6 +205,14 @@ describe('long reels: a story in scenes, one picture and one clip each, edited t
     expect(pictures).toEqual([]);
     // Clip 1 kept; clip 2 sent again, then the rest.
     expect(clips.map((c) => c.seconds)).toEqual([8, 8, 8, 8, 6]);
+  });
+
+  it('waits out the image service restarting instead of failing the reel', async () => {
+    unreachable = 3;
+    createReels(seoId, true);
+    await kickReels(deps());
+    expect(listPlanReels(planId)[0]!.status).toBe('done');
+    expect(pictures).toHaveLength(4);
   });
 
   it('keeps the 10-second reel for a website that has not picked long', async () => {
