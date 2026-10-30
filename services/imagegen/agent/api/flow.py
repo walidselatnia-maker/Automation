@@ -74,6 +74,48 @@ async def ui_scan(project_id: str | None = None) -> dict:
     return await get_flow_client().scan_flow_ui(project_id)
 
 
+class PickerProbe(BaseModel):
+    project_id: str
+    search: str = ""
+    media_ids: list[str] = Field(default_factory=list)
+    durations: bool = False
+    reload: bool = False
+    # A picture to put into the project first, on the batch path, as a
+    # reference is: its media id is then looked for in the picker too.
+    upload_url: str = ""
+
+
+@router.post("/picker-probe")
+async def picker_probe(body: PickerProbe) -> dict:
+    """The project's "+" picker as the live page shows it.
+
+    What attaching a reference depends on -- what a row carries, whether a
+    picture made or uploaded in the project is listed, by which id -- is read
+    here rather than assumed. Nothing is generated.
+    """
+    chrome.hold_manually()
+    await chrome.ensure_running("a picker probe was asked for")
+    client = get_flow_client()
+    report: dict = {}
+    media_ids = list(body.media_ids)
+    if body.upload_url:
+        import base64
+        from agent.worker.processor import WorkerController
+        fetched = await WorkerController._fetch_reference(None, body.upload_url)
+        if "error" in fetched:
+            raise HTTPException(400, fetched["error"])
+        name = body.search or "probe-upload"
+        report["upload"] = await client.upload_image_batch(
+            image_base64=base64.b64encode(fetched["bytes"]).decode("ascii"),
+            project_id=body.project_id, mime_type=fetched["mime"], file_name=f"{name}.jpg")
+        if report["upload"].get("media_id"):
+            media_ids.append(report["upload"]["media_id"])
+    report["picker"] = await client.probe_picker(
+        body.project_id, search=body.search, media_ids=media_ids,
+        durations=body.durations, reload=body.reload)
+    return report
+
+
 @router.post("/chrome/start")
 async def chrome_start() -> dict:
     """Bring Chrome up and pin it there for a while.

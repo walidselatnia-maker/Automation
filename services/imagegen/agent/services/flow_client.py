@@ -764,6 +764,19 @@ class FlowClient:
         """
         return await self._send("scan_flow_ui", {"projectId": project_id}, timeout=60)
 
+    async def probe_picker(self, project_id: str | None, search: str = "",
+                           media_ids: list[str] | None = None, durations: bool = False,
+                           reload: bool = False) -> dict:
+        """A diagnostic: the project's "+" picker rows as the page has them,
+        which hold each of `media_ids`, and with `durations` the Video settings'
+        words. Nothing is generated."""
+        return await self._send_ui(
+            "ui_probe_picker",
+            {"projectId": project_id, "search": search, "mediaIds": media_ids or [],
+             "durations": durations, "reload": reload, "selectors": ui_selectors()},
+            timeout=180,
+        )
+
     async def discover_image_models(self, known: list[str]) -> dict:
         """The model names the Flow page's own source carries.
 

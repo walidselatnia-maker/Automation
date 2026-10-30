@@ -584,6 +584,8 @@ function connectToAgent() {
         sendToAgent({ id: msg.id, result: await uiTileImage(msg.params || {}) });
       } else if (msg.method === 'ui_page_errors') {
         sendToAgent({ id: msg.id, result: await uiPageErrors(msg.params || {}) });
+      } else if (msg.method === 'ui_probe_picker') {
+        sendToAgent({ id: msg.id, result: await uiProbePicker(msg.params || {}) });
       } else if (msg.method === 'scan_flow_ui') {
         sendToAgent({ id: msg.id, result: await scanFlowUi(msg.params || {}) });
       } else if (msg.method === 'api_request') {
@@ -2685,6 +2687,131 @@ async function pickAssetByMedia(target, tabId, ui, mediaId) {
     await pause(400, 900);
   }
   return false;
+}
+
+/**
+ * Every row of the open "+" picker as the page has it: its words, the
+ * addresses of its pictures, its data attributes and the start of its markup.
+ * The list is scrolled to its end so rows drawn only when seen are read too.
+ */
+async function pickerRows(tabId, ui) {
+  const seen = new Map();
+  for (let i = 0; i < 20; i++) {
+    const [out] = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      args: [ui.assetList, ui.assetRow],
+      func: (listSel, rowSel) => {
+        const list = document.querySelector(listSel);
+        if (!list) return { gone: true, rows: [] };
+        const rows = [...list.querySelectorAll(rowSel)].map((row) => {
+          const data = {};
+          for (const el of [row, ...row.querySelectorAll('*')]) {
+            for (const a of el.attributes) {
+              if (a.name.startsWith('data-') || a.name === 'aria-label' || a.name === 'title' || a.name === 'alt') {
+                data[`${el.tagName.toLowerCase()}.${a.name}`] = a.value.slice(0, 200);
+              }
+            }
+          }
+          const srcs = [...row.querySelectorAll('img, video, source')].map((el) => el.currentSrc || el.src || '');
+          const bg = [row, ...row.querySelectorAll('*')].map((el) => getComputedStyle(el).backgroundImage)
+            .filter((b) => b && b !== 'none');
+          return { text: (row.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 200), srcs, bg, data,
+            html: row.outerHTML.slice(0, 1500) };
+        });
+        const scroller = [list, ...list.querySelectorAll('*')].find((el) => el.scrollHeight > el.clientHeight + 4);
+        const end = !scroller || scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 2;
+        if (scroller && !end) scroller.scrollTop += scroller.clientHeight * 0.8;
+        return { rows, end };
+      },
+    }).catch((e) => [{ result: { gone: true, rows: [], why: String(e?.message || e) } }]);
+    const got = out?.result || { gone: true, rows: [] };
+    for (const r of got.rows) seen.set(r.html, r);
+    if (got.gone || got.end) break;
+    await pause(400, 700);
+  }
+  return [...seen.values()];
+}
+
+/**
+ * A diagnostic: the project's "+" picker as it is now -- every row, then the
+ * rows a search for `search` leaves -- and which rows hold each of `mediaIds`.
+ * With `durations`, also the words of the Video settings (the clip lengths).
+ * Nothing is generated; the picker is closed again.
+ */
+async function uiProbePicker({ projectId = null, search = '', mediaIds = [], durations = false,
+  reload = false, selectors = null } = {}) {
+  if (uiSubmit) return { error: `COMPOSER_BUSY: a submit is at "${uiStepName}"` };
+  const ui = uiSelectors(selectors);
+  holdFlowTab();
+  try {
+    if (!(await queryFlowTabs()).length) {
+      const created = await openTab({ url: projectId ? projectUrl(projectId) : FLOW_HOME, active: false });
+      await waitForTabLoad(created.id, 30000).catch(() => {});
+      await pause(2500, 4500);
+    }
+    await ensureFlowTabOnProject(projectId);
+    const tabs = await queryFlowTabs();
+    const candidate = (projectId && tabs.find((t) => (t.url || '').includes(projectId)))
+      || tabs.find((t) => !t.discarded) || tabs[0];
+    if (!candidate) return { error: 'NO_FLOW_TAB' };
+    const tab = await reviveTabIfNeeded(candidate);
+    if (!tab) return { error: 'FLOW_TAB_DISCARDED' };
+    await chrome.tabs.update(tab.id, { active: true }).catch(() => {});
+    if (reload) {
+      const loaded = waitForTabLoad(tab.id, 30000);
+      await chrome.tabs.reload(tab.id);
+      await loaded.catch(() => {});
+      await pause(2500, 4500);
+    }
+    return await withDebugger(tab.id, async (target) => {
+      const report = { tabUrl: tab.url };
+      if (!(await openPicker(target, tab.id, ui))) return { ...report, error: 'the "+" picker did not open' };
+      await pause(1500, 2000);
+      report.rows = await pickerRows(tab.id, ui);
+      const holding = (rows) => Object.fromEntries(mediaIds.map((id) => [id,
+        rows.map((r, i) => (JSON.stringify(r).toLowerCase().includes(String(id).toLowerCase()) ? i : -1))
+          .filter((i) => i >= 0)]));
+      report.holding = holding(report.rows);
+      if (search) {
+        const box = await boxOf(tab.id, ui.assetSearch);
+        if (box) {
+          await humanClick(target, box);
+          await pause(120, 300);
+          await typePrompt(target, search);
+          await pause(2500, 3000);
+          report.searched = await pickerRows(tab.id, ui);
+          report.searchedHolding = holding(report.searched);
+        }
+      }
+      await pressKey(target, 'Escape', { keyCode: 27 });
+      await pause(300, 600);
+      if (durations) {
+        report.kindVideo = await pickInMenu(target, tab.id, ui, 'Video', KIND_LABELS);
+        const settings = await composerSettingsButton(tab.id, ui);
+        if (settings) {
+          await humanClick(target, settings);
+          await pause(700, 1000);
+          report.videoSettings = await visibleControls(tab.id, ui);
+          const [out] = await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            world: 'MAIN',
+            func: () => [...document.querySelectorAll('[role]')]
+              .filter((el) => el.getBoundingClientRect().width > 0)
+              .map((el) => `${el.getAttribute('role')}:${(el.innerText || el.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim().slice(0, 40)}`)
+              .filter((t, i, all) => /\d\s*s\b|sec|second|duration|length/i.test(t) && all.indexOf(t) === i),
+          }).catch(() => [{ result: [] }]);
+          report.durationControls = out?.result || [];
+          await pressKey(target, 'Escape', { keyCode: 27 });
+          await pause(300, 600);
+        }
+        report.kindImage = await pickInMenu(target, tab.id, ui, 'Image', KIND_LABELS);
+      }
+      return report;
+    });
+  } finally {
+    releaseFlowTab();
+  }
 }
 
 /**
