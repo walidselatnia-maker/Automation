@@ -91,12 +91,19 @@ async def claim_pending(limit: int) -> list[dict]:
     The UPDATE ... WHERE id IN (SELECT ...) is one statement on purpose: two
     workers reading then writing separately would both see the same PENDING row
     and generate the image twice, which costs real Flow credits.
+
+    First tries go first, oldest first; a job back for another try waits
+    behind them, in the order it was put back. Ordered by created_at alone, a
+    requeued job (which keeps its created_at) took every freed slot ahead of
+    new work, and a job failing five times held new pictures back for minutes.
     """
     db = await get_db()
     async with db.execute(
         f"""UPDATE job SET status = 'PROCESSING', attempts = attempts + 1, updated_at = {_NOW}
              WHERE id IN (
-               SELECT id FROM job WHERE status = 'PENDING' ORDER BY created_at LIMIT ?
+               SELECT id FROM job WHERE status = 'PENDING'
+                ORDER BY attempts > 0, CASE WHEN attempts > 0 THEN updated_at ELSE created_at END
+                LIMIT ?
              )
          RETURNING *""",
         (limit,),

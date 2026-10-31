@@ -613,3 +613,16 @@ async def test_a_clip_sent_before_a_restart_is_found_not_sent_again(monkeypatch)
     assert client.looked_for == ("P", ["old-1"])
     after = await jobs.get(job["id"])
     assert after["status"] == "COMPLETED" and after["output_url"] == "https://v/9.mp4"
+
+
+@pytest.mark.asyncio
+async def test_a_new_job_goes_before_one_back_for_another_try():
+    old = await jobs.create("old prompt")
+    await jobs.claim_pending(1)
+    await jobs.requeue(old["id"], "no image appeared")
+    new = await jobs.create("new prompt")
+
+    claimed = await jobs.claim_pending(1)
+
+    assert [j["id"] for j in claimed] == [new["id"]]
+    assert [j["id"] for j in await jobs.claim_pending(1)] == [old["id"]]
