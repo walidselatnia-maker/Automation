@@ -135,6 +135,15 @@ RETRYABLE = ("quota", "rate_limit", "exhausted", "resource_exhausted", "429",
              # The "+" picker would not give the references; tried again.
              "references_not_attached")
 
+# Misses that came back the same on every try (2026-10-30/31: 191 jobs refused
+# five times each, then dozens watched for 300 s five times each). Past these
+# tries the answer will not change, and each extra one is more traffic into an
+# account Google is already wary of, and a slot a new picture waits for.
+TRIES_FOR = (
+    ("composer_rejected_prompt", 1),
+    ("no image appeared", 2),
+)
+
 
 class WorkerController:
     """Owns the polling loop and its shutdown."""
@@ -1226,8 +1235,9 @@ class WorkerController:
             return
 
         retryable = any(marker in error.lower() for marker in RETRYABLE)
+        tries = next((n for marker, n in TRIES_FOR if marker in error.lower()), MAX_RETRIES)
 
-        if retryable and job["attempts"] < MAX_RETRIES:
+        if retryable and job["attempts"] < min(tries, MAX_RETRIES):
             logger.warning(
                 "job %s attempt %d/%d failed, requeueing: %s",
                 job_id[:8], job["attempts"], MAX_RETRIES, error[:200],

@@ -179,6 +179,20 @@ def test_retries_stop_at_the_limit(monkeypatch):
     assert stored["status"] == "FAILED"
 
 
+def test_a_prompt_the_composer_refused_is_not_tried_again(monkeypatch):
+    error = 'the composer would not take it: COMPOSER_REJECTED_PROMPT: it holds ""'
+    stored = run_one(monkeypatch, {"error": error}, attempts=1)
+
+    assert stored["status"] == "FAILED"
+
+
+def test_a_picture_that_never_appeared_gets_one_more_try_only(monkeypatch):
+    error = "no image appeared: this prompt's tiles left the page"
+
+    assert run_one(monkeypatch, {"error": error}, attempts=1)["status"] == "PENDING"
+    assert run_one(monkeypatch, {"error": error}, attempts=2)["status"] == "FAILED"
+
+
 def test_an_exception_is_recorded_rather_than_escaping(monkeypatch):
     stored = run_one(monkeypatch, raises=RuntimeError("socket died"))
 
