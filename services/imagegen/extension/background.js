@@ -2314,8 +2314,12 @@ async function tileImage(tabId, src) {
     func: async (want) => {
       const el = [...document.querySelectorAll('img')].find(
         (i) => (i.currentSrc || i.src) === want || (i.currentSrc || i.src).startsWith(want));
+      // Since 2026-10-30 17:07 the grid's tiles are small and load "=s512-rw"
+      // previews (382x512 for a 3:4 picture) that never grow. The same link
+      // ending in "=s0" is the picture at full size (896x1200), measured.
+      const full = (u) => u.replace(/=s\d+(-[a-z]+)?(?=\?|$)/, '=s0');
       try {
-        const res = await fetch(el ? (el.currentSrc || el.src) : want, { credentials: 'include' });
+        const res = await fetch(full(el ? (el.currentSrc || el.src) : want), { credentials: 'include' });
         if (!res.ok) return { error: `HTTP ${res.status}` };
         const blob = await res.blob();
         if (!blob.type.startsWith('image/')) return { error: `not a picture: ${blob.type}` };
