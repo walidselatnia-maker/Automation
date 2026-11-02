@@ -191,9 +191,15 @@ async function landWhereTheWorkIs() {
 
   // Only a tab that is nowhere yet. A Flow tab already on a project is left
   // alone -- this runs on install and startup, never on a page mid-use.
-  const tabs = await chrome.tabs.query({});
-  const blank = tabs.find((t) => !t.url || t.url === 'about:blank' || t.url === 'chrome://newtab/');
-  const home = tabs.find((t) => isFlowUrl(t.url) && !(t.url || '').includes('/project/'));
+  //
+  // Judged by where a tab is going, not only where it is. Gemini Chat opens a
+  // popup window straight at Gemini, and until that first page commits the
+  // tab has no url at all: taken for a blank tab here, it was sent to Flow
+  // while Gemini typed a prompt into it, and the two fought over one tab.
+  const tabs = await chrome.tabs.query({ windowType: 'normal' });
+  const where = (t) => t.pendingUrl || t.url || '';
+  const blank = tabs.find((t) => !where(t) || where(t) === 'about:blank' || where(t) === 'chrome://newtab/');
+  const home = tabs.find((t) => isFlowUrl(where(t)) && !where(t).includes('/project/'));
   const tab = blank || home;
   if (!tab) return;
   if ((tab.url || '') === url) return;

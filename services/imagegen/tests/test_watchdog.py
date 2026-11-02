@@ -162,3 +162,31 @@ def test_a_stop_does_not_bank_time_towards_a_restart(monkeypatch):
     monkeypatch.setattr(chrome, "_wanted_running", False)
     assert check(FakeController()) is False
     assert watchdog.state.disconnected_since is None
+
+
+def test_a_gemini_prompt_in_progress_puts_the_restart_off(monkeypatch):
+    """Flow Kit gone is the only thing the watchdog measures, but Gemini Chat shares the browser:
+    a prompt still beating proves Chrome is not wedged, and a restart would throw its answer away."""
+    from agent import gemini
+
+    class Busy:
+        def __init__(self):
+            self.answering = True
+
+        def working(self):
+            return self.answering
+
+    busy = Busy()
+    monkeypatch.setattr(gemini, "get_queue", lambda: busy)
+    connected(True, monkeypatch)
+    check(FakeController())
+    connected(False, monkeypatch)
+    check(FakeController())
+    watchdog.state.disconnected_since -= 150
+
+    assert check(FakeController()) is False
+    assert watchdog.state.chrome_restarts == []
+
+    busy.answering = False  # the prompt is done: the restart it was holding back comes now
+    assert check(FakeController()) is True
+    assert len(watchdog.state.chrome_restarts) == 1

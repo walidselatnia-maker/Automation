@@ -8,7 +8,8 @@
 // The window is a popup created straight at the Gemini address, never a blank tab: Flow Kit
 // takes over blank tabs on startup and opens its own tabs in the first *normal* window, so a
 // popup keeps the two extensions out of each other's way. Chrome here runs with background
-// throttling off, so the window works whether or not it is in front.
+// throttling off and covered windows counted as visible (docker/supervisord.conf), so the page
+// keeps working while Flow's window is in front of it.
 const AGENT = 'http://127.0.0.1:8100/ext/gemini';
 const APP = 'https://gemini.google.com/app';
 
@@ -30,11 +31,16 @@ chrome.runtime.onConnect.addListener((port) => {
 });
 
 // ── the Gemini window ────────────────────────────────────────────────────────
+// The tab is ours while it is on Gemini, or on Google's sign-in where Gemini sends a signed-out
+// account. Anywhere else, Flow Kit has it: it is left to Flow and a new window is opened, rather
+// than pulling Flow's page out from under a picture being made.
+const OURS = /^https:\/\/(gemini|accounts)\.google\.com\//;
+
 async function geminiTab() {
   const { tabId } = await chrome.storage.session.get('tabId');
   if (tabId) {
     const tab = await chrome.tabs.get(tabId).catch(() => null);
-    if (tab) return tab;
+    if (tab && OURS.test(tab.pendingUrl || tab.url || '')) return tab;
   }
   const win = await chrome.windows.create({ url: APP, type: 'popup', focused: false, left: 0, top: 0, width: 1280, height: 720 });
   const tab = win.tabs[0];

@@ -22,7 +22,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Optional
 
-from agent import chrome
+from agent import chrome, gemini
 from agent.db import jobs
 from agent.services.flow_client import get_flow_client
 
@@ -287,6 +287,13 @@ async def _check_extension(controller) -> bool:
         )
         controller.pause("chrome unrecoverable")
         return True
+
+    # Flow Kit's connection is the only thing measured above, and Gemini Chat shares the browser.
+    # A Gemini prompt still beating proves the browser is not wedged, and a restart now would
+    # throw its answer away. The clock keeps running, so the restart comes once the prompt is done.
+    if gemini.get_queue().working():
+        logger.info("Watchdog: Flow Kit gone for %ds, but Gemini is answering a prompt; restarting after it", int(gap))
+        return False
 
     state.healthy = False
     state.reason = (
