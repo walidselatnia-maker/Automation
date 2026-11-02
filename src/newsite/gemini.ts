@@ -181,7 +181,8 @@ const TRY_SCRIPT = `<script>
   var form = document.getElementById('gm-form');
   if (!form) return;
   var send = document.getElementById('gm-send'), wait = document.getElementById('gm-wait'), out = document.getElementById('gm-reply');
-  var MAX = 20 * 1024 * 1024;
+  // Files travel as base64 (a third larger) in a request the server caps at 20 MB.
+  var MAX = 14 * 1024 * 1024;
   function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
   function readFile(f) {
     return new Promise(function (ok, no) {
@@ -213,7 +214,7 @@ const TRY_SCRIPT = `<script>
     var prompt = document.getElementById('gm-prompt').value.trim();
     var picked = Array.from(document.getElementById('gm-files').files || []);
     if (!prompt && !picked.length) { show(null, 'Write a message or attach a file first.'); return; }
-    if (picked.reduce(function (n, f) { return n + f.size; }, 0) > MAX) { show(null, 'The files are too large together. Keep them under 20 MB.'); return; }
+    if (picked.reduce(function (n, f) { return n + f.size; }, 0) > MAX) { show(null, 'The files are too large together. Keep them under 14 MB.'); return; }
     send.disabled = true; send.classList.add('busy'); wait.textContent = 'Sending…'; out.hidden = true;
     try {
       var files = await Promise.all(picked.map(readFile));
