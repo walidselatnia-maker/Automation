@@ -283,10 +283,19 @@
     const port = chrome.runtime.connect({ name: 'gemini-chat' });
     port.onMessage.addListener(async (msg) => {
       if (msg.cmd !== 'run') return;
+      // Chrome stops an extension's service worker after 30 s without an event, and its timers
+      // do not count. A message on this port does, so the page says it is still working every
+      // few seconds -- otherwise a slow answer outlived the worker, the reply had nowhere to go,
+      // and the agent queued the same prompt again.
+      const alive = setInterval(() => {
+        try { port.postMessage({ beat: msg.job.id }); } catch { /* the worker is gone */ }
+      }, 5_000);
       try {
         port.postMessage({ id: msg.job.id, ok: true, result: await chat(msg.job.payload) });
       } catch (e) {
         port.postMessage({ id: msg.job.id, ok: false, error: e.message || String(e) });
+      } finally {
+        clearInterval(alive);
       }
     });
   }

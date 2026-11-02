@@ -27,9 +27,12 @@ from agent import chrome
 
 logger = logging.getLogger(__name__)
 
-#: A prompt handed out with no heartbeat for this long goes back in the queue. The extension beats
-#: every 5 s while it works, so this only fires when the hand-off itself was lost (the long-poll
-#: answer never arrived) -- without it that prompt would wait out its whole timeout.
+#: How long a prompt that was handed out may go without a heartbeat. The extension beats the
+#: moment a prompt arrives and every 5 s while the page works on it. A prompt never confirmed by
+#: that first beat was lost in transit (the long-poll answer never arrived) and goes back in the
+#: queue. One that was confirmed and then went quiet is failed instead, never handed out again:
+#: it may already be in Gemini's box or answered, and re-sending it is how the page ended up
+#: typing the same prompt over and over.
 LEASE_S = 20
 
 #: How many times one prompt may be handed out before it is failed instead of re-queued.
@@ -56,6 +59,8 @@ class GeminiJob:
     result: Optional[dict] = None
     error: Optional[str] = None
     last_beat: float = 0.0
+    # Set by the first heartbeat after a hand-off: the extension has the prompt.
+    confirmed: bool = False
     deliveries: int = 0
     finished_at: float = 0.0
     holds_chrome: bool = False
@@ -114,6 +119,7 @@ class GeminiQueue:
                 job = self.jobs.get(self._order.popleft())
                 if job and job.status == QUEUED:
                     job.status = RUNNING
+                    job.confirmed = False
                     job.deliveries += 1
                     job.last_beat = time.monotonic()
                     return job
@@ -131,6 +137,7 @@ class GeminiQueue:
         job = self.jobs.get(job_id)
         if not job or job.status != RUNNING:
             return False
+        job.confirmed = True
         job.last_beat = time.monotonic()
         return True
 
@@ -170,7 +177,10 @@ class GeminiQueue:
                 self._fail(job, "TIMEOUT: Gemini did not answer in time")
                 self._close(job)
             elif job.status == RUNNING and now - job.last_beat > LEASE_S:
-                if job.deliveries >= MAX_DELIVERIES:
+                if job.confirmed:
+                    self._fail(job, "STOPPED: the Gemini page stopped reporting back during the prompt. It is not sent again, so Gemini is not asked twice.")
+                    self._close(job)
+                elif job.deliveries >= MAX_DELIVERIES:
                     self._fail(job, "TIMEOUT: the Gemini page never picked the prompt up")
                     self._close(job)
                 else:

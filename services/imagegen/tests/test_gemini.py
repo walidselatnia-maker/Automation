@@ -173,6 +173,23 @@ async def test_heartbeats_keep_a_long_answer_from_being_handed_out_twice(clock):
     assert job.status == "running" and job.deliveries == 1
 
 
+async def test_a_prompt_the_page_took_is_never_handed_out_again(clock):
+    """The page confirmed it and then went quiet (its worker was stopped mid-answer): the prompt
+    may already be in Gemini's box or answered, so it fails rather than being typed again."""
+    q = gemini.get_queue()
+    job = q.submit({"prompt": "x"}, timeout_s=600)
+    await q.next_job(0)
+    assert q.beat(job.id)  # the extension's first beat: it has the prompt
+
+    clock.now += gemini.LEASE_S + 1
+    q.sweep()
+    assert job.status == "failed"
+    assert job.error.startswith("STOPPED")
+    assert job.deliveries == 1
+    assert await q.next_job(0) is None
+    assert chrome._users == 0
+
+
 async def test_a_prompt_handed_out_too_often_is_failed(clock):
     q = gemini.get_queue()
     job = q.submit({"prompt": "x"}, timeout_s=3600)

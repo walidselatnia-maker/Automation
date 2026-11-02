@@ -86,6 +86,11 @@ async function run(job) {
       else resolve(result);
     }
     function onMessage(msg) {
+      // The page's heartbeat: it keeps this worker alive and is passed on to the agent.
+      if (msg.beat === job.id) {
+        post('/beat', { id: job.id }).catch(() => {});
+        return;
+      }
       if (msg.id !== job.id) return;
       if (msg.ok) finish(null, msg.result);
       else finish(new Error(msg.error));
@@ -126,6 +131,9 @@ async function pollLoop() {
         continue;
       }
       if (!job) continue;
+      // The first beat says the prompt arrived. From then on the agent never hands it out again,
+      // so Gemini is never asked the same prompt twice.
+      await post('/beat', { id: job.id }).catch(() => {});
       const beat = setInterval(() => post('/beat', { id: job.id }).catch(() => {}), 5_000);
       try {
         await report(job.id, { ok: true, result: await run(job) });

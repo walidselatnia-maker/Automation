@@ -64,6 +64,8 @@ export function geminiProblem(code: string, message: string): string {
       return `${message} The Browser page is where accounts are signed in.`;
     case 'TIMEOUT':
       return 'Gemini did not answer in time. Try again in a minute.';
+    case 'STOPPED':
+      return 'The Gemini page stopped reporting back in the middle of a prompt. It was not sent again, so Gemini was not asked twice.';
     case 'NOT_AN_ANSWER':
     case 'NOT_JSON':
       return `${message}. The step used your AI keys instead.`;
