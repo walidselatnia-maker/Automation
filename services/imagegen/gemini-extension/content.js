@@ -80,14 +80,33 @@
     return btoa(bin);
   }
 
+  // Shift+Enter is a new line in Gemini's box; a plain line break is Enter, and Enter sends.
+  function newLine(ed) {
+    const e = new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', shiftKey: true, bubbles: true, cancelable: true });
+    Object.defineProperty(e, 'keyCode', { get: () => 13 });
+    Object.defineProperty(e, 'which', { get: () => 13 });
+    ed.dispatchEvent(e);
+  }
+
+  const squash = (s) => s.replace(/\s+/g, '');
+
+  // Typed one line at a time. Typed whole, the first line break sent the first line on its own
+  // ("Instructions:") and lost the rest; a pasted text never reaches the box at all.
   async function setPrompt(text) {
     const ed = editor();
     ed.focus();
     document.execCommand('selectAll', false);
     document.execCommand('delete', false);
-    if (text) document.execCommand('insertText', false, text);
+    const before = responses().length;
+    text.replace(/\r\n?/g, '\n').split('\n').forEach((line, i) => {
+      if (i) newLine(ed);
+      if (line) document.execCommand('insertText', false, line);
+    });
     ed.dispatchEvent(new Event('input', { bubbles: true }));
-    if (text && !ed.innerText.trim()) fail('NO_PROMPT_BOX', 'could not type into the Gemini prompt box');
+    await sleep(300);
+    if (responses().length > before) fail('NO_PROMPT_BOX', 'Gemini sent part of the prompt while it was being typed');
+    // Only the whole prompt is sent: half of one gets a confident answer to the wrong question.
+    if (squash(ed.innerText) !== squash(text)) fail('NO_PROMPT_BOX', 'the whole prompt did not fit in the Gemini prompt box');
   }
 
   const previewCount = () =>
@@ -258,7 +277,7 @@
     return { ...(await extract(responses().at(-1), images)), account: email, temporary: temp };
   }
 
-  window.__geminiChat = { chat, toMarkdown, plainText };
+  window.__geminiChat = { chat, setPrompt, toMarkdown, plainText };
 
   if (typeof chrome !== 'undefined' && chrome.runtime?.id) {
     const port = chrome.runtime.connect({ name: 'gemini-chat' });
