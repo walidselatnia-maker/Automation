@@ -6,6 +6,15 @@
 (() => {
   if (window.__geminiChat) return;
 
+  // Gemini draws a full-window animated background, on every page, for ever. Nobody watches this
+  // window, there is no GPU to draw it with, and covered windows are kept drawing so Gemini keeps
+  // answering behind Flow's (docker/supervisord.conf) -- so it would cost CPU through every
+  // picture. Every animation here runs once, instantly: anything waiting for one to end still
+  // sees it end.
+  const still = document.createElement('style');
+  still.textContent = '*, *::before, *::after { animation-duration: 0s !important; animation-delay: 0s !important; animation-iteration-count: 1 !important; transition-duration: 0s !important; transition-delay: 0s !important; }';
+  (document.head || document.documentElement).append(still);
+
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
