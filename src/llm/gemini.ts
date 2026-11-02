@@ -24,6 +24,19 @@ export const articleChat = (articleId: number): string => `article:${articleId}`
 export const GEMINI_LAST_OK = 'gemini_last_ok_at';
 export const GEMINI_LAST_ERROR = 'gemini_last_error';
 
+/**
+ * How long prompts skip Gemini after it fails to answer, going straight to their usual model.
+ * The writer works one prompt at a time, so a Gemini that cannot answer -- the browser busy making
+ * pictures, signed out, the extension gone -- must cost one wait, not one per prompt.
+ */
+export const GEMINI_PAUSE_MS = 10 * 60_000;
+
+/** Failures in which Gemini did answer, only not usably: no reason to stop asking it. */
+const ANSWERED = new Set(['NOT_JSON', 'NOT_AN_ANSWER', 'SETUP', 'PAUSED']);
+
+/** Past every wait below it: the last word on how long one prompt may hold up the next. */
+const GRACE_MS = 90_000;
+
 /** Where the Gemini chat of each conversation key ("article:12") is remembered. */
 export interface GeminiChats {
   get(key: string): string;
@@ -39,6 +52,8 @@ interface GeminiSetup {
   fetchImpl?: typeof fetch;
   /** How often a reply is polled for; the client's default (2 s) unless given. */
   pollIntervalMs?: number;
+  /** How long past its own timeout a prompt is given up on regardless; GRACE_MS unless given. */
+  graceMs?: number;
 }
 
 /**
@@ -80,6 +95,26 @@ export function recordGeminiOutcome(settings: Settings, error: string | null): v
     settings.set(GEMINI_LAST_OK, new Date().toISOString());
     settings.set(GEMINI_LAST_ERROR, '');
   }
+}
+
+/**
+ * Until when prompts skip Gemini (epoch ms), or 0. Read off the last error, so the status badge
+ * and chat() agree, and a successful answer -- a test message counts -- ends the pause at once.
+ */
+export function geminiPausedUntil(settings: Settings, now = Date.now()): number {
+  const m = /^(\S+) ([A-Z_]{3,30}):/.exec(settings.get(GEMINI_LAST_ERROR));
+  if (!m || ANSWERED.has(m[2]!)) return 0;
+  const until = Date.parse(m[1]!) + GEMINI_PAUSE_MS;
+  return Number.isFinite(until) && until > now ? until : 0;
+}
+
+/** The work, or a TIMEOUT once `ms` have gone by, whichever comes first. */
+function within<T>(ms: number, work: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new GeminiError('Gemini did not answer in time', 'TIMEOUT')), ms);
+  });
+  return Promise.race([work, late]).finally(() => clearTimeout(timer));
 }
 
 /**
@@ -142,36 +177,51 @@ export function unusableReply(text: string): string | null {
  *
  * A prompt with a `chat` key continues that conversation's Gemini chat (one per article), or
  * starts it and remembers it; one without starts a new chat of its own.
+ *
+ * Never waits longer than its own timeout and a margin, whatever the image service does: the
+ * prompts of an article go one after another and the writer one article at a time, so one prompt
+ * that never came back would stop everything behind it.
  */
 export async function geminiCompletion(request: ChatRequest): Promise<Completion> {
   if (!setup) throw new GeminiError('Gemini is not set up in this process', 'SETUP');
   const current = setup;
   const client = geminiClient(current.settings, current.fetchImpl, current.pollIntervalMs);
   if (!client) throw new GeminiError('The image service is not configured, and Gemini runs there', 'SETUP');
-  return inTurn(request.chat, () => answer(current, client, request));
+  const timeoutMs = request.timeoutMs ?? 300_000;
+  const limitMs = timeoutMs + (current.graceMs ?? GRACE_MS);
+
+  return inTurn(request.chat, async () => {
+    // Asked in turn, not before: a prompt that waited behind a failed one goes straight on.
+    const paused = geminiPausedUntil(current.settings);
+    if (paused) {
+      throw new GeminiError(`Gemini is paused until ${new Date(paused).toISOString().slice(11, 16)} UTC after it could not answer`, 'PAUSED');
+    }
+    try {
+      const completion = await within(limitMs, answer(current, client, request, timeoutMs));
+      recordGeminiOutcome(current.settings, null);
+      return completion;
+    } catch (err) {
+      const error = err instanceof GeminiError ? err : new GeminiError(err instanceof Error ? err.message : String(err));
+      recordGeminiOutcome(current.settings, `${error.code}: ${error.message}`);
+      throw error;
+    }
+  });
 }
 
-async function answer(current: GeminiSetup, client: GeminiClient, request: ChatRequest): Promise<Completion> {
-  const { settings, chats } = current;
+async function answer(current: GeminiSetup, client: GeminiClient, request: ChatRequest, timeoutMs: number): Promise<Completion> {
+  const { chats } = current;
   const key = request.chat;
-  try {
-    const reply = await client.ask({
-      prompt: joinMessages(request.messages, request.format),
-      account: current.account(),
-      conversationId: key && chats ? chats.get(key) : '',
-      images: false,
-      timeoutS: Math.round((request.timeoutMs ?? 300_000) / 1000),
-    });
-    // Remembered even when the reply is then refused: the prompt is in that chat now.
-    if (key && chats && reply.conversation_id) chats.set(key, reply.conversation_id);
-    const problem = unusableReply(reply.text);
-    if (problem) throw new GeminiError(problem, 'NOT_AN_ANSWER');
-    const content = request.format === 'json' ? jsonFrom(reply) : reply.markdown || reply.text;
-    recordGeminiOutcome(settings, null);
-    return { content, tokensIn: 0, tokensOut: 0 };
-  } catch (err) {
-    const error = err instanceof GeminiError ? err : new GeminiError(err instanceof Error ? err.message : String(err));
-    recordGeminiOutcome(settings, `${error.code}: ${error.message}`);
-    throw error;
-  }
+  const reply = await client.ask({
+    prompt: joinMessages(request.messages, request.format),
+    account: current.account(),
+    conversationId: key && chats ? chats.get(key) : '',
+    images: false,
+    timeoutS: Math.round(timeoutMs / 1000),
+  });
+  // Remembered even when the reply is then refused: the prompt is in that chat now.
+  if (key && chats && reply.conversation_id) chats.set(key, reply.conversation_id);
+  const problem = unusableReply(reply.text);
+  if (problem) throw new GeminiError(problem, 'NOT_AN_ANSWER');
+  const content = request.format === 'json' ? jsonFrom(reply) : reply.markdown || reply.text;
+  return { content, tokensIn: 0, tokensOut: 0 };
 }

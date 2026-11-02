@@ -157,7 +157,18 @@ What keeps the two apart:
   session that needs signing in must not stop pictures, nor a Flow hold stop
   Gemini.
 - **Its own window**, a popup created at the Gemini address. Flow Kit takes
-  over blank tabs and opens its tabs in the first normal window.
+  over blank tabs and opens its tabs in the first normal window; it judges a
+  tab by where it is going, so a popup still loading is not taken for blank,
+  and Gemini Chat leaves a tab that has ended up on Flow to Flow.
+- **Both pages always live.** With no window manager, a fully covered window
+  is reported to its page as hidden and stops drawing, and Flow's composer
+  raises its full-screen window at every step. Chrome runs with
+  `--disable-backgrounding-occluded-windows`, so Gemini keeps answering behind
+  it. No lock between the two: a picture holds Chrome for minutes, and SEO
+  prompts waiting behind it would make every article slow.
+- **The watchdog waits for Gemini.** It restarts Chrome when Flow Kit has been
+  disconnected too long; a Gemini prompt still beating proves the browser is
+  not wedged, so the restart waits until the prompt is done.
 - **The same Chrome counter.** A queued prompt holds the browser up like a job,
   so the idle stop never takes it away mid-answer and a prompt alone starts it.
 - **Not an AI key.** A key with no model list serves every model, so a Gemini
@@ -172,6 +183,12 @@ What keeps the two apart:
   chats. Prompts with no article (research, top lists) open a chat each.
 - **Never asked twice.** A prompt the extension has confirmed is never handed
   out again, even if the page goes quiet; it fails and falls back instead.
+- **Never holds up the writer.** The writer works one prompt at a time, so a
+  Gemini that cannot answer must cost one wait, not one per prompt. Each prompt
+  is given up on at its timeout plus a margin whatever the service does; a
+  prompt no extension is there to take fails in 90 s; and after Gemini fails
+  to answer, prompts skip it for 10 minutes and go to their usual model. A test
+  message that works ends the pause.
 
 The risk accepted: automated prompts from the same account and browser Flow
 uses. They run in Gemini's own page, paced by its own answering, in normal

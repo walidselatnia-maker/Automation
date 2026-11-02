@@ -41,6 +41,11 @@ MAX_DELIVERIES = 3
 #: The extension polls at least every POLL_WAIT_S; quieter than this, it is not there.
 EXTENSION_ALIVE_S = 45
 
+#: How long a prompt waits for an extension that is not there at all before it is failed. Chrome
+#: starts and the extension polls within seconds; one still absent after this is not coming, and
+#: the platform is better off asking its usual model now than after the prompt's whole timeout.
+NO_EXTENSION_S = 90
+
 #: How long a long-poll waits for a prompt before answering "nothing".
 POLL_WAIT_S = 25
 
@@ -58,6 +63,7 @@ class GeminiJob:
     status: str = QUEUED
     result: Optional[dict] = None
     error: Optional[str] = None
+    queued_at: float = 0.0
     last_beat: float = 0.0
     # Set by the first heartbeat after a hand-off: the extension has the prompt.
     confirmed: bool = False
@@ -81,7 +87,8 @@ class GeminiQueue:
     # -- the platform's side ------------------------------------------------
 
     def submit(self, payload: dict, timeout_s: float) -> GeminiJob:
-        job = GeminiJob(id=str(uuid.uuid4()), payload=payload, deadline=time.monotonic() + timeout_s)
+        now = time.monotonic()
+        job = GeminiJob(id=str(uuid.uuid4()), payload=payload, deadline=now + timeout_s, queued_at=now)
         # Claimed before anything can await, so the idle stop cannot land in between.
         chrome.hold()
         job.holds_chrome = True
@@ -95,11 +102,19 @@ class GeminiQueue:
         self.sweep()
         return self.jobs.get(job_id)
 
+    def extension_alive(self) -> bool:
+        return bool(self.last_poll) and time.monotonic() - self.last_poll < EXTENSION_ALIVE_S
+
+    def working(self) -> bool:
+        """Whether the page is answering a prompt right now: handed out and still beating."""
+        now = time.monotonic()
+        return any(j.status == RUNNING and now - j.last_beat <= LEASE_S for j in self.jobs.values())
+
     def status(self) -> dict:
         self.sweep()
         live = [j for j in self.jobs.values() if j.status in (QUEUED, RUNNING)]
         return {
-            "extension_connected": bool(self.last_poll) and time.monotonic() - self.last_poll < EXTENSION_ALIVE_S,
+            "extension_connected": self.extension_alive(),
             "queued": sum(1 for j in live if j.status == QUEUED),
             "running": sum(1 for j in live if j.status == RUNNING),
             "last_success_at": self.last_success_at,
@@ -170,7 +185,8 @@ class GeminiQueue:
             chrome.release()
 
     def sweep(self) -> None:
-        """Time out overdue prompts, re-queue lost hand-offs, forget old answers."""
+        """Time out overdue prompts, re-queue lost hand-offs, fail prompts nobody is there to take,
+        forget old answers."""
         now = time.monotonic()
         for job in list(self.jobs.values()):
             if job.status in (QUEUED, RUNNING) and now > job.deadline:
@@ -188,6 +204,9 @@ class GeminiQueue:
                     job.status = QUEUED
                     self._order.appendleft(job.id)
                     self._wakeup.set()
+            elif job.status == QUEUED and now - job.queued_at > NO_EXTENSION_S and not self.extension_alive():
+                self._fail(job, "NO_EXTENSION: the Gemini Chat extension is not running in the image service's browser")
+                self._close(job)
             elif job.status in (DONE, FAILED) and now - job.finished_at > KEEP_FINISHED_S:
                 del self.jobs[job.id]
 

@@ -439,6 +439,7 @@ database, and mounts `./prompts` read-write for editing without a rebuild.
 | The browser view is blank | Chrome has not finished starting; reload after a minute |
 | Gemini says "Sign-in needed" | Open **Browser** and sign in to Google; Gemini uses the same session as Flow |
 | Gemini "Last prompt failed" with a limit | Gemini's daily limit for that account; those steps use the AI keys until it resets |
+| Gemini "Paused" | Gemini could not answer (the reason is shown), so for 10 minutes the steps use the AI keys instead of waiting on it. Nothing to do; send a test message to end it sooner |
 
 **Decisions** — a section of the dashboard — answers "why did nothing happen?":
 every site checked and every keyword skipped, with the reason recorded when the

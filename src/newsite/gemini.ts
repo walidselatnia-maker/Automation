@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { get, run } from '../db/index.js';
 import { setModelOverride } from '../db/repos.js';
 import { GeminiError, type GeminiFile, type GeminiReply } from '../integrations/gemini.js';
-import { GEMINI_LAST_ERROR, GEMINI_LAST_OK, GEMINI_MODEL, geminiClient, recordGeminiOutcome, type GeminiChats } from '../llm/gemini.js';
+import { GEMINI_LAST_ERROR, GEMINI_LAST_OK, GEMINI_MODEL, geminiClient, geminiPausedUntil, recordGeminiOutcome, type GeminiChats } from '../llm/gemini.js';
 import { invalidatePromptCache, modelFor, PROMPT_MODELS } from '../pipeline/prompts.js';
 import type { Settings } from '../settings.js';
 import { html, raw, type Html } from '../web/views/layout.js';
@@ -87,6 +87,8 @@ export function geminiProblem(code: string, message: string): string {
       return `${message}. The step used your AI keys instead.`;
     case 'GONE':
       return 'The image service restarted while Gemini was answering. Send it again.';
+    case 'NO_EXTENSION':
+      return "The Gemini Chat extension is not running in the image service's browser. Open the Browser page once; if it keeps happening, redeploy the image service.";
     case 'KEY':
     case 'SERVICE':
     case 'SETUP':
@@ -123,10 +125,12 @@ export async function geminiState(settings: Settings, fetchImpl?: Fetch, service
   if (failed) {
     const [at = '', ...rest] = failed.split(' ');
     const { code, message } = GeminiError.from(rest.join(' '));
+    const paused = geminiPausedUntil(settings);
+    const until = paused ? ` Until ${new Date(paused).toISOString().slice(11, 16)} the steps use your AI keys instead; a test message that works ends this sooner.` : '';
     return {
       kind: 'bad',
-      label: code === 'NOT_SIGNED_IN' || code === 'WRONG_ACCOUNT' ? 'Sign-in needed' : 'Last prompt failed',
-      detail: `${geminiProblem(code, message)} (${at.slice(0, 16).replace('T', ' ')})`,
+      label: code === 'NOT_SIGNED_IN' || code === 'WRONG_ACCOUNT' ? 'Sign-in needed' : paused ? 'Paused' : 'Last prompt failed',
+      detail: `${geminiProblem(code, message)} (${at.slice(0, 16).replace('T', ' ')})${until}`,
     };
   }
   if (okAt) return { kind: 'ok', label: 'Working', detail: `Last answer ${okAt.slice(0, 16).replace('T', ' ')}.` };

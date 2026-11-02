@@ -3,7 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { closeDatabase, openDatabase } from '../src/db/index.js';
 import { GeminiClient, GeminiError } from '../src/integrations/gemini.js';
 import { chat } from '../src/llm/client.js';
-import { articleChat, configureGemini, GEMINI_LAST_ERROR, GEMINI_LAST_OK, GEMINI_MODEL, joinMessages, jsonFrom, unusableReply } from '../src/llm/gemini.js';
+import {
+  articleChat, configureGemini, GEMINI_LAST_ERROR, GEMINI_LAST_OK, GEMINI_MODEL, GEMINI_PAUSE_MS, geminiPausedUntil, joinMessages, jsonFrom, recordGeminiOutcome, unusableReply,
+} from '../src/llm/gemini.js';
 import { listEndpointRows, upsertEndpoint } from '../src/llm/pool.js';
 import { Settings } from '../src/settings.js';
 import { setLogLevel } from '../src/lib/logger.js';
@@ -168,13 +170,55 @@ describe('chat() with Gemini as the model', () => {
     expect(ollamaModels).toEqual([]);
   });
 
-  it("a failed prompt does not hold up the article's next one", async () => {
+  it("a failed prompt does not hold up the article's next one, which goes straight to its usual model", async () => {
     const { fetchImpl, sent } = service({ error: 'TIMEOUT: too slow' });
     configureGemini({ settings, pollIntervalMs: 5, account: () => '', chats: { get: () => '', set: () => {} }, fetchImpl });
     const ask = () => chat({ model: GEMINI_MODEL, messages: [{ role: 'user', content: 'x' }], fallbackModel: 'gpt-oss:120b', chat: articleChat(3) }, KEY);
     const results = await Promise.all([ask(), ask()]);
     expect(results.map((r) => r.model)).toEqual(['gpt-oss:120b', 'gpt-oss:120b']);
-    expect(sent).toHaveLength(2);
+    // Gemini could not answer, so it is paused: the second prompt never waits on it.
+    expect(sent).toHaveLength(1);
+    expect(geminiPausedUntil(settings)).toBeGreaterThan(Date.now() + GEMINI_PAUSE_MS - 60_000);
+  });
+
+  it('gives up on a prompt the image service never finishes, and the next one goes on', async () => {
+    // The service takes the prompt and then calls it "running" for ever.
+    const fetchImpl = vi.fn(async (url: string | URL | Request) =>
+      String(url).endsWith('/v1/gemini/jobs')
+        ? json({ id: 'job-1', status: 'queued', result: null, error: null }, 202)
+        : json({ id: 'job-1', status: 'running', result: null, error: null }),
+    ) as unknown as typeof fetch;
+    configureGemini({ settings, pollIntervalMs: 5, graceMs: 50, account: () => '', fetchImpl });
+    const ask = () => chat({ model: GEMINI_MODEL, messages: [{ role: 'user', content: 'x' }], fallbackModel: 'gpt-oss:120b', chat: articleChat(4), timeoutMs: 100 }, KEY);
+    const results = await Promise.all([ask(), ask()]);
+    expect(results.map((r) => r.model)).toEqual(['gpt-oss:120b', 'gpt-oss:120b']);
+    expect(settings.get(GEMINI_LAST_ERROR)).toMatch(/TIMEOUT: Gemini did not answer in time/);
+  });
+
+  it('gives up even when the image service never answers at all', async () => {
+    const fetchImpl = vi.fn(() => new Promise<Response>(() => {})) as unknown as typeof fetch;
+    configureGemini({ settings, pollIntervalMs: 5, graceMs: 50, account: () => '', fetchImpl });
+    const result = await chat({ model: GEMINI_MODEL, messages: [{ role: 'user', content: 'x' }], fallbackModel: 'gpt-oss:120b', timeoutMs: 100 }, KEY);
+    expect(result.model).toBe('gpt-oss:120b');
+  });
+
+  it('keeps asking Gemini after an answer that was only badly shaped, and a working answer ends a pause', async () => {
+    settings.set(GEMINI_LAST_ERROR, `${new Date().toISOString()} NOT_JSON: Gemini did not answer with valid JSON`);
+    expect(geminiPausedUntil(settings)).toBe(0);
+    settings.set(GEMINI_LAST_ERROR, `${new Date(Date.now() - GEMINI_PAUSE_MS - 1000).toISOString()} TIMEOUT: too slow`);
+    expect(geminiPausedUntil(settings)).toBe(0); // long over
+
+    settings.set(GEMINI_LAST_ERROR, `${new Date().toISOString()} STOPPED: the page went quiet`);
+    const { fetchImpl, sent } = service({ result: reply() });
+    configureGemini({ settings, pollIntervalMs: 5, account: () => '', fetchImpl });
+    const paused = await chat({ model: GEMINI_MODEL, messages: [{ role: 'user', content: 'x' }], fallbackModel: 'gpt-oss:120b' }, KEY);
+    expect(paused.model).toBe('gpt-oss:120b');
+    expect(sent).toHaveLength(0);
+    expect(settings.get(GEMINI_LAST_ERROR)).toMatch(/STOPPED/); // the reason stays on show
+
+    recordGeminiOutcome(settings, null); // what a test message that works does
+    const back = await chat({ model: GEMINI_MODEL, messages: [{ role: 'user', content: 'x' }], fallbackModel: 'gpt-oss:120b' }, KEY);
+    expect(back.model).toBe(GEMINI_MODEL);
   });
 
   it('fails plainly with no fallback, and with no Gemini set up at all', async () => {

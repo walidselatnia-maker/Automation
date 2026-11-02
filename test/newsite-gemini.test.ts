@@ -128,6 +128,11 @@ describe('Gemini on Platform settings', () => {
     expect(out).toMatchObject({ kind: 'bad', label: 'Sign-in needed' });
     expect(out.detail).toMatch(/Browser page/);
 
+    settings.set(GEMINI_LAST_ERROR, `${new Date().toISOString()} STOPPED: the page went quiet`);
+    const paused = await geminiState(settings, fetchImpl);
+    expect(paused).toMatchObject({ kind: 'bad', label: 'Paused' });
+    expect(paused.detail).toMatch(/the steps use your AI keys instead/);
+
     serviceUp = false;
     expect(await geminiState(settings, fetchImpl)).toMatchObject({ kind: 'bad', label: 'Not answering' });
 

@@ -230,3 +230,44 @@ def test_the_extension_counts_as_gone_when_it_stops_polling(clock):
     assert q.status()["extension_connected"] is True
     clock.now += gemini.EXTENSION_ALIVE_S + 1
     assert q.status()["extension_connected"] is False
+
+
+def test_a_prompt_nobody_is_there_to_take_fails_instead_of_waiting_out_its_timeout(clock):
+    """No extension polling at all: the platform hears so in about a minute and a half and asks its
+    usual model, instead of holding up the article for the prompt's whole timeout."""
+    q = gemini.get_queue()
+    job = q.submit({"prompt": "x"}, timeout_s=600)
+    clock.now += gemini.NO_EXTENSION_S - 1
+    q.sweep()
+    assert job.status == "queued"  # Chrome may still be starting
+
+    clock.now += 2
+    q.sweep()
+    assert job.status == "failed" and job.error.startswith("NO_EXTENSION")
+    assert chrome._users == 0
+
+
+async def test_a_prompt_waiting_behind_another_is_not_failed(clock):
+    """The extension takes one prompt at a time: the next one waits its turn while the page beats."""
+    q = gemini.get_queue()
+    first = q.submit({"prompt": "a"}, timeout_s=600)
+    second = q.submit({"prompt": "b"}, timeout_s=600)
+    await q.next_job(0)
+    for _ in range(10):
+        clock.now += 15
+        q.beat(first.id)
+        q.sweep()
+    assert second.status == "queued"
+    assert q.working() is True
+
+
+async def test_the_page_counts_as_working_only_while_it_beats(clock):
+    q = gemini.get_queue()
+    assert q.working() is False
+    job = q.submit({"prompt": "x"}, timeout_s=600)
+    assert q.working() is False  # queued, not on the page yet
+    await q.next_job(0)
+    q.beat(job.id)
+    assert q.working() is True
+    q.finish(job.id, True, {"text": "y"})
+    assert q.working() is False
