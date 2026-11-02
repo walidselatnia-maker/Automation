@@ -75,7 +75,7 @@ export interface NewWebsiteDeps {
   checkSite?: (domain: string, apiKey: string) => Promise<SiteCheck>;
   listPosts?: (domain: string, apiKey: string) => Promise<SitePost[]>;
   suggest?: (pillar: string, language?: string) => Promise<string[]>;
-  ask?: (promptName: string, variables: Record<string, unknown>) => Promise<string>;
+  ask?: (promptName: string, variables: Record<string, unknown>, chat?: string) => Promise<string>;
   /** Whether websites may be added yet. Defaults to the saved platform setup. */
   isPlatformReady?: () => boolean;
   /** The category names on a website (GET /api/v1/categories); tests pass their own. */
@@ -128,9 +128,9 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
 
   const ask =
     deps.ask ??
-    (async (promptName: string, variables: Record<string, unknown>) => {
+    (async (promptName: string, variables: Record<string, unknown>, chat?: string) => {
       if (!deps.settings) throw new Error('No AI connection configured.');
-      return (await askPrompt(deps.settings, deps.encryptionKey, promptName, variables)).content;
+      return (await askPrompt(deps.settings, deps.encryptionKey, promptName, variables, { chat })).content;
     });
 
   if (deps.settings) {

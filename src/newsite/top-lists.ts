@@ -158,7 +158,7 @@ export async function readPosts(site: NewWebsiteRow, apiKey: string, fetchImpl: 
 export interface TopListDeps {
   encryptionKey: Buffer;
   readFlash: (query: unknown) => NewFlash;
-  ask: (promptName: string, variables: Record<string, unknown>) => Promise<string>;
+  ask: (promptName: string, variables: Record<string, unknown>, chat?: string) => Promise<string>;
   fetchImpl?: Fetch;
 }
 

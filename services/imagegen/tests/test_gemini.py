@@ -65,7 +65,7 @@ def client(loopback=True, api_key=""):
 
 def test_a_prompt_goes_to_the_extension_and_its_reply_comes_back(fresh):
     with client() as c:
-        sent = c.post("/v1/gemini/jobs", json={"prompt": "Hello", "account": " me@example.com "})
+        sent = c.post("/v1/gemini/jobs", json={"prompt": "Hello", "account": " me@example.com ", "conversation_id": "e6247740663f051e"})
         assert sent.status_code == 202
         job_id = sent.json()["id"]
         assert sent.json()["status"] == "queued"
@@ -75,7 +75,7 @@ def test_a_prompt_goes_to_the_extension_and_its_reply_comes_back(fresh):
         assert taken["id"] == job_id
         assert taken["payload"]["prompt"] == "Hello"
         assert taken["payload"]["account"] == "me@example.com"
-        assert taken["payload"]["temporary"] is True
+        assert taken["payload"]["conversationId"] == "e6247740663f051e"
         assert c.get(f"/v1/gemini/jobs/{job_id}").json()["status"] == "running"
 
         reply = {"text": "Hi!", "markdown": "Hi!", "code_blocks": [], "images": []}
@@ -97,6 +97,8 @@ def test_a_failure_from_the_page_is_reported_with_its_reason():
 def test_files_travel_with_the_prompt_and_an_empty_request_is_refused():
     with client() as c:
         assert c.post("/v1/gemini/jobs", json={"prompt": "  "}).status_code == 422
+        # A chat id is only ever the id in Gemini's address: nothing that could change the URL.
+        assert c.post("/v1/gemini/jobs", json={"prompt": "x", "conversation_id": "../x?y=1"}).status_code == 422
         sent = c.post("/v1/gemini/jobs", json={"files": [{"name": "a.png", "mime": "image/png", "base64": "iVBORw0KGgo="}]})
         assert sent.status_code == 202
         payload = c.get("/ext/gemini/poll").json()["job"]["payload"]

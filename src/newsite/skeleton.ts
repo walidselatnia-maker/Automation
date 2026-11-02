@@ -1,4 +1,5 @@
 import { all, get, run } from '../db/index.js';
+import { articleChat } from '../llm/gemini.js';
 import { loadTemplate } from '../pipeline/prompts.js';
 import { planLanguage } from './repo.js';
 import { createLogger, errorMessage } from '../lib/logger.js';
@@ -285,7 +286,7 @@ function stylesFor(row: SeoRow, websiteId: number, random?: () => number): Skele
 /* -- The writer step ----------------------------------------------------- */
 
 export interface SkeletonDeps {
-  ask: (promptName: string, variables: Record<string, unknown>) => Promise<string>;
+  ask: (promptName: string, variables: Record<string, unknown>, chat?: string) => Promise<string>;
   /** Picks the outline styles (tests); Math.random by default. */
   random?: () => number;
 }
@@ -350,7 +351,7 @@ export async function makeSkeleton(row: SeoRow, deps: SkeletonDeps): Promise<voi
         bodyPart: style('body'),
         closingPart: style('closing'),
         problemsJson: corrections,
-      }),
+      }, articleChat(row.id)),
     parse: (raw) => {
       const k = parseSkeleton(raw);
       if (k) k.h1 = k.h1 || row.title;

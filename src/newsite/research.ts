@@ -146,7 +146,7 @@ function takenOf(site: NewWebsiteRow, posts: SitePost[]): Taken[] {
 /* -- Running it --------------------------------------------------------------------- */
 
 export interface ResearchDeps extends SearchDeps {
-  ask: (promptName: string, variables: Record<string, unknown>) => Promise<string>;
+  ask: (promptName: string, variables: Record<string, unknown>, chat?: string) => Promise<string>;
   /** The website's posts, for the duplicate check; a website that cannot be read is no reason to stop. */
   listPosts: (domain: string, apiKey: string) => Promise<SitePost[]>;
 }

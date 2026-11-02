@@ -19,8 +19,8 @@ export interface GeminiAsk {
   files?: GeminiFile[];
   /** The Google account to ask as, by email; empty for the browser's default account. */
   account?: string;
-  /** A temporary chat keeps automated prompts out of the account's chat history. */
-  temporary?: boolean;
+  /** The Gemini chat to continue (the id in its /app/<id> address); empty starts a new one. */
+  conversationId?: string;
   /** Whether pictures in the reply come back as data, not only as addresses. */
   images?: boolean;
   /** The whole budget: the browser starting, the page loading and Gemini answering. */
@@ -128,7 +128,7 @@ export class GeminiClient {
         prompt: ask.prompt,
         files: ask.files ?? [],
         account: ask.account ?? '',
-        temporary: ask.temporary ?? true,
+        conversation_id: ask.conversationId ?? '',
         images: ask.images ?? true,
         timeout_s: Math.min(1800, Math.max(60, Math.round(ask.timeoutS ?? DEFAULT_TIMEOUT_S))),
       }),

@@ -1,7 +1,8 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
+import { get, run } from '../db/index.js';
 import { setModelOverride } from '../db/repos.js';
 import { GeminiError, type GeminiFile, type GeminiReply } from '../integrations/gemini.js';
-import { GEMINI_LAST_ERROR, GEMINI_LAST_OK, GEMINI_MODEL, geminiClient, recordGeminiOutcome } from '../llm/gemini.js';
+import { GEMINI_LAST_ERROR, GEMINI_LAST_OK, GEMINI_MODEL, geminiClient, recordGeminiOutcome, type GeminiChats } from '../llm/gemini.js';
 import { invalidatePromptCache, modelFor, PROMPT_MODELS } from '../pipeline/prompts.js';
 import type { Settings } from '../settings.js';
 import { html, raw, type Html } from '../web/views/layout.js';
@@ -17,6 +18,21 @@ import type { Fetch } from './platform.js';
  * service. So this section has one decision on it -- which steps Gemini writes -- and that is off
  * for every step until someone ticks one, so an installation behaves exactly as before.
  */
+
+/**
+ * Each article's Gemini chat, kept on its own row (keyword_seo.gemini_chat). A key that is not an
+ * article's has no chat to keep: such a prompt starts a new one each time.
+ */
+export const geminiChats: GeminiChats = {
+  get(key) {
+    const id = /^article:(\d+)$/.exec(key)?.[1];
+    return id ? (get<{ gemini_chat: string }>('SELECT gemini_chat FROM keyword_seo WHERE id = ?', Number(id))?.gemini_chat ?? '') : '';
+  },
+  set(key, conversationId) {
+    const id = /^article:(\d+)$/.exec(key)?.[1];
+    if (id) run('UPDATE keyword_seo SET gemini_chat = ? WHERE id = ?', conversationId, Number(id));
+  },
+};
 
 /** The Prompts page's stages, keeping only prompts an AI writes (not picture templates). */
 export const GEMINI_STAGES = PROMPT_STAGES.map((stage) => ({
@@ -277,7 +293,7 @@ export function registerGeminiRoutes(app: FastifyInstance, deps: GeminiRouteDeps
     const gemini = client();
     if (!gemini) return reply.status(503).send({ error: geminiProblem('SETUP', 'it has no address or key in this deployment.') });
     try {
-      const id = await gemini.submit({ prompt, files, account: geminiAccount(), temporary: true, images: true, timeoutS: 300 });
+      const id = await gemini.submit({ prompt, files, account: geminiAccount(), images: true, timeoutS: 300 });
       return reply.send({ id });
     } catch (err) {
       const e = err instanceof GeminiError ? err : new GeminiError(String(err), 'SERVICE');

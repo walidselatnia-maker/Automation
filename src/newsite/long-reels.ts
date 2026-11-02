@@ -1,4 +1,5 @@
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { articleChat } from '../llm/gemini.js';
 import { join } from 'node:path';
 import { all, get, run } from '../db/index.js';
 import { resolveDataDir } from '../config.js';
@@ -276,7 +277,7 @@ async function askChecked<T>(ctx: Ctx, name: string, vars: Record<string, unknow
   const ask = ctx.deps.ask;
   if (!ask) throw new Error('No AI to write the reel.');
   const out = await correctUntilRight<T>({
-    ask: (corrections) => ask(name, { language: ctx.site.language, ...vars, problemsJson: corrections }),
+    ask: (corrections) => ask(name, { language: ctx.site.language, ...vars, problemsJson: corrections }, articleChat(ctx.row.id)),
     parse,
     check,
   });

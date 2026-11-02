@@ -17,15 +17,45 @@ import type { ChatMessage, ChatRequest, Completion } from './client.js';
 
 export const GEMINI_MODEL = 'gemini';
 
+/** The conversation key of one article: every Gemini prompt for it goes to the same chat. */
+export const articleChat = (articleId: number): string => `article:${articleId}`;
+
 /** Platform settings keys holding the last outcome, for the status badge. */
 export const GEMINI_LAST_OK = 'gemini_last_ok_at';
 export const GEMINI_LAST_ERROR = 'gemini_last_error';
+
+/** Where the Gemini chat of each conversation key ("article:12") is remembered. */
+export interface GeminiChats {
+  get(key: string): string;
+  set(key: string, conversationId: string): void;
+}
 
 interface GeminiSetup {
   settings: Settings;
   /** The Google account Gemini should answer as; empty for the browser's default account. */
   account: () => string;
+  /** Absent: every prompt starts a new chat. */
+  chats?: GeminiChats;
   fetchImpl?: typeof fetch;
+  /** How often a reply is polled for; the client's default (2 s) unless given. */
+  pollIntervalMs?: number;
+}
+
+/**
+ * Prompts for the same conversation, one after another. The second prompt of a new article has
+ * to wait for the first one's answer, because only then does the article's chat have an id; sent
+ * together, each would open a chat of its own.
+ */
+const queues = new Map<string, Promise<unknown>>();
+
+function inTurn<T>(key: string | undefined, work: () => Promise<T>): Promise<T> {
+  if (!key) return work();
+  const run = (queues.get(key) ?? Promise.resolve()).catch(() => {}).then(work);
+  queues.set(key, run);
+  void run.catch(() => {}).finally(() => {
+    if (queues.get(key) === run) queues.delete(key);
+  });
+  return run;
 }
 
 let setup: GeminiSetup | null = null;
@@ -35,11 +65,11 @@ export function configureGemini(next: GeminiSetup | null): void {
   setup = next;
 }
 
-export function geminiClient(settings: Settings, fetchImpl?: typeof fetch): GeminiClient | null {
+export function geminiClient(settings: Settings, fetchImpl?: typeof fetch, pollIntervalMs?: number): GeminiClient | null {
   const baseUrl = settings.get('image_base_url').trim();
   const apiKey = settings.get('image_api_key').trim();
   if (!baseUrl || !apiKey) return null;
-  return new GeminiClient({ baseUrl, apiKey, fetchImpl });
+  return new GeminiClient({ baseUrl, apiKey, fetchImpl, pollIntervalMs });
 }
 
 /** Remember how the last prompt went: the time it worked, or why it did not. */
@@ -107,21 +137,33 @@ export function unusableReply(text: string): string | null {
   return null;
 }
 
-/** Ask Gemini for one completion. Throws when it cannot give a usable one. */
+/**
+ * Ask Gemini for one completion. Throws when it cannot give a usable one.
+ *
+ * A prompt with a `chat` key continues that conversation's Gemini chat (one per article), or
+ * starts it and remembers it; one without starts a new chat of its own.
+ */
 export async function geminiCompletion(request: ChatRequest): Promise<Completion> {
   if (!setup) throw new GeminiError('Gemini is not set up in this process', 'SETUP');
-  const { settings } = setup;
-  const client = geminiClient(settings, setup.fetchImpl);
+  const current = setup;
+  const client = geminiClient(current.settings, current.fetchImpl, current.pollIntervalMs);
   if (!client) throw new GeminiError('The image service is not configured, and Gemini runs there', 'SETUP');
+  return inTurn(request.chat, () => answer(current, client, request));
+}
 
+async function answer(current: GeminiSetup, client: GeminiClient, request: ChatRequest): Promise<Completion> {
+  const { settings, chats } = current;
+  const key = request.chat;
   try {
     const reply = await client.ask({
       prompt: joinMessages(request.messages, request.format),
-      account: setup.account(),
-      temporary: true,
+      account: current.account(),
+      conversationId: key && chats ? chats.get(key) : '',
       images: false,
       timeoutS: Math.round((request.timeoutMs ?? 300_000) / 1000),
     });
+    // Remembered even when the reply is then refused: the prompt is in that chat now.
+    if (key && chats && reply.conversation_id) chats.set(key, reply.conversation_id);
     const problem = unusableReply(reply.text);
     if (problem) throw new GeminiError(problem, 'NOT_AN_ANSWER');
     const content = request.format === 'json' ? jsonFrom(reply) : reply.markdown || reply.text;

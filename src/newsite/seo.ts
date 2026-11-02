@@ -1,4 +1,5 @@
 import { all, get, run } from '../db/index.js';
+import { articleChat } from '../llm/gemini.js';
 import { planLanguage } from './repo.js';
 import { createLogger, errorMessage } from '../lib/logger.js';
 import { similarity, words } from '../seo/rules.js';
@@ -328,7 +329,7 @@ export function requeueSkeleton(id: number): void {
 /* -- The writer ---------------------------------------------------------- */
 
 export interface WriterDeps {
-  ask: (promptName: string, variables: Record<string, unknown>) => Promise<string>;
+  ask: (promptName: string, variables: Record<string, unknown>, chat?: string) => Promise<string>;
   /** Real autocomplete searches for one keyword. */
   suggest: (keyword: string, language?: string) => Promise<string[]>;
   /**
@@ -384,7 +385,7 @@ export async function writeOne(row: SeoRow, deps: WriterDeps): Promise<void> {
         searchesJson: JSON.stringify(searches),
         takenTitlesJson: JSON.stringify(otherTitles),
         problemsJson: corrections,
-      }),
+      }, articleChat(row.id)),
     parse: parseSeoAnswer,
     check: (a) => checkSeo(a, ctx),
     onError: (err) => log.warn(`AI#1 could not reach the AI for "${row.keyword}": ${errorMessage(err)}`),

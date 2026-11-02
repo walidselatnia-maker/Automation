@@ -14,7 +14,7 @@ export async function askPrompt(
   encryptionKey: Buffer,
   promptName: string,
   variables: Record<string, unknown>,
-  overrides: { model?: string; format?: 'json' | null } = {},
+  overrides: { model?: string; format?: 'json' | null; chat?: string } = {},
 ): Promise<ChatResult> {
   const spec = PROMPT_MODELS[promptName];
   const loaded = loadPrompt(promptName, variables);
@@ -36,6 +36,8 @@ export async function askPrompt(
       model: overrides.model ?? modelFor(promptName),
       // Where a prompt switched to Gemini goes when Gemini cannot answer it.
       fallbackModel: spec?.model,
+      // The article it is for: Gemini keeps one chat per article.
+      chat: overrides.chat,
       messages,
       format: overrides.format !== undefined ? overrides.format : (spec?.format ?? null),
     },

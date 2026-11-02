@@ -36,7 +36,7 @@ interface IntroRow {
 
 export interface IntroDeps {
   encryptionKey: Buffer;
-  ask?: (promptName: string, variables: Record<string, unknown>) => Promise<string>;
+  ask?: (promptName: string, variables: Record<string, unknown>, chat?: string) => Promise<string>;
   fetchImpl?: Fetch;
   now?: () => number;
 }

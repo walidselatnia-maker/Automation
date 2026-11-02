@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { articleChat } from '../llm/gemini.js';
 import { join } from 'node:path';
 import { get, run } from '../db/index.js';
 import { resolveDataDir } from '../config.js';
@@ -41,7 +42,7 @@ export interface PublishDeps {
   settings: Settings;
   encryptionKey: Buffer;
   /** The AI, for picking the website category. */
-  ask?: (promptName: string, variables: Record<string, unknown>) => Promise<string>;
+  ask?: (promptName: string, variables: Record<string, unknown>, chat?: string) => Promise<string>;
   /** Picks one author when the category has none; tests pass their own. */
   random?: () => number;
   /** Wakes the picture maker, so the step pictures just queued get made. */
@@ -134,7 +135,7 @@ async function categoryAndAuthor(t: Target, deps: PublishDeps): Promise<{ catego
       pillar: t.pillar,
       niche,
       categoriesJson: JSON.stringify(categories.map((c) => c.name)),
-    }).catch(() => '');
+    }, articleChat(t.row.id)).catch(() => '');
     const name = String(parseJson(raw)?.category ?? '').trim().toLowerCase();
     chosen = categories.find((c) => c.name.toLowerCase() === name);
   }

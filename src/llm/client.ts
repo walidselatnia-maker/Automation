@@ -21,6 +21,11 @@ export interface ChatRequest {
    * daily limit, not JSON). Normally the prompt's shipped model.
    */
   fallbackModel?: string;
+  /**
+   * When `model` is Gemini: which conversation the prompt belongs to, e.g. "article:12". Prompts
+   * with the same key go to the same Gemini chat, so each sees the ones before it.
+   */
+  chat?: string;
 }
 
 export interface ChatResult {

@@ -1,4 +1,5 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { articleChat } from '../llm/gemini.js';
 import { join } from 'node:path';
 import { all, get, run } from '../db/index.js';
 import { resolveDataDir } from '../config.js';
@@ -120,7 +121,7 @@ export interface ReelDeps {
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
   /** The AI that writes the video prompt. */
-  ask?: (name: string, vars: Record<string, unknown>) => Promise<string>;
+  ask?: (name: string, vars: Record<string, unknown>, chat?: string) => Promise<string>;
   /** A reel's video is made: it is shared on its channels. Unset, the listener set by onReelMade runs. */
   onDone?: (reelId: number) => void;
   /** Flow for a long reel's pictures and clips. Tests pass their own. */
@@ -263,7 +264,7 @@ async function writeScript(reel: ReelRow, row: SeoRow, site: NewWebsiteRow, desc
         articleOutline: row.article_md.split('\n').filter((l) => /^#{1,3}\s/.test(l)).map((l) => l.replace(/^#+\s*/, '- ')).join('\n') || '- (no headings)',
         references: described,
         problemsJson: corrections,
-      }),
+      }, articleChat(row.id)),
     parse: (raw) => {
       const start = raw.indexOf('{');
       const end = raw.lastIndexOf('}');

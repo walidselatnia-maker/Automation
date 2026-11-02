@@ -1,4 +1,5 @@
 import { get, run } from '../db/index.js';
+import { articleChat } from '../llm/gemini.js';
 import { planLanguage } from './repo.js';
 import { createLogger, errorMessage } from '../lib/logger.js';
 import { similarity, words } from '../seo/rules.js';
@@ -291,7 +292,7 @@ export function checkImageSet(set: ImageSet, ctx: ImageContext): string[] {
 /* -- The writer step ----------------------------------------------------- */
 
 export interface ImageDeps {
-  ask: (promptName: string, variables: Record<string, unknown>) => Promise<string>;
+  ask: (promptName: string, variables: Record<string, unknown>, chat?: string) => Promise<string>;
 }
 
 interface Context {
@@ -350,7 +351,7 @@ export async function makeImagePrompts(row: SeoRow, deps: ImageDeps): Promise<vo
         slotsJson: JSON.stringify(slots),
         colorStylesJson: JSON.stringify(styles),
         problemsJson: corrections,
-      }),
+      }, articleChat(row.id)),
     parse: parseImageSet,
     check: (set) =>
       checkImageSet(set, { keyword: row.keyword, slots, allowedText, language: planLanguage(row.plan_id), article: row.article_md, colorStyles: styles.map((s) => s.name), pictureStyles: pictureStyles.map((s) => s.name) }),

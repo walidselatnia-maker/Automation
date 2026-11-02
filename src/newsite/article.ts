@@ -1,4 +1,5 @@
 import { all, get, run } from '../db/index.js';
+import { articleChat } from '../llm/gemini.js';
 import { planLanguage } from './repo.js';
 import { createLogger, errorMessage } from '../lib/logger.js';
 import { words } from '../seo/rules.js';
@@ -165,7 +166,7 @@ export function checkSection(md: string, ctx: SectionContext): string[] {
 /* -- The writer step ----------------------------------------------------- */
 
 export interface ArticleDeps {
-  ask: (promptName: string, variables: Record<string, unknown>) => Promise<string>;
+  ask: (promptName: string, variables: Record<string, unknown>, chat?: string) => Promise<string>;
 }
 
 interface Context {
@@ -264,7 +265,7 @@ export async function writeArticle(row: SeoRow, deps: ArticleDeps): Promise<void
           previousEnding: parts.length ? parts[parts.length - 1]!.slice(-500) : '(this is the first section)',
           recipeJson: recipe ? JSON.stringify(recipe) : '(no fixed recipe for this page)',
           problemsJson: corrections,
-        }),
+        }, articleChat(row.id)),
       parse: cleanMarkdown,
       check: (text) => checkSection(text, { section, first: i === 0, focusKeyword: row.focus_keyword, allowedText, keyword: row.keyword, language: planLanguage(row.plan_id) }),
       // A hard problem (wrong heading, invented ingredient) weighs more than a soft one (length, reading level).

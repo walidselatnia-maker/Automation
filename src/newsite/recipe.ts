@@ -1,4 +1,5 @@
 import { get, run } from '../db/index.js';
+import { articleChat } from '../llm/gemini.js';
 import { planLanguage } from './repo.js';
 import { createLogger, errorMessage } from '../lib/logger.js';
 import type { SeoRow } from './seo.js';
@@ -149,7 +150,7 @@ export const recipeText = (r: Recipe): string =>
 /* -- The writer step ----------------------------------------------------- */
 
 export interface RecipeDeps {
-  ask: (promptName: string, variables: Record<string, unknown>) => Promise<string>;
+  ask: (promptName: string, variables: Record<string, unknown>, chat?: string) => Promise<string>;
 }
 
 interface Context {
@@ -188,7 +189,7 @@ export async function makeRecipe(row: SeoRow, deps: RecipeDeps): Promise<void> {
         nicheContext: ctx.niche_context || '(none)',
         persona: ctx.persona,
         problemsJson: corrections,
-      }),
+      }, articleChat(row.id)),
     parse: parseRecipe,
     check: (r) => checkRecipe(r, row.keyword, planLanguage(row.plan_id)),
     onError: (err) => log.warn(`Recipe step could not reach the AI for "${row.keyword}": ${errorMessage(err)}`),

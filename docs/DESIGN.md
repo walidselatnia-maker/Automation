@@ -165,10 +165,18 @@ What keeps the two apart:
   intercepted in `chat()` before the pool, and anything that stops Gemini
   answering sends the prompt to its shipped model. Every step is off until
   someone ticks it on Platform settings.
+- **One chat per article.** Every Gemini prompt for an article continues that
+  article's chat (its id is kept in `keyword_seo.gemini_chat`), so the outline
+  sees the recipe card and each section sees the outline. Prompts for the same
+  article are sent one after another, so a new article does not open two
+  chats. Prompts with no article (research, top lists) open a chat each.
+- **Never asked twice.** A prompt the extension has confirmed is never handed
+  out again, even if the page goes quiet; it fails and falls back instead.
 
 The risk accepted: automated prompts from the same account and browser Flow
-uses. They run in Gemini's own page, paced by its own answering, in temporary
-chats, and only for the steps someone chose.
+uses. They run in Gemini's own page, paced by its own answering, in normal
+chats the account can see in its history, and only for the steps someone
+chose.
 
 ### Server-rendered HTML, no framework
 

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { closeDatabase, openDatabase } from '../src/db/index.js';
 import { GeminiClient, GeminiError } from '../src/integrations/gemini.js';
 import { chat } from '../src/llm/client.js';
-import { configureGemini, GEMINI_LAST_ERROR, GEMINI_LAST_OK, GEMINI_MODEL, joinMessages, jsonFrom, unusableReply } from '../src/llm/gemini.js';
+import { articleChat, configureGemini, GEMINI_LAST_ERROR, GEMINI_LAST_OK, GEMINI_MODEL, joinMessages, jsonFrom, unusableReply } from '../src/llm/gemini.js';
 import { listEndpointRows, upsertEndpoint } from '../src/llm/pool.js';
 import { Settings } from '../src/settings.js';
 import { setLogLevel } from '../src/lib/logger.js';
@@ -44,7 +44,7 @@ describe('Gemini client', () => {
     const client = new GeminiClient({ baseUrl: `${BASE}/`, apiKey: 'k', pollIntervalMs: 1, fetchImpl });
     const got = await client.ask({ prompt: 'Hi', account: 'a@b.c', timeoutS: 120 });
     expect(got.text).toBe('Hello there');
-    expect(sent[0]).toEqual({ prompt: 'Hi', files: [], account: 'a@b.c', temporary: true, images: true, timeout_s: 120 });
+    expect(sent[0]).toEqual({ prompt: 'Hi', files: [], account: 'a@b.c', conversation_id: '', images: true, timeout_s: 120 });
   });
 
   it("reports the page's own failure code", async () => {
@@ -126,17 +126,17 @@ describe('chat() with Gemini as the model', () => {
 
   it('is answered by Gemini, never by an AI key', async () => {
     const { fetchImpl, sent } = service({ result: reply({ code_blocks: [{ language: 'json', code: '{"ok": true}' }] }) });
-    configureGemini({ settings, account: () => 'me@gmail.com', fetchImpl });
+    configureGemini({ settings, pollIntervalMs: 5, account: () => 'me@gmail.com', fetchImpl });
     const result = await chat({ model: GEMINI_MODEL, messages: [{ role: 'user', content: 'x' }], format: 'json', fallbackModel: 'gpt-oss:120b' }, KEY);
     expect(result).toMatchObject({ content: '{"ok": true}', endpoint: 'Gemini', model: GEMINI_MODEL });
-    expect(sent[0]).toMatchObject({ account: 'me@gmail.com', temporary: true, images: false });
+    expect(sent[0]).toMatchObject({ account: 'me@gmail.com', conversation_id: '', images: false });
     expect(ollamaModels).toEqual([]);
     expect(settings.get(GEMINI_LAST_OK)).not.toBe('');
   });
 
   it("falls back to the prompt's usual model when Gemini cannot answer, and remembers why", async () => {
     const { fetchImpl } = service({ error: 'NOT_SIGNED_IN: sign in' });
-    configureGemini({ settings, account: () => '', fetchImpl });
+    configureGemini({ settings, pollIntervalMs: 5, account: () => '', fetchImpl });
     const result = await chat({ model: GEMINI_MODEL, messages: [{ role: 'user', content: 'x' }], fallbackModel: 'gpt-oss:120b' }, KEY);
     expect(result).toMatchObject({ content: 'from the AI key', model: 'gpt-oss:120b', endpoint: 'Main' });
     expect(ollamaModels).toEqual(['gpt-oss:120b']);
@@ -146,15 +146,40 @@ describe('chat() with Gemini as the model', () => {
 
   it('falls back when JSON was asked for and Gemini wrote prose', async () => {
     const { fetchImpl } = service({ result: reply({ text: 'Sure! Here is a lovely cake.' }) });
-    configureGemini({ settings, account: () => '', fetchImpl });
+    configureGemini({ settings, pollIntervalMs: 5, account: () => '', fetchImpl });
     const result = await chat({ model: GEMINI_MODEL, messages: [{ role: 'user', content: 'x' }], format: 'json', fallbackModel: 'gemma4:31b' }, KEY);
     expect(result.model).toBe('gemma4:31b');
     expect(settings.get(GEMINI_LAST_ERROR)).toMatch(/NOT_JSON/);
   });
 
+  it('keeps one Gemini chat per article: its first prompt opens it, the rest continue it', async () => {
+    const stored = new Map<string, string>();
+    const chats = { get: (k: string) => stored.get(k) ?? '', set: (k: string, id: string) => void stored.set(k, id) };
+    const { fetchImpl, sent } = service({ result: reply({ conversation_id: 'abc123' }) });
+    configureGemini({ settings, pollIntervalMs: 5, account: () => '', chats, fetchImpl });
+    const ask = (key?: string) => chat({ model: GEMINI_MODEL, messages: [{ role: 'user', content: 'x' }], fallbackModel: 'gpt-oss:120b', chat: key }, KEY);
+
+    // Two prompts of a new article sent together: the second waits for the first, so both land in
+    // the one chat instead of opening two.
+    await Promise.all([ask(articleChat(7)), ask(articleChat(7))]);
+    await ask(); // no article: a new chat of its own
+    expect(sent.map((s) => s.conversation_id)).toEqual(['', 'abc123', '']);
+    expect(stored.get('article:7')).toBe('abc123');
+    expect(ollamaModels).toEqual([]);
+  });
+
+  it("a failed prompt does not hold up the article's next one", async () => {
+    const { fetchImpl, sent } = service({ error: 'TIMEOUT: too slow' });
+    configureGemini({ settings, pollIntervalMs: 5, account: () => '', chats: { get: () => '', set: () => {} }, fetchImpl });
+    const ask = () => chat({ model: GEMINI_MODEL, messages: [{ role: 'user', content: 'x' }], fallbackModel: 'gpt-oss:120b', chat: articleChat(3) }, KEY);
+    const results = await Promise.all([ask(), ask()]);
+    expect(results.map((r) => r.model)).toEqual(['gpt-oss:120b', 'gpt-oss:120b']);
+    expect(sent).toHaveLength(2);
+  });
+
   it('fails plainly with no fallback, and with no Gemini set up at all', async () => {
     const { fetchImpl } = service({ error: 'TIMEOUT: too slow' });
-    configureGemini({ settings, account: () => '', fetchImpl });
+    configureGemini({ settings, pollIntervalMs: 5, account: () => '', fetchImpl });
     await expect(chat({ model: GEMINI_MODEL, messages: [{ role: 'user', content: 'x' }] }, KEY)).rejects.toThrow(/too slow/);
     configureGemini(null);
     const result = await chat({ model: GEMINI_MODEL, messages: [{ role: 'user', content: 'x' }], fallbackModel: 'gpt-oss:120b' }, KEY);

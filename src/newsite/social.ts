@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { articleChat } from '../llm/gemini.js';
 import { join } from 'node:path';
 import { all, get, run } from '../db/index.js';
 import { resolveDataDir } from '../config.js';
@@ -119,7 +120,7 @@ export const realThreads = (token: string): ThreadsApi => {
 export interface SocialDeps {
   settings: Settings;
   encryptionKey: Buffer;
-  ask: (promptName: string, variables: Record<string, unknown>) => Promise<string>;
+  ask: (promptName: string, variables: Record<string, unknown>, chat?: string) => Promise<string>;
   dataDir?: string;
   /** Checks that a picture link answers from the internet before Buffer is asked to fetch it. */
   fetchImpl?: Fetch;
@@ -329,7 +330,7 @@ export async function writePostWords(
         articleOutline: articleOutline(row.article_md),
         articleStart: articleStart(row.article_md),
         problemsJson: corrections,
-      }),
+      }, articleChat(row.id)),
     parse: (raw) => {
       const o = parseObject(raw);
       return o ? Object.fromEntries(rules.fields.map((f) => [f, str(o, f)])) : null;
@@ -399,7 +400,7 @@ export async function pickBoard(w: { row: SeoRow; site: NewWebsiteRow }, boards:
       title: w.row.title,
       niche: w.site.niche,
       boardsJson: JSON.stringify(boards.map((b) => b.name)),
-    })
+    }, articleChat(w.row.id))
     .catch(() => '');
   const name = String(parseObject(raw)?.board ?? '').trim().toLowerCase();
   return boards.find((b) => b.name.toLowerCase() === name) ?? generalBoard(boards);

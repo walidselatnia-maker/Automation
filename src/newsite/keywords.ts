@@ -172,7 +172,7 @@ export function parsePicks(raw: string): unknown[] {
 export interface FindDeps {
   /** Real Google searches for the pillar, with the plan's modifiers. Empty when Google is unreachable. */
   suggest: (pillar: string, language?: string) => Promise<string[]>;
-  ask: (promptName: string, variables: Record<string, unknown>) => Promise<string>;
+  ask: (promptName: string, variables: Record<string, unknown>, chat?: string) => Promise<string>;
 }
 
 export interface FindInput {

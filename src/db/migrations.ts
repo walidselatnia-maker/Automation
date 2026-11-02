@@ -1194,6 +1194,14 @@ export const MIGRATIONS: Migration[] = [
       addColumn(db, 'newsite_reel_scenes', 'picture_project', "TEXT NOT NULL DEFAULT ''");
     },
   },
+  {
+    id: '062-newsite-gemini-chat',
+    description: "New websites: each article's Gemini chat, so every Gemini prompt for it continues one conversation",
+    up(db) {
+      // The id in the chat's gemini.google.com/app/<id> address; empty until its first Gemini prompt.
+      addColumn(db, 'keyword_seo', 'gemini_chat', "TEXT NOT NULL DEFAULT ''");
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */

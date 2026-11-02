@@ -2,14 +2,18 @@ import { randomBytes } from 'node:crypto';
 import Fastify, { type FastifyInstance } from 'fastify';
 import formbody from '@fastify/formbody';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { closeDatabase, openDatabase, run } from '../src/db/index.js';
+import { all, closeDatabase, openDatabase, run } from '../src/db/index.js';
 import { setModelOverride } from '../src/db/repos.js';
 import { GEMINI_LAST_ERROR, GEMINI_LAST_OK, GEMINI_MODEL } from '../src/llm/gemini.js';
 import { invalidatePromptCache, modelFor } from '../src/pipeline/prompts.js';
 import { addGoogleAccount } from '../src/newsite/google-accounts.js';
+import { articleChat } from '../src/llm/gemini.js';
+import { createNewWebsite, saveKeywordPlan } from '../src/newsite/repo.js';
+import { queuePlanSeo } from '../src/newsite/seo.js';
 import {
   GEMINI_STAGES,
   geminiAccount,
+  geminiChats,
   geminiSection,
   geminiStages,
   geminiState,
@@ -148,7 +152,7 @@ describe('Gemini on Platform settings', () => {
     const sent = await a.inject({ method: 'POST', url: '/new-website/gemini/ask', payload: { prompt: 'Hi', files: [{ name: 'a.png', mime: 'image/png', base64: 'AAAA' }, { bad: 1 }] } });
     expect(sent.json()).toEqual({ id: 'job-9' });
     expect(calls.find((c) => c.path === '/v1/gemini/jobs')!.body).toMatchObject({
-      prompt: 'Hi', account: 'one@gmail.com', temporary: true, images: true, files: [{ name: 'a.png', mime: 'image/png', base64: 'AAAA' }],
+      prompt: 'Hi', account: 'one@gmail.com', conversation_id: '', images: true, files: [{ name: 'a.png', mime: 'image/png', base64: 'AAAA' }],
     });
 
     expect((await a.inject({ url: '/new-website/gemini/ask/job-9' })).json()).toEqual({ status: 'running' });
@@ -177,6 +181,23 @@ describe('Gemini on Platform settings', () => {
     const down = await a.inject({ method: 'POST', url: '/new-website/gemini/ask', payload: { prompt: 'Hi' } });
     expect(down.statusCode).toBe(502);
     expect(down.json().error).toMatch(/image service/);
+  });
+
+  it("keeps each article's Gemini chat on the article itself", () => {
+    const siteId = createNewWebsite(
+      { name: 'Site', domain: 'site.test', apiKey: 'sk_test_ABCDEFGHIJKLMNOP', niche: 'Recipes', nicheContext: '', persona: 'Storyteller', status: 'active', autoPublish: true, dailyTarget: 3, intervalMinutes: 60, bufferToken: '', pinUsername: '', projectId: '' },
+      KEY,
+    );
+    queuePlanSeo(saveKeywordPlan(siteId, 'cakes', [], 'recipe'), 'cakes', ['lemon cake'], 'recipe');
+    const ids = all<{ id: number }>('SELECT id FROM keyword_seo ORDER BY id').map((r) => r.id);
+    expect(ids.length).toBeGreaterThanOrEqual(2);
+    expect(geminiChats.get(articleChat(ids[0]!))).toBe('');
+    geminiChats.set(articleChat(ids[0]!), 'abc123');
+    expect(geminiChats.get(articleChat(ids[0]!))).toBe('abc123');
+    expect(geminiChats.get(articleChat(ids[1]!))).toBe('');
+    // A key that is not an article's has no chat to keep.
+    geminiChats.set('research:4', 'zzz');
+    expect(geminiChats.get('research:4')).toBe('');
   });
 
   it('sits on the Platform settings page', async () => {

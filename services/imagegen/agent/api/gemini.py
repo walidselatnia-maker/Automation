@@ -45,8 +45,9 @@ class AskRequest(BaseModel):
     files: list[GeminiFile] = Field(default_factory=list, max_length=10)
     # The Google account to ask as, by email. Empty means the browser's default account.
     account: str = Field(default="", max_length=320)
-    # A temporary chat keeps automated prompts out of the account's chat history.
-    temporary: bool = True
+    # The Gemini chat to continue (the id in its /app/<id> address); empty starts a new chat. The
+    # platform keeps one chat per article, so each prompt sees the ones before it.
+    conversation_id: str = Field(default="", max_length=64, pattern=r"^[A-Za-z0-9_-]*$")
     # Whether pictures in the reply come back as data, not only as addresses.
     images: bool = True
     # The whole budget: Chrome starting, the page loading and Gemini answering.
@@ -68,7 +69,7 @@ async def ask(body: AskRequest) -> dict:
             "prompt": body.prompt,
             "files": [f.model_dump() for f in body.files],
             "account": body.account.strip(),
-            "temporary": body.temporary,
+            "conversationId": body.conversation_id,
             "images": body.images,
             "timeoutMs": (body.timeout_s - START_ALLOWANCE_S) * 1000,
         },

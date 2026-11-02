@@ -52,20 +52,6 @@
     return email;
   }
 
-  // ── temporary chat ─────────────────────────────────────────────────────────
-  // Automated prompts go in a temporary chat, so they do not fill the account's chat history and
-  // Gemini does not personalise them from it. Best effort: if the toggle cannot be found the
-  // prompt still goes, as an ordinary chat.
-  async function useTemporaryChat() {
-    const toggle = $$('button').find((b) => /^temporary chat$/i.test(labelOf(b)));
-    if (!toggle) return false;
-    if (toggle.getAttribute('aria-pressed') === 'true' || toggle.classList.contains('active')) return true;
-    toggle.click();
-    await sleep(800);
-    await waitFor(editor, 10_000, () => null);
-    return true;
-  }
-
   // ── input ──────────────────────────────────────────────────────────────────
   function b64ToBytes(b64) {
     const bin = atob(b64);
@@ -245,15 +231,32 @@
     };
   }
 
+  // An existing chat draws its earlier answers after the prompt box appears. Counted too early, the
+  // first of them would look like the new answer and be handed back instead of it, so the count
+  // is taken once it has stopped changing.
+  async function settledResponses() {
+    if (!conversationId()) return responses().length;
+    await waitFor(() => responses().length > 0, 15_000, () => null);
+    let count = -1;
+    let since = Date.now();
+    while (Date.now() - since < 1200) {
+      const now = responses().length;
+      if (now !== count) { count = now; since = Date.now(); }
+      await sleep(200);
+    }
+    return count;
+  }
+
   // ── the job ────────────────────────────────────────────────────────────────
-  async function chat({ prompt = '', files = [], account = '', temporary = true, images = true, timeoutMs = 240_000 }) {
+  // The background worker has already opened the page: a new chat, or the chat the prompt
+  // continues (one per article, so each prompt sees the ones before it).
+  async function chat({ prompt = '', files = [], account = '', images = true, timeoutMs = 240_000 }) {
     // A page that is not visible may not draw the reply as it streams in.
     if (document.visibilityState !== 'visible') fail('HIDDEN', 'the Gemini window is minimized or hidden');
     const email = await checkSession(account);
-    const temp = temporary ? await useTemporaryChat() : false;
     await waitFor(editor, 15_000, () => fail('NO_PROMPT_BOX', 'the Gemini page did not show its prompt box'));
 
-    const before = responses().length;
+    const before = await settledResponses();
     await setPrompt(prompt);
     await attachFiles(files);
     const send = await waitFor(() => { const b = sendButton(); return !isDisabled(b) && b; }, 15_000, () => fail('NO_PROMPT_BOX', 'the Send button stayed disabled'));
@@ -274,7 +277,10 @@
       if (Date.now() > end) fail('TIMEOUT', 'Gemini was still answering when the time ran out');
       await sleep(400);
     }
-    return { ...(await extract(responses().at(-1), images)), account: email, temporary: temp };
+    // A new chat gets its address (/app/<id>) once the first answer is in; the next prompt for the
+    // same article continues it there.
+    await waitFor(conversationId, 5_000, () => null);
+    return { ...(await extract(responses().at(-1), images)), account: email };
   }
 
   window.__geminiChat = { chat, setPrompt, toMarkdown, plainText };

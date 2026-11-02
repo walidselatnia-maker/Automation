@@ -67,7 +67,7 @@ export interface ReelFacebookApi {
 export interface ReelShareDeps {
   settings: Settings;
   encryptionKey: Buffer;
-  ask: (promptName: string, variables: Record<string, unknown>) => Promise<string>;
+  ask: (promptName: string, variables: Record<string, unknown>, chat?: string) => Promise<string>;
   dataDir?: string;
   buffer?: (token: string) => ReelBufferApi;
   facebook?: (token: string) => ReelFacebookApi;
