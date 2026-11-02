@@ -31,6 +31,7 @@ import {
   startSignIn,
 } from './google-accounts.js';
 import { rejectionReason, storePassword, storedPasswordHash } from '../web/password.js';
+import { geminiAccount, geminiSection, geminiStages, geminiState, registerGeminiRoutes } from './gemini.js';
 
 export interface PlatformRouteDeps {
   settings: Settings;
@@ -61,31 +62,38 @@ export function registerPlatformRoutes(app: FastifyInstance, deps: PlatformRoute
   const { settings } = deps;
   const fetchImpl = deps.fetchImpl ?? fetch;
 
+  // Its section lives on this page, so its routes are registered with it.
+  registerGeminiRoutes(app, { settings, fetchImpl });
+
   const context = (): PlatformContext => ({
     keys: listEndpointRows().map((r) => ({ id: r.id, name: r.name })),
     hasTelegramToken: settings.has('telegram_bot_token'),
     savedApiKeys: new Map(listEndpoints(deps.encryptionKey).map((e) => [e.id, e.apiKey])),
   });
 
-  const view = async (): Promise<PlatformView> => ({
-    ready: platformReady(settings),
-    done: settings.get(SETUP_DONE_KEY) === 'true',
-    keys: listEndpointRows().map((r) => {
-      let models: string[] = [];
-      try {
-        models = JSON.parse(r.models) as string[];
-      } catch {
-        /* shown as none */
-      }
-      return { id: r.id, name: r.name, models, enabled: r.enabled === 1, lastError: r.last_error ?? '' };
-    }),
-    value: (key: string) => settings.get(key),
-    hasTelegramToken: settings.has('telegram_bot_token'),
-    imageProblem: await checkImageService(settings.get('image_base_url'), settings.get('image_api_key'), fetchImpl),
-    catalogue: await imageCatalogue(settings, fetchImpl),
-    password: deps.account ? (storedPasswordHash(deps.encryptionKey) ? 'own' : deps.account.generated ? 'generated' : 'server') : undefined,
-    googleAccounts: listGoogleAccounts(),
-  });
+  const view = async (): Promise<PlatformView> => {
+    const imageProblem = await checkImageService(settings.get('image_base_url'), settings.get('image_api_key'), fetchImpl);
+    return {
+      ready: platformReady(settings),
+      done: settings.get(SETUP_DONE_KEY) === 'true',
+      keys: listEndpointRows().map((r) => {
+        let models: string[] = [];
+        try {
+          models = JSON.parse(r.models) as string[];
+        } catch {
+          /* shown as none */
+        }
+        return { id: r.id, name: r.name, models, enabled: r.enabled === 1, lastError: r.last_error ?? '' };
+      }),
+      value: (key: string) => settings.get(key),
+      hasTelegramToken: settings.has('telegram_bot_token'),
+      imageProblem,
+      catalogue: await imageCatalogue(settings, fetchImpl),
+      password: deps.account ? (storedPasswordHash(deps.encryptionKey) ? 'own' : deps.account.generated ? 'generated' : 'server') : undefined,
+      googleAccounts: listGoogleAccounts(),
+      gemini: geminiSection(await geminiState(settings, fetchImpl, imageProblem), geminiStages(), geminiAccount()),
+    };
+  };
 
   /** The AI step's live part: a new key must answer before it is accepted. */
   const testNewKey = async (raw: Record<string, unknown>) => {

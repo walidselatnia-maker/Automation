@@ -14,6 +14,8 @@ import type { Settings } from '../settings.js';
 import { createLogger, errorMessage } from '../lib/logger.js';
 import { registerNewWebsiteRoutes } from '../newsite/routes.js';
 import { automationOn } from '../newsite/autopilot.js';
+import { configureGemini } from '../llm/gemini.js';
+import { geminiAccount } from '../newsite/gemini.js';
 
 /**
  * The web server: sign-in, the Article Platform (src/newsite, all under
@@ -100,6 +102,9 @@ export function buildServer(
       }
     },
   });
+
+  // Prompts switched to Gemini reach it through chat(), which is not handed Settings.
+  configureGemini({ settings, account: geminiAccount });
 
   registerNewWebsiteRoutes(app, {
     encryptionKey,

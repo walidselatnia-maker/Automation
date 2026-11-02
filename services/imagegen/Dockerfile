@@ -45,6 +45,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # credential to manage, for no gain.
 COPY agent/ /app/agent/
 COPY extension/ /app/extension/
+# The Gemini Chat extension rides in the same Chrome and is packed and
+# force-installed beside Flow Kit by the same script below.
+COPY gemini-extension/ /app/gemini-extension/
 COPY tests/ /app/tests/
 COPY pytest.ini /app/
 COPY docker/supervisord.conf /etc/supervisor/supervisord.conf
@@ -53,9 +56,9 @@ COPY docker/pack-extension.sh /usr/local/bin/pack-extension.sh
 COPY docker/dbus.conf /etc/dbus-1/imagegen.conf
 RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/pack-extension.sh
 
-# ─── Pack the extension and install the Chrome policy ────────
-# Chrome 151 ignores --load-extension entirely, so the extension is packed
-# into a signed CRX here and force-installed through enterprise policy at
+# ─── Pack the extensions and install the Chrome policy ───────
+# Chrome 151 ignores --load-extension entirely, so the extensions are packed
+# into signed CRXs here and force-installed through enterprise policy at
 # runtime. Failing the build is intentional: an image whose extension never
 # loads is useless, and finding that out at deploy time costs far more than
 # finding it out here.

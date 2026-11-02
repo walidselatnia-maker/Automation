@@ -19,6 +19,8 @@ export interface PlatformView {
   password?: 'own' | 'generated' | 'server';
   /** The Google accounts Flow jobs use, in order. */
   googleAccounts?: GoogleAccount[];
+  /** The Gemini section: its state, the steps it writes, a box to try it. */
+  gemini?: Html;
 }
 
 const modelLabel = (v: string): string => IMAGE_MODELS.find((m) => m.value === v)?.label ?? v;
@@ -91,7 +93,7 @@ export function platformPage(v: PlatformView, automation: Html = raw(''), search
     <div class="ns-head">
       <div>
         <h1 class="ns-title">Platform settings</h1>
-        <p class="ns-lede">What the whole platform needs to work: the AI that writes, the service that makes pictures, your time zone and where to send notifications.
+        <p class="ns-lede">What the whole platform needs to work: the AI that writes, the service that makes pictures, Gemini, your time zone and where to send notifications.
           Each part has its own Change button.</p>
       </div>
       ${d ? raw('') : html`<a class="ns-btn primary" href="/new-website/platform/setup">Set up the platform</a>`}
@@ -117,6 +119,7 @@ export function platformPage(v: PlatformView, automation: Html = raw(''), search
         </details>
       </section>
       ${v.googleAccounts ? googleAccountsSection(v.googleAccounts) : raw('')}
+      ${v.gemini ?? raw('')}
       <section class="pf-group">
         ${head('Timezone', 1, state(true, 'Set', ''), d)}
         <dl><dt>Timezone</dt><dd>${v.value('timezone')}</dd></dl>
