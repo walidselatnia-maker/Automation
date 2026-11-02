@@ -14,6 +14,9 @@ const APP = 'https://gemini.google.com/app';
 
 const ports = new Map(); // tabId -> content-script port
 let polling = false;
+// Set when a prompt fails: whatever it left on the page (a half-typed prompt, an attachment) is
+// not trusted, so the next prompt gets a freshly loaded page.
+let dirty = false;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -55,12 +58,41 @@ function loaded(tabId, timeoutMs = 60_000) {
   });
 }
 
-// Every prompt starts from a freshly loaded page: the chat it continues (one per article), or a
-// new chat. Never whatever chat the previous prompt left open.
-async function openFresh(account, conversationId) {
-  const path = /^[A-Za-z0-9_-]{1,64}$/.test(conversationId || '') ? `${APP}/${conversationId}` : APP;
-  const url = account ? `${path}?authuser=${encodeURIComponent(account)}` : path;
+// Ask the page to do something and wait for its answer ({ rid, ok }).
+function request(port, cmd, timeoutMs = 15_000) {
+  const rid = crypto.randomUUID();
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => done(false), timeoutMs);
+    function done(ok) {
+      clearTimeout(timer);
+      port.onMessage.removeListener(onMessage);
+      port.onDisconnect.removeListener(onGone);
+      resolve(ok);
+    }
+    function onMessage(msg) { if (msg.rid === rid) done(Boolean(msg.ok)); }
+    function onGone() { done(false); }
+    port.onMessage.addListener(onMessage);
+    port.onDisconnect.addListener(onGone);
+    port.postMessage({ cmd, rid });
+  });
+}
+
+// The page for a prompt: the chat it continues (one per article), or a new chat -- never whatever
+// chat the previous prompt left open. The page is only loaded again when it has to be: an
+// article's next prompt goes into its chat where it already is, and a new chat comes from
+// Gemini's own New chat button. Switching to another article's chat loads that chat.
+async function openChat(account, conversationId) {
+  const continuing = /^[A-Za-z0-9_-]{1,64}$/.test(conversationId || '');
+  const path = continuing ? `${APP}/${conversationId}` : APP;
   const tab = await geminiTab();
+  const open = ports.get(tab.id);
+  const here = (tab.url || '').split(/[?#]/)[0];
+  if (open && tab.status === 'complete' && !dirty) {
+    if (here === path) return open;
+    if (!continuing && here.startsWith(`${APP}/`) && (await request(open, 'newChat'))) return open;
+  }
+
+  const url = account ? `${path}?authuser=${encodeURIComponent(account)}` : path;
   ports.delete(tab.id);
   const done = loaded(tab.id);
   await chrome.tabs.update(tab.id, { url });
@@ -73,11 +105,12 @@ async function openFresh(account, conversationId) {
   for (let i = 0; i < 80 && !ports.get(tab.id); i++) await sleep(250);
   const port = ports.get(tab.id);
   if (!port) throw new Error('NO_PROMPT_BOX: the Gemini page did not load the extension');
+  dirty = false;
   return port;
 }
 
 async function run(job) {
-  const port = await openFresh(job.payload.account || '', job.payload.conversationId || '');
+  const port = await openChat(job.payload.account || '', job.payload.conversationId || '');
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => finish(new Error('TIMEOUT: the Gemini page stopped answering')), (job.payload.timeoutMs || 240_000) + 30_000);
     function finish(err, result) {
@@ -140,6 +173,7 @@ async function pollLoop() {
       try {
         await report(job.id, { ok: true, result: await run(job) });
       } catch (e) {
+        dirty = true;
         await report(job.id, { ok: false, error: e.message || String(e) });
       } finally {
         clearInterval(beat);

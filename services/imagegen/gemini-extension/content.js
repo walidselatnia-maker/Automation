@@ -247,6 +247,18 @@
     return count;
   }
 
+  // Gemini's own New chat, so a new chat needs no page load. False when the button is not found or
+  // the page did not become an empty chat; the worker then loads a new chat instead.
+  async function newChat() {
+    if (!conversationId() && !responses().length) return true;
+    const button =
+      $('[data-test-id="new-chat-button"] a, [data-test-id="new-chat-button"] button, a[data-test-id="new-chat-button"]') ||
+      $$('a, button').find((el) => /^new chat$/i.test(labelOf(el) || (el.textContent || '').trim()));
+    if (!button) return false;
+    button.click();
+    return Boolean(await waitFor(() => !conversationId() && !responses().length && editor(), 10_000, () => null));
+  }
+
   // ── the job ────────────────────────────────────────────────────────────────
   // The background worker has already opened the page: a new chat, or the chat the prompt
   // continues (one per article, so each prompt sees the ones before it).
@@ -283,11 +295,15 @@
     return { ...(await extract(responses().at(-1), images)), account: email };
   }
 
-  window.__geminiChat = { chat, setPrompt, toMarkdown, plainText };
+  window.__geminiChat = { chat, newChat, setPrompt, toMarkdown, plainText };
 
   if (typeof chrome !== 'undefined' && chrome.runtime?.id) {
     const port = chrome.runtime.connect({ name: 'gemini-chat' });
     port.onMessage.addListener(async (msg) => {
+      if (msg.cmd === 'newChat') {
+        port.postMessage({ rid: msg.rid, ok: await newChat().catch(() => false) });
+        return;
+      }
       if (msg.cmd !== 'run') return;
       // Chrome stops an extension's service worker after 30 s without an event, and its timers
       // do not count. A message on this port does, so the page says it is still working every
