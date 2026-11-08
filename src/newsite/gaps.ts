@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { get } from '../db/index.js';
+import { all, get } from '../db/index.js';
 import type { NewWebsiteRow } from './repo.js';
 
 /**
@@ -78,4 +78,32 @@ export function lastSocialSent(siteId: number, channelId: number): number {
     channelId, siteId, channelId, siteId,
   );
   return Math.max(sqlTime(row?.at), letThrough.get(`${siteId}:${channelId}`) ?? 0);
+}
+
+/** How many social posts and reel shares a website sent today in the given timezone. */
+export function socialSentToday(siteId: number, tz: string, now = Date.now()): number {
+  const seoIds = 'SELECT s.id FROM keyword_seo s JOIN keyword_plans p ON p.id = s.plan_id WHERE p.website_id = ?';
+  const rows = all<{ at: string | null }>(
+    `SELECT sent_at AS at FROM newsite_social_posts WHERE status = 'sent' AND seo_id IN (${seoIds})
+     UNION ALL
+     SELECT r.sent_at AS at FROM newsite_reel_shares r JOIN newsite_reels v ON v.id = r.reel_id WHERE r.status = 'sent' AND v.seo_id IN (${seoIds})`,
+    siteId, siteId,
+  );
+  let day = '';
+  try {
+    day = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(now);
+  } catch {
+    day = new Date(now).toISOString().slice(0, 10);
+  }
+  return rows.filter((r) => {
+    const t = sqlTime(r.at);
+    if (!t) return false;
+    let d = '';
+    try {
+      d = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(t);
+    } catch {
+      d = new Date(t).toISOString().slice(0, 10);
+    }
+    return d === day;
+  }).length;
 }

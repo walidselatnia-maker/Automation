@@ -1,10 +1,11 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
+import { run } from '../db/index.js';
 import { html, raw, type Html } from '../web/views/layout.js';
 import { listChannels, websiteChannels } from './channels.js';
 import { newLayout, type NewFlash } from './layout.js';
 import { createSocialPosts, getSocialPost, kickSocial, listPlanSocialPosts, remakeSocialPost, retrySocialPost, type SocialDeps } from './social.js';
 import { getSeoRow, listPlanSeo } from './seo.js';
-import { getKeywordPlan, listKeywordPlans, listNewWebsites } from './repo.js';
+import { getKeywordPlan, getNewWebsite, listKeywordPlans, listNewWebsites } from './repo.js';
 import { listPlanSocialPictures } from './pictures.js';
 import { createReels, getReel, kickReels, listPlanReels, onReelMade, REEL_RULES_KEY, reelDir, reelRules, remakeReel, resetInterruptedReels, resumeStoppedLongReels, type ReelDeps } from './reels.js';
 import { createReadStream, existsSync } from 'node:fs';
@@ -163,6 +164,16 @@ export function registerSocialRoutes(
     const site = sharingSites().find((s) => s.site.id === id);
     if (!site) return reply.redirect('/new-website/sharing/new', 303);
     return reply.type('text/html; charset=utf-8').send(page('Share articles', shareArticlesStep(site), request.query));
+  });
+
+  app.post('/new-website/sharing/site/:id/toggle-social', async (request, reply) => {
+    const id = Number((request.params as { id: string }).id) || 0;
+    const site = getNewWebsite(id);
+    if (!site) return reply.redirect('/new-website/sharing', 303);
+    const nextStatus = site.social_status === 'paused' ? 'active' : 'paused';
+    run('UPDATE new_websites SET social_status = ? WHERE id = ?', nextStatus, id);
+    if (nextStatus === 'active') kickAll();
+    return reply.redirect(sharingAt(id, `Social sharing ${nextStatus === 'active' ? 'resumed' : 'paused'} for ${site.name}.`), 303);
   });
 
   app.post('/new-website/sharing/share', async (request, reply) => {

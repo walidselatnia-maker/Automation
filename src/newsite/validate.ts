@@ -53,6 +53,9 @@ export type FieldName =
   | 'socialFrom'
   | 'socialTo'
   | 'socialUnit'
+  | 'socialStatus'
+  | 'socialAutoPublish'
+  | 'socialDailyTarget'
   | 'bufferToken'
   | 'pinUsername'
   | 'projectId';
@@ -62,7 +65,7 @@ export const STEP_FIELDS: FieldName[][] = [
   ['name', 'domain', 'apiKey'],
   ['niche', 'nicheContext', 'pictureStyle', 'colorStyles', 'language'],
   ['persona', 'customPersona'],
-  ['status', 'autoPublish', 'dailyTarget', 'gapAmount', 'gapUnit', 'randomFrom', 'randomTo', 'randomUnit', 'socialFrom', 'socialTo', 'socialUnit'],
+  ['status', 'autoPublish', 'dailyTarget', 'gapAmount', 'gapUnit', 'randomFrom', 'randomTo', 'randomUnit', 'socialFrom', 'socialTo', 'socialUnit', 'socialStatus', 'socialAutoPublish', 'socialDailyTarget'],
   ['bufferToken', 'pinUsername', 'projectId'],
   [],
 ];
@@ -91,6 +94,12 @@ export interface CleanWebsite {
   /** The random gap between social posts to one channel, in minutes; socialGapTo 0 (or missing) = not set. */
   socialGapFrom?: number;
   socialGapTo?: number;
+  /** Whether social posts and reels are active or paused for this website. */
+  socialStatus?: 'active' | 'paused';
+  /** Whether social posts share automatically or wait for approval. */
+  socialAutoPublish?: boolean;
+  /** Max social posts and reels per day for this website; 0 = no limit. */
+  socialDailyTarget?: number;
   bufferToken: string;
   pinUsername: string;
   projectId: string;
@@ -252,10 +261,22 @@ function fieldCheck(field: FieldName, raw: Raw, clean: Partial<CleanWebsite>): s
       clean.status = value;
       return null;
     }
+    case 'socialStatus': {
+      const value = text(raw, field);
+      if (value && value !== 'active' && value !== 'paused') return 'Choose active or paused for social sharing.';
+      clean.socialStatus = (value as 'active' | 'paused') || 'active';
+      return null;
+    }
     case 'autoPublish': {
       const value = text(raw, field);
       if (value !== '1' && value !== '0') return 'Choose how posts are published.';
       clean.autoPublish = value === '1';
+      return null;
+    }
+    case 'socialAutoPublish': {
+      const value = text(raw, field);
+      if (value && value !== '1' && value !== '0') return 'Choose how social posts are shared.';
+      clean.socialAutoPublish = value === '0' ? false : true;
       return null;
     }
     case 'dailyTarget': {
@@ -264,6 +285,14 @@ function fieldCheck(field: FieldName, raw: Raw, clean: Partial<CleanWebsite>): s
         return 'Posts per day must be a whole number from 0 to 100.';
       }
       clean.dailyTarget = Number(value);
+      return null;
+    }
+    case 'socialDailyTarget': {
+      const value = text(raw, field);
+      if (value && (!/^\d{1,3}$/.test(value) || Number(value) > 100)) {
+        return 'Social posts per day must be a whole number from 0 to 100.';
+      }
+      clean.socialDailyTarget = value ? Number(value) : 0;
       return null;
     }
     case 'gapAmount':

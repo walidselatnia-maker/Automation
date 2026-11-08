@@ -171,6 +171,9 @@ export function newWebsiteListPage(rows: NewWebsiteRow[], platformReady = true):
                     ['Posts per day', String(r.daily_target || 'No target')],
                     ['Gap between posts', gap(r.interval_minutes)],
                     ...(r.random_gap_to > 0 ? [['Random gap between posts', gapRange(r.random_gap_from, r.random_gap_to)] as [string, string]] : []),
+                    ['Social status', (r.social_status ?? 'active') === 'active' ? 'Active' : 'Paused'],
+                    ['Social approval', (r.social_auto_publish ?? 1) ? 'Shares automatically' : 'Waits for my approval'],
+                    ['Social posts per day', String(r.social_daily_target || 'No limit')],
                     ...(r.social_gap_to > 0 ? [['Random gap between social posts', gapRange(r.social_gap_from, r.social_gap_to)] as [string, string]] : []),
                   ])}
                   ${part(r.id, 4, 'Channels and pictures', [
@@ -475,6 +478,17 @@ export function newWebsiteWizardPage(existing?: NewWebsiteRow, channels: WizardC
               ${rangeField('random', 'Random gap between posts', rangeParts(e?.random_gap_from ?? 0, e?.random_gap_to ?? 0))}
               ${rangeField('social', 'Random gap between social posts', rangeParts(e?.social_gap_from ?? 0, e?.social_gap_to ?? 0))}
             </div>
+            <div class="wz-two">
+              ${field('socialStatus', 'Social sharing status', html`<select id="wz-socialStatus" name="socialStatus">
+                <option value="active">Active</option><option value="paused" ${selected(e?.social_status === 'paused')}>Paused</option></select>`)}
+              ${field('socialAutoPublish', 'Social approval', html`<select id="wz-socialAutoPublish" name="socialAutoPublish">
+                <option value="1">Share automatically</option><option value="0" ${selected(e?.social_auto_publish === 0)}>Wait for my approval</option></select>`)}
+            </div>
+            <div class="wz-two">
+              ${field('socialDailyTarget', 'Social posts per day', html`<input id="wz-socialDailyTarget" name="socialDailyTarget" inputmode="numeric" value="${e?.social_daily_target ?? 0}" />`, {
+                hint: '0 means no daily target.',
+              })}
+            </div>
           </div>
 
           <div class="wz-step">
@@ -625,7 +639,10 @@ const SCRIPT = `<script>
       [2, 'Voice', [['Persona', persona()]]],
       [3, 'Publishing', [['Status', f('status').selectedOptions[0].text], ['Approval', f('autoPublish').selectedOptions[0].text],
         ['Posts per day', val('dailyTarget')], ['Gap between posts', val('gapAmount') + ' ' + val('gapUnit')],
-        ['Random gap between posts', range('random')], ['Random gap between social posts', range('social')]]],
+        ['Random gap between posts', range('random')], ['Random gap between social posts', range('social')],
+        ['Social status', f('socialStatus') ? f('socialStatus').selectedOptions[0].text : 'Active'],
+        ['Social approval', f('socialAutoPublish') ? f('socialAutoPublish').selectedOptions[0].text : 'Share automatically'],
+        ['Social posts per day', val('socialDailyTarget') || '0']]],
       [4, 'Channels and images', [['Shares on', channelsText()],
         ['Google Flow project', val('projectId') || 'Shared project from Platform settings']]]
     ];

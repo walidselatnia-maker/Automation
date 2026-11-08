@@ -11,6 +11,7 @@ import { bufferTokenOf, fbTokenOf, channelTakes, getChannel, takesReels, website
 import { channelRules } from './platform-rules.js';
 import { getReel, reelDir, withDomain, type ReelRow } from './reels.js';
 import { getSeoRow } from './seo.js';
+import { socialSentToday } from './gaps.js';
 import { NO_BOARD, bufferMetadata, holdForSocialGap, isQueueFull, pickBoard, realInstagram, realThreads, websiteOf, writePostWords, type InstagramApi, type ThreadsApi } from './social.js';
 import { threadsTokenOf, type Renew } from './threads-token.js';
 
@@ -152,6 +153,9 @@ async function work(share: ReelShareRow, deps: ReelShareDeps, now: number): Prom
   if (!reel || !channel || !row || !site) return fail(share.id, 'Its reel, article, website or channel is gone.');
   if (reel.status !== 'done' || !reel.file) return fail(share.id, 'The reel has no video yet.');
   if (row.post_status !== 'published' || !row.post_url) return fail(share.id, 'The article is not published on the website yet.');
+  if (site.social_status === 'paused') return;
+  const tz = deps.settings?.get?.('timezone') || 'UTC';
+  if (site.social_daily_target > 0 && socialSentToday(site.id, tz, now) >= site.social_daily_target) return;
   if (!websiteChannels(site.id).some((c) => c.id === channel.id && c.post_reel && channelTakes(c, row.post_category))) {
     // The website no longer sends reels there (or not of this category): it is dropped, never sent.
     run('DELETE FROM newsite_reel_shares WHERE id = ?', share.id);
@@ -170,6 +174,7 @@ async function work(share: ReelShareRow, deps: ReelShareDeps, now: number): Prom
     run('UPDATE newsite_reel_shares SET text = ?, title = ? WHERE id = ?', share.text, share.title, share.id);
   }
   if (holdForSocialGap('newsite_reel_shares', share.id, site, channel.id, now)) return;
+  if (site.social_auto_publish === 0) return; // Waits for approval
 
   if (channel.via === 'buffer') {
     const api = (deps.buffer ?? realBuffer)(bufferTokenOf(channel, deps.encryptionKey));

@@ -1202,6 +1202,15 @@ export const MIGRATIONS: Migration[] = [
       addColumn(db, 'keyword_seo', 'gemini_chat', "TEXT NOT NULL DEFAULT ''");
     },
   },
+  {
+    id: '063-newsite-social-controls',
+    description: 'New websites: per-website social status, daily post limit, and approval setting',
+    up(db) {
+      addColumn(db, 'new_websites', 'social_status', "TEXT NOT NULL DEFAULT 'active'");
+      addColumn(db, 'new_websites', 'social_daily_target', 'INTEGER NOT NULL DEFAULT 0');
+      addColumn(db, 'new_websites', 'social_auto_publish', 'INTEGER NOT NULL DEFAULT 1');
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */

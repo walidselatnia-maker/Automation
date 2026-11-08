@@ -234,8 +234,12 @@ export function sharingSitesPage(sites: SharingSite[]): Html {
     ${sites.length
       ? html`<div class="sh-grid">${sites.map((s) => {
           const c = countsOf(s);
+          const isPaused = s.site.social_status === 'paused';
           return html`<a class="sh-card" href="${siteHref(s.site.id)}">
-            <div><span class="sh-card-title">${s.site.name}</span><span class="sh-card-sub">${s.site.domain}</span></div>
+            <div>
+              <span class="sh-card-title">${s.site.name}</span>
+              <span class="sh-card-sub">${s.site.domain} · <span class="ns-badge ${isPaused ? 'bad' : 'ok'}">${isPaused ? 'Paused' : 'Active'}</span></span>
+            </div>
             <div class="sh-nums">
               ${num(c.published, 'published')}
               ${num(s.channels.length, s.channels.length === 1 ? 'channel' : 'channels')}
@@ -259,9 +263,14 @@ export function sharingSitePage(s: SharingSite, plan: { id: number; pillar: stri
     <div class="ns-head">
       <div>
         <h1 class="ns-title">${s.site.name}</h1>
-        <p class="ns-lede">${String(c.published)} published article${c.published === 1 ? '' : 's'} · ${s.site.domain}. Choose a channel to see its posts, reels and problems.</p>
+        <p class="ns-lede">${String(c.published)} published article${c.published === 1 ? '' : 's'} · ${s.site.domain} · Social: <b>${s.site.social_status === 'paused' ? 'Paused' : 'Active'}</b>${s.site.social_daily_target ? ` (${s.site.social_daily_target}/day)` : ''}${s.site.social_auto_publish === 0 ? ' · Manual approval' : ''}. Choose a channel to see its posts, reels and problems.</p>
       </div>
-      <a class="ns-btn primary" href="/new-website/sharing/new?website=${String(s.site.id)}">Share articles</a>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+        <form method="post" action="/new-website/sharing/site/${String(s.site.id)}/toggle-social" style="margin:0">
+          <button class="ns-btn ${s.site.social_status === 'paused' ? 'primary' : 'quiet'}">${s.site.social_status === 'paused' ? 'Resume social' : 'Pause social'}</button>
+        </form>
+        <a class="ns-btn primary" href="/new-website/sharing/new?website=${String(s.site.id)}">Share articles</a>
+      </div>
     </div>
     ${plan ? html`<div class="sh-filter"><span class="ns-tag">Keyword plan: ${plan.pillar}</span><a class="ns-btn small" href="${siteHref(s.site.id)}">Show every article</a></div>` : raw('')}
     ${s.channels.length

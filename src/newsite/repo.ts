@@ -25,6 +25,9 @@ export interface NewWebsiteRow {
   /** The random gap between two social posts to one channel, in minutes; social_gap_to 0 = not set. */
   social_gap_from: number;
   social_gap_to: number;
+  social_status: 'active' | 'paused';
+  social_daily_target: number;
+  social_auto_publish: number;
   pin_username: string;
   project_id: string;
   api_key_encrypted: string;
@@ -55,8 +58,9 @@ export function createNewWebsite(site: CleanWebsite, key: Buffer): number {
     `INSERT INTO new_websites (name, domain, niche, niche_context, persona, status,
        auto_publish, daily_target, interval_minutes, pin_username, project_id,
        api_key_encrypted, buffer_token_encrypted, language, picture_style,
-       random_gap_from, random_gap_to, social_gap_from, social_gap_to, color_styles)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       random_gap_from, random_gap_to, social_gap_from, social_gap_to, color_styles,
+       social_status, social_daily_target, social_auto_publish)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     site.name,
     site.domain,
     site.niche,
@@ -77,6 +81,9 @@ export function createNewWebsite(site: CleanWebsite, key: Buffer): number {
     site.socialGapFrom ?? 0,
     site.socialGapTo ?? 0,
     site.colorStyles ?? '',
+    site.socialStatus ?? 'active',
+    site.socialDailyTarget ?? 0,
+    site.socialAutoPublish === false ? 0 : 1,
   ).lastInsertRowid;
 }
 
@@ -86,7 +93,8 @@ export function updateNewWebsite(id: number, site: CleanWebsite, key: Buffer): v
     `UPDATE new_websites SET name = ?, domain = ?, niche = ?, niche_context = ?, persona = ?, status = ?,
        auto_publish = ?, daily_target = ?, interval_minutes = ?, pin_username = ?, project_id = ?,
        api_key_encrypted = ?, buffer_token_encrypted = ?, language = ?, picture_style = ?,
-       random_gap_from = ?, random_gap_to = ?, social_gap_from = ?, social_gap_to = ?, color_styles = ?
+       random_gap_from = ?, random_gap_to = ?, social_gap_from = ?, social_gap_to = ?, color_styles = ?,
+       social_status = ?, social_daily_target = ?, social_auto_publish = ?
      WHERE id = ?`,
     site.name,
     site.domain,
@@ -108,6 +116,9 @@ export function updateNewWebsite(id: number, site: CleanWebsite, key: Buffer): v
     site.socialGapFrom ?? 0,
     site.socialGapTo ?? 0,
     site.colorStyles ?? '',
+    site.socialStatus ?? 'active',
+    site.socialDailyTarget ?? 0,
+    site.socialAutoPublish === false ? 0 : 1,
     id,
   );
 }

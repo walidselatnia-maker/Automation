@@ -16,7 +16,7 @@ import { pickedPinDesigns, renderDesign } from './pin-designs.js';
 import type { Settings } from '../settings.js';
 import { bufferTokenOf, channelTakes, fbTokenOf, getChannel, videoOnly, websiteChannels, type ChannelRow } from './channels.js';
 import type { Fetch } from './client.js';
-import { claimSocialSlot, lastSocialSent, socialDueAt } from './gaps.js';
+import { claimSocialSlot, lastSocialSent, socialDueAt, socialSentToday } from './gaps.js';
 import { parseImageSet } from './images.js';
 import { pictureDir, type PictureRow } from './pictures.js';
 import { instagramFileOf, makeInstagramPicture } from './instagram-picture.js';
@@ -610,6 +610,9 @@ async function work(item: SocialPostRow, deps: SocialDeps, now: number): Promise
   const site = row ? websiteOf(row.id) : undefined;
   if (!row || !channel || !site) return fail(item.id, 'Its article, website or channel is gone.');
   if (row.post_status !== 'published' || !row.post_url) return fail(item.id, 'The article is not published on the website yet.');
+  if (site.social_status === 'paused') return;
+  const tz = deps.settings?.get?.('timezone') || 'UTC';
+  if (site.social_daily_target > 0 && socialSentToday(site.id, tz, now) >= site.social_daily_target) return;
   if (!websiteChannels(site.id).some((c) => c.id === channel.id && c.post_image && channelTakes(c, row.post_category))) {
     // The website no longer sends image posts there (or not of this category): it is dropped, never sent.
     run('DELETE FROM newsite_social_posts WHERE id = ?', item.id);
@@ -624,6 +627,7 @@ async function work(item: SocialPostRow, deps: SocialDeps, now: number): Promise
   const picture = item.picture_id ? get<PictureRow>('SELECT * FROM newsite_pictures WHERE id = ?', item.picture_id) : undefined;
   if (!picture || picture.status !== 'done') return queuePicture(w, deps);
   if (holdForSocialGap('newsite_social_posts', item.id, site, channel.id, now)) return;
+  if (site.social_auto_publish === 0) return; // Waits for approval
   if (channel.via === 'buffer') return sendThroughBuffer(w, picture, deps, now);
   if (channel.platform === 'facebook') return sendThroughFacebook(w, picture, deps);
   if (channel.platform === 'instagram' || channel.platform === 'threads') return sendThroughMetaApi(w, picture, deps, now);
