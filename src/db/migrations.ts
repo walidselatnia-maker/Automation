@@ -1270,6 +1270,13 @@ export const MIGRATIONS: Migration[] = [
       addColumn(db, 'newsite_repurpose_posts', 'board_name', "TEXT NOT NULL DEFAULT ''");
     },
   },
+  {
+    id: '066-newsite-repurpose-images',
+    description: 'New websites: image url for repurposed social posts',
+    up(db) {
+      addColumn(db, 'newsite_repurpose_posts', 'image_url', "TEXT NOT NULL DEFAULT ''");
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */

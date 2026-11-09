@@ -337,4 +337,105 @@ describe('New dashboard: content repurposing', () => {
     expect(deleteRes.statusCode).toBe(303);
     expect(listRepurposeArticles(siteId)).toHaveLength(1);
   });
+
+  it('regenerates failed posts and provides click-to-enlarge lightbox in UI', async () => {
+    const a = Fastify();
+    await a.register(formbody);
+
+    const siteId = createSite();
+    const site = get<NewWebsiteRow>('SELECT * FROM new_websites WHERE id = ?', siteId)!;
+
+    await syncWebsiteArticles(site, 'sk_test_mock', (async () => mockPostsResponse()) as any);
+    const articles = listRepurposeArticles(siteId);
+    const article = articles[0]!;
+
+    const channelId = saveBufferChannel(
+      {
+        platform: 'pinterest',
+        name: 'Baking Inspiration',
+        bufferToken: 'buf_test',
+        bufferChannelId: 'buf_pin_1',
+        postImage: true,
+        postReel: false,
+        multiWebsite: false,
+      },
+      KEY,
+    );
+
+    let askCount = 0;
+    const mockBuffer = () => ({
+      channels: async () => [
+        {
+          id: 'buf_pin_1',
+          name: 'Pinterest Baking',
+          service: 'pinterest',
+          boards: [{ serviceId: 'b_123', name: 'Cookies & Desserts' }],
+        },
+      ],
+      createImagePost: async () => ({ id: 'buf_post_regen_1', dueAt: '2026-11-10T12:00:00Z' }),
+    });
+
+    const deps = {
+      encryptionKey: KEY,
+      readFlash: () => null,
+      buffer: mockBuffer as any,
+      ask: async () => {
+        askCount++;
+        return JSON.stringify({
+          headline: 'Chewy Cookies',
+          cta: 'Save Recipe',
+          title: `Fresh Artisan Sourdough Secrets and Homemade Baking Tips Round ${askCount}`,
+          description: `Learn how to achieve a perfectly crispy golden crust and an airy chewy crumb at home using natural sourdough starter with our simple step-by-step masterclass edition ${askCount}.`,
+          alt: 'Golden brown loaf of freshly baked artisan sourdough bread cooling on a rustic wire rack',
+        });
+      },
+      fetchImpl: (async () => ({ ok: true, status: 200, arrayBuffer: async () => new ArrayBuffer(8) })) as any,
+    };
+
+    // 1. Generate initial post
+    const gen = await generateRepurposePost(article.id, channelId, deps);
+    expect(gen.post).toBeTruthy();
+    expect(gen.post?.image_url).toBe(article.cover_url);
+    expect(gen.post?.title).toBe('Fresh Artisan Sourdough Secrets and Homemade Baking Tips Round 1');
+
+    // Manually mark it as failed with an error
+    const { run } = await import('../src/db/index.js');
+    run("UPDATE newsite_repurpose_posts SET status = 'failed', error = 'Buffer rejected test error' WHERE id = ?", gen.post!.id);
+    expect(getRepurposePost(gen.post!.id)?.status).toBe('failed');
+
+    registerRepurposeRoutes(a, deps);
+
+    // 2. View shows image thumbnail with click-to-enlarge lightbox and Regenerate button
+    const viewRes = await a.inject({ url: `/new-website/repurpose?website=${siteId}` });
+    expect(viewRes.statusCode).toBe(200);
+    expect(viewRes.body).toContain('rp-thumb');
+    expect(viewRes.body).toContain('openLightbox');
+    expect(viewRes.body).toContain('rp-lightbox');
+    expect(viewRes.body).toContain('Regenerate');
+    expect(viewRes.body).toContain('Regenerate all failed');
+
+    // 3. Trigger regeneration
+    const regenRes = await a.inject({
+      method: 'POST',
+      url: `/new-website/repurpose/post/${gen.post!.id}/regenerate`,
+    });
+    expect(regenRes.statusCode).toBe(303);
+
+    const refreshed = getRepurposePost(gen.post!.id)!;
+    expect(refreshed.status).not.toBe('failed');
+    expect(refreshed.title).toBe('Fresh Artisan Sourdough Secrets and Homemade Baking Tips Round 2');
+    expect(refreshed.image_url).toBe(article.cover_url);
+    expect(refreshed.error).toBe('');
+
+    // 4. Test bulk retry of failed posts
+    run("UPDATE newsite_repurpose_posts SET status = 'failed', error = 'Another error' WHERE id = ?", gen.post!.id);
+    const retryRes = await a.inject({
+      method: 'POST',
+      url: `/new-website/repurpose/${siteId}/retry-failed`,
+    });
+    expect(retryRes.statusCode).toBe(303);
+    const retryRefreshed = getRepurposePost(gen.post!.id)!;
+    expect(retryRefreshed.status).not.toBe('failed');
+    expect(retryRefreshed.title).toBe('Fresh Artisan Sourdough Secrets and Homemade Baking Tips Round 3');
+  });
 });

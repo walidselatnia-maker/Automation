@@ -31,6 +31,15 @@ details.rp-site-card:not([open]) .rp-toggle-arrow { transform: rotate(-90deg); }
 .rp-select { padding: 6px 10px; border-radius: var(--r-ctl); border: 1px solid var(--line); background: var(--surface); color: var(--ink); font-size: 13px; }
 .rp-select.small { padding: 4px 8px; font-size: 12px; max-width: 140px; }
 .rp-channel-row { display: flex; align-items: center; gap: 8px; }
+.rp-thumb-box { display: inline-block; position: relative; }
+.rp-thumb { width: 56px; height: 56px; object-fit: cover; border-radius: 6px; border: 1px solid var(--line); cursor: pointer; display: block; transition: transform .15s ease, box-shadow .15s ease; background: var(--surface); }
+.rp-thumb:hover { transform: scale(1.08); box-shadow: 0 4px 14px rgba(0,0,0,0.3); }
+.rp-lightbox { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 9999; align-items: center; justify-content: center; padding: 24px; }
+.rp-lightbox.open { display: flex; }
+.rp-lightbox-inner { position: relative; max-width: 90vw; max-height: 90vh; display: flex; flex-direction: column; align-items: center; }
+.rp-lightbox-inner img { max-width: 90vw; max-height: 85vh; border-radius: 8px; box-shadow: 0 10px 40px rgba(0,0,0,0.6); object-fit: contain; }
+.rp-lightbox-close { position: absolute; top: -38px; right: 0; font-size: 32px; color: #fff; cursor: pointer; line-height: 1; user-select: none; }
+.rp-lightbox-close:hover { color: #f87171; }
 .rp-posts-table { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 14px; }
 .rp-posts-table th, .rp-posts-table td { padding: 12px 14px; text-align: left; border-bottom: 1px solid var(--line); }
 .rp-posts-table th { color: var(--soft); font-weight: 600; font-size: 13px; }
@@ -75,7 +84,7 @@ export function repurposePage(
   websites: NewWebsiteRow[],
   selectedSiteId: number | undefined,
   articlesOf: Map<number, RepurposeArticleRow[]>,
-  postsOf: Map<number, (RepurposePostRow & { article_title: string; article_url: string; channel_name: string })[]>,
+  postsOf: Map<number, (RepurposePostRow & { article_title: string; article_url: string; article_cover_url?: string; channel_name: string })[]>,
   channelsOf: Map<number, ChannelRow[]>,
   sentTodayOf: Map<number, number>,
   currentPage: number = 1,
@@ -280,23 +289,41 @@ export function repurposePage(
                 </div>`}
 
             <!-- Generated Repurpose Posts -->
-            <h3 style="font-size:17px;margin:28px 0 10px">Repurposed social posts (${String(posts.length)})</h3>
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin:28px 0 10px">
+              <h3 style="font-size:17px;margin:0">Repurposed social posts (${String(posts.length)})</h3>
+              ${posts.some((p) => p.status === 'failed')
+                ? html`<form method="post" action="/new-website/repurpose/${String(site.id)}/retry-failed" style="margin:0">
+                    <button class="ns-btn small danger">Regenerate all failed (${String(posts.filter((p) => p.status === 'failed').length)})</button>
+                  </form>`
+                : raw('')}
+            </div>
+
             ${posts.length
               ? html`<table class="rp-posts-table">
                   <thead>
                     <tr>
-                      <th>Channel</th>
-                      <th>Source article</th>
+                      <th style="width:180px">Channel</th>
+                      <th style="width:72px">Image</th>
+                      <th style="width:200px">Source article</th>
                       <th>Fresh generated copy</th>
-                      <th>Status</th>
-                      <th>Actions</th>
+                      <th style="width:90px">Status</th>
+                      <th style="width:190px">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
-                    ${posts.slice(0, 20).map((p) => html`<tr>
+                    ${posts.slice(0, 50).map((p) => {
+                      const img = p.image_url || p.article_cover_url;
+                      return html`<tr>
                       <td>
                         <b>${p.channel_name}</b> <span style="font-size:12px;color:var(--soft)">(${platformLabel(p.platform)})</span>
                         ${p.board_name ? html`<div style="font-size:12px;color:var(--soft);margin-top:2px">Board: <b>${p.board_name}</b></div>` : raw('')}
+                      </td>
+                      <td>
+                        ${img
+                          ? html`<div class="rp-thumb-box">
+                              <img src="${img}" alt="${p.title || p.article_title}" class="rp-thumb" onclick="openLightbox(event, '${img}')" title="Click to enlarge" loading="lazy" />
+                            </div>`
+                          : html`<span style="font-size:12px;color:var(--soft)">No image</span>`}
                       </td>
                       <td><a href="${p.article_url}" target="_blank" rel="noopener" style="color:var(--accent-text);text-decoration:none">${p.article_title}</a></td>
                       <td>
@@ -306,20 +333,35 @@ export function repurposePage(
                       </td>
                       <td><span class="ns-badge ${p.status === 'sent' ? 'good' : p.status === 'failed' ? 'bad' : 'idle'}">${p.status}</span></td>
                       <td>
-                        <div style="display:flex;gap:6px">
-                          ${p.status !== 'sent'
-                            ? html`<form method="post" action="/new-website/repurpose/post/${String(p.id)}/send" style="margin:0">
-                                <button class="ns-btn small primary">Send</button>
-                              </form>`
-                            : p.post_link
-                              ? html`<a class="ns-btn small quiet" href="${p.post_link}" target="_blank" rel="noopener">View</a>`
-                              : raw('')}
+                        <div style="display:flex;gap:6px;flex-wrap:wrap">
+                          ${p.status === 'failed'
+                            ? html`
+                                <form method="post" action="/new-website/repurpose/post/${String(p.id)}/regenerate" style="margin:0">
+                                  <button class="ns-btn small primary" title="Generate fresh copy and retry">Regenerate</button>
+                                </form>
+                                <form method="post" action="/new-website/repurpose/post/${String(p.id)}/send" style="margin:0">
+                                  <button class="ns-btn small quiet">Retry</button>
+                                </form>`
+                            : p.status === 'waiting'
+                              ? html`
+                                  <form method="post" action="/new-website/repurpose/post/${String(p.id)}/send" style="margin:0">
+                                    <button class="ns-btn small primary">Send</button>
+                                  </form>
+                                  <form method="post" action="/new-website/repurpose/post/${String(p.id)}/regenerate" style="margin:0">
+                                    <button class="ns-btn small quiet" title="Generate fresh copy">Regenerate</button>
+                                  </form>`
+                              : html`
+                                  ${p.post_link ? html`<a class="ns-btn small quiet" href="${p.post_link}" target="_blank" rel="noopener">View</a>` : raw('')}
+                                  <form method="post" action="/new-website/repurpose/post/${String(p.id)}/regenerate" style="margin:0">
+                                    <button class="ns-btn small quiet" title="Generate fresh copy">Regenerate</button>
+                                  </form>`}
                           <form method="post" action="/new-website/repurpose/post/${String(p.id)}/delete" style="margin:0" onsubmit="return confirm('Delete this post?')">
                             <button class="ns-btn small danger">Delete</button>
                           </form>
                         </div>
                       </td>
-                    </tr>`)}
+                    </tr>`;
+                    })}
                   </tbody>
                 </table>`
               : html`<div class="rp-empty" style="margin-top:10px">
@@ -328,6 +370,14 @@ export function repurposePage(
           </details>`;
         })
       : html`<div class="rp-empty"><h2>No websites yet</h2><p>Add a website to begin repurposing its published content.</p><a class="ns-btn primary" href="/new-website/add">Add website</a></div>`}
+
+    <!-- Lightbox for image enlargement -->
+    <div id="rp-lightbox" class="rp-lightbox" onclick="closeLightbox(event)">
+      <div class="rp-lightbox-inner">
+        <span class="rp-lightbox-close" onclick="closeLightbox()">&times;</span>
+        <img id="rp-lightbox-img" src="" alt="Enlarged preview" />
+      </div>
+    </div>
 
     <script>
     (function () {
@@ -348,6 +398,29 @@ export function repurposePage(
         cbs.forEach(function (cb) {
           cb.addEventListener('change', updateCount);
         });
+      });
+
+      window.openLightbox = function (e, src) {
+        if (e) e.preventDefault();
+        var lb = document.getElementById('rp-lightbox');
+        var img = document.getElementById('rp-lightbox-img');
+        if (lb && img) {
+          img.src = src;
+          lb.classList.add('open');
+        }
+      };
+
+      window.closeLightbox = function (e) {
+        if (e && e.target && e.target.tagName === 'IMG') return;
+        var lb = document.getElementById('rp-lightbox');
+        if (lb) lb.classList.remove('open');
+      };
+
+      document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') {
+          var lb = document.getElementById('rp-lightbox');
+          if (lb) lb.classList.remove('open');
+        }
       });
     })();
     </script>

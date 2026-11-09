@@ -45,6 +45,7 @@ export interface RepurposePostRow {
   text: string;
   alt: string;
   board_name: string;
+  image_url: string;
   post_link: string;
   external_id: string;
   error: string;
@@ -106,10 +107,10 @@ export const getRepurposeArticle = (id: number): RepurposeArticleRow | undefined
 
 export const listRepurposePosts = (
   websiteId?: number,
-): (RepurposePostRow & { article_title: string; article_url: string; channel_name: string })[] =>
+): (RepurposePostRow & { article_title: string; article_url: string; article_cover_url: string; channel_name: string })[] =>
   websiteId
-    ? all<RepurposePostRow & { article_title: string; article_url: string; channel_name: string }>(
-        `SELECT p.*, a.title AS article_title, a.url AS article_url, COALESCE(c.name, p.platform) AS channel_name
+    ? all<RepurposePostRow & { article_title: string; article_url: string; article_cover_url: string; channel_name: string }>(
+        `SELECT p.*, a.title AS article_title, a.url AS article_url, a.cover_url AS article_cover_url, COALESCE(c.name, p.platform) AS channel_name
          FROM newsite_repurpose_posts p
          JOIN newsite_repurpose_articles a ON a.id = p.article_id
          LEFT JOIN newsite_channels c ON c.id = p.channel_id
@@ -117,8 +118,8 @@ export const listRepurposePosts = (
          ORDER BY p.id DESC`,
         websiteId,
       )
-    : all<RepurposePostRow & { article_title: string; article_url: string; channel_name: string }>(
-        `SELECT p.*, a.title AS article_title, a.url AS article_url, COALESCE(c.name, p.platform) AS channel_name
+    : all<RepurposePostRow & { article_title: string; article_url: string; article_cover_url: string; channel_name: string }>(
+        `SELECT p.*, a.title AS article_title, a.url AS article_url, a.cover_url AS article_cover_url, COALESCE(c.name, p.platform) AS channel_name
          FROM newsite_repurpose_posts p
          JOIN newsite_repurpose_articles a ON a.id = p.article_id
          LEFT JOIN newsite_channels c ON c.id = p.channel_id
@@ -330,12 +331,13 @@ export async function generateRepurposePost(
   const postText = f[r.postText] ?? f.text ?? f.caption ?? '';
   const alt = r.altField ? f[r.altField] ?? '' : '';
   const postTitle = f.title ?? '';
+  const imageUrl = article.cover_url;
 
   const id = Number(
     run(
       `INSERT INTO newsite_repurpose_posts
-         (website_id, article_id, channel_id, platform, status, fields_json, title, text, alt, created_at)
-       VALUES (?, ?, ?, ?, 'waiting', ?, ?, ?, ?, unixepoch())`,
+         (website_id, article_id, channel_id, platform, status, fields_json, title, text, alt, image_url, created_at)
+       VALUES (?, ?, ?, ?, 'waiting', ?, ?, ?, ?, ?, unixepoch())`,
       site.id,
       article.id,
       channel.id,
@@ -344,6 +346,7 @@ export async function generateRepurposePost(
       postTitle,
       postText,
       alt,
+      imageUrl,
     ).lastInsertRowid,
   );
 
@@ -441,11 +444,12 @@ export async function sendRepurposePost(
         }
       }
 
+      const targetImgUrl = post.image_url || article.cover_url;
       const firstComment = rules.link === 'first_comment' && channel.paid_buffer && !commentsThroughApi(channel) ? article.url : '';
       const { id, dueAt } = await api.createImagePost({
         text: post.text,
         channelId: channel.buffer_channel_id,
-        imageUrl: article.cover_url,
+        imageUrl: targetImgUrl,
         altText: post.alt || article.title,
         metadata: bufferMetadata(channel.platform, {
           title: post.title || article.title,
@@ -467,8 +471,9 @@ export async function sendRepurposePost(
       const api = (deps.facebook ?? ((tok) => new FacebookClient({ systemUserToken: tok })))(fbTokenOf(channel, deps.encryptionKey));
       let imageBuffer: Buffer | null = null;
       let contentType = 'image/jpeg';
-      if (article.cover_url) {
-        const imgRes = await (deps.fetchImpl ?? fetch)(article.cover_url).catch(() => null);
+      const targetImgUrl = post.image_url || article.cover_url;
+      if (targetImgUrl) {
+        const imgRes = await (deps.fetchImpl ?? fetch)(targetImgUrl).catch(() => null);
         if (imgRes && imgRes.ok) {
           const arr = await imgRes.arrayBuffer();
           imageBuffer = Buffer.from(arr);
@@ -502,6 +507,110 @@ export async function sendRepurposePost(
     run(`UPDATE newsite_repurpose_posts SET status = 'failed', error = ? WHERE id = ?`, errorMsg, post.id);
     return { ok: false, error: errorMsg };
   }
+}
+
+/**
+ * Regenerates fresh content for a post (gives failed or existing posts another chance).
+ */
+export async function regenerateRepurposePost(
+  postId: number,
+  deps: RepurposeDeps,
+): Promise<{ ok: boolean; post?: RepurposePostRow; problems?: string[] }> {
+  const post = getRepurposePost(postId);
+  if (!post) return { ok: false, problems: ['Post not found.'] };
+
+  const article = getRepurposeArticle(post.article_id);
+  if (!article) return { ok: false, problems: ['Article not found.'] };
+
+  const channel = getChannel(post.channel_id);
+  if (!channel) return { ok: false, problems: ['Channel not found.'] };
+
+  const site = getNewWebsite(post.website_id);
+  if (!site) return { ok: false, problems: ['Website not found.'] };
+
+  const rules = channelRules(channel);
+  const r = rules.rules;
+  if (!r) return { ok: false, problems: ['No rules configured for channel platform.'] };
+
+  const outcome = await correctUntilRight<Record<string, string>>({
+    ask: (corrections) =>
+      deps.ask('newsite-repurpose-post', {
+        label: r.label,
+        platformRules: corrections ? `${r.text}\n\nCORRECTIONS REQUIRED:\n${corrections}` : r.text,
+        fields: r.fields.join(', '),
+        shape: JSON.stringify(Object.fromEntries(r.fields.map((f: string) => [f, '...']))),
+        domain: site.domain,
+        articleTitle: article.title,
+        niche: site.niche,
+        persona: site.persona,
+        excerpt: article.excerpt || article.title,
+        articleContent: (article.content_text || article.excerpt || article.title).slice(0, 4000),
+      }),
+    parse: (raw) => {
+      const o = parseJson(raw);
+      return o ? Object.fromEntries(r.fields.map((f: string) => [f, strClean(o, f)])) : null;
+    },
+    check: (fields) => {
+      const baseProblems = checkFields(fields, r, site.domain);
+      if (fields.title && fields.title.toLowerCase().trim() === article.title.toLowerCase().trim()) {
+        baseProblems.push('Do NOT reuse the original article title verbatim. Write a fresh, captivating headline for this post.');
+      }
+      return baseProblems;
+    },
+  });
+
+  if (!outcome.answer) {
+    return { ok: false, problems: outcome.problems };
+  }
+
+  const f = outcome.answer;
+  const postText = f[r.postText] ?? f.text ?? f.caption ?? '';
+  const alt = r.altField ? f[r.altField] ?? '' : '';
+  const postTitle = f.title ?? '';
+  const imageUrl = post.image_url || article.cover_url;
+
+  run(
+    `UPDATE newsite_repurpose_posts SET
+       fields_json = ?, title = ?, text = ?, alt = ?, image_url = ?,
+       status = 'waiting', error = '', scheduled_for = 0, sent_at = 0
+     WHERE id = ?`,
+    JSON.stringify(f),
+    postTitle,
+    postText,
+    alt,
+    imageUrl,
+    post.id,
+  );
+
+  run('UPDATE newsite_repurpose_articles SET last_repurposed_at = unixepoch() WHERE id = ?', article.id);
+
+  const updatedPost = getRepurposePost(post.id)!;
+
+  // Auto-publish if enabled
+  if (site.repurpose_auto_publish) {
+    await sendRepurposePost(post.id, deps);
+  }
+
+  return { ok: true, post: updatedPost };
+}
+
+/**
+ * Retries/regenerates all failed posts for a website.
+ */
+export async function retryFailedRepurposePosts(
+  websiteId: number,
+  deps: RepurposeDeps,
+): Promise<{ ok: boolean; retried: number }> {
+  const failedPosts = all<RepurposePostRow>(
+    `SELECT * FROM newsite_repurpose_posts WHERE website_id = ? AND status = 'failed' ORDER BY id ASC`,
+    websiteId,
+  );
+  let retried = 0;
+  for (const p of failedPosts) {
+    const res = await regenerateRepurposePost(p.id, deps);
+    if (res.ok) retried++;
+  }
+  return { ok: true, retried };
 }
 
 /* -- Bulk Article Operations ---------------------------------------------- */

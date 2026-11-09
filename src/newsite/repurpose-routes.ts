@@ -11,7 +11,9 @@ import {
   kickRepurpose,
   listRepurposeArticles,
   listRepurposePosts,
+  regenerateRepurposePost,
   repurposeSentToday,
+  retryFailedRepurposePosts,
   sendRepurposePost,
   syncWebsiteArticles,
   updateRepurposeSettings,
@@ -212,6 +214,39 @@ export function registerRepurposeRoutes(
 
     return reply.redirect(
       `/new-website/repurpose?website=${post.website_id}&ok=${encodeURIComponent('Post sent successfully.')}`,
+      303,
+    );
+  });
+
+  app.post('/new-website/repurpose/post/:postId/regenerate', async (request, reply) => {
+    const postId = Number((request.params as { postId: string }).postId);
+    const post = getRepurposePost(postId);
+    if (!post) return reply.redirect('/new-website/repurpose', 303);
+
+    const res = await regenerateRepurposePost(postId, deps);
+    if (!res.ok) {
+      return reply.redirect(
+        `/new-website/repurpose?website=${post.website_id}&error=${encodeURIComponent(
+          `Regeneration failed: ${res.problems?.join(' ') ?? ''}`,
+        )}`,
+        303,
+      );
+    }
+
+    return reply.redirect(
+      `/new-website/repurpose?website=${post.website_id}&ok=${encodeURIComponent('Post regenerated successfully.')}`,
+      303,
+    );
+  });
+
+  app.post('/new-website/repurpose/:siteId/retry-failed', async (request, reply) => {
+    const siteId = Number((request.params as { siteId: string }).siteId);
+    const site = getNewWebsite(siteId);
+    if (!site) return reply.redirect('/new-website/repurpose', 303);
+
+    const res = await retryFailedRepurposePosts(siteId, deps);
+    return reply.redirect(
+      `/new-website/repurpose?website=${siteId}&ok=${encodeURIComponent(`Regenerated ${res.retried} failed post(s).`)}`,
       303,
     );
   });
