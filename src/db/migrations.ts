@@ -1305,6 +1305,18 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    id: '070-newsite-repurpose-clean-status',
+    description: 'New websites: reset articles with 0 posts to active status',
+    up(db) {
+      db.exec(`
+        UPDATE newsite_repurpose_articles
+        SET status = 'active'
+        WHERE status = 'generated'
+          AND id NOT IN (SELECT DISTINCT article_id FROM newsite_repurpose_posts);
+      `);
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */

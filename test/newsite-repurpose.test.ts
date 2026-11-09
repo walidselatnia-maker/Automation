@@ -1040,10 +1040,9 @@ describe('New dashboard: content repurposing', () => {
     // Discovered articles table is toggleable
     expect(initialRes.body).toContain(`details class="rp-table-card" open id="discovered-card-${siteId}"`);
     expect(initialRes.body).toContain('Discovered articles (2)');
-    expect(initialRes.body).toContain('0 generated');
+    expect(initialRes.body).toContain('0 repurposed');
     expect(initialRes.body).toContain('2 ready');
-    expect(initialRes.body).toContain('Active · Ready');
-    expect(initialRes.body).toContain('Never repurposed');
+    expect(initialRes.body).toContain('Not repurposed');
 
     // Repurposed posts table is toggleable
     expect(initialRes.body).toContain(`details class="rp-table-card" open id="posts-card-${siteId}"`);
@@ -1069,16 +1068,15 @@ describe('New dashboard: content repurposing', () => {
     expect(art1.post_count).toBe(1);
     expect(art1.last_repurposed_at).toBeGreaterThan(0);
 
-    // 3. Render page again: article 1 clearly displays "✓ Generated (1 post)" in good badge
+    // 3. Render page again: article 1 clearly displays "✓ Repurposed (1)" with green row styling
     const afterGenRes = await a.inject({ url: `/new-website/repurpose?website=${siteId}` });
     expect(afterGenRes.statusCode).toBe(200);
-    expect(afterGenRes.body).toContain('1 generated');
+    expect(afterGenRes.body).toContain('1 repurposed');
     expect(afterGenRes.body).toContain('1 ready');
-    expect(afterGenRes.body).toContain('✓ Generated (1 post)');
-    expect(afterGenRes.body).toContain('Repurposed today');
-    // Article 2 remains Active · Ready
-    expect(afterGenRes.body).toContain('Active · Ready');
-    expect(afterGenRes.body).toContain('Never repurposed');
+    expect(afterGenRes.body).toContain('✓ Repurposed (1)');
+    expect(afterGenRes.body).toContain('rp-row-repurposed');
+    // Article 2 remains Not repurposed
+    expect(afterGenRes.body).toContain('Not repurposed');
 
     // Repurposed posts table now shows 1 post
     expect(afterGenRes.body).toContain('Repurposed social posts (1)');

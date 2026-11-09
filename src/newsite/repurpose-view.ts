@@ -29,8 +29,23 @@ details.rp-site-card:not([open]) .rp-toggle-arrow { transform: rotate(-90deg); }
 .rp-bulk-label { font-size: 13px; color: var(--soft); display: flex; align-items: center; gap: 6px; margin: 0; }
 .rp-bulk-count { font-size: 13px; font-weight: 600; color: var(--ink); }
 .rp-select { padding: 6px 10px; border-radius: var(--r-ctl); border: 1px solid var(--line); background: var(--surface); color: var(--ink); font-size: 13px; }
-.rp-select.small { padding: 4px 8px; font-size: 12px; max-width: 140px; }
-.rp-channel-row { display: flex; align-items: center; gap: 8px; }
+.rp-select.small { padding: 4px 8px; font-size: 12px; }
+.rp-channel-row { display: flex; align-items: center; gap: 8px; width: 100%; }
+.rp-channel-row select.rp-select { flex: 1; min-width: 180px; max-width: 270px; height: 32px; padding: 4px 8px; font-size: 13px; text-overflow: ellipsis; }
+.rp-channel-row .ns-btn { flex-shrink: 0; white-space: nowrap; }
+tr.rp-row-repurposed { background: color-mix(in srgb, #065f46 22%, var(--raised)) !important; }
+tr.rp-row-repurposed:hover { background: color-mix(in srgb, #065f46 32%, var(--raised)) !important; }
+tr.rp-row-repurposed td:first-child { border-left: 4px solid #10b981; }
+html:not(.dark) tr.rp-row-repurposed { background: #ecfdf5 !important; }
+html:not(.dark) tr.rp-row-repurposed:hover { background: #d1fae5 !important; }
+.rp-badge-repurposed { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: 999px; font: 700 12px/1 var(--body); white-space: nowrap; background: #064e3b; color: #34d399; border: 1px solid #059669; }
+.rp-badge-repurposed::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: #34d399; box-shadow: 0 0 6px #34d399; }
+html:not(.dark) .rp-badge-repurposed { background: #d1fae5; color: #047857; border-color: #6ee7b7; }
+.rp-badge-ready { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: 999px; font: 600 12px/1 var(--body); white-space: nowrap; background: var(--surface); color: var(--soft); border: 1px solid var(--line); }
+.rp-badge-ready::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--soft); opacity: 0.5; }
+.rp-badge-paused { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: 999px; font: 600 12px/1 var(--body); white-space: nowrap; background: #450a0a; color: #f87171; border: 1px solid #991b1b; }
+.rp-badge-paused::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: #f87171; }
+html:not(.dark) .rp-badge-paused { background: #fef2f2; color: #b91c1c; border-color: #fca5a5; }
 .rp-thumb-box { display: inline-block; position: relative; }
 .rp-thumb { width: 56px; height: 56px; object-fit: cover; border-radius: 6px; border: 1px solid var(--line); cursor: pointer; display: block; transition: transform .15s ease, box-shadow .15s ease; background: var(--surface); }
 .rp-thumb:hover { transform: scale(1.08); box-shadow: 0 4px 14px rgba(0,0,0,0.3); }
@@ -139,18 +154,17 @@ export function repurposePage(
           const sentToday = sentTodayOf.get(site.id) ?? 0;
           const status = site.repurpose_status ?? 'paused';
 
-          const generatedArticlesCount = allArticles.filter(
-            (a) => a.status === 'generated' || (a.post_count ?? 0) > 0 || (a.last_repurposed_at ?? 0) > 0,
-          ).length;
+          const isRepurposedArt = (a: RepurposeArticleRow) => (a.post_count ?? 0) > 0;
+          const repurposedArticlesCount = allArticles.filter(isRepurposedArt).length;
           const pausedArticlesCount = allArticles.filter((a) => a.status === 'paused').length;
-          const readyArticlesCount = Math.max(0, allArticles.length - generatedArticlesCount - pausedArticlesCount);
+          const readyArticlesCount = Math.max(0, allArticles.length - repurposedArticlesCount - pausedArticlesCount);
 
           const currentFilter = filter || 'all';
           const filteredArticles =
-            currentFilter === 'generated'
-              ? allArticles.filter((a) => a.status === 'generated' || (a.post_count ?? 0) > 0 || (a.last_repurposed_at ?? 0) > 0)
+            currentFilter === 'generated' || currentFilter === 'repurposed'
+              ? allArticles.filter(isRepurposedArt)
               : currentFilter === 'ready'
-                ? allArticles.filter((a) => a.status !== 'paused' && a.status !== 'generated' && !(a.post_count ?? 0) && !(a.last_repurposed_at ?? 0))
+                ? allArticles.filter((a) => a.status !== 'paused' && !isRepurposedArt(a))
                 : currentFilter === 'paused'
                   ? allArticles.filter((a) => a.status === 'paused')
                   : allArticles;
@@ -171,11 +185,11 @@ export function repurposePage(
                   <span class="ns-mono" style="font-size:14px;color:var(--soft);font-weight:400">${site.domain}</span>
                 </div>
                 <div class="rp-meta">
-                  <span class="ns-badge ${status === 'active' ? 'good' : 'bad'}">Repurposing: ${status === 'active' ? 'Active' : 'Paused'}</span>
+                  <span class="ns-badge ${status === 'active' ? 'ok' : 'bad'}">Repurposing: ${status === 'active' ? 'Active' : 'Paused'}</span>
                   <span>Target: <b>${String(sentToday)} / ${String(site.repurpose_daily_target ?? 1)} today</b></span>
                   <span>Cooldown: <b>${String(site.repurpose_cooldown_days ?? 30)} days</b></span>
                   <span>${site.repurpose_auto_publish ? 'Auto-publish' : 'Manual approval'}</span>
-                  <span>Articles: <b>${String(allArticles.length)}</b> (${String(generatedArticlesCount)} generated, ${String(readyArticlesCount)} ready)</span>
+                  <span>Articles: <b>${String(allArticles.length)}</b> (${String(repurposedArticlesCount)} repurposed, ${String(readyArticlesCount)} ready)</span>
                   <span>Posts: <b>${String(posts.length)}</b></span>
                 </div>
               </div>
@@ -221,7 +235,7 @@ export function repurposePage(
                 <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
                   <span class="rp-toggle-arrow">▼</span>
                   <h3 style="font-size:17px;margin:0">Discovered articles (${String(allArticles.length)})</h3>
-                  <span class="ns-badge good" style="font-size:11px">${String(generatedArticlesCount)} generated</span>
+                  <span class="ns-badge ok" style="font-size:11px">${String(repurposedArticlesCount)} repurposed</span>
                   <span class="ns-badge idle" style="font-size:11px">${String(readyArticlesCount)} ready</span>
                   ${pausedArticlesCount ? html`<span class="ns-badge bad" style="font-size:11px">${String(pausedArticlesCount)} paused</span>` : raw('')}
                 </div>
@@ -242,8 +256,8 @@ export function repurposePage(
                   <a class="rp-filter-pill ${currentFilter === 'ready' ? 'on' : ''}" href="${makePageUrl(site.id, 1, selectedSiteId, 'ready')}">
                     Ready (${String(readyArticlesCount)})
                   </a>
-                  <a class="rp-filter-pill ${currentFilter === 'generated' ? 'on' : ''}" href="${makePageUrl(site.id, 1, selectedSiteId, 'generated')}">
-                    ✓ Generated (${String(generatedArticlesCount)})
+                  <a class="rp-filter-pill ${currentFilter === 'repurposed' || currentFilter === 'generated' ? 'on' : ''}" href="${makePageUrl(site.id, 1, selectedSiteId, 'repurposed')}">
+                    ✓ Repurposed (${String(repurposedArticlesCount)})
                   </a>
                   ${pausedArticlesCount
                     ? html`<a class="rp-filter-pill ${currentFilter === 'paused' ? 'on' : ''}" href="${makePageUrl(site.id, 1, selectedSiteId, 'paused')}">
@@ -285,36 +299,17 @@ export function repurposePage(
                                 <input type="checkbox" class="rp-select-all" data-site="${String(site.id)}" title="Select all on this page" />
                               </th>
                               <th>Title</th>
-                              <th style="width:190px">Status</th>
-                              <th style="width:260px">Channels</th>
+                              <th style="width:160px;text-align:center">Status</th>
+                              <th style="width:380px">Channels</th>
                             </tr>
                           </thead>
                           <tbody>
                             ${pagedArticles.map((art) => {
-                              const isGen = art.status === 'generated' || (art.post_count ?? 0) > 0 || (art.last_repurposed_at ?? 0) > 0;
+                              const isRepurposed = (art.post_count ?? 0) > 0;
                               const isPaused = art.status === 'paused';
-                              const postCount = art.post_count ?? (isGen ? 1 : 0);
+                              const postCount = art.post_count ?? 0;
 
-                              let badgeClass = 'idle';
-                              let badgeText = 'Active · Ready';
-                              let subText = 'Never repurposed';
-
-                              if (isPaused) {
-                                badgeClass = 'bad';
-                                badgeText = 'Paused';
-                                subText = 'Excluded from auto-repurpose';
-                              } else if (isGen) {
-                                badgeClass = 'good';
-                                badgeText = `✓ Generated (${String(postCount)} post${postCount === 1 ? '' : 's'})`;
-                                if (art.last_repurposed_at) {
-                                  const daysAgo = Math.floor((Date.now() / 1000 - art.last_repurposed_at) / 86400);
-                                  subText = daysAgo === 0 ? 'Repurposed today' : `Repurposed ${daysAgo}d ago`;
-                                } else {
-                                  subText = 'Generated';
-                                }
-                              }
-
-                              return html`<tr>
+                              return html`<tr class="${isRepurposed ? 'rp-row-repurposed' : ''}">
                                 <td style="text-align:center">
                                   <input type="checkbox" name="articleIds" value="${String(art.id)}" class="rp-art-cb rp-cb-${String(site.id)}" />
                                 </td>
@@ -322,15 +317,17 @@ export function repurposePage(
                                   <a class="rp-art-title" href="${art.url}" target="_blank" rel="noopener">${art.title}</a>
                                   ${art.category ? html`<span class="rp-cat-tag">${art.category}</span>` : raw('')}
                                 </td>
-                                <td>
-                                  <span class="ns-badge ${badgeClass}">${badgeText}</span>
-                                  <div style="font-size:11px;color:var(--soft);margin-top:3px">${subText}</div>
-                                  ${art.post_platforms ? html`<div style="font-size:11px;color:var(--faint);margin-top:2px">${art.post_platforms}</div>` : raw('')}
+                                <td style="text-align:center">
+                                  ${isRepurposed
+                                    ? html`<span class="rp-badge-repurposed">✓ Repurposed (${String(postCount)})</span>`
+                                    : isPaused
+                                      ? html`<span class="rp-badge-paused">Paused</span>`
+                                      : html`<span class="rp-badge-ready">Not repurposed</span>`}
                                 </td>
                                 <td>
                                   ${channels.length
                                     ? html`<div class="rp-channel-row">
-                                        <select class="rp-select small" onchange="document.getElementById('row-ch-${String(art.id)}').value = this.value">
+                                        <select class="rp-select" onchange="document.getElementById('row-ch-${String(art.id)}').value = this.value">
                                           ${channels.map((ch) => html`<option value="${String(ch.id)}">${ch.name} (${platformLabel(ch.platform)})</option>`)}
                                         </select>
                                         <form method="post" action="/new-website/repurpose/article/${String(art.id)}/generate" style="margin:0">
@@ -379,7 +376,7 @@ export function repurposePage(
                 <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
                   <span class="rp-toggle-arrow">▼</span>
                   <h3 style="font-size:17px;margin:0">Repurposed social posts (${String(posts.length)})</h3>
-                  <span class="ns-badge good" style="font-size:11px">${String(posts.filter((p) => p.status === 'sent').length)} sent</span>
+                  <span class="ns-badge ok" style="font-size:11px">${String(posts.filter((p) => p.status === 'sent').length)} sent</span>
                   ${posts.some((p) => p.status === 'waiting') ? html`<span class="ns-badge idle" style="font-size:11px">${String(posts.filter((p) => p.status === 'waiting').length)} waiting</span>` : raw('')}
                   ${posts.some((p) => p.status === 'failed') ? html`<span class="ns-badge bad" style="font-size:11px">${String(posts.filter((p) => p.status === 'failed').length)} failed</span>` : raw('')}
                 </div>
@@ -441,7 +438,7 @@ export function repurposePage(
                             <div class="rp-post-text">${p.text}</div>
                             ${p.error ? html`<div style="color:var(--bad);font-size:12px;margin-top:4px">${p.error}</div>` : raw('')}
                           </td>
-                          <td><span class="ns-badge ${p.status === 'sent' ? 'good' : p.status === 'failed' ? 'bad' : 'idle'}">${p.status}</span></td>
+                          <td><span class="ns-badge ${p.status === 'sent' ? 'ok' : p.status === 'failed' ? 'bad' : 'idle'}">${p.status}</span></td>
                           <td>
                             <div style="display:flex;gap:6px;flex-wrap:wrap">
                               ${p.status === 'failed'
