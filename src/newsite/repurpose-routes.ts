@@ -1,4 +1,7 @@
+import { createReadStream, existsSync } from 'node:fs';
+import { join } from 'node:path';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
+import { resolveDataDir } from '../config.js';
 import { run } from '../db/index.js';
 import { newLayout, type NewFlash } from './layout.js';
 import { getNewWebsite, listNewWebsites, websiteApiKey } from './repo.js';
@@ -12,6 +15,7 @@ import {
   listRepurposeArticles,
   listRepurposePosts,
   regenerateRepurposePost,
+  repurposeDir,
   repurposeSentToday,
   retryFailedRepurposePosts,
   sendRepurposePost,
@@ -197,6 +201,34 @@ export function registerRepurposeRoutes(
       `/new-website/repurpose?website=${siteId}${pageParam}&ok=${encodeURIComponent(msg)}#discovered-articles`,
       303,
     );
+  });
+
+  app.get('/new-website/repurpose/post/:postId/file', async (request, reply) => {
+    const postId = Number((request.params as { postId: string }).postId);
+    const post = getRepurposePost(postId);
+    const dataDir = deps.dataDir ?? resolveDataDir();
+    if (!post) return reply.code(404).send('Not found');
+
+    if (post.media_file && !/[\\/]/.test(post.media_file)) {
+      const p = join(repurposeDir(dataDir), post.media_file);
+      if (existsSync(p)) {
+        const isVideo = post.media_file.endsWith('.mp4');
+        const type = isVideo
+          ? 'video/mp4'
+          : post.media_file.endsWith('.png')
+            ? 'image/png'
+            : post.media_file.endsWith('.webp')
+              ? 'image/webp'
+              : 'image/jpeg';
+        return reply.type(type).header('Cache-Control', 'private, max-age=86400').send(createReadStream(p));
+      }
+    }
+
+    if (post.image_url && /^https?:\/\//i.test(post.image_url)) {
+      return reply.redirect(post.image_url, 302);
+    }
+
+    return reply.code(404).send('Not found');
   });
 
   app.post('/new-website/repurpose/post/:postId/send', async (request, reply) => {

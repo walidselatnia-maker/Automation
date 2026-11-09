@@ -302,8 +302,8 @@ export function repurposePage(
               ? html`<table class="rp-posts-table">
                   <thead>
                     <tr>
-                      <th style="width:180px">Channel</th>
-                      <th style="width:72px">Image</th>
+                      <th style="width:190px">Channel & Type</th>
+                      <th style="width:76px">Media</th>
                       <th style="width:200px">Source article</th>
                       <th>Fresh generated copy</th>
                       <th style="width:90px">Status</th>
@@ -312,18 +312,35 @@ export function repurposePage(
                   </thead>
                   <tbody>
                     ${posts.slice(0, 50).map((p) => {
+                      const isReel = p.post_kind === 'reel';
                       const img = p.image_url || p.article_cover_url;
                       return html`<tr>
                       <td>
-                        <b>${p.channel_name}</b> <span style="font-size:12px;color:var(--soft)">(${platformLabel(p.platform)})</span>
+                        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+                          <b>${p.channel_name}</b>
+                          <span class="ns-badge ${isReel ? 'info' : 'idle'}" style="font-size:11px;padding:1px 6px">
+                            ${isReel ? '🎬 Reel' : '🖼️ Image'}
+                          </span>
+                        </div>
+                        <div style="font-size:12px;color:var(--soft);margin-top:2px">${platformLabel(p.platform)}</div>
                         ${p.board_name ? html`<div style="font-size:12px;color:var(--soft);margin-top:2px">Board: <b>${p.board_name}</b></div>` : raw('')}
                       </td>
                       <td>
-                        ${img
-                          ? html`<div class="rp-thumb-box">
-                              <img src="${img}" alt="${p.title || p.article_title}" class="rp-thumb" onclick="openLightbox(event, '${img}')" title="Click to enlarge" loading="lazy" />
+                        ${p.media_status === 'making'
+                          ? html`<div style="display:flex;flex-direction:column;align-items:center;gap:2px">
+                              <span class="ns-badge idle" style="font-size:10px">Making...</span>
+                              <span style="font-size:10px;color:var(--soft)">Flow</span>
                             </div>`
-                          : html`<span style="font-size:12px;color:var(--soft)">No image</span>`}
+                          : isReel
+                            ? html`<div class="rp-thumb-box" style="position:relative;cursor:pointer" onclick="openVideoLightbox(event, '${p.media_file ? `/new-website/repurpose/post/${String(p.id)}/file` : img}')" title="Click to play video">
+                                <video src="${p.media_file ? `/new-website/repurpose/post/${String(p.id)}/file` : img}" class="rp-thumb" preload="metadata"></video>
+                                <span style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.35);border-radius:6px;color:#fff;font-size:16px">▶</span>
+                              </div>`
+                            : img
+                              ? html`<div class="rp-thumb-box">
+                                  <img src="${img}" alt="${p.title || p.article_title}" class="rp-thumb" onclick="openLightbox(event, '${img}')" title="Click to enlarge" loading="lazy" />
+                                </div>`
+                              : html`<span style="font-size:12px;color:var(--soft)">No media</span>`}
                       </td>
                       <td><a href="${p.article_url}" target="_blank" rel="noopener" style="color:var(--accent-text);text-decoration:none">${p.article_title}</a></td>
                       <td>
@@ -337,7 +354,7 @@ export function repurposePage(
                           ${p.status === 'failed'
                             ? html`
                                 <form method="post" action="/new-website/repurpose/post/${String(p.id)}/regenerate" style="margin:0">
-                                  <button class="ns-btn small primary" title="Generate fresh copy and retry">Regenerate</button>
+                                  <button class="ns-btn small primary" title="Generate fresh copy and media, then retry">Regenerate</button>
                                 </form>
                                 <form method="post" action="/new-website/repurpose/post/${String(p.id)}/send" style="margin:0">
                                   <button class="ns-btn small quiet">Retry</button>
@@ -348,12 +365,12 @@ export function repurposePage(
                                     <button class="ns-btn small primary">Send</button>
                                   </form>
                                   <form method="post" action="/new-website/repurpose/post/${String(p.id)}/regenerate" style="margin:0">
-                                    <button class="ns-btn small quiet" title="Generate fresh copy">Regenerate</button>
+                                    <button class="ns-btn small quiet" title="Generate fresh copy and media">Regenerate</button>
                                   </form>`
                               : html`
                                   ${p.post_link ? html`<a class="ns-btn small quiet" href="${p.post_link}" target="_blank" rel="noopener">View</a>` : raw('')}
                                   <form method="post" action="/new-website/repurpose/post/${String(p.id)}/regenerate" style="margin:0">
-                                    <button class="ns-btn small quiet" title="Generate fresh copy">Regenerate</button>
+                                    <button class="ns-btn small quiet" title="Generate fresh copy and media">Regenerate</button>
                                   </form>`}
                           <form method="post" action="/new-website/repurpose/post/${String(p.id)}/delete" style="margin:0" onsubmit="return confirm('Delete this post?')">
                             <button class="ns-btn small danger">Delete</button>
@@ -371,11 +388,12 @@ export function repurposePage(
         })
       : html`<div class="rp-empty"><h2>No websites yet</h2><p>Add a website to begin repurposing its published content.</p><a class="ns-btn primary" href="/new-website/add">Add website</a></div>`}
 
-    <!-- Lightbox for image enlargement -->
+    <!-- Lightbox for image & video enlargement -->
     <div id="rp-lightbox" class="rp-lightbox" onclick="closeLightbox(event)">
       <div class="rp-lightbox-inner">
         <span class="rp-lightbox-close" onclick="closeLightbox()">&times;</span>
-        <img id="rp-lightbox-img" src="" alt="Enlarged preview" />
+        <img id="rp-lightbox-img" src="" alt="Enlarged preview" style="display:none" />
+        <video id="rp-lightbox-video" src="" controls playsinline style="display:none;max-width:90vw;max-height:85vh;border-radius:8px;box-shadow:0 10px 40px rgba(0,0,0,0.6)"></video>
       </div>
     </div>
 
@@ -404,21 +422,43 @@ export function repurposePage(
         if (e) e.preventDefault();
         var lb = document.getElementById('rp-lightbox');
         var img = document.getElementById('rp-lightbox-img');
-        if (lb && img) {
+        var vid = document.getElementById('rp-lightbox-video');
+        if (lb && img && vid) {
+          vid.style.display = 'none';
+          try { vid.pause(); } catch (_) {}
           img.src = src;
+          img.style.display = 'block';
           lb.classList.add('open');
         }
       };
 
-      window.closeLightbox = function (e) {
-        if (e && e.target && e.target.tagName === 'IMG') return;
+      window.openVideoLightbox = function (e, src) {
+        if (e) e.preventDefault();
         var lb = document.getElementById('rp-lightbox');
+        var img = document.getElementById('rp-lightbox-img');
+        var vid = document.getElementById('rp-lightbox-video');
+        if (lb && img && vid) {
+          img.style.display = 'none';
+          vid.src = src;
+          vid.style.display = 'block';
+          lb.classList.add('open');
+          try { vid.play(); } catch (_) {}
+        }
+      };
+
+      window.closeLightbox = function (e) {
+        if (e && e.target && (e.target.tagName === 'IMG' || e.target.tagName === 'VIDEO')) return;
+        var lb = document.getElementById('rp-lightbox');
+        var vid = document.getElementById('rp-lightbox-video');
+        if (vid) { try { vid.pause(); } catch (_) {} }
         if (lb) lb.classList.remove('open');
       };
 
       document.addEventListener('keydown', function (e) {
         if (e.key === 'Escape') {
           var lb = document.getElementById('rp-lightbox');
+          var vid = document.getElementById('rp-lightbox-video');
+          if (vid) { try { vid.pause(); } catch (_) {} }
           if (lb) lb.classList.remove('open');
         }
       });

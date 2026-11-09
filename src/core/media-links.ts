@@ -37,7 +37,7 @@ const PURPOSE = 'media-link-v1';
  * image post), Instagram's 4:5 copy of one, a new-website reel, or the
  * picture of one scene of a long reel (newsite_reel_scenes id), for Flow.
  */
-export type MediaKind = 'reel' | 'picture' | 'ig-picture' | 'newsite-reel' | 'reel-scene';
+export type MediaKind = 'reel' | 'picture' | 'ig-picture' | 'newsite-reel' | 'reel-scene' | 'repurpose-picture' | 'repurpose-ig-picture' | 'repurpose-reel';
 
 export type MediaCheck =
   | { ok: true }
@@ -236,4 +236,34 @@ export function reelSceneMediaUrl(
   if (!base) throw new Error('No public address for this platform yet.');
   const expiresAt = now + linkDays(days) * 86_400_000;
   return `${base}${mediaPath('reel-scene', sceneId, expiresAt, secret, ext)}`;
+}
+
+/** The absolute address of one repurposed post's picture, for Buffer or Meta API to fetch. */
+export function repurposePictureMediaUrl(
+  baseUrl: string,
+  postId: number,
+  ext: string,
+  days: string | number,
+  secret: Buffer,
+  now: number = Date.now(),
+  kind: 'repurpose-picture' | 'repurpose-ig-picture' = 'repurpose-picture',
+): string {
+  const base = baseUrl.trim().replace(/\/+$/, '');
+  if (!base) throw new Error('No public address for this platform yet.');
+  const expiresAt = now + linkDays(days) * 86_400_000;
+  return `${base}${mediaPath(kind, postId, expiresAt, secret, ext)}`;
+}
+
+/** The absolute address of one repurposed post's reel video, for Buffer or Meta API to fetch. */
+export function repurposeReelMediaUrl(
+  baseUrl: string,
+  postId: number,
+  days: string | number,
+  secret: Buffer,
+  now: number = Date.now(),
+): string {
+  const base = baseUrl.trim().replace(/\/+$/, '');
+  if (!base) throw new Error('No public address for this platform yet.');
+  const expiresAt = now + linkDays(days) * 86_400_000;
+  return `${base}${mediaPath('repurpose-reel', postId, expiresAt, secret, 'mp4')}`;
 }

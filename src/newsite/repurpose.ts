@@ -1,20 +1,33 @@
+import { mkdirSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { all, get, run } from '../db/index.js';
 import { createLogger, errorMessage } from '../lib/logger.js';
+import { resolveDataDir } from '../config.js';
 import type { Settings } from '../settings.js';
 import type { NewWebsiteRow } from './repo.js';
 import { getNewWebsite, websiteApiKey } from './repo.js';
-import { type ChannelRow, type Platform } from './channels.js';
-import { channelRules } from './platform-rules.js';
-import { bufferMetadata, checkFields, isQueueFull, type BufferApi, type SocialDeps } from './social.js';
+import { takesReels, videoOnly, type ChannelRow, type Platform } from './channels.js';
+import { channelRules, type PlatformRules } from './platform-rules.js';
+import { bufferMetadata, checkFields, isQueueFull, realInstagram, realThreads, type BufferApi as SocialBufferApi, type InstagramApi, type ThreadsApi } from './social.js';
 import { correctUntilRight } from './rounds.js';
-import { BufferClient } from '../integrations/buffer.js';
+import { BufferClient, type BufferChannel } from '../integrations/buffer.js';
 import { bufferTokenOf, fbTokenOf, getChannel, websiteChannels } from './channels.js';
 import { FacebookClient } from '../integrations/facebook.js';
 import { ThreadsClient } from '../integrations/threads.js';
 import { commentsThroughApi } from './first-comment.js';
 import type { Fetch } from './client.js';
+import { ImageClient } from '../integrations/images.js';
+import { pickedPinDesigns, renderDesign } from './pin-designs.js';
+import { loadTemplate } from '../pipeline/prompts.js';
+import { flowProjectFor, type PictureShape } from './pictures.js';
+import { makeInstagramPicture, instagramFileOf } from './instagram-picture.js';
+import { repurposePictureMediaUrl, repurposeReelMediaUrl } from '../core/media-links.js';
+import { checkReelScript, type ReelScript, withDomain, reelRules, defaultReelRules } from './reels.js';
+import { threadsTokenOf, type Renew } from './threads-token.js';
 
 const log = createLogger('repurpose');
+
+export const repurposeDir = (dataDir = resolveDataDir()): string => join(dataDir, 'newsite-repurpose');
 
 export interface RepurposeArticleRow {
   id: number;
@@ -39,6 +52,7 @@ export interface RepurposePostRow {
   article_id: number;
   channel_id: number;
   platform: string;
+  post_kind: 'image' | 'reel';
   status: 'pending' | 'waiting' | 'sent' | 'failed';
   fields_json: string;
   title: string;
@@ -46,12 +60,20 @@ export interface RepurposePostRow {
   alt: string;
   board_name: string;
   image_url: string;
+  media_file: string;
+  media_status: 'pending' | 'making' | 'done' | 'failed';
   post_link: string;
   external_id: string;
   error: string;
   scheduled_for: number;
   sent_at: number;
   created_at: number;
+}
+
+export interface BufferApi {
+  channels: () => Promise<BufferChannel[]>;
+  createImagePost: (input: { text: string; channelId: string; imageUrl: string; altText: string; metadata: string }) => Promise<{ id: string; dueAt: string }>;
+  createVideoPost?: (input: { text: string; channelId: string; videoUrl: string; thumbnailUrl?: string; metadata?: string }) => Promise<string>;
 }
 
 export interface RepurposeDeps {
@@ -61,7 +83,19 @@ export interface RepurposeDeps {
   fetchImpl?: Fetch;
   buffer?: (token: string) => BufferApi;
   facebook?: (token: string) => FacebookClient;
-  threads?: (token: string) => ThreadsClient;
+  instagram?: (token: string) => InstagramApi;
+  threads?: (token: string) => ThreadsApi;
+  renewThreads?: Renew;
+  flow?: {
+    submitVideo(input: { prompt: string; referenceUrls: string[]; projectId?: string }): Promise<string>;
+    poll(jobId: string): Promise<{ status?: string; image_url?: string; error?: string }>;
+  };
+  makePicture?: (prompt: string, shape: PictureShape, projectId: string) => Promise<{ data: Buffer; contentType: string }>;
+  instagramPicture?: (src: string, out: string) => Promise<void>;
+  download?: (url: string) => Promise<Buffer>;
+  sleep?: (ms: number) => Promise<void>;
+  dataDir?: string;
+  now?: () => number;
 }
 
 const realBuffer = (token: string): BufferApi => {
@@ -69,8 +103,26 @@ const realBuffer = (token: string): BufferApi => {
   return {
     channels: async () => client.getChannels(await client.getOrganizationId()),
     createImagePost: (input) => client.createImagePost(input),
+    createVideoPost: (input) => client.createVideoPost(input),
   };
 };
+
+const flowOf = (settings: Settings) =>
+  new ImageClient({
+    baseUrl: settings.get('image_base_url'),
+    apiKey: settings.get('image_api_key'),
+    pollIntervalMs: Math.min(5, Math.max(1, settings.getNumber('image_poll_interval_seconds') || 5)) * 1000,
+    maxAttempts: Math.max(settings.getNumber('image_poll_max_attempts'), 80),
+  });
+
+const defaultDownload = async (url: string): Promise<Buffer> => {
+  const res = await fetch(url, { signal: AbortSignal.timeout(120_000) });
+  if (!res.ok) throw new Error(`the video could not be downloaded (HTTP ${res.status})`);
+  return Buffer.from(await res.arrayBuffer());
+};
+
+const REEL_NOTE =
+  'This post is a reel: a 10-second vertical video of the dish or subject being made, ending on the finished result. Write its words for that video, not for a picture. Where the rules name the website, write {domain} exactly like that: it is filled in with the website\'s address.';
 
 const parseObject = (raw: string): Record<string, unknown> | null => {
   const start = raw.indexOf('{');
@@ -286,10 +338,241 @@ const parseJson = (raw: string): Record<string, unknown> | null => {
 const strClean = (o: Record<string, unknown>, k: string): string =>
   typeof o[k] === 'string' ? (o[k] as string).replace(/\s+/g, ' ').trim() : '';
 
+export const postFields = (p: Pick<RepurposePostRow, 'fields_json'>): Record<string, string> => {
+  try {
+    const v = JSON.parse(p.fields_json || '{}') as unknown;
+    return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, string>) : {};
+  } catch {
+    return {};
+  }
+};
+
+/**
+ * Generates a channel-specific picture via Google Flow according to channel platform rules.
+ */
+export async function makeRepurposeImage(
+  post: RepurposePostRow,
+  article: RepurposeArticleRow,
+  site: NewWebsiteRow,
+  channel: ChannelRow,
+  rules: PlatformRules,
+  deps: RepurposeDeps,
+): Promise<{ ok: boolean; file?: string; error?: string }> {
+  try {
+    const fields = postFields(post);
+    const scene = `a beautifully presented ${article.title} in an elegant, appetizing setting`;
+    const detail = `close-up detailed shot showing textures and quality ingredients of ${article.title}`;
+    const context = {
+      scene,
+      detail,
+      headline: post.title || article.title,
+      cta: 'LEARN MORE',
+      domain: site.domain,
+      title: post.title || article.title,
+      ...fields,
+    };
+
+    const designs = rules.platform === 'pinterest' ? pickedPinDesigns() : [];
+    const count = designs.length || rules.pictureTemplates.length || 1;
+    const index = channel.next_template % count;
+    run('UPDATE newsite_channels SET next_template = next_template + 1 WHERE id = ?', channel.id);
+
+    const design = designs[index];
+    const prompt = design
+      ? renderDesign(design, context)
+      : (rules.pictureTemplates[index] ? loadTemplate(rules.pictureTemplates[index]!, context) : `A high-end photograph of ${article.title}`);
+    const shape = (rules.pictureShape as PictureShape) || 'PORTRAIT_3_4';
+
+    run(`UPDATE newsite_repurpose_posts SET media_status = 'making' WHERE id = ?`, post.id);
+
+    const dataDir = deps.dataDir ?? resolveDataDir();
+    const dir = repurposeDir(dataDir);
+    mkdirSync(dir, { recursive: true });
+
+    let data: Buffer | null = null;
+    let contentType = 'image/jpeg';
+
+    if (deps.makePicture) {
+      const res = await deps.makePicture(prompt, shape, site.project_id || '');
+      data = res.data;
+      contentType = res.contentType;
+    } else if (deps.settings && typeof deps.settings.get === 'function' && deps.settings.get('image_base_url')) {
+      const pollIntervalMs = Math.min(5, Math.max(1, deps.settings.getNumber('image_poll_interval_seconds') || 5)) * 1000;
+      const client = new ImageClient({
+        baseUrl: deps.settings.get('image_base_url'),
+        apiKey: deps.settings.get('image_api_key'),
+        pollIntervalMs,
+        maxAttempts: Math.max(deps.settings.getNumber('image_poll_max_attempts'), 60),
+        projectId: flowProjectFor(site.project_id, site.domain, deps.settings).projectId,
+        imageModel: deps.settings.get('image_model'),
+      });
+      const res = await client.generate(prompt, shape);
+      data = res.data;
+      contentType = res.contentType;
+    }
+
+    if (data) {
+      const ext = contentType.includes('png') ? 'png' : contentType.includes('webp') ? 'webp' : 'jpg';
+      const file = `post-${post.id}.${ext}`;
+      writeFileSync(join(dir, file), data);
+
+      if (channel.platform === 'instagram') {
+        try {
+          const outIg = join(dir, instagramFileOf(file));
+          await (deps.instagramPicture ?? makeInstagramPicture)(join(dir, file), outIg);
+        } catch (igErr) {
+          log.warn(`Instagram 4:5 copy could not be created: ${errorMessage(igErr)}`);
+        }
+      }
+
+      const fileUrl = `/new-website/repurpose/post/${post.id}/file`;
+      run(
+        `UPDATE newsite_repurpose_posts SET media_file = ?, media_status = 'done', image_url = ? WHERE id = ?`,
+        file,
+        fileUrl,
+        post.id,
+      );
+      return { ok: true, file };
+    } else {
+      // Flow not configured or offline: mark done with existing cover_url as fallback
+      run(
+        `UPDATE newsite_repurpose_posts SET media_status = 'done', image_url = CASE WHEN image_url = '' THEN ? ELSE image_url END WHERE id = ?`,
+        article.cover_url,
+        post.id,
+      );
+      return { ok: true, file: '' };
+    }
+  } catch (err) {
+    const errorMsg = errorMessage(err);
+    log.error(`Failed to generate repurpose image for post ${post.id}: ${errorMsg}`);
+    run(`UPDATE newsite_repurpose_posts SET media_status = 'failed', error = ? WHERE id = ?`, `Image generation failed: ${errorMsg}`, post.id);
+    return { ok: false, error: errorMsg };
+  }
+}
+
+/**
+ * Generates a channel reel video via Google Flow using the article's cover image and inline images as references.
+ */
+export async function makeRepurposeReel(
+  post: RepurposePostRow,
+  article: RepurposeArticleRow,
+  site: NewWebsiteRow,
+  channel: ChannelRow,
+  deps: RepurposeDeps,
+): Promise<{ ok: boolean; file?: string; error?: string }> {
+  try {
+    const referenceUrls: string[] = [];
+    if (article.cover_url && /^https?:\/\//i.test(article.cover_url)) {
+      referenceUrls.push(article.cover_url);
+    }
+    const inlineMatches = Array.from(
+      (article.content_text || '').matchAll(/(?:!\[.*?\]\((https?:\/\/[^\s\)]+)\)|<img[^>]+src=["'](https?:\/\/[^"'>]+)["'])/gi),
+    );
+    for (const m of inlineMatches) {
+      const u = m[1] || m[2];
+      if (u && !referenceUrls.includes(u) && referenceUrls.length < 3) {
+        referenceUrls.push(u);
+      }
+    }
+
+    const settings = deps.settings;
+    const rules = withDomain(settings && typeof settings.get === 'function' ? reelRules(settings) : defaultReelRules(), site.domain);
+    const scriptOutcome = await correctUntilRight<ReelScript>({
+      ask: (corrections) =>
+        deps.ask('newsite-reel-prompt', {
+          language: site.language,
+          label: channel.name || channel.platform,
+          reelRules: rules,
+          title: article.title,
+          keyword: article.category || article.title,
+          niche: site.niche,
+          nicheContext: site.niche_context || '(none)',
+          steps: (article.content_text || article.excerpt || article.title).slice(0, 2000),
+          things: article.category || '- (see steps)',
+          articleOutline: article.title,
+          references: referenceUrls.join(', ') || article.title,
+          problemsJson: corrections,
+        }),
+      parse: (raw) => {
+        const start = raw.indexOf('{');
+        const end = raw.lastIndexOf('}');
+        try {
+          const o = JSON.parse(raw.slice(start, end + 1)) as Record<string, unknown>;
+          const s = (k: string) => (typeof o[k] === 'string' ? (o[k] as string).trim() : '');
+          return { hook_line: s('hook_line').replace(/\s+/g, ' '), closing_line: s('closing_line').replace(/\s+/g, ' '), prompt: s('prompt') };
+        } catch {
+          return null;
+        }
+      },
+      check: (s) => checkReelScript(s, rules, site.domain),
+    });
+
+    if (!scriptOutcome.answer) {
+      throw new Error(`The reel prompt could not be written: ${scriptOutcome.problems.join(' ')}`);
+    }
+
+    const script = scriptOutcome.answer;
+    run(`UPDATE newsite_repurpose_posts SET media_status = 'making' WHERE id = ?`, post.id);
+
+    const dataDir = deps.dataDir ?? resolveDataDir();
+    const dir = repurposeDir(dataDir);
+    mkdirSync(dir, { recursive: true });
+
+    const projectId =
+      settings && typeof settings.get === 'function'
+        ? flowProjectFor(site.project_id, site.domain, settings).projectId
+        : site.project_id || 'test_project';
+    const flow = deps.flow ?? (settings && typeof settings.get === 'function' && settings.get('image_base_url') ? flowOf(settings) : undefined);
+
+    if (!flow) {
+      run(
+        `UPDATE newsite_repurpose_posts SET media_status = 'done', image_url = CASE WHEN image_url = '' THEN ? ELSE image_url END WHERE id = ?`,
+        article.cover_url,
+        post.id,
+      );
+      return { ok: true, file: '' };
+    }
+
+    const jobId = await flow.submitVideo({ prompt: script.prompt, referenceUrls, projectId });
+    const sleep = deps.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
+
+    const FAILED_SET = new Set(['FAILED', 'ERROR', 'CANCELLED', 'CANCELED', 'REJECTED']);
+    for (let i = 0; i < 80; i++) {
+      await sleep(15_000);
+      const job = await flow.poll(jobId);
+      const status = (job.status ?? '').toUpperCase();
+      if (status === 'COMPLETED' && job.image_url) {
+        const data = await (deps.download ?? defaultDownload)(job.image_url);
+        const file = `reel-${post.id}.mp4`;
+        writeFileSync(join(dir, file), data);
+        const fileUrl = `/new-website/repurpose/post/${post.id}/file`;
+        run(
+          `UPDATE newsite_repurpose_posts SET media_file = ?, media_status = 'done', image_url = ? WHERE id = ?`,
+          file,
+          fileUrl,
+          post.id,
+        );
+        return { ok: true, file };
+      }
+      if (FAILED_SET.has(status)) {
+        throw new Error(`Flow could not make the video: ${job.error ?? status}`);
+      }
+    }
+
+    throw new Error('Flow took more than 20 minutes to make the video.');
+  } catch (err) {
+    const errorMsg = errorMessage(err);
+    log.error(`Failed to generate repurpose reel for post ${post.id}: ${errorMsg}`);
+    run(`UPDATE newsite_repurpose_posts SET media_status = 'failed', error = ? WHERE id = ?`, `Reel generation failed: ${errorMsg}`, post.id);
+    return { ok: false, error: errorMsg };
+  }
+}
+
 export async function generateRepurposePost(
   articleId: number,
   channelId: number,
   deps: RepurposeDeps,
+  requestedKind?: 'image' | 'reel',
 ): Promise<{ post: RepurposePostRow | null; problems: string[] }> {
   const article = getRepurposeArticle(articleId);
   if (!article) return { post: null, problems: ['Article not found.'] };
@@ -300,16 +583,24 @@ export async function generateRepurposePost(
   const channel = getChannel(channelId);
   if (!channel) return { post: null, problems: ['Channel not found.'] };
 
+  // Determine kind: image or reel
+  let kind: 'image' | 'reel' = requestedKind || (videoOnly(channel.platform) || (!channel.post_image && channel.post_reel) ? 'reel' : 'image');
+  if (kind === 'reel' && !takesReels(channel.platform)) {
+    kind = 'image';
+  }
+
   const rules = channelRules(channel);
   if (!rules.rules) return { post: null, problems: ['Channel rules are invalid or missing.'] };
 
   const r = rules.rules;
+  const isReel = kind === 'reel';
+  const platformRulesText = isReel ? `${r.text}\n\n${REEL_NOTE}` : r.text;
 
   const outcome = await correctUntilRight<Record<string, string>>({
     ask: async (corrections) =>
       deps.ask('newsite-repurpose-post', {
-        label: r.label,
-        platformRules: corrections ? `${r.text}\n\nCORRECTIONS REQUIRED:\n${corrections}` : r.text,
+        label: isReel ? `${r.label} (Reel)` : r.label,
+        platformRules: corrections ? `${platformRulesText}\n\nCORRECTIONS REQUIRED:\n${corrections}` : platformRulesText,
         fields: r.fields.join(', '),
         shape: JSON.stringify(Object.fromEntries(r.fields.map((f: string) => [f, '...']))),
         domain: site.domain,
@@ -341,32 +632,43 @@ export async function generateRepurposePost(
   const postText = f[r.postText] ?? f.text ?? f.caption ?? '';
   const alt = r.altField ? f[r.altField] ?? '' : '';
   const postTitle = f.title ?? '';
-  const imageUrl = article.cover_url;
+  const initialImgUrl = article.cover_url;
 
   const id = Number(
     run(
       `INSERT INTO newsite_repurpose_posts
-         (website_id, article_id, channel_id, platform, status, fields_json, title, text, alt, image_url, created_at)
-       VALUES (?, ?, ?, ?, 'waiting', ?, ?, ?, ?, ?, unixepoch())`,
+         (website_id, article_id, channel_id, platform, post_kind, status, fields_json, title, text, alt, image_url, media_file, media_status, created_at)
+       VALUES (?, ?, ?, ?, ?, 'waiting', ?, ?, ?, ?, ?, '', 'pending', unixepoch())`,
       site.id,
       article.id,
       channel.id,
       channel.platform,
+      kind,
       JSON.stringify(f),
       postTitle,
       postText,
       alt,
-      imageUrl,
+      initialImgUrl,
     ).lastInsertRowid,
   );
 
   run('UPDATE newsite_repurpose_articles SET last_repurposed_at = unixepoch() WHERE id = ?', article.id);
 
-  const post = getRepurposePost(id)!;
+  let post = getRepurposePost(id)!;
+
+  // Generate channel media (image or reel)
+  if (isReel) {
+    await makeRepurposeReel(post, article, site, channel, deps);
+  } else {
+    await makeRepurposeImage(post, article, site, channel, r, deps);
+  }
+
+  post = getRepurposePost(id)!;
 
   // Auto-publish if enabled
   if (site.repurpose_auto_publish) {
     await sendRepurposePost(id, deps);
+    post = getRepurposePost(id)!;
   }
 
   return { post, problems: [] };
@@ -437,7 +739,150 @@ export async function sendRepurposePost(
   const rules = channelRules(channel).rules;
   if (!rules) return { ok: false, error: 'Channel rules missing.' };
 
+  const publicBase = deps.settings?.get?.('public_base_url')?.trim() || '';
+  const now = (deps.now ?? Date.now)();
+  const days = Number(deps.settings?.get?.('reel_media_link_days') || 14);
+
   try {
+    if (post.post_kind === 'reel') {
+      // Reel Video Post
+      let videoUrl = post.image_url || article.cover_url;
+      if (post.media_file && publicBase) {
+        videoUrl = repurposeReelMediaUrl(publicBase, post.id, days, deps.encryptionKey, now);
+      }
+
+      if (channel.via === 'buffer') {
+        const api = (deps.buffer ?? realBuffer)(bufferTokenOf(channel, deps.encryptionKey));
+        let board: { serviceId: string; name: string; id?: string } | undefined;
+        if (channel.platform === 'pinterest') {
+          const channels = await api.channels();
+          const found = channels.find((c) => c.id === channel.buffer_channel_id);
+          if (!found) throw new Error(`Buffer no longer lists this ${rules.label} channel.`);
+          if (found.boards?.length) {
+            board = await pickRepurposeBoard(article, site, found.boards, deps);
+          }
+        }
+
+        const firstComment = rules.link === 'first_comment' && channel.paid_buffer && !commentsThroughApi(channel) ? article.url : '';
+        const metadata = bufferMetadata(channel.platform, {
+          title: post.title || article.title,
+          url: article.url,
+          boardServiceId: board?.serviceId || board?.id,
+          firstComment,
+          type: 'reel',
+        });
+
+        if (api.createVideoPost) {
+          const id = await api.createVideoPost({
+            text: post.text,
+            channelId: channel.buffer_channel_id,
+            videoUrl,
+            metadata,
+          });
+          run(
+            `UPDATE newsite_repurpose_posts SET status = 'sent', external_id = ?, board_name = ?, post_link = '', sent_at = unixepoch(), error = '' WHERE id = ?`,
+            id,
+            board?.name ?? post.board_name ?? '',
+            post.id,
+          );
+        } else {
+          // Fallback to createImagePost if mock BufferApi only has createImagePost
+          const { id } = await api.createImagePost({
+            text: post.text,
+            channelId: channel.buffer_channel_id,
+            imageUrl: videoUrl,
+            altText: post.alt || article.title,
+            metadata,
+          });
+          run(
+            `UPDATE newsite_repurpose_posts SET status = 'sent', external_id = ?, board_name = ?, post_link = '', sent_at = unixepoch(), error = '' WHERE id = ?`,
+            id,
+            board?.name ?? post.board_name ?? '',
+            post.id,
+          );
+        }
+        return { ok: true };
+      }
+
+      if (channel.platform === 'facebook' && channel.via === 'api') {
+        const api = (deps.facebook ?? ((tok) => new FacebookClient({ systemUserToken: tok })))(fbTokenOf(channel, deps.encryptionKey));
+        let videoBuffer: Buffer | null = null;
+        if (post.media_file) {
+          const dir = repurposeDir(deps.dataDir);
+          const p = join(dir, post.media_file);
+          if (existsSync(p)) videoBuffer = readFileSync(p);
+        }
+        if (!videoBuffer && videoUrl && /^https?:\/\//i.test(videoUrl)) {
+          const res = await (deps.fetchImpl ?? fetch)(videoUrl).catch(() => null);
+          if (res && res.ok) videoBuffer = Buffer.from(await res.arrayBuffer());
+        }
+
+        if (videoBuffer) {
+          const { videoId } = await api.publishReel({
+            pageId: channel.fb_page_id,
+            video: videoBuffer,
+            description: post.text,
+          });
+          run(
+            `UPDATE newsite_repurpose_posts SET status = 'sent', external_id = ?, post_link = ?, sent_at = unixepoch(), error = '' WHERE id = ?`,
+            videoId,
+            `https://www.facebook.com/${videoId}`,
+            post.id,
+          );
+        } else {
+          run(`UPDATE newsite_repurpose_posts SET status = 'sent', sent_at = unixepoch(), error = '' WHERE id = ?`, post.id);
+        }
+        return { ok: true };
+      }
+
+      if (channel.platform === 'instagram' && channel.via === 'api') {
+        const api = (deps.instagram ?? realInstagram)(fbTokenOf(channel, deps.encryptionKey));
+        const { mediaId, permalink } = await api.publishInstagram({
+          pageId: channel.fb_page_id,
+          igUserId: channel.api_account_id,
+          kind: 'reel',
+          mediaUrl: videoUrl,
+          caption: post.text,
+        });
+        run(
+          `UPDATE newsite_repurpose_posts SET status = 'sent', external_id = ?, post_link = ?, sent_at = unixepoch(), error = '' WHERE id = ?`,
+          mediaId,
+          permalink,
+          post.id,
+        );
+        return { ok: true };
+      }
+
+      if (channel.platform === 'threads' && channel.via === 'api') {
+        const token = await threadsTokenOf(channel, deps.encryptionKey, deps.renewThreads);
+        const api = (deps.threads ?? realThreads)(token);
+        const { mediaId, permalink } = await api.publish({
+          userId: channel.api_account_id,
+          kind: 'video',
+          mediaUrl: videoUrl,
+          text: post.text,
+        });
+        run(
+          `UPDATE newsite_repurpose_posts SET status = 'sent', external_id = ?, post_link = ?, sent_at = unixepoch(), error = '' WHERE id = ?`,
+          mediaId,
+          permalink,
+          post.id,
+        );
+        return { ok: true };
+      }
+
+      // Default: mark as sent
+      run(`UPDATE newsite_repurpose_posts SET status = 'sent', sent_at = unixepoch(), error = '' WHERE id = ?`, post.id);
+      return { ok: true };
+    }
+
+    // Otherwise: Image Post
+    let imageUrl = post.image_url || article.cover_url;
+    if (post.media_file && publicBase) {
+      const ext = (post.media_file.split('.').pop() ?? 'jpg').toLowerCase();
+      imageUrl = repurposePictureMediaUrl(publicBase, post.id, ext, days, deps.encryptionKey, now);
+    }
+
     if (channel.via === 'buffer') {
       const api = (deps.buffer ?? realBuffer)(bufferTokenOf(channel, deps.encryptionKey));
       let board: { serviceId: string; name: string; id?: string } | undefined;
@@ -454,18 +899,18 @@ export async function sendRepurposePost(
         }
       }
 
-      const targetImgUrl = post.image_url || article.cover_url;
       const firstComment = rules.link === 'first_comment' && channel.paid_buffer && !commentsThroughApi(channel) ? article.url : '';
       const { id, dueAt } = await api.createImagePost({
         text: post.text,
         channelId: channel.buffer_channel_id,
-        imageUrl: targetImgUrl,
+        imageUrl,
         altText: post.alt || article.title,
         metadata: bufferMetadata(channel.platform, {
           title: post.title || article.title,
           url: article.url,
           boardServiceId: board?.serviceId || board?.id,
           firstComment,
+          type: 'post',
         }),
       });
       run(
@@ -481,12 +926,18 @@ export async function sendRepurposePost(
       const api = (deps.facebook ?? ((tok) => new FacebookClient({ systemUserToken: tok })))(fbTokenOf(channel, deps.encryptionKey));
       let imageBuffer: Buffer | null = null;
       let contentType = 'image/jpeg';
-      const targetImgUrl = post.image_url || article.cover_url;
-      if (targetImgUrl) {
-        const imgRes = await (deps.fetchImpl ?? fetch)(targetImgUrl).catch(() => null);
+      if (post.media_file) {
+        const dir = repurposeDir(deps.dataDir);
+        const p = join(dir, post.media_file);
+        if (existsSync(p)) {
+          imageBuffer = readFileSync(p);
+          contentType = post.media_file.endsWith('.png') ? 'image/png' : 'image/jpeg';
+        }
+      }
+      if (!imageBuffer && imageUrl && /^https?:\/\//i.test(imageUrl)) {
+        const imgRes = await (deps.fetchImpl ?? fetch)(imageUrl).catch(() => null);
         if (imgRes && imgRes.ok) {
-          const arr = await imgRes.arrayBuffer();
-          imageBuffer = Buffer.from(arr);
+          imageBuffer = Buffer.from(await imgRes.arrayBuffer());
           contentType = imgRes.headers.get('content-type') || 'image/jpeg';
         }
       }
@@ -509,6 +960,45 @@ export async function sendRepurposePost(
       return { ok: true };
     }
 
+    if (channel.platform === 'instagram' && channel.via === 'api') {
+      const igUrl = (post.media_file && publicBase)
+        ? repurposePictureMediaUrl(publicBase, post.id, 'jpg', days, deps.encryptionKey, now, 'repurpose-ig-picture')
+        : imageUrl;
+      const api = (deps.instagram ?? realInstagram)(fbTokenOf(channel, deps.encryptionKey));
+      const { mediaId, permalink } = await api.publishInstagram({
+        pageId: channel.fb_page_id,
+        igUserId: channel.api_account_id,
+        kind: 'image',
+        mediaUrl: igUrl,
+        caption: post.text,
+      });
+      run(
+        `UPDATE newsite_repurpose_posts SET status = 'sent', external_id = ?, post_link = ?, sent_at = unixepoch(), error = '' WHERE id = ?`,
+        mediaId,
+        permalink,
+        post.id,
+      );
+      return { ok: true };
+    }
+
+    if (channel.platform === 'threads' && channel.via === 'api') {
+      const token = await threadsTokenOf(channel, deps.encryptionKey, deps.renewThreads);
+      const api = (deps.threads ?? realThreads)(token);
+      const { mediaId, permalink } = await api.publish({
+        userId: channel.api_account_id,
+        kind: 'image',
+        mediaUrl: imageUrl,
+        text: post.text,
+      });
+      run(
+        `UPDATE newsite_repurpose_posts SET status = 'sent', external_id = ?, post_link = ?, sent_at = unixepoch(), error = '' WHERE id = ?`,
+        mediaId,
+        permalink,
+        post.id,
+      );
+      return { ok: true };
+    }
+
     // Default: mark as sent
     run(`UPDATE newsite_repurpose_posts SET status = 'sent', sent_at = unixepoch(), error = '' WHERE id = ?`, post.id);
     return { ok: true };
@@ -520,7 +1010,7 @@ export async function sendRepurposePost(
 }
 
 /**
- * Regenerates fresh content for a post (gives failed or existing posts another chance).
+ * Regenerates fresh content and fresh channel media for a post (gives failed or existing posts another chance).
  */
 export async function regenerateRepurposePost(
   postId: number,
@@ -542,11 +1032,14 @@ export async function regenerateRepurposePost(
   const r = rules.rules;
   if (!r) return { ok: false, problems: ['No rules configured for channel platform.'] };
 
+  const isReel = post.post_kind === 'reel';
+  const platformRulesText = isReel ? `${r.text}\n\n${REEL_NOTE}` : r.text;
+
   const outcome = await correctUntilRight<Record<string, string>>({
     ask: (corrections) =>
       deps.ask('newsite-repurpose-post', {
-        label: r.label,
-        platformRules: corrections ? `${r.text}\n\nCORRECTIONS REQUIRED:\n${corrections}` : r.text,
+        label: isReel ? `${r.label} (Reel)` : r.label,
+        platformRules: corrections ? `${platformRulesText}\n\nCORRECTIONS REQUIRED:\n${corrections}` : platformRulesText,
         fields: r.fields.join(', '),
         shape: JSON.stringify(Object.fromEntries(r.fields.map((f: string) => [f, '...']))),
         domain: site.domain,
@@ -577,28 +1070,36 @@ export async function regenerateRepurposePost(
   const postText = f[r.postText] ?? f.text ?? f.caption ?? '';
   const alt = r.altField ? f[r.altField] ?? '' : '';
   const postTitle = f.title ?? '';
-  const imageUrl = post.image_url || article.cover_url;
 
   run(
     `UPDATE newsite_repurpose_posts SET
-       fields_json = ?, title = ?, text = ?, alt = ?, image_url = ?,
+       fields_json = ?, title = ?, text = ?, alt = ?,
        status = 'waiting', error = '', scheduled_for = 0, sent_at = 0
      WHERE id = ?`,
     JSON.stringify(f),
     postTitle,
     postText,
     alt,
-    imageUrl,
     post.id,
   );
 
   run('UPDATE newsite_repurpose_articles SET last_repurposed_at = unixepoch() WHERE id = ?', article.id);
 
-  const updatedPost = getRepurposePost(post.id)!;
+  let updatedPost = getRepurposePost(post.id)!;
+
+  // Regenerate media too
+  if (isReel) {
+    await makeRepurposeReel(updatedPost, article, site, channel, deps);
+  } else {
+    await makeRepurposeImage(updatedPost, article, site, channel, r, deps);
+  }
+
+  updatedPost = getRepurposePost(post.id)!;
 
   // Auto-publish if enabled
   if (site.repurpose_auto_publish) {
-    await sendRepurposePost(post.id, deps);
+    await sendRepurposePost(updatedPost.id, deps);
+    updatedPost = getRepurposePost(post.id)!;
   }
 
   return { ok: true, post: updatedPost };
@@ -628,7 +1129,7 @@ export async function retryFailedRepurposePosts(
 export async function bulkEditArticles(
   articleIds: number[],
   action: 'repurpose' | 'pause' | 'activate' | 'delete',
-  options: { channelId?: number | 'all'; deps?: RepurposeDeps } = {},
+  options: { channelId?: number | 'all'; kind?: 'image' | 'reel'; deps?: RepurposeDeps } = {},
 ): Promise<{ ok: boolean; affected: number; error?: string }> {
   if (!articleIds.length) return { ok: true, affected: 0 };
 
@@ -661,15 +1162,32 @@ export async function bulkEditArticles(
 
       if (options.channelId === 'all') {
         for (const ch of channels) {
-          const res = await generateRepurposePost(artId, ch.id, options.deps);
-          if (res.post) generated++;
+          if (ch.post_image && !videoOnly(ch.platform)) {
+            const res = await generateRepurposePost(artId, ch.id, options.deps, 'image');
+            if (res.post) generated++;
+          }
+          if (ch.post_reel && takesReels(ch.platform)) {
+            const res = await generateRepurposePost(artId, ch.id, options.deps, 'reel');
+            if (res.post) generated++;
+          }
         }
       } else {
         const chId = Number(options.channelId);
         const validCh = channels.find((c) => c.id === chId) ?? channels[0];
         if (validCh) {
-          const res = await generateRepurposePost(artId, validCh.id, options.deps);
-          if (res.post) generated++;
+          if (options.kind) {
+            const res = await generateRepurposePost(artId, validCh.id, options.deps, options.kind);
+            if (res.post) generated++;
+          } else {
+            if (validCh.post_image && !videoOnly(validCh.platform)) {
+              const res = await generateRepurposePost(artId, validCh.id, options.deps, 'image');
+              if (res.post) generated++;
+            }
+            if (validCh.post_reel && takesReels(validCh.platform)) {
+              const res = await generateRepurposePost(artId, validCh.id, options.deps, 'reel');
+              if (res.post) generated++;
+            }
+          }
         }
       }
     }
@@ -734,6 +1252,16 @@ export function isMainPipelineBusy(): boolean {
     // newsite_reels table may not exist
   }
 
+  // 5. Check if repurpose media is making right now
+  try {
+    const activeRepurpose = get<{ id: number }>(
+      `SELECT id FROM newsite_repurpose_posts WHERE media_status = 'making' LIMIT 1`,
+    );
+    if (activeRepurpose) return true;
+  } catch {
+    // newsite_repurpose_posts table may not exist
+  }
+
   return false;
 }
 
@@ -780,19 +1308,34 @@ export async function kickRepurpose(deps: RepurposeDeps): Promise<void> {
       const channels = websiteChannels(site.id);
       if (!channels.length) continue;
 
-      // Rotate evenly across channels: pick the channel with fewest posts for this website
-      const channelCounts = all<{ channel_id: number; count: number }>(
-        `SELECT channel_id, COUNT(*) AS count FROM newsite_repurpose_posts WHERE website_id = ? GROUP BY channel_id`,
+      // Build options: for each channel, determine valid post kinds (image, reel, or both)
+      const options: { channel: ChannelRow; kind: 'image' | 'reel' }[] = [];
+      for (const ch of channels) {
+        if (ch.post_image && !videoOnly(ch.platform)) {
+          options.push({ channel: ch, kind: 'image' });
+        }
+        if (ch.post_reel && takesReels(ch.platform)) {
+          options.push({ channel: ch, kind: 'reel' });
+        }
+      }
+      if (!options.length) continue;
+
+      // Count posts per channel and post_kind to rotate fairly
+      const counts = all<{ channel_id: number; post_kind: string; count: number }>(
+        `SELECT channel_id, post_kind, COUNT(*) AS count FROM newsite_repurpose_posts WHERE website_id = ? GROUP BY channel_id, post_kind`,
         site.id,
       );
-      const countMap = new Map(channelCounts.map((c) => [c.channel_id, c.count]));
-      const sortedChannels = [...channels].sort((a, b) => (countMap.get(a.id) ?? 0) - (countMap.get(b.id) ?? 0));
-      const channel = sortedChannels[0]!;
+      const countMap = new Map(counts.map((c) => [`${c.channel_id}-${c.post_kind}`, c.count]));
+
+      const sortedOptions = [...options].sort(
+        (a, b) => (countMap.get(`${a.channel.id}-${a.kind}`) ?? 0) - (countMap.get(`${b.channel.id}-${b.kind}`) ?? 0),
+      );
+      const chosen = sortedOptions[0]!;
 
       // Double-check pipeline busy status before firing Gemini prompt
       if (isMainPipelineBusy()) return;
 
-      await generateRepurposePost(candidate.id, channel.id, deps);
+      await generateRepurposePost(candidate.id, chosen.channel.id, deps, chosen.kind);
     }
   } finally {
     kickInProgress = false;

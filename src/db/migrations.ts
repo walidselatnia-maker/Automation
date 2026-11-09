@@ -1277,6 +1277,15 @@ export const MIGRATIONS: Migration[] = [
       addColumn(db, 'newsite_repurpose_posts', 'image_url', "TEXT NOT NULL DEFAULT ''");
     },
   },
+  {
+    id: '067-newsite-repurpose-media-pipeline',
+    description: 'New websites: track post kind, generated media file, and media generation status for repurposed posts',
+    up(db) {
+      addColumn(db, 'newsite_repurpose_posts', 'post_kind', "TEXT NOT NULL DEFAULT 'image'");
+      addColumn(db, 'newsite_repurpose_posts', 'media_file', "TEXT NOT NULL DEFAULT ''");
+      addColumn(db, 'newsite_repurpose_posts', 'media_status', "TEXT NOT NULL DEFAULT 'pending'");
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */

@@ -235,6 +235,70 @@ export function registerMedia(app: FastifyInstance, options: MediaOptions): void
       return sendVideo(request, reply, file, info.size, `reel-${id}.mp4`);
     },
   );
+
+  /**
+   * Repurposed picture (a pin's 3:4 picture or social feed picture).
+   */
+  const serveRepurposePicture = (kind: 'repurpose-picture' | 'repurpose-ig-picture') =>
+    async (request: FastifyRequest<{ Params: { id: string; expires: string; file: string } }>, reply: FastifyReply) => {
+      const { id: rawId, expires: rawExpires, file: rawFile } = request.params;
+      const match = /^([A-Za-z0-9_-]{1,100})\.(png|jpg|jpeg|webp)$/.exec(rawFile);
+      if (!/^\d+$/.test(rawId) || !/^\d+$/.test(rawExpires) || !match) return notFound(reply);
+
+      const id = Number(rawId);
+      const check = checkMediaToken({ kind, id, expiresAt: Number(rawExpires), signature: match[1]! }, options.secret);
+      if (!check.ok) {
+        if (check.reason === 'expired') return reply.code(410).type('text/plain; charset=utf-8').send('Gone');
+        return notFound(reply);
+      }
+
+      const post = get<{ media_file: string; media_status: string }>('SELECT media_file, media_status FROM newsite_repurpose_posts WHERE id = ?', id);
+      if (!post || !post.media_file || /[\\/]/.test(post.media_file)) return notFound(reply);
+      const file = kind === 'repurpose-ig-picture' ? instagramFileOf(post.media_file) : post.media_file;
+      const path = join(options.dataDir ?? resolveDataDir(), 'newsite-repurpose', file);
+      const info = await stat(path).catch(() => null);
+      if (!info?.isFile()) return notFound(reply);
+
+      log.info(`repurpose picture ${id}: serving ${file} to ${request.ip}`);
+      const type = file.endsWith('.png') ? 'image/png' : file.endsWith('.webp') ? 'image/webp' : 'image/jpeg';
+      return reply
+        .type(type)
+        .header('cache-control', 'private, no-store')
+        .header('x-robots-tag', 'noindex, nofollow, noarchive')
+        .header('content-length', info.size)
+        .send(createReadStream(path));
+    };
+
+  app.get<{ Params: { id: string; expires: string; file: string } }>('/media/repurpose-picture/:id/:expires/:file', serveRepurposePicture('repurpose-picture'));
+  app.get<{ Params: { id: string; expires: string; file: string } }>('/media/repurpose-ig-picture/:id/:expires/:file', serveRepurposePicture('repurpose-ig-picture'));
+
+  /**
+   * Repurposed reel video.
+   */
+  app.get<{ Params: { id: string; expires: string; signature: string } }>(
+    '/media/repurpose-reel/:id/:expires/:signature.mp4',
+    async (request, reply) => {
+      const { id: rawId, expires: rawExpires, signature } = request.params;
+      if (!/^\d+$/.test(rawId) || !/^\d+$/.test(rawExpires)) return notFound(reply);
+      if (!signature || signature.length > MAX_SIGNATURE) return notFound(reply);
+
+      const id = Number(rawId);
+      const check = checkMediaToken({ kind: 'repurpose-reel', id, expiresAt: Number(rawExpires), signature }, options.secret);
+      if (!check.ok) {
+        if (check.reason === 'expired') return reply.code(410).type('text/plain; charset=utf-8').send('Gone');
+        return notFound(reply);
+      }
+
+      const post = get<{ media_file: string; media_status: string }>('SELECT media_file, media_status FROM newsite_repurpose_posts WHERE id = ?', id);
+      if (!post || !post.media_file || /[\\/]/.test(post.media_file)) return notFound(reply);
+      const file = join(options.dataDir ?? resolveDataDir(), 'newsite-repurpose', post.media_file);
+      const info = await stat(file).catch(() => null);
+      if (!info?.isFile()) return notFound(reply);
+
+      log.info(`repurpose reel ${id}: serving video to ${request.ip}`);
+      return sendVideo(request, reply, file, info.size, `repurpose-reel-${id}.mp4`);
+    },
+  );
 }
 
 /**

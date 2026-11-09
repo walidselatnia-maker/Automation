@@ -584,4 +584,227 @@ describe('New dashboard: content repurposing', () => {
     expect(retryRefreshed.status).not.toBe('failed');
     expect(retryRefreshed.title).toBe('Fresh Artisan Sourdough Secrets and Homemade Baking Tips Round 3');
   });
+
+  it('generates channel-specific Flow images for image channels and serves media via routes', async () => {
+    const a = Fastify();
+    await a.register(formbody);
+
+    const siteId = createSite();
+    const site = get<NewWebsiteRow>('SELECT * FROM new_websites WHERE id = ?', siteId)!;
+
+    const mockFetch = async () => mockPostsResponse() as any;
+    await syncWebsiteArticles(site, 'sk_test_mock', mockFetch);
+    const article = listRepurposeArticles(siteId)[0]!;
+
+    const pinChannelId = saveBufferChannel(
+      {
+        websiteId: siteId,
+        platform: 'pinterest',
+        name: 'Pinterest Recipes',
+        bufferToken: 'buf_test',
+        bufferChannelId: 'buf_pin_test',
+        postImage: true,
+        postReel: false,
+        multiWebsite: false,
+      },
+      KEY,
+    );
+
+    let madePrompt = '';
+    let madeShape = '';
+    const deps = {
+      encryptionKey: KEY,
+      readFlash: () => null,
+      ask: async () =>
+        JSON.stringify({
+          headline: 'Secret Sourdough',
+          cta: 'GET RECIPE',
+          title: 'Unbelievable Wild Yeast Secrets',
+          description: 'The definitive sourdough masterclass for a crispy golden crust.',
+          alt: 'Sourdough loaf on cooling rack',
+        }),
+      makePicture: async (prompt: string, shape: string) => {
+        madePrompt = prompt;
+        madeShape = shape;
+        return { data: Buffer.from('FAKE_PNG_BYTES'), contentType: 'image/png' };
+      },
+    };
+
+    registerRepurposeRoutes(a, deps);
+
+    const res = await generateRepurposePost(article.id, pinChannelId, deps, 'image');
+    expect(res.post).toBeTruthy();
+    expect(res.post?.post_kind).toBe('image');
+    expect(res.post?.media_status).toBe('done');
+    expect(res.post?.media_file).toMatch(/^post-\d+\.png$/);
+    expect(res.post?.image_url).toBe(`/new-website/repurpose/post/${res.post!.id}/file`);
+
+    // Verified Pinterest shape is PORTRAIT_3_4
+    expect(madeShape).toBe('PORTRAIT_3_4');
+    expect(madePrompt).toBeTruthy();
+
+    // Verify file route serves the generated image
+    const fileRes = await a.inject({ url: `/new-website/repurpose/post/${res.post!.id}/file` });
+    expect(fileRes.statusCode).toBe(200);
+    expect(fileRes.headers['content-type']).toBe('image/png');
+    expect(fileRes.rawPayload.toString()).toBe('FAKE_PNG_BYTES');
+  });
+
+  it('generates Flow reel videos for video channels using article cover and inline images as reference', async () => {
+    const a = Fastify();
+    await a.register(formbody);
+
+    const siteId = createSite();
+    const site = get<NewWebsiteRow>('SELECT * FROM new_websites WHERE id = ?', siteId)!;
+
+    const mockFetch = async () => mockPostsResponse() as any;
+    await syncWebsiteArticles(site, 'sk_test_mock', mockFetch);
+    const article = listRepurposeArticles(siteId)[0]!;
+
+    const ytChannelId = saveBufferChannel(
+      {
+        websiteId: siteId,
+        platform: 'youtube',
+        name: 'Baking Shorts',
+        bufferToken: 'buf_test',
+        bufferChannelId: 'buf_yt_test',
+        postImage: false,
+        postReel: true,
+        multiWebsite: false,
+      },
+      KEY,
+    );
+
+    let submittedVideoInput: any = null;
+    const goodScript = (rules: string, hook = 'Watch this easy sourdough rise') => {
+      const closing = /closing line, word for word: "([^"]+)"/i.exec(rules)?.[1] || `Full recipe on ${site.domain}.`;
+      const marks = rules.match(/^- (\d+-\d+s):/gm)?.map((m) => m.slice(2, -1)) || ['0-2s', '2-4s', '4-6s', '6-8s', '8-10s'];
+      const shots = marks.map((m, i) =>
+        `${m}: ${i === 0 ? `The finished artisan bread in full, a hand cuts the first slice. A warm voice says "${hook}".` : i === marks.length - 1 ? `The slice lifted toward the lens. The voice says "${closing}".` : 'Real hands do the next step of the recipe at natural speed, phone camera, close and handheld, warm kitchen light from the left, authentic homemade sourdough preparation.'}`,
+      );
+      return JSON.stringify({ hook_line: hook, closing_line: closing, prompt: `A 10-second vertical reel of fresh sourdough bread.\n${shots.join('\n')}\nReal cooking sound, no music, no on-screen text.` });
+    };
+
+    const deps = {
+      encryptionKey: KEY,
+      readFlash: () => null,
+      sleep: async () => {},
+      ask: async (name: string, vars?: any) => {
+        if (name === 'newsite-reel-prompt') {
+          return goodScript(String(vars?.reelRules ?? ''));
+        }
+        return JSON.stringify({
+          title: 'Crispy Sourdough In Minutes',
+          description: `Watch how to bake rustic artisan sourdough at home with simple wild yeast steps. Full guide on ${site.domain}!`,
+          alt: 'Sourdough loaf sliced',
+        });
+      },
+      flow: {
+        submitVideo: async (input: any) => {
+          submittedVideoInput = input;
+          return 'flow_job_123';
+        },
+        poll: async () => ({ status: 'COMPLETED', image_url: 'https://flow.example.com/video.mp4' }),
+      },
+      download: async () => Buffer.from('FAKE_MP4_VIDEO_BYTES'),
+    };
+
+    registerRepurposeRoutes(a, deps);
+
+    const res = await generateRepurposePost(article.id, ytChannelId, deps, 'reel');
+    expect(res.post).toBeTruthy();
+    expect(res.post?.post_kind).toBe('reel');
+    expect(res.post?.media_status).toBe('done');
+    expect(res.post?.media_file).toMatch(/^reel-\d+\.mp4$/);
+
+    // References include article cover url
+    expect(submittedVideoInput?.referenceUrls).toContain(article.cover_url);
+
+    // Verify streaming the mp4 video file
+    const fileRes = await a.inject({ url: `/new-website/repurpose/post/${res.post!.id}/file` });
+    expect(fileRes.statusCode).toBe(200);
+    expect(fileRes.headers['content-type']).toBe('video/mp4');
+    expect(fileRes.rawPayload.toString()).toBe('FAKE_MP4_VIDEO_BYTES');
+  });
+
+  it('rotates across image and reel posts for channels with both enabled', async () => {
+    const siteId = createSite();
+    const site = get<NewWebsiteRow>('SELECT * FROM new_websites WHERE id = ?', siteId)!;
+
+    const mockFetch = async () => mockPostsResponse() as any;
+    await syncWebsiteArticles(site, 'sk_test_mock', mockFetch);
+
+    // Facebook with both postImage AND postReel
+    const fbChannelId = saveBufferChannel(
+      {
+        websiteId: siteId,
+        platform: 'facebook',
+        name: 'FB Baking Page',
+        bufferToken: 'buf_test',
+        bufferChannelId: 'buf_fb_test',
+        postImage: true,
+        postReel: true,
+        multiWebsite: false,
+      },
+      KEY,
+    );
+    setChannelWebsites(fbChannelId, [siteId]);
+
+    const goodScript = (rules: string, hook = 'Fresh bread in minutes') => {
+      const closing = /closing line, word for word: "([^"]+)"/i.exec(rules)?.[1] || `Full recipe on ${site.domain}.`;
+      const marks = rules.match(/^- (\d+-\d+s):/gm)?.map((m) => m.slice(2, -1)) || ['0-2s', '2-4s', '4-6s', '6-8s', '8-10s'];
+      const shots = marks.map((m, i) =>
+        `${m}: ${i === 0 ? `The finished artisan bread in full, a hand cuts the first slice. A warm voice says "${hook}".` : i === marks.length - 1 ? `The slice lifted toward the lens. The voice says "${closing}".` : 'Real hands do the next step of the recipe at natural speed, phone camera, close and handheld, warm kitchen light from the left, authentic homemade sourdough preparation.'}`,
+      );
+      return JSON.stringify({ hook_line: hook, closing_line: closing, prompt: `A 10-second vertical reel of fresh sourdough bread.\n${shots.join('\n')}\nReal cooking sound, no music, no on-screen text.` });
+    };
+
+    const createdKinds: string[] = [];
+    const deps = {
+      encryptionKey: KEY,
+      sleep: async () => {},
+      ask: async (name: string, vars?: any) => {
+        if (name === 'newsite-reel-prompt') {
+          return goodScript(String(vars?.reelRules ?? ''));
+        }
+        return JSON.stringify({
+          headline: 'Delicious Bakes',
+          cta: 'Read More',
+          title: 'Amazing Homemade Sourdough',
+          text: 'Check out our favorite sourdough tips!',
+          alt: 'Freshly baked loaf',
+        });
+      },
+      makePicture: async () => {
+        createdKinds.push('image');
+        return { data: Buffer.from('IMG'), contentType: 'image/jpeg' };
+      },
+      flow: {
+        submitVideo: async () => {
+          createdKinds.push('reel');
+          return 'job_1';
+        },
+        poll: async () => ({ status: 'COMPLETED', image_url: 'https://flow.example.com/v.mp4' }),
+      },
+      download: async () => Buffer.from('VID'),
+    };
+
+    updateRepurposeSettings(siteId, { status: 'active', dailyTarget: 1, cooldownDays: 0 });
+
+    // Day 1 kick -> generates image
+    await kickRepurpose(deps);
+    const posts1 = listRepurposePosts(siteId);
+    expect(posts1).toHaveLength(1);
+    expect(posts1[0]!.post_kind).toBe('image');
+
+    // Simulate next day
+    const { run } = await import('../src/db/index.js');
+    run("UPDATE newsite_repurpose_posts SET created_at = unixepoch() - 86400, sent_at = unixepoch() - 86400 WHERE id = ?", posts1[0]!.id);
+
+    // Day 2 kick -> rotates to reel!
+    await kickRepurpose(deps);
+    const posts2 = listRepurposePosts(siteId);
+    expect(posts2).toHaveLength(2);
+    expect(posts2[0]!.post_kind).toBe('reel');
+  });
 });
