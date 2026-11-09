@@ -34,13 +34,14 @@ export function registerRepurposeRoutes(
     const websites = listNewWebsites();
     const q = (request.query as Record<string, unknown>) ?? {};
     const selectedSiteId = q.website ? Number(q.website) : undefined;
+    const page = Math.max(1, Number(q.page) || 1);
 
     const articlesOf = new Map(websites.map((s) => [s.id, listRepurposeArticles(s.id)]));
     const postsOf = new Map(websites.map((s) => [s.id, listRepurposePosts(s.id)]));
     const channelsOf = new Map(websites.map((s) => [s.id, websiteChannels(s.id)]));
     const sentTodayOf = new Map(websites.map((s) => [s.id, repurposeSentToday(s.id)]));
 
-    const body = repurposePage(websites, selectedSiteId, articlesOf, postsOf, channelsOf, sentTodayOf);
+    const body = repurposePage(websites, selectedSiteId, articlesOf, postsOf, channelsOf, sentTodayOf, page);
 
     return send(
       reply,
@@ -82,6 +83,9 @@ export function registerRepurposeRoutes(
     const site = getNewWebsite(siteId);
     if (!site) return reply.redirect('/new-website/repurpose', 303);
 
+    const b = (request.body as Record<string, unknown>) ?? {};
+    const pageParam = b.page ? `&page=${encodeURIComponent(String(b.page))}` : '';
+
     const nextStatus = site.repurpose_status === 'active' ? 'paused' : 'active';
     updateRepurposeSettings(siteId, { status: nextStatus });
 
@@ -90,7 +94,7 @@ export function registerRepurposeRoutes(
     }
 
     return reply.redirect(
-      `/new-website/repurpose?website=${siteId}&ok=${encodeURIComponent(
+      `/new-website/repurpose?website=${siteId}${pageParam}&ok=${encodeURIComponent(
         `Repurposing is now ${nextStatus === 'active' ? 'Active' : 'Paused'} for ${site.name}.`,
       )}`,
       303,
@@ -106,11 +110,12 @@ export function registerRepurposeRoutes(
     const dailyTarget = Number(b.dailyTarget) || 1;
     const cooldownDays = Number(b.cooldownDays) || 30;
     const autoPublish = b.autoPublish === '1' || b.autoPublish === 'on' || b.autoPublish === true;
+    const pageParam = b.page ? `&page=${encodeURIComponent(String(b.page))}` : '';
 
     updateRepurposeSettings(siteId, { dailyTarget, cooldownDays, autoPublish });
 
     return reply.redirect(
-      `/new-website/repurpose?website=${siteId}&ok=${encodeURIComponent('Repurposing settings saved.')}`,
+      `/new-website/repurpose?website=${siteId}${pageParam}&ok=${encodeURIComponent('Repurposing settings saved.')}`,
       303,
     );
   });
@@ -119,6 +124,7 @@ export function registerRepurposeRoutes(
     const articleId = Number((request.params as { articleId: string }).articleId);
     const b = (request.body as Record<string, unknown>) ?? {};
     const channelId = Number(b.channelId);
+    const pageParam = b.page ? `&page=${encodeURIComponent(String(b.page))}` : '';
 
     const article = getRepurposeArticle(articleId);
     if (!article) return reply.redirect('/new-website/repurpose', 303);
@@ -126,15 +132,15 @@ export function registerRepurposeRoutes(
     const res = await generateRepurposePost(articleId, channelId, deps);
     if (!res.post) {
       return reply.redirect(
-        `/new-website/repurpose?website=${article.website_id}&error=${encodeURIComponent(
+        `/new-website/repurpose?website=${article.website_id}${pageParam}&error=${encodeURIComponent(
           `Could not generate post: ${res.problems.join(' ')}`,
-        )}`,
+        )}#discovered-articles`,
         303,
       );
     }
 
     return reply.redirect(
-      `/new-website/repurpose?website=${article.website_id}&ok=${encodeURIComponent('Fresh post generated.')}`,
+      `/new-website/repurpose?website=${article.website_id}${pageParam}&ok=${encodeURIComponent('Fresh post generated.')}#discovered-articles`,
       303,
     );
   });

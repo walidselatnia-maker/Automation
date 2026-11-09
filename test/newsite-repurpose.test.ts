@@ -210,4 +210,58 @@ describe('New dashboard: content repurposing', () => {
     expect(toggleRes.statusCode).toBe(303);
     expect(toggleRes.headers.location).toMatch(/Active/);
   });
+
+  it('paginates discovered articles with navigation controls and page slicing', async () => {
+    const a = Fastify();
+    await a.register(formbody);
+
+    const siteId = createSite();
+    const site = get<NewWebsiteRow>('SELECT * FROM new_websites WHERE id = ?', siteId)!;
+
+    // Create 30 articles
+    const manyArticles = Array.from({ length: 30 }, (_, i) => ({
+      id: 200 + i,
+      title: `Recipe Number ${i + 1}`,
+      slug: `recipe-number-${i + 1}`,
+      status: 'published',
+      excerpt: `Excerpt for recipe ${i + 1}`,
+      content: `Content for recipe ${i + 1}`,
+      category: 'Baking',
+      cover: { url: 'https://example.com/cover.jpg' },
+    }));
+
+    await syncWebsiteArticles(site, 'sk_test_mock', (async () => ({
+      ok: true,
+      status: 200,
+      headers: new Headers({ 'content-type': 'application/json' }),
+      json: async () => ({ pages: 1, items: manyArticles }),
+    })) as any);
+
+    registerRepurposeRoutes(a, {
+      encryptionKey: KEY,
+      readFlash: () => null,
+      ask: async () => JSON.stringify({ title: 'T', description: 'D', alt: 'A' }),
+      fetchImpl: (async () => ({})) as any,
+    });
+
+    // Page 1: should show 1-24 of 30 (newest first, so Recipe 30 down to 7)
+    const resPage1 = await a.inject({ url: `/new-website/repurpose?website=${siteId}&page=1` });
+    expect(resPage1.statusCode).toBe(200);
+    expect(resPage1.body).toContain('Discovered articles (30)');
+    expect(resPage1.body).toContain('Showing <b>1–24</b> of <b>30</b>');
+    expect(resPage1.body).toContain('Page <b>1</b> of <b>2</b>');
+    expect(resPage1.body).toContain('Recipe Number 30');
+    expect(resPage1.body).toContain('Recipe Number 7');
+    expect(resPage1.body).not.toContain('Recipe Number 6');
+    expect(resPage1.body).toContain('page=2');
+
+    // Page 2: should show 25-30 (Recipe 6 down to 1)
+    const resPage2 = await a.inject({ url: `/new-website/repurpose?website=${siteId}&page=2` });
+    expect(resPage2.statusCode).toBe(200);
+    expect(resPage2.body).toContain('Showing <b>25–30</b> of <b>30</b>');
+    expect(resPage2.body).toContain('Page <b>2</b> of <b>2</b>');
+    expect(resPage2.body).not.toContain('Recipe Number 7');
+    expect(resPage2.body).toContain('Recipe Number 6');
+    expect(resPage2.body).toContain('Recipe Number 1');
+  });
 });

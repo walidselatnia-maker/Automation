@@ -25,7 +25,40 @@ const CSS = `
 .rp-posts-table th { color: var(--soft); font-weight: 600; font-size: 13px; }
 .rp-post-text { font-family: var(--mono); font-size: 13px; color: var(--ink); max-height: 60px; overflow: hidden; text-overflow: ellipsis; white-space: pre-wrap; }
 .rp-empty { border: 1px dashed var(--line); border-radius: var(--r-ctl); padding: 32px; text-align: center; color: var(--soft); font-size: 14px; }
+.rp-pagination { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px; margin: 24px 0 16px; }
+.rp-page-btn { display: inline-flex; align-items: center; justify-content: center; min-width: 36px; height: 36px; padding: 0 10px; border-radius: var(--r-ctl); font-size: 13px; font-weight: 500; text-decoration: none; background: var(--raised); color: var(--ink); border: 1px solid var(--line); transition: all .15s ease; }
+.rp-page-btn:hover:not(.disabled):not(.active) { background: var(--idle-hover); border-color: var(--soft); }
+.rp-page-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 700; }
+.rp-page-btn.disabled { opacity: 0.35; cursor: not-allowed; pointer-events: none; }
+.rp-page-ellipsis { display: inline-flex; align-items: center; justify-content: center; min-width: 28px; height: 36px; color: var(--soft); font-size: 13px; }
+.rp-page-jump { display: inline-flex; align-items: center; gap: 6px; margin-left: 10px; }
+.rp-page-jump input { width: 64px; height: 36px; padding: 0 8px; border-radius: var(--r-ctl); border: 1px solid var(--line); background: var(--raised); color: var(--ink); font-size: 13px; text-align: center; }
 `;
+
+function paginationWindow(current: number, total: number): (number | '...')[] {
+  if (total <= 7) {
+    return Array.from({ length: total }, (_, i) => i + 1);
+  }
+  if (current <= 4) {
+    return [1, 2, 3, 4, 5, '...', total];
+  }
+  if (current >= total - 3) {
+    return [1, '...', total - 4, total - 3, total - 2, total - 1, total];
+  }
+  return [1, '...', current - 1, current, current + 1, '...', total];
+}
+
+function makePageUrl(siteId: number, targetPage: number, selectedSiteId?: number): string {
+  const params = new URLSearchParams();
+  if (selectedSiteId || siteId) {
+    params.set('website', String(selectedSiteId ?? siteId));
+  }
+  if (targetPage > 1) {
+    params.set('page', String(targetPage));
+  }
+  const s = params.toString();
+  return `/new-website/repurpose${s ? `?${s}` : ''}#discovered-articles`;
+}
 
 export function repurposePage(
   websites: NewWebsiteRow[],
@@ -34,6 +67,7 @@ export function repurposePage(
   postsOf: Map<number, (RepurposePostRow & { article_title: string; article_url: string; channel_name: string })[]>,
   channelsOf: Map<number, ChannelRow[]>,
   sentTodayOf: Map<number, number>,
+  currentPage: number = 1,
 ): Html {
   const visibleSites = selectedSiteId
     ? websites.filter((s) => s.id === selectedSiteId)
@@ -71,6 +105,13 @@ export function repurposePage(
           const sentToday = sentTodayOf.get(site.id) ?? 0;
           const status = site.repurpose_status ?? 'paused';
 
+          const pageSize = 24;
+          const totalPages = Math.max(1, Math.ceil(articles.length / pageSize));
+          const safePage = Math.min(Math.max(1, currentPage), totalPages);
+          const startIdx = (safePage - 1) * pageSize;
+          const pagedArticles = articles.slice(startIdx, startIdx + pageSize);
+          const pageNums = paginationWindow(safePage, totalPages);
+
           return html`<section class="rp-site-card" id="site-${String(site.id)}">
             <div class="rp-head-row">
               <div class="rp-site-info">
@@ -87,6 +128,7 @@ export function repurposePage(
               </div>
               <div class="rp-actions">
                 <form method="post" action="/new-website/repurpose/${String(site.id)}/toggle" style="margin:0">
+                  <input type="hidden" name="page" value="${String(safePage)}" />
                   <button class="ns-btn ${status === 'active' ? 'quiet' : 'primary'}">${status === 'active' ? 'Pause repurposing' : 'Resume repurposing'}</button>
                 </form>
                 <form method="post" action="/new-website/repurpose/${String(site.id)}/sync" style="margin:0">
@@ -99,6 +141,7 @@ export function repurposePage(
             <details style="margin-bottom: 20px;">
               <summary style="cursor:pointer;font-weight:600;font-size:14px;color:var(--accent-text)">Repurposing settings for ${site.name}</summary>
               <form method="post" action="/new-website/repurpose/${String(site.id)}/settings" style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-top:12px;padding:14px;background:var(--raised);border-radius:var(--r-ctl)">
+                <input type="hidden" name="page" value="${String(safePage)}" />
                 <div>
                   <label style="display:block;font-size:13px;color:var(--soft);margin-bottom:4px">Daily limit</label>
                   <input type="number" name="dailyTarget" min="1" max="50" value="${String(site.repurpose_daily_target ?? 1)}" style="width:100px;padding:6px 10px;border-radius:var(--r-ctl);border:1px solid var(--line)" />
@@ -118,10 +161,19 @@ export function repurposePage(
             </details>
 
             <!-- Discovered Articles -->
-            <h3 style="font-size:17px;margin:20px 0 10px">Discovered articles (${String(articles.length)})</h3>
+            <div id="discovered-articles" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin:24px 0 12px">
+              <h3 style="font-size:17px;margin:0">Discovered articles (${String(articles.length)})</h3>
+              ${articles.length > pageSize
+                ? html`<div style="font-size:13px;color:var(--soft);display:flex;align-items:center;gap:10px">
+                    <span>Showing <b>${String(startIdx + 1)}–${String(Math.min(articles.length, startIdx + pageSize))}</b> of <b>${String(articles.length)}</b></span>
+                    <span style="border-left:1px solid var(--line);padding-left:10px">Page <b>${String(safePage)}</b> of <b>${String(totalPages)}</b></span>
+                  </div>`
+                : raw('')}
+            </div>
+
             ${articles.length
               ? html`<div class="rp-grid">
-                  ${articles.slice(0, 12).map((art) => {
+                  ${pagedArticles.map((art) => {
                     const daysAgo = art.last_repurposed_at ? Math.floor((Date.now() / 1000 - art.last_repurposed_at) / 86400) : null;
                     return html`<div class="rp-art-card">
                       <a class="rp-art-title" href="${art.url}" target="_blank" rel="noopener">${art.title}</a>
@@ -133,6 +185,7 @@ export function repurposePage(
                       <div class="rp-art-foot">
                         ${channels.length
                           ? html`<form method="post" action="/new-website/repurpose/article/${String(art.id)}/generate" style="margin:0;display:flex;gap:6px">
+                              <input type="hidden" name="page" value="${String(safePage)}" />
                               <select name="channelId" style="padding:4px 8px;border-radius:var(--r-ctl);border:1px solid var(--line);font-size:12px">
                                 ${channels.map((ch) => html`<option value="${String(ch.id)}">${ch.name} (${platformLabel(ch.platform)})</option>`)}
                               </select>
@@ -142,7 +195,25 @@ export function repurposePage(
                       </div>
                     </div>`;
                   })}
-                </div>`
+                </div>
+                ${totalPages > 1
+                  ? html`<nav class="rp-pagination" aria-label="Articles pagination">
+                      <a class="rp-page-btn ${safePage <= 1 ? 'disabled' : ''}" href="${makePageUrl(site.id, 1, selectedSiteId)}" title="First page">&laquo;</a>
+                      <a class="rp-page-btn ${safePage <= 1 ? 'disabled' : ''}" href="${makePageUrl(site.id, safePage - 1, selectedSiteId)}" title="Previous page">&lsaquo;</a>
+                      ${pageNums.map((p) =>
+                        p === '...'
+                          ? html`<span class="rp-page-ellipsis">&hellip;</span>`
+                          : html`<a class="rp-page-btn ${p === safePage ? 'active' : ''}" href="${makePageUrl(site.id, p as number, selectedSiteId)}">${String(p)}</a>`,
+                      )}
+                      <a class="rp-page-btn ${safePage >= totalPages ? 'disabled' : ''}" href="${makePageUrl(site.id, safePage + 1, selectedSiteId)}" title="Next page">&rsaquo;</a>
+                      <a class="rp-page-btn ${safePage >= totalPages ? 'disabled' : ''}" href="${makePageUrl(site.id, totalPages, selectedSiteId)}" title="Last page">&raquo;</a>
+                      <form class="rp-page-jump" method="get" action="/new-website/repurpose">
+                        <input type="hidden" name="website" value="${String(selectedSiteId ?? site.id)}" />
+                        <input type="number" name="page" min="1" max="${String(totalPages)}" placeholder="Page" aria-label="Go to page" />
+                        <button class="ns-btn small quiet" type="submit">Go</button>
+                      </form>
+                    </nav>`
+                  : raw('')}`
               : html`<div class="rp-empty">
                   <p>No articles discovered yet from ${site.name}. Click "Fetch articles from site" to load your existing content.</p>
                 </div>`}
