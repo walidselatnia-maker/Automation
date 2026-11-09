@@ -88,9 +88,10 @@ describe('New dashboard: content repurposing', () => {
 
     const articles = listRepurposeArticles(siteId);
     expect(articles).toHaveLength(2);
-    expect(articles[0]!.title).toBe('Quick Chocolate Chip Cookies');
-    expect(articles[0]!.cover_url).toBe('https://food.example.com/images/cookies.jpg');
-    expect(articles[1]!.title).toBe('Authentic Sourdough Bread');
+    // Oldest published article (lowest site_post_id) is first
+    expect(articles[0]!.title).toBe('Authentic Sourdough Bread');
+    expect(articles[1]!.title).toBe('Quick Chocolate Chip Cookies');
+    expect(articles[1]!.cover_url).toBe('https://food.example.com/images/cookies.jpg');
 
     // Running sync again updates existing articles without adding duplicates
     const resync = await syncWebsiteArticles(site, 'sk_test_mock', mockFetch);
@@ -140,9 +141,25 @@ describe('New dashboard: content repurposing', () => {
       });
     };
 
+    const mockBuffer = () => ({
+      channels: async () => [
+        {
+          id: 'buf_pin_1',
+          name: 'Pinterest Baking',
+          service: 'pinterest',
+          boards: [{ serviceId: 'b_123', name: 'Cookies & Desserts' }],
+        },
+      ],
+      createImagePost: async (inp: any) => {
+        expect(inp.metadata).toContain('boardServiceId: "b_123"');
+        return { id: 'buf_post_1', dueAt: '2026-11-10T12:00:00Z' };
+      },
+    });
+
     const outcome = await generateRepurposePost(article.id, channelId, {
       encryptionKey: KEY,
       ask,
+      buffer: mockBuffer as any,
     });
 
     expect(outcome.post).not.toBeNull();
@@ -244,24 +261,80 @@ describe('New dashboard: content repurposing', () => {
       fetchImpl: (async () => ({})) as any,
     });
 
-    // Page 1: should show 1-24 of 30 (newest first, so Recipe 30 down to 7)
+    // Page 1: should show 1-24 of 30 (oldest published first: Recipe 1 up to Recipe 24)
     const resPage1 = await a.inject({ url: `/new-website/repurpose?website=${siteId}&page=1` });
     expect(resPage1.statusCode).toBe(200);
     expect(resPage1.body).toContain('Discovered articles (30)');
     expect(resPage1.body).toContain('Showing <b>1–24</b> of <b>30</b>');
     expect(resPage1.body).toContain('Page <b>1</b> of <b>2</b>');
-    expect(resPage1.body).toContain('Recipe Number 30');
-    expect(resPage1.body).toContain('Recipe Number 7');
-    expect(resPage1.body).not.toContain('Recipe Number 6');
+    expect(resPage1.body).toContain('Recipe Number 1');
+    expect(resPage1.body).toContain('Recipe Number 24');
+    expect(resPage1.body).not.toContain('Recipe Number 25');
     expect(resPage1.body).toContain('page=2');
 
-    // Page 2: should show 25-30 (Recipe 6 down to 1)
+    // Page 2: should show 25-30 (Recipe 25 up to Recipe 30)
     const resPage2 = await a.inject({ url: `/new-website/repurpose?website=${siteId}&page=2` });
     expect(resPage2.statusCode).toBe(200);
     expect(resPage2.body).toContain('Showing <b>25–30</b> of <b>30</b>');
     expect(resPage2.body).toContain('Page <b>2</b> of <b>2</b>');
-    expect(resPage2.body).not.toContain('Recipe Number 7');
-    expect(resPage2.body).toContain('Recipe Number 6');
-    expect(resPage2.body).toContain('Recipe Number 1');
+    expect(resPage2.body).not.toContain('Recipe Number 24');
+    expect(resPage2.body).toContain('Recipe Number 25');
+    expect(resPage2.body).toContain('Recipe Number 30');
+  });
+
+  it('performs bulk actions on articles including pause, activate, delete, and repurpose', async () => {
+    const a = Fastify();
+    await a.register(formbody);
+
+    const siteId = createSite();
+    const site = get<NewWebsiteRow>('SELECT * FROM new_websites WHERE id = ?', siteId)!;
+
+    await syncWebsiteArticles(site, 'sk_test_mock', (async () => mockPostsResponse()) as any);
+    const articles = listRepurposeArticles(siteId);
+    expect(articles).toHaveLength(2);
+
+    registerRepurposeRoutes(a, {
+      encryptionKey: KEY,
+      readFlash: () => null,
+      ask: async () => JSON.stringify({ title: 'New', description: 'Fresh', alt: 'A' }),
+      fetchImpl: (async () => ({})) as any,
+    });
+
+    // 1. Bulk pause
+    const pauseRes = await a.inject({
+      method: 'POST',
+      url: `/new-website/repurpose/${siteId}/bulk-articles`,
+      payload: {
+        articleIds: [articles[0]!.id, articles[1]!.id],
+        bulkAction: 'pause',
+      },
+    });
+    expect(pauseRes.statusCode).toBe(303);
+    expect(getRepurposeArticle(articles[0]!.id)?.status).toBe('paused');
+    expect(getRepurposeArticle(articles[1]!.id)?.status).toBe('paused');
+
+    // 2. Bulk activate
+    const activateRes = await a.inject({
+      method: 'POST',
+      url: `/new-website/repurpose/${siteId}/bulk-articles`,
+      payload: {
+        articleIds: [articles[0]!.id],
+        bulkAction: 'activate',
+      },
+    });
+    expect(activateRes.statusCode).toBe(303);
+    expect(getRepurposeArticle(articles[0]!.id)?.status).toBe('active');
+
+    // 3. Bulk delete
+    const deleteRes = await a.inject({
+      method: 'POST',
+      url: `/new-website/repurpose/${siteId}/bulk-articles`,
+      payload: {
+        articleIds: [articles[1]!.id],
+        bulkAction: 'delete',
+      },
+    });
+    expect(deleteRes.statusCode).toBe(303);
+    expect(listRepurposeArticles(siteId)).toHaveLength(1);
   });
 });

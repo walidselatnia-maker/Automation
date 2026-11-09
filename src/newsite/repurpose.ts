@@ -5,14 +5,13 @@ import type { NewWebsiteRow } from './repo.js';
 import { getNewWebsite, websiteApiKey } from './repo.js';
 import { type ChannelRow, type Platform } from './channels.js';
 import { channelRules } from './platform-rules.js';
-import { checkFields, type SocialDeps } from './social.js';
+import { bufferMetadata, checkFields, isQueueFull, type BufferApi, type SocialDeps } from './social.js';
 import { correctUntilRight } from './rounds.js';
 import { BufferClient } from '../integrations/buffer.js';
 import { bufferTokenOf, fbTokenOf, getChannel, websiteChannels } from './channels.js';
 import { FacebookClient } from '../integrations/facebook.js';
 import { ThreadsClient } from '../integrations/threads.js';
 import { commentsThroughApi } from './first-comment.js';
-import { bufferMetadata, isQueueFull } from './social.js';
 import type { Fetch } from './client.js';
 
 const log = createLogger('repurpose');
@@ -45,6 +44,7 @@ export interface RepurposePostRow {
   title: string;
   text: string;
   alt: string;
+  board_name: string;
   post_link: string;
   external_id: string;
   error: string;
@@ -58,17 +58,48 @@ export interface RepurposeDeps {
   encryptionKey: Buffer;
   ask: (promptName: string, variables: Record<string, unknown>, chat?: string) => Promise<string>;
   fetchImpl?: Fetch;
-  buffer?: (token: string) => BufferClient;
+  buffer?: (token: string) => BufferApi;
   facebook?: (token: string) => FacebookClient;
   threads?: (token: string) => ThreadsClient;
 }
 
+const realBuffer = (token: string): BufferApi => {
+  const client = new BufferClient(token);
+  return {
+    channels: async () => client.getChannels(await client.getOrganizationId()),
+    createImagePost: (input) => client.createImagePost(input),
+  };
+};
+
+const parseObject = (raw: string): Record<string, unknown> | null => {
+  const start = raw.indexOf('{');
+  const end = raw.lastIndexOf('}');
+  try {
+    const v = start >= 0 && end > start ? JSON.parse(raw.slice(start, end + 1)) : null;
+    return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+};
+
 /* -- Database queries ----------------------------------------------------- */
 
+/**
+ * List discovered articles, ordered OLD PUBLISHED FIRST as requested.
+ * (Lowest published_at or site_post_id first).
+ */
 export const listRepurposeArticles = (websiteId?: number): RepurposeArticleRow[] =>
   websiteId
-    ? all<RepurposeArticleRow>('SELECT * FROM newsite_repurpose_articles WHERE website_id = ? ORDER BY site_post_id DESC', websiteId)
-    : all<RepurposeArticleRow>('SELECT * FROM newsite_repurpose_articles ORDER BY website_id, site_post_id DESC');
+    ? all<RepurposeArticleRow>(
+        `SELECT * FROM newsite_repurpose_articles
+         WHERE website_id = ?
+         ORDER BY CASE WHEN published_at > 0 THEN published_at ELSE site_post_id END ASC, site_post_id ASC`,
+        websiteId,
+      )
+    : all<RepurposeArticleRow>(
+        `SELECT * FROM newsite_repurpose_articles
+         ORDER BY website_id, CASE WHEN published_at > 0 THEN published_at ELSE site_post_id END ASC, site_post_id ASC`,
+      );
 
 export const getRepurposeArticle = (id: number): RepurposeArticleRow | undefined =>
   get<RepurposeArticleRow>('SELECT * FROM newsite_repurpose_articles WHERE id = ?', id);
@@ -166,6 +197,12 @@ export async function syncWebsiteArticles(
       const cover = item.cover as { url?: unknown } | string | null | undefined;
       const coverUrl = typeof cover === 'string' ? cover : String((cover as { url?: unknown } | null)?.url ?? item.coverUrl ?? '');
 
+      const publishedAt = item.publishedAt ? Math.floor(new Date(String(item.publishedAt)).getTime() / 1000)
+        : item.published_at ? Math.floor(new Date(String(item.published_at)).getTime() / 1000)
+        : item.createdAt ? Math.floor(new Date(String(item.createdAt)).getTime() / 1000)
+        : item.created_at ? Math.floor(new Date(String(item.created_at)).getTime() / 1000)
+        : 0;
+
       const existing = get<RepurposeArticleRow>(
         'SELECT id FROM newsite_repurpose_articles WHERE website_id = ? AND site_post_id = ?',
         site.id,
@@ -178,7 +215,8 @@ export async function syncWebsiteArticles(
              title = ?, slug = ?, url = ?, excerpt = ?,
              cover_url = CASE WHEN ? <> '' THEN ? ELSE cover_url END,
              content_text = CASE WHEN ? <> '' THEN ? ELSE content_text END,
-             category = ?
+             category = ?,
+             published_at = CASE WHEN ? > 0 THEN ? ELSE published_at END
            WHERE id = ?`,
           title,
           slug,
@@ -189,6 +227,8 @@ export async function syncWebsiteArticles(
           content,
           content,
           category,
+          publishedAt,
+          publishedAt,
           existing.id,
         );
         updated++;
@@ -196,7 +236,7 @@ export async function syncWebsiteArticles(
         run(
           `INSERT INTO newsite_repurpose_articles
              (website_id, site_post_id, title, slug, url, cover_url, excerpt, content_text, category, published_at, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch(), unixepoch())`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch())`,
           site.id,
           sitePostId,
           title,
@@ -206,6 +246,7 @@ export async function syncWebsiteArticles(
           excerpt,
           content,
           category,
+          publishedAt,
         );
         added++;
       }
@@ -320,6 +361,50 @@ export async function generateRepurposePost(
 
 /* -- Post Sending & Publishing -------------------------------------------- */
 
+export async function pickRepurposeBoard(
+  article: RepurposeArticleRow,
+  site: NewWebsiteRow,
+  boards: { serviceId: string; name: string; id?: string }[],
+  deps: Pick<RepurposeDeps, 'ask'>,
+): Promise<{ serviceId: string; name: string; id?: string } | undefined> {
+  if (!boards.length) return undefined;
+  if (boards.length === 1) return boards[0];
+
+  try {
+    const raw = await deps.ask('newsite-pick-board', {
+      keyword: article.category || article.title,
+      title: article.title,
+      niche: site.niche || article.category,
+      boardsJson: JSON.stringify(boards.map((b) => b.name)),
+    });
+    const parsed = parseObject(raw);
+    const chosenName = String(parsed?.board ?? '').trim().toLowerCase();
+    if (chosenName) {
+      const match = boards.find((b) => b.name.toLowerCase() === chosenName);
+      if (match) return match;
+    }
+  } catch {
+    // fallback to category/general
+  }
+
+  // Fallback 1: match category name
+  if (article.category) {
+    const cat = article.category.toLowerCase().trim();
+    const catMatch = boards.find((b) => {
+      const bn = b.name.toLowerCase();
+      return bn.includes(cat) || cat.includes(bn);
+    });
+    if (catMatch) return catMatch;
+  }
+
+  // Fallback 2: "general" board
+  const general = boards.find((b) => /general/i.test(b.name));
+  if (general) return general;
+
+  // Fallback 3: first board
+  return boards[0];
+}
+
 export async function sendRepurposePost(
   postId: number,
   deps: RepurposeDeps,
@@ -341,7 +426,21 @@ export async function sendRepurposePost(
 
   try {
     if (channel.via === 'buffer') {
-      const api = (deps.buffer ?? ((tok) => new BufferClient(tok)))(bufferTokenOf(channel, deps.encryptionKey));
+      const api = (deps.buffer ?? realBuffer)(bufferTokenOf(channel, deps.encryptionKey));
+      let board: { serviceId: string; name: string; id?: string } | undefined;
+      if (channel.platform === 'pinterest') {
+        const channels = await api.channels();
+        const found = channels.find((c) => c.id === channel.buffer_channel_id);
+        if (!found) throw new Error(`Buffer no longer lists this ${rules.label} channel. Check it on the Channels page.`);
+        if (!found.boards || !found.boards.length) {
+          throw new Error('This Pinterest channel has no boards. Create a board on Pinterest first.');
+        }
+        board = await pickRepurposeBoard(article, site, found.boards, deps);
+        if (!board) {
+          throw new Error('No Pinterest board fits this article, and the account has no board with “general” in its name.');
+        }
+      }
+
       const firstComment = rules.link === 'first_comment' && channel.paid_buffer && !commentsThroughApi(channel) ? article.url : '';
       const { id, dueAt } = await api.createImagePost({
         text: post.text,
@@ -351,12 +450,14 @@ export async function sendRepurposePost(
         metadata: bufferMetadata(channel.platform, {
           title: post.title || article.title,
           url: article.url,
+          boardServiceId: board?.serviceId || board?.id,
           firstComment,
         }),
       });
       run(
-        `UPDATE newsite_repurpose_posts SET status = 'sent', external_id = ?, post_link = '', sent_at = unixepoch(), error = '' WHERE id = ?`,
+        `UPDATE newsite_repurpose_posts SET status = 'sent', external_id = ?, board_name = ?, post_link = '', sent_at = unixepoch(), error = '' WHERE id = ?`,
         id,
+        board?.name ?? post.board_name ?? '',
         post.id,
       );
       return { ok: true };
@@ -403,6 +504,62 @@ export async function sendRepurposePost(
   }
 }
 
+/* -- Bulk Article Operations ---------------------------------------------- */
+
+export async function bulkEditArticles(
+  articleIds: number[],
+  action: 'repurpose' | 'pause' | 'activate' | 'delete',
+  options: { channelId?: number | 'all'; deps?: RepurposeDeps } = {},
+): Promise<{ ok: boolean; affected: number; error?: string }> {
+  if (!articleIds.length) return { ok: true, affected: 0 };
+
+  if (action === 'pause') {
+    const placeholders = articleIds.map(() => '?').join(',');
+    run(`UPDATE newsite_repurpose_articles SET status = 'paused' WHERE id IN (${placeholders})`, ...articleIds);
+    return { ok: true, affected: articleIds.length };
+  }
+
+  if (action === 'activate') {
+    const placeholders = articleIds.map(() => '?').join(',');
+    run(`UPDATE newsite_repurpose_articles SET status = 'active' WHERE id IN (${placeholders})`, ...articleIds);
+    return { ok: true, affected: articleIds.length };
+  }
+
+  if (action === 'delete') {
+    const placeholders = articleIds.map(() => '?').join(',');
+    run(`DELETE FROM newsite_repurpose_articles WHERE id IN (${placeholders})`, ...articleIds);
+    return { ok: true, affected: articleIds.length };
+  }
+
+  if (action === 'repurpose') {
+    if (!options.deps) return { ok: false, affected: 0, error: 'Missing dependencies.' };
+    let generated = 0;
+    for (const artId of articleIds) {
+      const art = getRepurposeArticle(artId);
+      if (!art) continue;
+      const channels = websiteChannels(art.website_id);
+      if (!channels.length) continue;
+
+      if (options.channelId === 'all') {
+        for (const ch of channels) {
+          const res = await generateRepurposePost(artId, ch.id, options.deps);
+          if (res.post) generated++;
+        }
+      } else {
+        const chId = Number(options.channelId);
+        const validCh = channels.find((c) => c.id === chId) ?? channels[0];
+        if (validCh) {
+          const res = await generateRepurposePost(artId, validCh.id, options.deps);
+          if (res.post) generated++;
+        }
+      }
+    }
+    return { ok: true, affected: generated };
+  }
+
+  return { ok: false, affected: 0, error: 'Unknown action.' };
+}
+
 /* -- Background Repurposing Worker ---------------------------------------- */
 
 export async function kickRepurpose(deps: RepurposeDeps): Promise<void> {
@@ -423,7 +580,10 @@ export async function kickRepurpose(deps: RepurposeDeps): Promise<void> {
     const candidate = get<RepurposeArticleRow>(
       `SELECT * FROM newsite_repurpose_articles
        WHERE website_id = ? AND status = 'active' AND (last_repurposed_at = 0 OR last_repurposed_at < ?)
-       ORDER BY last_repurposed_at ASC, id ASC LIMIT 1`,
+       ORDER BY last_repurposed_at ASC,
+                CASE WHEN published_at > 0 THEN published_at ELSE site_post_id END ASC,
+                site_post_id ASC
+       LIMIT 1`,
       site.id,
       cutoff,
     );

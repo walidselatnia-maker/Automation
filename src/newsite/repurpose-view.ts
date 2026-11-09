@@ -9,17 +9,28 @@ const CSS = `
 .rp-tab:hover { background: var(--idle-hover); }
 .rp-tab.on { background: var(--accent); color: #fff; border-color: var(--accent); }
 .rp-site-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); padding: 22px 24px; margin-bottom: 30px; box-shadow: var(--shadow); }
+details.rp-site-card summary::-webkit-details-marker { display: none; }
+details.rp-site-card .rp-toggle-arrow { font-size: 14px; transition: transform .15s ease; display: inline-block; color: var(--soft); margin-right: 4px; }
+details.rp-site-card:not([open]) .rp-toggle-arrow { transform: rotate(-90deg); }
 .rp-head-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid var(--line); }
 .rp-site-info { display: flex; flex-direction: column; gap: 6px; }
 .rp-title { margin: 0; font: 700 22px/1.25 var(--display); color: var(--ink); display: flex; align-items: center; gap: 12px; }
 .rp-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; font-size: 13px; color: var(--soft); }
 .rp-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.rp-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; margin-top: 16px; }
-.rp-art-card { background: var(--raised); border: 1px solid var(--line); border-radius: var(--r-ctl); padding: 16px; display: flex; flex-direction: column; gap: 10px; }
-.rp-art-title { font-weight: 600; font-size: 15px; line-height: 1.35; color: var(--ink); text-decoration: none; }
+.rp-art-title { font-weight: 600; font-size: 14px; line-height: 1.35; color: var(--ink); text-decoration: none; }
 .rp-art-title:hover { color: var(--accent-text); text-decoration: underline; }
-.rp-art-meta { font-size: 12px; color: var(--soft); display: flex; justify-content: space-between; }
-.rp-art-foot { margin-top: auto; display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.rp-cat-tag { display: inline-block; font-size: 11px; padding: 2px 6px; border-radius: 4px; background: var(--idle); color: var(--soft); margin-left: 8px; vertical-align: middle; }
+.rp-articles-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 14px; background: var(--raised); border-radius: var(--r-ctl); overflow: hidden; border: 1px solid var(--line); }
+.rp-articles-table th, .rp-articles-table td { padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: middle; }
+.rp-articles-table th { background: var(--surface); color: var(--soft); font-weight: 600; font-size: 13px; }
+.rp-articles-table tbody tr:hover { background: var(--idle-hover); }
+.rp-bulk-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 10px 14px; background: var(--raised); border: 1px solid var(--line); border-radius: var(--r-ctl); margin: 12px 0 10px; }
+.rp-bulk-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.rp-bulk-label { font-size: 13px; color: var(--soft); display: flex; align-items: center; gap: 6px; margin: 0; }
+.rp-bulk-count { font-size: 13px; font-weight: 600; color: var(--ink); }
+.rp-select { padding: 6px 10px; border-radius: var(--r-ctl); border: 1px solid var(--line); background: var(--surface); color: var(--ink); font-size: 13px; }
+.rp-select.small { padding: 4px 8px; font-size: 12px; max-width: 140px; }
+.rp-channel-row { display: flex; align-items: center; gap: 8px; }
 .rp-posts-table { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 14px; }
 .rp-posts-table th, .rp-posts-table td { padding: 12px 14px; text-align: left; border-bottom: 1px solid var(--line); }
 .rp-posts-table th { color: var(--soft); font-weight: 600; font-size: 13px; }
@@ -112,10 +123,11 @@ export function repurposePage(
           const pagedArticles = articles.slice(startIdx, startIdx + pageSize);
           const pageNums = paginationWindow(safePage, totalPages);
 
-          return html`<section class="rp-site-card" id="site-${String(site.id)}">
-            <div class="rp-head-row">
+          return html`<details class="rp-site-card" open id="site-${String(site.id)}">
+            <summary class="rp-head-row" style="cursor:pointer;list-style:none">
               <div class="rp-site-info">
                 <div class="rp-title">
+                  <span class="rp-toggle-arrow">▼</span>
                   <h2>${site.name}</h2>
                   <span class="ns-mono" style="font-size:14px;color:var(--soft);font-weight:400">${site.domain}</span>
                 </div>
@@ -124,9 +136,11 @@ export function repurposePage(
                   <span>Target: <b>${String(sentToday)} / ${String(site.repurpose_daily_target ?? 1)} today</b></span>
                   <span>Cooldown: <b>${String(site.repurpose_cooldown_days ?? 30)} days</b></span>
                   <span>${site.repurpose_auto_publish ? 'Auto-publish' : 'Manual approval'}</span>
+                  <span>Articles: <b>${String(articles.length)}</b></span>
+                  <span>Posts: <b>${String(posts.length)}</b></span>
                 </div>
               </div>
-              <div class="rp-actions">
+              <div class="rp-actions" onclick="event.stopPropagation()">
                 <form method="post" action="/new-website/repurpose/${String(site.id)}/toggle" style="margin:0">
                   <input type="hidden" name="page" value="${String(safePage)}" />
                   <button class="ns-btn ${status === 'active' ? 'quiet' : 'primary'}">${status === 'active' ? 'Pause repurposing' : 'Resume repurposing'}</button>
@@ -135,7 +149,7 @@ export function repurposePage(
                   <button class="ns-btn quiet">Fetch articles from site</button>
                 </form>
               </div>
-            </div>
+            </summary>
 
             <!-- Settings disclosure -->
             <details style="margin-bottom: 20px;">
@@ -165,55 +179,102 @@ export function repurposePage(
               <h3 style="font-size:17px;margin:0">Discovered articles (${String(articles.length)})</h3>
               ${articles.length > pageSize
                 ? html`<div style="font-size:13px;color:var(--soft);display:flex;align-items:center;gap:10px">
-                    <span>Showing <b>${String(startIdx + 1)}–${String(Math.min(articles.length, startIdx + pageSize))}</b> of <b>${String(articles.length)}</b></span>
+                    <span>Showing <b>${String(startIdx + 1)}–${String(Math.min(articles.length, startIdx + pageSize))}</b> of <b>${String(articles.length)}</b> (Oldest first)</span>
                     <span style="border-left:1px solid var(--line);padding-left:10px">Page <b>${String(safePage)}</b> of <b>${String(totalPages)}</b></span>
                   </div>`
                 : raw('')}
             </div>
 
             ${articles.length
-              ? html`<div class="rp-grid">
-                  ${pagedArticles.map((art) => {
-                    const daysAgo = art.last_repurposed_at ? Math.floor((Date.now() / 1000 - art.last_repurposed_at) / 86400) : null;
-                    return html`<div class="rp-art-card">
-                      <a class="rp-art-title" href="${art.url}" target="_blank" rel="noopener">${art.title}</a>
-                      <div class="rp-art-meta">
-                        <span>${art.category ? art.category : 'Article'}</span>
-                        <span>${daysAgo === null ? 'Never repurposed' : `Repurposed ${daysAgo}d ago`}</span>
+              ? html`
+                  <form method="post" action="/new-website/repurpose/${String(site.id)}/bulk-articles" id="bulk-form-${String(site.id)}">
+                    <input type="hidden" name="page" value="${String(safePage)}" />
+
+                    <!-- Bulk action toolbar -->
+                    <div class="rp-bulk-bar">
+                      <div class="rp-bulk-left">
+                        <span class="rp-bulk-count" id="bulk-count-${String(site.id)}">0 articles selected</span>
                       </div>
-                      ${art.excerpt ? html`<p style="font-size:13px;color:var(--soft);margin:0;line-height:1.4">${art.excerpt.slice(0, 120)}...</p>` : raw('')}
-                      <div class="rp-art-foot">
-                        ${channels.length
-                          ? html`<form method="post" action="/new-website/repurpose/article/${String(art.id)}/generate" style="margin:0;display:flex;gap:6px">
-                              <input type="hidden" name="page" value="${String(safePage)}" />
-                              <select name="channelId" style="padding:4px 8px;border-radius:var(--r-ctl);border:1px solid var(--line);font-size:12px">
-                                ${channels.map((ch) => html`<option value="${String(ch.id)}">${ch.name} (${platformLabel(ch.platform)})</option>`)}
-                              </select>
-                              <button class="ns-btn small primary">Repurpose now</button>
-                            </form>`
-                          : html`<span style="font-size:12px;color:var(--soft)">No channels connected</span>`}
+                      <div class="rp-bulk-actions">
+                        <label class="rp-bulk-label">
+                          Channel:
+                          <select name="channelId" class="rp-select">
+                            <option value="all">All connected channels (${String(channels.length)})</option>
+                            ${channels.map((ch) => html`<option value="${String(ch.id)}">${ch.name} (${platformLabel(ch.platform)})</option>`)}
+                          </select>
+                        </label>
+                        <button name="bulkAction" value="repurpose" class="ns-btn small primary">Repurpose selected</button>
+                        <button name="bulkAction" value="pause" class="ns-btn small quiet">Pause selected</button>
+                        <button name="bulkAction" value="activate" class="ns-btn small quiet">Mark active</button>
+                        <button name="bulkAction" value="delete" class="ns-btn small danger" onclick="return confirm('Remove selected articles?')">Delete</button>
                       </div>
-                    </div>`;
-                  })}
-                </div>
-                ${totalPages > 1
-                  ? html`<nav class="rp-pagination" aria-label="Articles pagination">
-                      <a class="rp-page-btn ${safePage <= 1 ? 'disabled' : ''}" href="${makePageUrl(site.id, 1, selectedSiteId)}" title="First page">&laquo;</a>
-                      <a class="rp-page-btn ${safePage <= 1 ? 'disabled' : ''}" href="${makePageUrl(site.id, safePage - 1, selectedSiteId)}" title="Previous page">&lsaquo;</a>
-                      ${pageNums.map((p) =>
-                        p === '...'
-                          ? html`<span class="rp-page-ellipsis">&hellip;</span>`
-                          : html`<a class="rp-page-btn ${p === safePage ? 'active' : ''}" href="${makePageUrl(site.id, p as number, selectedSiteId)}">${String(p)}</a>`,
-                      )}
-                      <a class="rp-page-btn ${safePage >= totalPages ? 'disabled' : ''}" href="${makePageUrl(site.id, safePage + 1, selectedSiteId)}" title="Next page">&rsaquo;</a>
-                      <a class="rp-page-btn ${safePage >= totalPages ? 'disabled' : ''}" href="${makePageUrl(site.id, totalPages, selectedSiteId)}" title="Last page">&raquo;</a>
-                      <form class="rp-page-jump" method="get" action="/new-website/repurpose">
-                        <input type="hidden" name="website" value="${String(selectedSiteId ?? site.id)}" />
-                        <input type="number" name="page" min="1" max="${String(totalPages)}" placeholder="Page" aria-label="Go to page" />
-                        <button class="ns-btn small quiet" type="submit">Go</button>
-                      </form>
-                    </nav>`
-                  : raw('')}`
+                    </div>
+
+                    <table class="rp-articles-table">
+                      <thead>
+                        <tr>
+                          <th style="width:36px;text-align:center">
+                            <input type="checkbox" class="rp-select-all" data-site="${String(site.id)}" title="Select all on this page" />
+                          </th>
+                          <th>Title</th>
+                          <th style="width:170px">Status</th>
+                          <th style="width:260px">Channels</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        ${pagedArticles.map((art) => {
+                          const daysAgo = art.last_repurposed_at ? Math.floor((Date.now() / 1000 - art.last_repurposed_at) / 86400) : null;
+                          const statusText = art.status === 'paused' ? 'Paused' : daysAgo === null ? 'Never repurposed' : `Repurposed ${daysAgo}d ago`;
+                          const badgeClass = art.status === 'paused' ? 'bad' : daysAgo === null ? 'idle' : 'good';
+                          return html`<tr>
+                            <td style="text-align:center">
+                              <input type="checkbox" name="articleIds" value="${String(art.id)}" class="rp-art-cb rp-cb-${String(site.id)}" />
+                            </td>
+                            <td>
+                              <a class="rp-art-title" href="${art.url}" target="_blank" rel="noopener">${art.title}</a>
+                              ${art.category ? html`<span class="rp-cat-tag">${art.category}</span>` : raw('')}
+                            </td>
+                            <td>
+                              <span class="ns-badge ${badgeClass}">${statusText}</span>
+                            </td>
+                            <td>
+                              ${channels.length
+                                ? html`<div class="rp-channel-row">
+                                    <select class="rp-select small" onchange="document.getElementById('row-ch-${String(art.id)}').value = this.value">
+                                      ${channels.map((ch) => html`<option value="${String(ch.id)}">${ch.name} (${platformLabel(ch.platform)})</option>`)}
+                                    </select>
+                                    <form method="post" action="/new-website/repurpose/article/${String(art.id)}/generate" style="margin:0">
+                                      <input type="hidden" name="page" value="${String(safePage)}" />
+                                      <input type="hidden" name="channelId" id="row-ch-${String(art.id)}" value="${String(channels[0]?.id ?? '')}" />
+                                      <button class="ns-btn small primary">Repurpose</button>
+                                    </form>
+                                  </div>`
+                                : html`<span style="font-size:12px;color:var(--soft)">No channels connected</span>`}
+                            </td>
+                          </tr>`;
+                        })}
+                      </tbody>
+                    </table>
+                  </form>
+
+                  ${totalPages > 1
+                    ? html`<nav class="rp-pagination" aria-label="Articles pagination">
+                        <a class="rp-page-btn ${safePage <= 1 ? 'disabled' : ''}" href="${makePageUrl(site.id, 1, selectedSiteId)}" title="First page">&laquo;</a>
+                        <a class="rp-page-btn ${safePage <= 1 ? 'disabled' : ''}" href="${makePageUrl(site.id, safePage - 1, selectedSiteId)}" title="Previous page">&lsaquo;</a>
+                        ${pageNums.map((p) =>
+                          p === '...'
+                            ? html`<span class="rp-page-ellipsis">&hellip;</span>`
+                            : html`<a class="rp-page-btn ${p === safePage ? 'active' : ''}" href="${makePageUrl(site.id, p as number, selectedSiteId)}">${String(p)}</a>`,
+                        )}
+                        <a class="rp-page-btn ${safePage >= totalPages ? 'disabled' : ''}" href="${makePageUrl(site.id, safePage + 1, selectedSiteId)}" title="Next page">&rsaquo;</a>
+                        <a class="rp-page-btn ${safePage >= totalPages ? 'disabled' : ''}" href="${makePageUrl(site.id, totalPages, selectedSiteId)}" title="Last page">&raquo;</a>
+                        <form class="rp-page-jump" method="get" action="/new-website/repurpose">
+                          <input type="hidden" name="website" value="${String(selectedSiteId ?? site.id)}" />
+                          <input type="number" name="page" min="1" max="${String(totalPages)}" placeholder="Page" aria-label="Go to page" />
+                          <button class="ns-btn small quiet" type="submit">Go</button>
+                        </form>
+                      </nav>`
+                    : raw('')}`
               : html`<div class="rp-empty">
                   <p>No articles discovered yet from ${site.name}. Click "Fetch articles from site" to load your existing content.</p>
                 </div>`}
@@ -233,7 +294,10 @@ export function repurposePage(
                   </thead>
                   <tbody>
                     ${posts.slice(0, 20).map((p) => html`<tr>
-                      <td><b>${p.channel_name}</b> <span style="font-size:12px;color:var(--soft)">(${platformLabel(p.platform)})</span></td>
+                      <td>
+                        <b>${p.channel_name}</b> <span style="font-size:12px;color:var(--soft)">(${platformLabel(p.platform)})</span>
+                        ${p.board_name ? html`<div style="font-size:12px;color:var(--soft);margin-top:2px">Board: <b>${p.board_name}</b></div>` : raw('')}
+                      </td>
                       <td><a href="${p.article_url}" target="_blank" rel="noopener" style="color:var(--accent-text);text-decoration:none">${p.article_title}</a></td>
                       <td>
                         ${p.title ? html`<div style="font-weight:600;margin-bottom:4px">${p.title}</div>` : raw('')}
@@ -261,8 +325,31 @@ export function repurposePage(
               : html`<div class="rp-empty" style="margin-top:10px">
                   <p>No repurposed social posts generated yet for ${site.name}.</p>
                 </div>`}
-          </section>`;
+          </details>`;
         })
       : html`<div class="rp-empty"><h2>No websites yet</h2><p>Add a website to begin repurposing its published content.</p><a class="ns-btn primary" href="/new-website/add">Add website</a></div>`}
+
+    <script>
+    (function () {
+      document.querySelectorAll('.rp-select-all').forEach(function (allCb) {
+        var siteId = allCb.dataset.site;
+        var cbs = document.querySelectorAll('.rp-cb-' + siteId);
+        var countEl = document.getElementById('bulk-count-' + siteId);
+        function updateCount() {
+          var checked = document.querySelectorAll('.rp-cb-' + siteId + ':checked').length;
+          if (countEl) countEl.textContent = checked + ' article' + (checked === 1 ? '' : 's') + ' selected';
+          allCb.checked = checked > 0 && checked === cbs.length;
+          allCb.indeterminate = checked > 0 && checked < cbs.length;
+        }
+        allCb.addEventListener('change', function () {
+          cbs.forEach(function (cb) { cb.checked = allCb.checked; });
+          updateCount();
+        });
+        cbs.forEach(function (cb) {
+          cb.addEventListener('change', updateCount);
+        });
+      });
+    })();
+    </script>
   `;
 }

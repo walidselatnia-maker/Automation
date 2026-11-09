@@ -4,6 +4,7 @@ import { newLayout, type NewFlash } from './layout.js';
 import { getNewWebsite, listNewWebsites, websiteApiKey } from './repo.js';
 import { websiteChannels } from './channels.js';
 import {
+  bulkEditArticles,
   generateRepurposePost,
   getRepurposeArticle,
   getRepurposePost,
@@ -141,6 +142,57 @@ export function registerRepurposeRoutes(
 
     return reply.redirect(
       `/new-website/repurpose?website=${article.website_id}${pageParam}&ok=${encodeURIComponent('Fresh post generated.')}#discovered-articles`,
+      303,
+    );
+  });
+
+  app.post('/new-website/repurpose/:siteId/bulk-articles', async (request, reply) => {
+    const siteId = Number((request.params as { siteId: string }).siteId);
+    const site = getNewWebsite(siteId);
+    if (!site) return reply.redirect('/new-website/repurpose', 303);
+
+    const b = (request.body as Record<string, unknown>) ?? {};
+    const pageParam = b.page ? `&page=${encodeURIComponent(String(b.page))}` : '';
+    const rawIds = b.articleIds;
+    const articleIds: number[] = Array.isArray(rawIds)
+      ? rawIds.map((x) => Number(x)).filter(Number.isFinite)
+      : rawIds
+        ? [Number(rawIds)].filter(Number.isFinite)
+        : [];
+
+    if (!articleIds.length) {
+      return reply.redirect(
+        `/new-website/repurpose?website=${siteId}${pageParam}&error=${encodeURIComponent(
+          'No articles were selected.',
+        )}#discovered-articles`,
+        303,
+      );
+    }
+
+    const action = String(b.bulkAction || 'repurpose') as 'repurpose' | 'pause' | 'activate' | 'delete';
+    const channelId = b.channelId === 'all' ? 'all' : Number(b.channelId) || 'all';
+
+    const res = await bulkEditArticles(articleIds, action, { channelId, deps });
+    if (!res.ok) {
+      return reply.redirect(
+        `/new-website/repurpose?website=${siteId}${pageParam}&error=${encodeURIComponent(
+          res.error ?? 'Bulk action failed.',
+        )}#discovered-articles`,
+        303,
+      );
+    }
+
+    const msg =
+      action === 'repurpose'
+        ? `Generated ${res.affected} fresh social post${res.affected === 1 ? '' : 's'} across selected articles.`
+        : action === 'pause'
+          ? `Paused ${res.affected} article${res.affected === 1 ? '' : 's'} from repurposing.`
+          : action === 'activate'
+            ? `Activated ${res.affected} article${res.affected === 1 ? '' : 's'} for repurposing.`
+            : `Removed ${res.affected} article${res.affected === 1 ? '' : 's'}.`;
+
+    return reply.redirect(
+      `/new-website/repurpose?website=${siteId}${pageParam}&ok=${encodeURIComponent(msg)}#discovered-articles`,
       303,
     );
   });

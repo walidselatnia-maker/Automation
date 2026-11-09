@@ -1263,6 +1263,13 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    id: '065-newsite-repurpose-boards',
+    description: 'New websites: board name tracking for repurposed social posts',
+    up(db) {
+      addColumn(db, 'newsite_repurpose_posts', 'board_name', "TEXT NOT NULL DEFAULT ''");
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */
