@@ -269,6 +269,7 @@ export function sharingSitePage(s: SharingSite, plan: { id: number; pillar: stri
         <form method="post" action="/new-website/sharing/site/${String(s.site.id)}/toggle-social" style="margin:0">
           <button class="ns-btn ${s.site.social_status === 'paused' ? 'primary' : 'quiet'}">${s.site.social_status === 'paused' ? 'Resume social' : 'Pause social'}</button>
         </form>
+        <a class="ns-btn quiet" href="/new-website/channels?website=${String(s.site.id)}">Manage channels</a>
         <a class="ns-btn primary" href="/new-website/sharing/new?website=${String(s.site.id)}">Share articles</a>
       </div>
     </div>
@@ -292,7 +293,7 @@ export function sharingSitePage(s: SharingSite, plan: { id: number; pillar: stri
           </a>`;
         })}</div>`
       : html`<div class="ns-alert info"><b>${s.site.name} shares on no channel yet.</b> Pick its channels in the website’s settings, or add a channel first.
-          <div class="kw-share-actions"><a class="ns-btn small" href="/new-website/${String(s.site.id)}/edit?section=4">Pick channels</a><a class="ns-btn small" href="/new-website/channels">Add a channel</a></div></div>`}
+          <div class="kw-share-actions"><a class="ns-btn small" href="/new-website/${String(s.site.id)}/edit?section=4">Pick channels</a><a class="ns-btn small" href="/new-website/channels/add?website=${String(s.site.id)}">Add a channel</a></div></div>`}
     ${watch(isBusy(s))}
     ${raw(SHARING_SCRIPT)}`;
 }

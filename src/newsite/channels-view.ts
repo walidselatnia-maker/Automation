@@ -3,6 +3,7 @@ import { apiName, channelColor, PLATFORMS, takesReels, videoOnly, viasOf, viaLab
 import type { RulesCheck } from './platform-rules.js';
 import { commentsThroughApi, COMMENT_PLATFORMS } from './first-comment.js';
 import { WIZARD_CSS, field } from './view.js';
+import type { NewWebsiteRow } from './repo.js';
 
 /**
  * The Channels page and the channel wizards.
@@ -93,6 +94,21 @@ const CSS = `
 .ch-facts dd { margin: 0; font-weight: 500; overflow-wrap: anywhere; }
 .ch-sec { font: 600 15px var(--display); margin: 20px 0 10px; }
 .ch-sec:first-child { margin-top: 0; }
+.ch-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 24px; }
+.ch-tab { display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 16px; border-radius: 999px; text-decoration: none; font-weight: 600; font-size: 14px; background: var(--idle); color: var(--idle-ink); border: 1px solid var(--idle-line); }
+.ch-tab:hover { background: var(--idle-hover); }
+.ch-tab.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+.ch-tab .n { font-variant-numeric: tabular-nums; opacity: .85; }
+.ch-site-section { margin: 0 0 32px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); padding: 22px 24px; box-shadow: var(--shadow); }
+.ch-site-section.ch-unassigned { border-style: dashed; }
+.ch-site-section-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.ch-site-section-title-wrap { display: flex; flex-direction: column; gap: 6px; }
+.ch-site-section-title { display: flex; align-items: center; gap: 12px; margin: 0; flex-wrap: wrap; }
+.ch-site-section-title h2 { margin: 0; font: 700 22px/1.25 var(--display); letter-spacing: -.015em; color: var(--ink); }
+.ch-site-section-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; font-size: 13px; color: var(--soft); }
+.ch-site-section-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ch-site-empty { border: 1px dashed var(--line-strong); border-radius: var(--r-ctl); padding: 36px 24px; text-align: center; color: var(--soft); }
+.ch-site-empty p { margin: 0 0 14px; font-size: 15px; }
 @media (max-width: 640px) { .ch-facts, .ch-parts { grid-template-columns: 1fr; gap: 2px; } .ch-part dl div { grid-template-columns: 1fr; gap: 0; } }
 `;
 
@@ -124,6 +140,8 @@ export interface WizardContext {
   draft?: string;
   /** The platform's rules put the link in a first comment (asks about the Buffer plan). */
   firstComment?: boolean;
+  /** The website this channel is being added for, if initiated from a website. */
+  defaultWebsiteId?: number;
 }
 
 const titleOf = (w: WizardContext): string => `Add ${platformLabel(w.platform)}`;
@@ -179,6 +197,7 @@ export function connectStep(w: WizardContext, error = ''): Html {
     w,
     'Connect',
     html`<form id="ch-form" method="post" action="${base(w)}/connect">
+      ${w.defaultWebsiteId ? html`<input type="hidden" name="website" value="${String(w.defaultWebsiteId)}" />` : raw('')}
       <h2>Connect</h2>
       ${buffer
         ? html`<p>Paste the Buffer access token of the account your ${platformLabel(w.platform)} ${w.platform === 'pinterest' ? 'channel is' : 'channels are'} in.</p>
@@ -337,33 +356,129 @@ export function websitesStep(w: WizardContext, websites: WebsiteChoice[], multi:
  * (a wizard), then a card per channel with its settings in parts. Each part
  * has one Change button that opens just that part in the wizard frame.
  */
-export function channelsPage(channels: ChannelRow[], websitesOf: Map<number, string[]>, rulesOf: Map<number, RulesCheck>): Html {
+/** Sort channels by platform order (Buffer list order), then name. */
+export function sortChannelsByPlatform(channels: ChannelRow[]): ChannelRow[] {
+  const order = (p: string) => {
+    const i = PLATFORMS.findIndex((x) => x.key === p);
+    return i < 0 ? PLATFORMS.length : i;
+  };
+  return [...channels].sort((a, b) => order(a.platform) - order(b.platform) || a.name.localeCompare(b.name));
+}
+
+/**
+ * The Channels page, organized by website.
+ * Each website has its own dedicated section containing all its connected social media accounts.
+ */
+export function channelsPage(
+  channels: ChannelRow[],
+  websitesOf: Map<number, string[]>,
+  rulesOf: Map<number, RulesCheck>,
+  websites: NewWebsiteRow[] = [],
+  selectedWebsiteId?: number,
+): Html {
+  // Sort channels by platform order for consistent display
+  const sortedChannels = sortChannelsByPlatform(channels);
+
+  // Group channels by website
+  const siteChannelsMap = new Map<number, ChannelRow[]>();
+  for (const site of websites) {
+    const siteChs = sortedChannels.filter((c) => (websitesOf.get(c.id) ?? []).includes(site.name));
+    siteChannelsMap.set(site.id, siteChs);
+  }
+
+  // Channels not connected to any website
+  const unassigned = sortedChannels.filter((c) => (websitesOf.get(c.id) ?? []).length === 0);
+
+  const visibleWebsites = selectedWebsiteId
+    ? websites.filter((s) => s.id === selectedWebsiteId)
+    : websites;
+
+  const addHref = selectedWebsiteId
+    ? `/new-website/channels/add?website=${String(selectedWebsiteId)}`
+    : '/new-website/channels/add';
+
   return html`
     <style>${raw(CSS)}</style>
     <div class="ns-head">
       <div>
         <h1 class="ns-title">Social channels</h1>
-        <p class="ns-lede">The social media accounts your articles are shared on. Add each account here once, then choose in each website’s settings which accounts it shares on. Every channel writes its own posts, by its own rules.</p>
+        <p class="ns-lede">Social media accounts organized by website. Manage each website and all its connected social channels (Facebook, Instagram, Pinterest, YouTube, etc.) in one place.</p>
       </div>
-      ${channels.length ? html`<a class="ns-btn primary" href="/new-website/channels/add">Add channel</a>` : raw('')}
+      ${channels.length || websites.length ? html`<a class="ns-btn primary" href="${addHref}">Add channel</a>` : raw('')}
     </div>
-    ${channels.length
-      ? groupsOf(channels).map(
-          ([platform, mine]) => html`<section class="ch-group" style="--ch-color:${channelColor({ platform })}">
-            <h2 class="ch-group-title"><span class="ch-dot"></span>${platformLabel(platform)} <span class="ch-count">${mine.length === 1 ? '1 channel' : `${mine.length} channels`}</span></h2>
-            <div class="ch-cards">${mine.map((c) => channelCard(c, websitesOf.get(c.id) ?? [], rulesOf.get(c.id)!))}</div>
-          </section>`,
-        )
-      : html`<div class="ch-empty">
-          <h2>No channels yet</h2>
-          <p>Add a Pinterest account, a Facebook page or another platform to share your articles on.</p>
-          <a class="ns-btn primary" href="/new-website/channels/add">Add channel</a>
-        </div>`}
+
+    ${websites.length > 1
+      ? html`<nav class="ch-tabs" aria-label="Filter channels by website">
+          <a class="ch-tab ${!selectedWebsiteId ? 'on' : ''}" href="/new-website/channels">
+            All websites <span class="n">(${String(websites.length)})</span>
+          </a>
+          ${websites.map((s) => {
+            const count = siteChannelsMap.get(s.id)?.length ?? 0;
+            const isSel = selectedWebsiteId === s.id;
+            return html`<a class="ch-tab ${isSel ? 'on' : ''}" href="/new-website/channels?website=${String(s.id)}">
+              ${s.name} <span class="n">(${String(count)})</span>
+            </a>`;
+          })}
+        </nav>`
+      : raw('')}
+
+    ${visibleWebsites.length
+      ? html`${visibleWebsites.map((s) => {
+          const mine = siteChannelsMap.get(s.id) ?? [];
+          return html`<section class="ch-site-section" id="website-${String(s.id)}">
+            <div class="ch-site-section-head">
+              <div class="ch-site-section-title-wrap">
+                <div class="ch-site-section-title">
+                  <h2>${s.name}</h2>
+                  <span class="ns-mono" style="font-size:14px;color:var(--soft);font-weight:400">${s.domain}</span>
+                  <span class="ch-count">${mine.length === 1 ? '1 channel' : `${mine.length} channels`}</span>
+                </div>
+                <div class="ch-site-section-meta">
+                  <span class="ns-badge ${s.social_status === 'paused' ? 'bad' : 'good'}">Social: ${s.social_status === 'paused' ? 'Paused' : 'Active'}</span>
+                  ${s.social_daily_target ? html`<span>Target: <b>${String(s.social_daily_target)}/day</b></span>` : raw('')}
+                  <span>${s.social_auto_publish === 0 ? 'Manual approval' : 'Auto publish'}</span>
+                </div>
+              </div>
+              <div class="ch-site-section-actions">
+                <a class="ns-btn small primary" href="/new-website/channels/add?website=${String(s.id)}">+ Add channel</a>
+                <a class="ns-btn small quiet" href="/new-website/${String(s.id)}/edit?section=4">Channel settings</a>
+                <a class="ns-btn small quiet" href="/new-website/sharing/site/${String(s.id)}">Social posts</a>
+              </div>
+            </div>
+            ${mine.length
+              ? html`<div class="ch-cards">${mine.map((c) => channelCard(c, websitesOf.get(c.id) ?? [], rulesOf.get(c.id)!))}</div>`
+              : html`<div class="ch-site-empty">
+                  <p>No social media channels connected to <b>${s.name}</b> yet.</p>
+                  <a class="ns-btn small primary" href="/new-website/channels/add?website=${String(s.id)}">Connect a channel for ${s.name}</a>
+                </div>`}
+          </section>`;
+        })}
+        ${!selectedWebsiteId && unassigned.length
+          ? html`<section class="ch-site-section ch-unassigned">
+              <div class="ch-site-section-head">
+                <div class="ch-site-section-title-wrap">
+                  <div class="ch-site-section-title">
+                    <h2>Unassigned channels</h2>
+                    <span class="ch-count">${unassigned.length === 1 ? '1 channel' : `${unassigned.length} channels`}</span>
+                  </div>
+                  <div class="ch-site-section-meta">These channels are not connected to any website yet.</div>
+                </div>
+              </div>
+              <div class="ch-cards">${unassigned.map((c) => channelCard(c, [], rulesOf.get(c.id)!))}</div>
+            </section>`
+          : raw('')}`
+      : channels.length
+        ? html`<div class="ch-cards">${sortedChannels.map((c) => channelCard(c, websitesOf.get(c.id) ?? [], rulesOf.get(c.id)!))}</div>`
+        : html`<div class="ch-empty">
+            <h2>No channels yet</h2>
+            <p>Add a Pinterest account, a Facebook page or another platform to share your articles on.</p>
+            <a class="ns-btn primary" href="/new-website/channels/add">Add channel</a>
+          </div>`}
     ${raw(TOGGLE_SCRIPT)}`;
 }
 
 /** Channels grouped by platform, in the order of Buffer's list. */
-function groupsOf(channels: ChannelRow[]): [string, ChannelRow[]][] {
+export function groupsOf(channels: ChannelRow[]): [string, ChannelRow[]][] {
   const order = (p: string) => {
     const i = PLATFORMS.findIndex((x) => x.key === p);
     return i < 0 ? PLATFORMS.length : i;
@@ -480,10 +595,11 @@ function addWizard(step: number, body: Html, foot: Html, error = ''): Html {
     </div>`;
 }
 
-export function addPlatformStep(platforms: { key: string; label: string; ready: boolean }[], error = ''): Html {
+export function addPlatformStep(platforms: { key: string; label: string; ready: boolean }[], error = '', website = ''): Html {
   return addWizard(
     0,
-    html`<form id="ch-form" method="post" action="/new-website/channels/add">
+    html`<form id="ch-form" method="post" action="/new-website/channels/add${website ? `?website=${encodeURIComponent(website)}` : ''}">
+      ${website ? html`<input type="hidden" name="website" value="${website}" />` : raw('')}
       <h2>Platform</h2>
       <p>Where this channel shares your articles.</p>
       <div class="ch-pick ch-pick-grid">
@@ -493,16 +609,17 @@ export function addPlatformStep(platforms: { key: string; label: string; ready: 
         )}
       </div>
     </form>`,
-    html`<a class="ns-btn quiet" href="/new-website/channels">Cancel</a><button class="ns-btn primary" form="ch-form">Next</button>`,
+    html`<a class="ns-btn quiet" href="/new-website/channels${website ? `?website=${encodeURIComponent(website)}` : ''}">Cancel</a><button class="ns-btn primary" form="ch-form">Next</button>`,
     error,
   );
 }
 
-export function addViaStep(platform: string): Html {
+export function addViaStep(platform: string, website = ''): Html {
   return addWizard(
     1,
-    html`<form id="ch-form" method="post" action="/new-website/channels/add/via">
+    html`<form id="ch-form" method="post" action="/new-website/channels/add/via${website ? `?website=${encodeURIComponent(website)}` : ''}">
       <input type="hidden" name="platform" value="${platform}" />
+      ${website ? html`<input type="hidden" name="website" value="${website}" />` : raw('')}
       <h2>How it posts</h2>
       <p>${platformLabel(platform)} can post through Buffer or through its own API. A channel uses one of them only.</p>
       <div class="ch-pick">
@@ -516,7 +633,7 @@ export function addViaStep(platform: string): Html {
               : 'Posts straight to your Threads profile, at once.'}</span></div></label>
       </div>
     </form>`,
-    html`<a class="ns-btn quiet" href="/new-website/channels/add">Previous</a><button class="ns-btn primary" form="ch-form">Next</button>`,
+    html`<a class="ns-btn quiet" href="/new-website/channels/add${website ? `?website=${encodeURIComponent(website)}` : ''}">Previous</a><button class="ns-btn primary" form="ch-form">Next</button>`,
   );
 }
 

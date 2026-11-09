@@ -146,6 +146,7 @@ export function newWebsiteListPage(rows: NewWebsiteRow[], platformReady = true):
                 </dl>
                 <div class="nl-links">
                   <a class="ns-btn small" href="/new-website/keywords#website-${String(r.id)}">Keywords &amp; articles</a>
+                  <a class="ns-btn small" href="/new-website/channels?website=${String(r.id)}">Social channels</a>
                   <a class="ns-btn small" href="/new-website/sharing/site/${String(r.id)}">Social posts</a>
                   <a class="ns-btn small" href="/new-website/sharing/reels?website=${String(r.id)}">Reels</a>
                 </div>

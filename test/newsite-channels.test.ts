@@ -343,4 +343,45 @@ describe('New dashboard: channels', () => {
     expect(setWebsiteChannels(two, [channelId])).toEqual([]);
     expect(websiteChannels(two)).toHaveLength(1);
   });
+
+  it('organizes channels by website, showing each website with its connected channels', async () => {
+    const a = await app();
+    const siteA = site('Website A', 'website-a.com');
+    const siteB = site('Website B', 'website-b.com');
+
+    // Add a Pinterest channel for Website A
+    const pickPin = await post(a, '/new-website/channels/pinterest/buffer/connect', { token: BUFFER_TOKEN });
+    const draftPin = draftIn(pickPin.body);
+    await post(a, '/new-website/channels/pinterest/buffer/pick', { draft: draftPin, pick: 'ch-pin' });
+    await post(a, '/new-website/channels/pinterest/buffer/what', { draft: draftPin, postImage: '1' });
+    await post(a, '/new-website/channels/pinterest/buffer/save', { draft: draftPin, websiteId: String(siteA) });
+
+    // Add a Facebook page for Website B through API
+    const pickFb = await post(a, '/new-website/channels/facebook/api/connect', { token: FB_TOKEN });
+    const draftFb = draftIn(pickFb.body);
+    await post(a, '/new-website/channels/facebook/api/pick', { draft: draftFb, pick: 'p1' });
+    await post(a, '/new-website/channels/facebook/api/checked', { draft: draftFb });
+    await post(a, '/new-website/channels/facebook/api/what', { draft: draftFb, postImage: '1' });
+    await post(a, '/new-website/channels/facebook/api/save', { draft: draftFb, websiteId: String(siteB) });
+
+    // Visit /new-website/channels: both websites have dedicated sections
+    const page = await a.inject({ url: '/new-website/channels' });
+    expect(page.statusCode).toBe(200);
+    expect(page.body).toContain('id="website-' + siteA + '"');
+    expect(page.body).toContain('id="website-' + siteB + '"');
+    expect(page.body).toContain('Website A');
+    expect(page.body).toContain('website-a.com');
+    expect(page.body).toContain('Website B');
+    expect(page.body).toContain('website-b.com');
+
+    // Filter tabs exist
+    expect(page.body).toContain('href="/new-website/channels?website=' + siteA + '"');
+    expect(page.body).toContain('href="/new-website/channels?website=' + siteB + '"');
+
+    // Direct filter to Website A
+    const filterA = await a.inject({ url: `/new-website/channels?website=${siteA}` });
+    expect(filterA.statusCode).toBe(200);
+    expect(filterA.body).toContain('id="website-' + siteA + '"');
+    expect(filterA.body).not.toContain('id="website-' + siteB + '"');
+  });
 });

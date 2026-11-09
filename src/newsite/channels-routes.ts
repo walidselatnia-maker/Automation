@@ -109,6 +109,7 @@ interface Draft {
   paidBuffer: boolean;
   postImage: boolean;
   postReel: boolean;
+  defaultWebsiteId?: number;
   expires: number;
 }
 const drafts = new Map<string, Draft>();
@@ -140,7 +141,10 @@ function routeOf(request: FastifyRequest): WizardContext | null {
   if (!/^[a-z0-9-]+$/.test(platform) || !viasOf(platform).includes(via)) return null;
   if (!PLATFORMS.some((x) => x.key === platform) && !checkPlatformRules(platform).rules) return null;
   const rules = parseRules(platform, defaultRulesText(platform, platformLabel(platform))).rules;
-  return { platform, via, firstComment: via === 'buffer' && rules?.link === 'first_comment' };
+  const q = request.query as Record<string, unknown> | undefined;
+  const b = request.body as Record<string, unknown> | undefined;
+  const defaultWebsiteId = Number(q?.website ?? b?.website) || undefined;
+  return { platform, via, firstComment: via === 'buffer' && rules?.link === 'first_comment', defaultWebsiteId };
 }
 
 export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDeps): void {
@@ -183,10 +187,13 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
   };
 
   app.get('/new-website/channels', async (request, reply) => {
+    const websites = listNewWebsites();
     const channels = listChannels();
     const names = new Map(channels.map((c) => [c.id, websiteChoices(channelWebsiteIds(c.id)).filter((x) => x.checked).map((x) => x.name)]));
     const rules = new Map(channels.map((c) => [c.id, channelRules(c)]));
-    return send(reply, page('Channels', channelsPage(channels, names, rules), request));
+    const q = (request.query as Record<string, unknown>) ?? {};
+    const selectedWebsiteId = q.website ? Number(q.website) : undefined;
+    return send(reply, page('Channels', channelsPage(channels, names, rules, websites, selectedWebsiteId), request));
   });
 
   /* -- Add a channel: the platform, then how it posts, then its wizard ---- */
@@ -200,23 +207,32 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
     ];
   };
 
-  app.get('/new-website/channels/add', async (request, reply) => send(reply, page('Add a channel', addPlatformStep(platformChoices()), request)));
+  app.get('/new-website/channels/add', async (request, reply) => {
+    const q = (request.query as Record<string, unknown>) ?? {};
+    const websiteId = q.website ? String(q.website) : '';
+    return send(reply, page('Add a channel', addPlatformStep(platformChoices(), '', websiteId), request));
+  });
 
   app.post('/new-website/channels/add', async (request, reply) => {
-    const platform = String(body(request).platform ?? '');
+    const b = body(request);
+    const platform = String(b.platform ?? '');
+    const websiteId = b.website ? String(b.website) : '';
     if (!platformChoices().some((p) => p.key === platform)) {
-      return send(reply, page('Add a channel', addPlatformStep(platformChoices(), 'Pick a platform.'), request));
+      return send(reply, page('Add a channel', addPlatformStep(platformChoices(), 'Pick a platform.', websiteId), request));
     }
-    if (viasOf(platform).length > 1) return send(reply, page('Add a channel', addViaStep(platform), request));
-    return reply.redirect(`/new-website/channels/${platform}/buffer/new`, 303);
+    const q = websiteId ? `?website=${encodeURIComponent(websiteId)}` : '';
+    if (viasOf(platform).length > 1) return send(reply, page('Add a channel', addViaStep(platform, websiteId), request));
+    return reply.redirect(`/new-website/channels/${platform}/buffer/new${q}`, 303);
   });
 
   app.post('/new-website/channels/add/via', async (request, reply) => {
     const b = body(request);
     const platform = String(b.platform ?? '');
     const via = String(b.via ?? '') as Via;
-    if (!viasOf(platform).includes(via)) return reply.redirect('/new-website/channels/add', 303);
-    return reply.redirect(`/new-website/channels/${platform}/${via}/new`, 303);
+    const websiteId = b.website ? String(b.website) : '';
+    const q = websiteId ? `?website=${encodeURIComponent(websiteId)}` : '';
+    if (!viasOf(platform).includes(via)) return reply.redirect(`/new-website/channels/add${q}`, 303);
+    return reply.redirect(`/new-website/channels/${platform}/${via}/new${q}`, 303);
   });
 
   /* -- Step 1: connect ---------------------------------------------------- */
@@ -267,6 +283,10 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
       return send(reply, page(title(w), connectStep(w, why), request));
     }
     const draft = newDraft({ platform: w.platform, via: w.via, token, choices });
+    if (w.defaultWebsiteId) {
+      const d = drafts.get(draft);
+      if (d) d.defaultWebsiteId = w.defaultWebsiteId;
+    }
     const ctx = { ...w, draft };
     return send(reply, page(title(w), pickStep(ctx, choiceList(ctx, drafts.get(draft)!)), request));
   });
@@ -304,7 +324,7 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
     }
     if (w.firstComment) return send(reply, page(title(w), planStep(ctx, d.paidBuffer), request));
     if (takesReels(w.platform) && !videoOnly(w.platform)) return send(reply, page(title(w), postStep(ctx, { image: d.postImage, reel: d.postReel }), request));
-    return send(reply, page(title(w), websitesStep(ctx, websiteChoices([]), false), request));
+    return send(reply, page(title(w), websitesStep(ctx, websiteChoices(d.defaultWebsiteId ? [d.defaultWebsiteId] : []), false), request));
   });
 
   /* -- Facebook's middle steps -------------------------------------------- */
@@ -325,7 +345,7 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
     d.paidBuffer = on(b.paidBuffer);
     const ctx = { ...w, draft: String(b.draft) };
     if (takesReels(w.platform) && !videoOnly(w.platform)) return send(reply, page(title(w), postStep(ctx, { image: d.postImage, reel: d.postReel }), request));
-    return send(reply, page(title(w), websitesStep(ctx, websiteChoices([]), false), request));
+    return send(reply, page(title(w), websitesStep(ctx, websiteChoices(d.defaultWebsiteId ? [d.defaultWebsiteId] : []), false), request));
   });
 
   app.post('/new-website/channels/:platform/:via/what', async (request, reply) => {
@@ -339,7 +359,7 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
     if (!d.postImage && !d.postReel) {
       return send(reply, page(title(w), postStep(ctx, { image: false, reel: false }, 'Pick what to post: an image post, a reel, or both.'), request));
     }
-    return send(reply, page(title(w), websitesStep(ctx, websiteChoices([]), false), request));
+    return send(reply, page(title(w), websitesStep(ctx, websiteChoices(d.defaultWebsiteId ? [d.defaultWebsiteId] : []), false), request));
   });
 
   /* -- Last step: websites, then save ------------------------------------- */
@@ -350,7 +370,10 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
     const d = w && draftOf(w, b.draft);
     if (!w || !d?.picked.length) return reply.redirect(lost, 303);
     const ctx = { ...w, draft: String(b.draft) };
-    const websiteIds = list(b.websiteId).map(Number).filter(Boolean);
+    let websiteIds = list(b.websiteId).map(Number).filter(Boolean);
+    if (websiteIds.length === 0 && d.defaultWebsiteId) {
+      websiteIds = [d.defaultWebsiteId];
+    }
     const multi = on(b.multiWebsite);
     if (websiteIds.length > 1 && !multi) {
       return send(
@@ -391,8 +414,9 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
     drafts.delete(String(b.draft));
 
     // A Buffer channel's last step, the check, runs on the channel's own page.
-    if (ids.length === 1) return reply.redirect(`/new-website/channels/${ids[0]}?${w.via === 'buffer' ? 'check=1&' : ''}ok=${encodeURIComponent('Channel saved.')}`, 303);
-    return reply.redirect(`/new-website/channels?ok=${encodeURIComponent(`${ids.length} channels saved.`)}`, 303);
+    const qWebsite = d.defaultWebsiteId ? `website=${d.defaultWebsiteId}&` : '';
+    if (ids.length === 1) return reply.redirect(`/new-website/channels/${ids[0]}?${w.via === 'buffer' ? 'check=1&' : ''}${qWebsite}ok=${encodeURIComponent('Channel saved.')}`, 303);
+    return reply.redirect(`/new-website/channels?${qWebsite}ok=${encodeURIComponent(`${ids.length} channels saved.`)}`, 303);
   });
 
   /* -- One channel -------------------------------------------------------- */
