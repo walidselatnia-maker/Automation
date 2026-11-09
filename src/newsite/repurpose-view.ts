@@ -53,6 +53,16 @@ details.rp-site-card:not([open]) .rp-toggle-arrow { transform: rotate(-90deg); }
 .rp-page-ellipsis { display: inline-flex; align-items: center; justify-content: center; min-width: 28px; height: 36px; color: var(--soft); font-size: 13px; }
 .rp-page-jump { display: inline-flex; align-items: center; gap: 6px; margin-left: 10px; }
 .rp-page-jump input { width: 64px; height: 36px; padding: 0 8px; border-radius: var(--r-ctl); border: 1px solid var(--line); background: var(--raised); color: var(--ink); font-size: 13px; text-align: center; }
+details.rp-table-card { margin: 20px 0; border: 1px solid var(--line); border-radius: var(--r-ctl); background: var(--surface); overflow: hidden; }
+details.rp-table-card > summary.rp-table-header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; padding: 14px 18px; background: color-mix(in srgb, var(--surface) 92%, var(--line)); cursor: pointer; user-select: none; font-weight: 600; list-style: none; }
+details.rp-table-card > summary.rp-table-header::-webkit-details-marker { display: none; }
+details.rp-table-card summary .rp-toggle-arrow { font-size: 13px; transition: transform .15s ease; display: inline-block; color: var(--soft); }
+details.rp-table-card:not([open]) summary .rp-toggle-arrow { transform: rotate(-90deg); }
+details.rp-table-card .rp-table-body { padding: 16px 18px; }
+.rp-filter-pills { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+.rp-filter-pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; border-radius: 999px; font-size: 12px; font-weight: 500; text-decoration: none; background: var(--idle); color: var(--idle-ink); border: 1px solid var(--idle-line); transition: all .15s ease; }
+.rp-filter-pill:hover { background: var(--idle-hover); }
+.rp-filter-pill.on { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600; }
 `;
 
 function paginationWindow(current: number, total: number): (number | '...')[] {
@@ -68,7 +78,7 @@ function paginationWindow(current: number, total: number): (number | '...')[] {
   return [1, '...', current - 1, current, current + 1, '...', total];
 }
 
-function makePageUrl(siteId: number, targetPage: number, selectedSiteId?: number): string {
+function makePageUrl(siteId: number, targetPage: number, selectedSiteId?: number, filter?: string): string {
   const params = new URLSearchParams();
   if (selectedSiteId || siteId) {
     params.set('website', String(selectedSiteId ?? siteId));
@@ -76,8 +86,11 @@ function makePageUrl(siteId: number, targetPage: number, selectedSiteId?: number
   if (targetPage > 1) {
     params.set('page', String(targetPage));
   }
+  if (filter && filter !== 'all') {
+    params.set('filter', filter);
+  }
   const s = params.toString();
-  return `/new-website/repurpose${s ? `?${s}` : ''}#discovered-articles`;
+  return `/new-website/repurpose${s ? `?${s}` : ''}#discovered-card-${siteId}`;
 }
 
 export function repurposePage(
@@ -88,6 +101,7 @@ export function repurposePage(
   channelsOf: Map<number, ChannelRow[]>,
   sentTodayOf: Map<number, number>,
   currentPage: number = 1,
+  filter: string = 'all',
 ): Html {
   const visibleSites = selectedSiteId
     ? websites.filter((s) => s.id === selectedSiteId)
@@ -119,17 +133,33 @@ export function repurposePage(
 
     ${visibleSites.length
       ? visibleSites.map((site) => {
-          const articles = articlesOf.get(site.id) ?? [];
+          const allArticles = articlesOf.get(site.id) ?? [];
           const posts = postsOf.get(site.id) ?? [];
           const channels = channelsOf.get(site.id) ?? [];
           const sentToday = sentTodayOf.get(site.id) ?? 0;
           const status = site.repurpose_status ?? 'paused';
 
+          const generatedArticlesCount = allArticles.filter(
+            (a) => a.status === 'generated' || (a.post_count ?? 0) > 0 || (a.last_repurposed_at ?? 0) > 0,
+          ).length;
+          const pausedArticlesCount = allArticles.filter((a) => a.status === 'paused').length;
+          const readyArticlesCount = Math.max(0, allArticles.length - generatedArticlesCount - pausedArticlesCount);
+
+          const currentFilter = filter || 'all';
+          const filteredArticles =
+            currentFilter === 'generated'
+              ? allArticles.filter((a) => a.status === 'generated' || (a.post_count ?? 0) > 0 || (a.last_repurposed_at ?? 0) > 0)
+              : currentFilter === 'ready'
+                ? allArticles.filter((a) => a.status !== 'paused' && a.status !== 'generated' && !(a.post_count ?? 0) && !(a.last_repurposed_at ?? 0))
+                : currentFilter === 'paused'
+                  ? allArticles.filter((a) => a.status === 'paused')
+                  : allArticles;
+
           const pageSize = 24;
-          const totalPages = Math.max(1, Math.ceil(articles.length / pageSize));
+          const totalPages = Math.max(1, Math.ceil(filteredArticles.length / pageSize));
           const safePage = Math.min(Math.max(1, currentPage), totalPages);
           const startIdx = (safePage - 1) * pageSize;
-          const pagedArticles = articles.slice(startIdx, startIdx + pageSize);
+          const pagedArticles = filteredArticles.slice(startIdx, startIdx + pageSize);
           const pageNums = paginationWindow(safePage, totalPages);
 
           return html`<details class="rp-site-card" open id="site-${String(site.id)}">
@@ -145,13 +175,14 @@ export function repurposePage(
                   <span>Target: <b>${String(sentToday)} / ${String(site.repurpose_daily_target ?? 1)} today</b></span>
                   <span>Cooldown: <b>${String(site.repurpose_cooldown_days ?? 30)} days</b></span>
                   <span>${site.repurpose_auto_publish ? 'Auto-publish' : 'Manual approval'}</span>
-                  <span>Articles: <b>${String(articles.length)}</b></span>
+                  <span>Articles: <b>${String(allArticles.length)}</b> (${String(generatedArticlesCount)} generated, ${String(readyArticlesCount)} ready)</span>
                   <span>Posts: <b>${String(posts.length)}</b></span>
                 </div>
               </div>
               <div class="rp-actions" onclick="event.stopPropagation()">
                 <form method="post" action="/new-website/repurpose/${String(site.id)}/toggle" style="margin:0">
                   <input type="hidden" name="page" value="${String(safePage)}" />
+                  <input type="hidden" name="filter" value="${String(currentFilter)}" />
                   <button class="ns-btn ${status === 'active' ? 'quiet' : 'primary'}">${status === 'active' ? 'Pause repurposing' : 'Resume repurposing'}</button>
                 </form>
                 <form method="post" action="/new-website/repurpose/${String(site.id)}/sync" style="margin:0">
@@ -165,6 +196,7 @@ export function repurposePage(
               <summary style="cursor:pointer;font-weight:600;font-size:14px;color:var(--accent-text)">Repurposing settings for ${site.name}</summary>
               <form method="post" action="/new-website/repurpose/${String(site.id)}/settings" style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-top:12px;padding:14px;background:var(--raised);border-radius:var(--r-ctl)">
                 <input type="hidden" name="page" value="${String(safePage)}" />
+                <input type="hidden" name="filter" value="${String(currentFilter)}" />
                 <div>
                   <label style="display:block;font-size:13px;color:var(--soft);margin-bottom:4px">Daily limit</label>
                   <input type="number" name="dailyTarget" min="1" max="50" value="${String(site.repurpose_daily_target ?? 1)}" style="width:100px;padding:6px 10px;border-radius:var(--r-ctl);border:1px solid var(--line)" />
@@ -183,207 +215,270 @@ export function repurposePage(
               </form>
             </details>
 
-            <!-- Discovered Articles -->
-            <div id="discovered-articles" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin:24px 0 12px">
-              <h3 style="font-size:17px;margin:0">Discovered articles (${String(articles.length)})</h3>
-              ${articles.length > pageSize
-                ? html`<div style="font-size:13px;color:var(--soft);display:flex;align-items:center;gap:10px">
-                    <span>Showing <b>${String(startIdx + 1)}–${String(Math.min(articles.length, startIdx + pageSize))}</b> of <b>${String(articles.length)}</b> (Oldest first)</span>
-                    <span style="border-left:1px solid var(--line);padding-left:10px">Page <b>${String(safePage)}</b> of <b>${String(totalPages)}</b></span>
-                  </div>`
-                : raw('')}
-            </div>
+            <!-- Discovered Articles (toggleable table card) -->
+            <details class="rp-table-card" open id="discovered-card-${String(site.id)}">
+              <summary class="rp-table-header">
+                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                  <span class="rp-toggle-arrow">▼</span>
+                  <h3 style="font-size:17px;margin:0">Discovered articles (${String(allArticles.length)})</h3>
+                  <span class="ns-badge good" style="font-size:11px">${String(generatedArticlesCount)} generated</span>
+                  <span class="ns-badge idle" style="font-size:11px">${String(readyArticlesCount)} ready</span>
+                  ${pausedArticlesCount ? html`<span class="ns-badge bad" style="font-size:11px">${String(pausedArticlesCount)} paused</span>` : raw('')}
+                </div>
+                ${filteredArticles.length > pageSize
+                  ? html`<div style="font-size:13px;color:var(--soft);display:flex;align-items:center;gap:10px">
+                      <span>Showing <b>${String(startIdx + 1)}–${String(Math.min(filteredArticles.length, startIdx + pageSize))}</b> of <b>${String(filteredArticles.length)}</b> (Oldest first)</span>
+                      <span style="border-left:1px solid var(--line);padding-left:10px">Page <b>${String(safePage)}</b> of <b>${String(totalPages)}</b></span>
+                    </div>`
+                  : raw('')}
+              </summary>
 
-            ${articles.length
-              ? html`
-                  <form method="post" action="/new-website/repurpose/${String(site.id)}/bulk-articles" id="bulk-form-${String(site.id)}">
-                    <input type="hidden" name="page" value="${String(safePage)}" />
+              <div class="rp-table-body">
+                <!-- Filter pills -->
+                <div class="rp-filter-pills">
+                  <a class="rp-filter-pill ${currentFilter === 'all' ? 'on' : ''}" href="${makePageUrl(site.id, 1, selectedSiteId, 'all')}">
+                    All (${String(allArticles.length)})
+                  </a>
+                  <a class="rp-filter-pill ${currentFilter === 'ready' ? 'on' : ''}" href="${makePageUrl(site.id, 1, selectedSiteId, 'ready')}">
+                    Ready (${String(readyArticlesCount)})
+                  </a>
+                  <a class="rp-filter-pill ${currentFilter === 'generated' ? 'on' : ''}" href="${makePageUrl(site.id, 1, selectedSiteId, 'generated')}">
+                    ✓ Generated (${String(generatedArticlesCount)})
+                  </a>
+                  ${pausedArticlesCount
+                    ? html`<a class="rp-filter-pill ${currentFilter === 'paused' ? 'on' : ''}" href="${makePageUrl(site.id, 1, selectedSiteId, 'paused')}">
+                        Paused (${String(pausedArticlesCount)})
+                      </a>`
+                    : raw('')}
+                </div>
 
-                    <!-- Bulk action toolbar -->
-                    <div class="rp-bulk-bar">
-                      <div class="rp-bulk-left">
-                        <span class="rp-bulk-count" id="bulk-count-${String(site.id)}">0 articles selected</span>
-                      </div>
-                      <div class="rp-bulk-actions">
-                        <label class="rp-bulk-label">
-                          Channel:
-                          <select name="channelId" class="rp-select">
-                            <option value="all">All connected channels (${String(channels.length)})</option>
-                            ${channels.map((ch) => html`<option value="${String(ch.id)}">${ch.name} (${platformLabel(ch.platform)})</option>`)}
-                          </select>
-                        </label>
-                        <button name="bulkAction" value="repurpose" class="ns-btn small primary">Repurpose selected</button>
-                        <button name="bulkAction" value="pause" class="ns-btn small quiet">Pause selected</button>
-                        <button name="bulkAction" value="activate" class="ns-btn small quiet">Mark active</button>
-                        <button name="bulkAction" value="delete" class="ns-btn small danger" onclick="return confirm('Remove selected articles?')">Delete</button>
-                      </div>
-                    </div>
+                ${filteredArticles.length
+                  ? html`
+                      <form method="post" action="/new-website/repurpose/${String(site.id)}/bulk-articles" id="bulk-form-${String(site.id)}">
+                        <input type="hidden" name="page" value="${String(safePage)}" />
+                        <input type="hidden" name="filter" value="${String(currentFilter)}" />
 
-                    <table class="rp-articles-table">
+                        <!-- Bulk action toolbar -->
+                        <div class="rp-bulk-bar">
+                          <div class="rp-bulk-left">
+                            <span class="rp-bulk-count" id="bulk-count-${String(site.id)}">0 articles selected</span>
+                          </div>
+                          <div class="rp-bulk-actions">
+                            <label class="rp-bulk-label">
+                              Channel:
+                              <select name="channelId" class="rp-select">
+                                <option value="all">All connected channels (${String(channels.length)})</option>
+                                ${channels.map((ch) => html`<option value="${String(ch.id)}">${ch.name} (${platformLabel(ch.platform)})</option>`)}
+                              </select>
+                            </label>
+                            <button name="bulkAction" value="repurpose" class="ns-btn small primary">Repurpose selected</button>
+                            <button name="bulkAction" value="pause" class="ns-btn small quiet">Pause selected</button>
+                            <button name="bulkAction" value="activate" class="ns-btn small quiet">Mark active</button>
+                            <button name="bulkAction" value="delete" class="ns-btn small danger" onclick="return confirm('Remove selected articles?')">Delete</button>
+                          </div>
+                        </div>
+
+                        <table class="rp-articles-table">
+                          <thead>
+                            <tr>
+                              <th style="width:36px;text-align:center">
+                                <input type="checkbox" class="rp-select-all" data-site="${String(site.id)}" title="Select all on this page" />
+                              </th>
+                              <th>Title</th>
+                              <th style="width:190px">Status</th>
+                              <th style="width:260px">Channels</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            ${pagedArticles.map((art) => {
+                              const isGen = art.status === 'generated' || (art.post_count ?? 0) > 0 || (art.last_repurposed_at ?? 0) > 0;
+                              const isPaused = art.status === 'paused';
+                              const postCount = art.post_count ?? (isGen ? 1 : 0);
+
+                              let badgeClass = 'idle';
+                              let badgeText = 'Active · Ready';
+                              let subText = 'Never repurposed';
+
+                              if (isPaused) {
+                                badgeClass = 'bad';
+                                badgeText = 'Paused';
+                                subText = 'Excluded from auto-repurpose';
+                              } else if (isGen) {
+                                badgeClass = 'good';
+                                badgeText = `✓ Generated (${String(postCount)} post${postCount === 1 ? '' : 's'})`;
+                                if (art.last_repurposed_at) {
+                                  const daysAgo = Math.floor((Date.now() / 1000 - art.last_repurposed_at) / 86400);
+                                  subText = daysAgo === 0 ? 'Repurposed today' : `Repurposed ${daysAgo}d ago`;
+                                } else {
+                                  subText = 'Generated';
+                                }
+                              }
+
+                              return html`<tr>
+                                <td style="text-align:center">
+                                  <input type="checkbox" name="articleIds" value="${String(art.id)}" class="rp-art-cb rp-cb-${String(site.id)}" />
+                                </td>
+                                <td>
+                                  <a class="rp-art-title" href="${art.url}" target="_blank" rel="noopener">${art.title}</a>
+                                  ${art.category ? html`<span class="rp-cat-tag">${art.category}</span>` : raw('')}
+                                </td>
+                                <td>
+                                  <span class="ns-badge ${badgeClass}">${badgeText}</span>
+                                  <div style="font-size:11px;color:var(--soft);margin-top:3px">${subText}</div>
+                                  ${art.post_platforms ? html`<div style="font-size:11px;color:var(--faint);margin-top:2px">${art.post_platforms}</div>` : raw('')}
+                                </td>
+                                <td>
+                                  ${channels.length
+                                    ? html`<div class="rp-channel-row">
+                                        <select class="rp-select small" onchange="document.getElementById('row-ch-${String(art.id)}').value = this.value">
+                                          ${channels.map((ch) => html`<option value="${String(ch.id)}">${ch.name} (${platformLabel(ch.platform)})</option>`)}
+                                        </select>
+                                        <form method="post" action="/new-website/repurpose/article/${String(art.id)}/generate" style="margin:0">
+                                          <input type="hidden" name="page" value="${String(safePage)}" />
+                                          <input type="hidden" name="filter" value="${String(currentFilter)}" />
+                                          <input type="hidden" name="channelId" id="row-ch-${String(art.id)}" value="${String(channels[0]?.id ?? '')}" />
+                                          <button class="ns-btn small primary">Repurpose</button>
+                                        </form>
+                                      </div>`
+                                    : html`<span style="font-size:12px;color:var(--soft)">No channels connected</span>`}
+                                </td>
+                              </tr>`;
+                            })}
+                          </tbody>
+                        </table>
+                      </form>
+
+                      ${totalPages > 1
+                        ? html`<nav class="rp-pagination" aria-label="Articles pagination">
+                            <a class="rp-page-btn ${safePage <= 1 ? 'disabled' : ''}" href="${makePageUrl(site.id, 1, selectedSiteId, currentFilter)}" title="First page">&laquo;</a>
+                            <a class="rp-page-btn ${safePage <= 1 ? 'disabled' : ''}" href="${makePageUrl(site.id, safePage - 1, selectedSiteId, currentFilter)}" title="Previous page">&lsaquo;</a>
+                            ${pageNums.map((p) =>
+                              p === '...'
+                                ? html`<span class="rp-page-ellipsis">&hellip;</span>`
+                                : html`<a class="rp-page-btn ${p === safePage ? 'active' : ''}" href="${makePageUrl(site.id, p as number, selectedSiteId, currentFilter)}">${String(p)}</a>`,
+                            )}
+                            <a class="rp-page-btn ${safePage >= totalPages ? 'disabled' : ''}" href="${makePageUrl(site.id, safePage + 1, selectedSiteId, currentFilter)}" title="Next page">&rsaquo;</a>
+                            <a class="rp-page-btn ${safePage >= totalPages ? 'disabled' : ''}" href="${makePageUrl(site.id, totalPages, selectedSiteId, currentFilter)}" title="Last page">&raquo;</a>
+                            <form class="rp-page-jump" method="get" action="/new-website/repurpose">
+                              <input type="hidden" name="website" value="${String(selectedSiteId ?? site.id)}" />
+                              <input type="hidden" name="filter" value="${String(currentFilter)}" />
+                              <input type="number" name="page" min="1" max="${String(totalPages)}" placeholder="Page" aria-label="Go to page" />
+                              <button class="ns-btn small quiet" type="submit">Go</button>
+                            </form>
+                          </nav>`
+                        : raw('')}`
+                  : html`<div class="rp-empty">
+                      <p>${currentFilter !== 'all' ? `No articles matching "${currentFilter}".` : `No articles discovered yet from ${site.name}. Click "Fetch articles from site" to load your existing content.`}</p>
+                    </div>`}
+              </div>
+            </details>
+
+            <!-- Repurposed Social Posts (toggleable results table card) -->
+            <details class="rp-table-card" open id="posts-card-${String(site.id)}">
+              <summary class="rp-table-header">
+                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                  <span class="rp-toggle-arrow">▼</span>
+                  <h3 style="font-size:17px;margin:0">Repurposed social posts (${String(posts.length)})</h3>
+                  <span class="ns-badge good" style="font-size:11px">${String(posts.filter((p) => p.status === 'sent').length)} sent</span>
+                  ${posts.some((p) => p.status === 'waiting') ? html`<span class="ns-badge idle" style="font-size:11px">${String(posts.filter((p) => p.status === 'waiting').length)} waiting</span>` : raw('')}
+                  ${posts.some((p) => p.status === 'failed') ? html`<span class="ns-badge bad" style="font-size:11px">${String(posts.filter((p) => p.status === 'failed').length)} failed</span>` : raw('')}
+                </div>
+                ${posts.some((p) => p.status === 'failed')
+                  ? html`<form method="post" action="/new-website/repurpose/${String(site.id)}/retry-failed" style="margin:0" onclick="event.stopPropagation()">
+                      <button class="ns-btn small danger">Regenerate all failed (${String(posts.filter((p) => p.status === 'failed').length)})</button>
+                    </form>`
+                  : raw('')}
+              </summary>
+
+              <div class="rp-table-body">
+                ${posts.length
+                  ? html`<table class="rp-posts-table">
                       <thead>
                         <tr>
-                          <th style="width:36px;text-align:center">
-                            <input type="checkbox" class="rp-select-all" data-site="${String(site.id)}" title="Select all on this page" />
-                          </th>
-                          <th>Title</th>
-                          <th style="width:170px">Status</th>
-                          <th style="width:260px">Channels</th>
+                          <th style="width:190px">Channel & Type</th>
+                          <th style="width:76px">Media</th>
+                          <th style="width:200px">Source article</th>
+                          <th>Fresh generated copy</th>
+                          <th style="width:90px">Status</th>
+                          <th style="width:190px">Actions</th>
                         </tr>
                       </thead>
                       <tbody>
-                        ${pagedArticles.map((art) => {
-                          const daysAgo = art.last_repurposed_at ? Math.floor((Date.now() / 1000 - art.last_repurposed_at) / 86400) : null;
-                          const statusText = art.status === 'paused' ? 'Paused' : daysAgo === null ? 'Never repurposed' : `Repurposed ${daysAgo}d ago`;
-                          const badgeClass = art.status === 'paused' ? 'bad' : daysAgo === null ? 'idle' : 'good';
+                        ${posts.slice(0, 50).map((p) => {
+                          const isReel = p.post_kind === 'reel';
+                          const img = p.image_url || p.article_cover_url;
                           return html`<tr>
-                            <td style="text-align:center">
-                              <input type="checkbox" name="articleIds" value="${String(art.id)}" class="rp-art-cb rp-cb-${String(site.id)}" />
-                            </td>
-                            <td>
-                              <a class="rp-art-title" href="${art.url}" target="_blank" rel="noopener">${art.title}</a>
-                              ${art.category ? html`<span class="rp-cat-tag">${art.category}</span>` : raw('')}
-                            </td>
-                            <td>
-                              <span class="ns-badge ${badgeClass}">${statusText}</span>
-                            </td>
-                            <td>
-                              ${channels.length
-                                ? html`<div class="rp-channel-row">
-                                    <select class="rp-select small" onchange="document.getElementById('row-ch-${String(art.id)}').value = this.value">
-                                      ${channels.map((ch) => html`<option value="${String(ch.id)}">${ch.name} (${platformLabel(ch.platform)})</option>`)}
-                                    </select>
-                                    <form method="post" action="/new-website/repurpose/article/${String(art.id)}/generate" style="margin:0">
-                                      <input type="hidden" name="page" value="${String(safePage)}" />
-                                      <input type="hidden" name="channelId" id="row-ch-${String(art.id)}" value="${String(channels[0]?.id ?? '')}" />
-                                      <button class="ns-btn small primary">Repurpose</button>
-                                    </form>
+                          <td>
+                            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+                              <b>${p.channel_name}</b>
+                              <span class="ns-badge ${isReel ? 'info' : 'idle'}" style="font-size:11px;padding:1px 6px">
+                                ${isReel ? '🎬 Reel' : '🖼️ Image'}
+                              </span>
+                            </div>
+                            <div style="font-size:12px;color:var(--soft);margin-top:2px">${platformLabel(p.platform)}</div>
+                            ${p.board_name ? html`<div style="font-size:12px;color:var(--soft);margin-top:2px">Board: <b>${p.board_name}</b></div>` : raw('')}
+                          </td>
+                          <td>
+                            ${p.media_status === 'making'
+                              ? html`<div style="display:flex;flex-direction:column;align-items:center;gap:2px">
+                                  <span class="ns-badge idle" style="font-size:10px">Making...</span>
+                                  <span style="font-size:10px;color:var(--soft)">Flow</span>
+                                </div>`
+                              : isReel
+                                ? html`<div class="rp-thumb-box" style="position:relative;cursor:pointer" onclick="openVideoLightbox(event, '${p.media_file ? `/new-website/repurpose/post/${String(p.id)}/file` : img}')" title="Click to play video">
+                                    <video src="${p.media_file ? `/new-website/repurpose/post/${String(p.id)}/file` : img}" class="rp-thumb" preload="metadata"></video>
+                                    <span style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.35);border-radius:6px;color:#fff;font-size:16px">▶</span>
                                   </div>`
-                                : html`<span style="font-size:12px;color:var(--soft)">No channels connected</span>`}
-                            </td>
-                          </tr>`;
+                                : img
+                                  ? html`<div class="rp-thumb-box">
+                                      <img src="${img}" alt="${p.title || p.article_title}" class="rp-thumb" onclick="openLightbox(event, '${img}')" title="Click to enlarge" loading="lazy" />
+                                    </div>`
+                                  : html`<span style="font-size:12px;color:var(--soft)">No media</span>`}
+                          </td>
+                          <td><a href="${p.article_url}" target="_blank" rel="noopener" style="color:var(--accent-text);text-decoration:none">${p.article_title}</a></td>
+                          <td>
+                            ${p.title ? html`<div style="font-weight:600;margin-bottom:4px">${p.title}</div>` : raw('')}
+                            <div class="rp-post-text">${p.text}</div>
+                            ${p.error ? html`<div style="color:var(--bad);font-size:12px;margin-top:4px">${p.error}</div>` : raw('')}
+                          </td>
+                          <td><span class="ns-badge ${p.status === 'sent' ? 'good' : p.status === 'failed' ? 'bad' : 'idle'}">${p.status}</span></td>
+                          <td>
+                            <div style="display:flex;gap:6px;flex-wrap:wrap">
+                              ${p.status === 'failed'
+                                ? html`
+                                    <form method="post" action="/new-website/repurpose/post/${String(p.id)}/regenerate" style="margin:0">
+                                      <button class="ns-btn small primary" title="Generate fresh copy and media, then retry">Regenerate</button>
+                                    </form>
+                                    <form method="post" action="/new-website/repurpose/post/${String(p.id)}/send" style="margin:0">
+                                      <button class="ns-btn small quiet">Retry</button>
+                                    </form>`
+                                : p.status === 'waiting'
+                                  ? html`
+                                      <form method="post" action="/new-website/repurpose/post/${String(p.id)}/send" style="margin:0">
+                                        <button class="ns-btn small primary">Send</button>
+                                      </form>
+                                      <form method="post" action="/new-website/repurpose/post/${String(p.id)}/regenerate" style="margin:0">
+                                        <button class="ns-btn small quiet" title="Generate fresh copy and media">Regenerate</button>
+                                      </form>`
+                                  : html`
+                                      ${p.post_link ? html`<a class="ns-btn small quiet" href="${p.post_link}" target="_blank" rel="noopener">View</a>` : raw('')}
+                                      <form method="post" action="/new-website/repurpose/post/${String(p.id)}/regenerate" style="margin:0">
+                                        <button class="ns-btn small quiet" title="Generate fresh copy and media">Regenerate</button>
+                                      </form>`}
+                              <form method="post" action="/new-website/repurpose/post/${String(p.id)}/delete" style="margin:0" onsubmit="return confirm('Delete this post?')">
+                                <button class="ns-btn small danger">Delete</button>
+                              </form>
+                            </div>
+                          </td>
+                        </tr>`;
                         })}
                       </tbody>
-                    </table>
-                  </form>
-
-                  ${totalPages > 1
-                    ? html`<nav class="rp-pagination" aria-label="Articles pagination">
-                        <a class="rp-page-btn ${safePage <= 1 ? 'disabled' : ''}" href="${makePageUrl(site.id, 1, selectedSiteId)}" title="First page">&laquo;</a>
-                        <a class="rp-page-btn ${safePage <= 1 ? 'disabled' : ''}" href="${makePageUrl(site.id, safePage - 1, selectedSiteId)}" title="Previous page">&lsaquo;</a>
-                        ${pageNums.map((p) =>
-                          p === '...'
-                            ? html`<span class="rp-page-ellipsis">&hellip;</span>`
-                            : html`<a class="rp-page-btn ${p === safePage ? 'active' : ''}" href="${makePageUrl(site.id, p as number, selectedSiteId)}">${String(p)}</a>`,
-                        )}
-                        <a class="rp-page-btn ${safePage >= totalPages ? 'disabled' : ''}" href="${makePageUrl(site.id, safePage + 1, selectedSiteId)}" title="Next page">&rsaquo;</a>
-                        <a class="rp-page-btn ${safePage >= totalPages ? 'disabled' : ''}" href="${makePageUrl(site.id, totalPages, selectedSiteId)}" title="Last page">&raquo;</a>
-                        <form class="rp-page-jump" method="get" action="/new-website/repurpose">
-                          <input type="hidden" name="website" value="${String(selectedSiteId ?? site.id)}" />
-                          <input type="number" name="page" min="1" max="${String(totalPages)}" placeholder="Page" aria-label="Go to page" />
-                          <button class="ns-btn small quiet" type="submit">Go</button>
-                        </form>
-                      </nav>`
-                    : raw('')}`
-              : html`<div class="rp-empty">
-                  <p>No articles discovered yet from ${site.name}. Click "Fetch articles from site" to load your existing content.</p>
-                </div>`}
-
-            <!-- Generated Repurpose Posts -->
-            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin:28px 0 10px">
-              <h3 style="font-size:17px;margin:0">Repurposed social posts (${String(posts.length)})</h3>
-              ${posts.some((p) => p.status === 'failed')
-                ? html`<form method="post" action="/new-website/repurpose/${String(site.id)}/retry-failed" style="margin:0">
-                    <button class="ns-btn small danger">Regenerate all failed (${String(posts.filter((p) => p.status === 'failed').length)})</button>
-                  </form>`
-                : raw('')}
-            </div>
-
-            ${posts.length
-              ? html`<table class="rp-posts-table">
-                  <thead>
-                    <tr>
-                      <th style="width:190px">Channel & Type</th>
-                      <th style="width:76px">Media</th>
-                      <th style="width:200px">Source article</th>
-                      <th>Fresh generated copy</th>
-                      <th style="width:90px">Status</th>
-                      <th style="width:190px">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    ${posts.slice(0, 50).map((p) => {
-                      const isReel = p.post_kind === 'reel';
-                      const img = p.image_url || p.article_cover_url;
-                      return html`<tr>
-                      <td>
-                        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-                          <b>${p.channel_name}</b>
-                          <span class="ns-badge ${isReel ? 'info' : 'idle'}" style="font-size:11px;padding:1px 6px">
-                            ${isReel ? '🎬 Reel' : '🖼️ Image'}
-                          </span>
-                        </div>
-                        <div style="font-size:12px;color:var(--soft);margin-top:2px">${platformLabel(p.platform)}</div>
-                        ${p.board_name ? html`<div style="font-size:12px;color:var(--soft);margin-top:2px">Board: <b>${p.board_name}</b></div>` : raw('')}
-                      </td>
-                      <td>
-                        ${p.media_status === 'making'
-                          ? html`<div style="display:flex;flex-direction:column;align-items:center;gap:2px">
-                              <span class="ns-badge idle" style="font-size:10px">Making...</span>
-                              <span style="font-size:10px;color:var(--soft)">Flow</span>
-                            </div>`
-                          : isReel
-                            ? html`<div class="rp-thumb-box" style="position:relative;cursor:pointer" onclick="openVideoLightbox(event, '${p.media_file ? `/new-website/repurpose/post/${String(p.id)}/file` : img}')" title="Click to play video">
-                                <video src="${p.media_file ? `/new-website/repurpose/post/${String(p.id)}/file` : img}" class="rp-thumb" preload="metadata"></video>
-                                <span style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.35);border-radius:6px;color:#fff;font-size:16px">▶</span>
-                              </div>`
-                            : img
-                              ? html`<div class="rp-thumb-box">
-                                  <img src="${img}" alt="${p.title || p.article_title}" class="rp-thumb" onclick="openLightbox(event, '${img}')" title="Click to enlarge" loading="lazy" />
-                                </div>`
-                              : html`<span style="font-size:12px;color:var(--soft)">No media</span>`}
-                      </td>
-                      <td><a href="${p.article_url}" target="_blank" rel="noopener" style="color:var(--accent-text);text-decoration:none">${p.article_title}</a></td>
-                      <td>
-                        ${p.title ? html`<div style="font-weight:600;margin-bottom:4px">${p.title}</div>` : raw('')}
-                        <div class="rp-post-text">${p.text}</div>
-                        ${p.error ? html`<div style="color:var(--bad);font-size:12px;margin-top:4px">${p.error}</div>` : raw('')}
-                      </td>
-                      <td><span class="ns-badge ${p.status === 'sent' ? 'good' : p.status === 'failed' ? 'bad' : 'idle'}">${p.status}</span></td>
-                      <td>
-                        <div style="display:flex;gap:6px;flex-wrap:wrap">
-                          ${p.status === 'failed'
-                            ? html`
-                                <form method="post" action="/new-website/repurpose/post/${String(p.id)}/regenerate" style="margin:0">
-                                  <button class="ns-btn small primary" title="Generate fresh copy and media, then retry">Regenerate</button>
-                                </form>
-                                <form method="post" action="/new-website/repurpose/post/${String(p.id)}/send" style="margin:0">
-                                  <button class="ns-btn small quiet">Retry</button>
-                                </form>`
-                            : p.status === 'waiting'
-                              ? html`
-                                  <form method="post" action="/new-website/repurpose/post/${String(p.id)}/send" style="margin:0">
-                                    <button class="ns-btn small primary">Send</button>
-                                  </form>
-                                  <form method="post" action="/new-website/repurpose/post/${String(p.id)}/regenerate" style="margin:0">
-                                    <button class="ns-btn small quiet" title="Generate fresh copy and media">Regenerate</button>
-                                  </form>`
-                              : html`
-                                  ${p.post_link ? html`<a class="ns-btn small quiet" href="${p.post_link}" target="_blank" rel="noopener">View</a>` : raw('')}
-                                  <form method="post" action="/new-website/repurpose/post/${String(p.id)}/regenerate" style="margin:0">
-                                    <button class="ns-btn small quiet" title="Generate fresh copy and media">Regenerate</button>
-                                  </form>`}
-                          <form method="post" action="/new-website/repurpose/post/${String(p.id)}/delete" style="margin:0" onsubmit="return confirm('Delete this post?')">
-                            <button class="ns-btn small danger">Delete</button>
-                          </form>
-                        </div>
-                      </td>
-                    </tr>`;
-                    })}
-                  </tbody>
-                </table>`
-              : html`<div class="rp-empty" style="margin-top:10px">
-                  <p>No repurposed social posts generated yet for ${site.name}.</p>
-                </div>`}
+                    </table>`
+                  : html`<div class="rp-empty" style="margin-top:10px">
+                      <p>No repurposed social posts generated yet for ${site.name}.</p>
+                    </div>`}
+              </div>
+            </details>
           </details>`;
         })
       : html`<div class="rp-empty"><h2>No websites yet</h2><p>Add a website to begin repurposing its published content.</p><a class="ns-btn primary" href="/new-website/add">Add website</a></div>`}

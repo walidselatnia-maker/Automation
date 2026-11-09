@@ -42,8 +42,11 @@ export interface RepurposeArticleRow {
   category: string;
   published_at: number;
   last_repurposed_at: number;
-  status: 'active' | 'paused' | 'excluded';
+  status: 'active' | 'paused' | 'generated' | 'excluded';
   created_at: number;
+  post_count?: number;
+  latest_post_at?: number;
+  post_platforms?: string;
 }
 
 export interface RepurposePostRow {
@@ -141,21 +144,47 @@ const parseObject = (raw: string): Record<string, unknown> | null => {
  * List discovered articles, ordered OLD PUBLISHED FIRST as requested.
  * (Lowest published_at or site_post_id first).
  */
-export const listRepurposeArticles = (websiteId?: number): RepurposeArticleRow[] =>
+export const listRepurposeArticles = (
+  websiteId?: number,
+): (RepurposeArticleRow & { post_count: number; latest_post_at?: number; post_platforms?: string })[] =>
   websiteId
-    ? all<RepurposeArticleRow>(
-        `SELECT * FROM newsite_repurpose_articles
-         WHERE website_id = ?
-         ORDER BY CASE WHEN published_at > 0 THEN published_at ELSE site_post_id END ASC, site_post_id ASC`,
+    ? all<RepurposeArticleRow & { post_count: number; latest_post_at?: number; post_platforms?: string }>(
+        `SELECT a.*,
+                COUNT(p.id) AS post_count,
+                MAX(p.created_at) AS latest_post_at,
+                GROUP_CONCAT(DISTINCT p.platform) AS post_platforms
+         FROM newsite_repurpose_articles a
+         LEFT JOIN newsite_repurpose_posts p ON p.article_id = a.id
+         WHERE a.website_id = ?
+         GROUP BY a.id
+         ORDER BY CASE WHEN a.published_at > 0 THEN a.published_at ELSE a.site_post_id END ASC, a.site_post_id ASC`,
         websiteId,
       )
-    : all<RepurposeArticleRow>(
-        `SELECT * FROM newsite_repurpose_articles
-         ORDER BY website_id, CASE WHEN published_at > 0 THEN published_at ELSE site_post_id END ASC, site_post_id ASC`,
+    : all<RepurposeArticleRow & { post_count: number; latest_post_at?: number; post_platforms?: string }>(
+        `SELECT a.*,
+                COUNT(p.id) AS post_count,
+                MAX(p.created_at) AS latest_post_at,
+                GROUP_CONCAT(DISTINCT p.platform) AS post_platforms
+         FROM newsite_repurpose_articles a
+         LEFT JOIN newsite_repurpose_posts p ON p.article_id = a.id
+         GROUP BY a.id
+         ORDER BY a.website_id, CASE WHEN a.published_at > 0 THEN a.published_at ELSE a.site_post_id END ASC, a.site_post_id ASC`,
       );
 
-export const getRepurposeArticle = (id: number): RepurposeArticleRow | undefined =>
-  get<RepurposeArticleRow>('SELECT * FROM newsite_repurpose_articles WHERE id = ?', id);
+export const getRepurposeArticle = (
+  id: number,
+): (RepurposeArticleRow & { post_count?: number; latest_post_at?: number; post_platforms?: string }) | undefined =>
+  get<RepurposeArticleRow & { post_count?: number; latest_post_at?: number; post_platforms?: string }>(
+    `SELECT a.*,
+            COUNT(p.id) AS post_count,
+            MAX(p.created_at) AS latest_post_at,
+            GROUP_CONCAT(DISTINCT p.platform) AS post_platforms
+     FROM newsite_repurpose_articles a
+     LEFT JOIN newsite_repurpose_posts p ON p.article_id = a.id
+     WHERE a.id = ?
+     GROUP BY a.id`,
+    id,
+  );
 
 export const listRepurposePosts = (
   websiteId?: number,
@@ -663,7 +692,7 @@ export async function generateRepurposePost(
     ).lastInsertRowid,
   );
 
-  run('UPDATE newsite_repurpose_articles SET last_repurposed_at = unixepoch() WHERE id = ?', article.id);
+  run("UPDATE newsite_repurpose_articles SET status = 'generated', last_repurposed_at = unixepoch() WHERE id = ?", article.id);
 
   let post = getRepurposePost(id)!;
 
@@ -1162,7 +1191,7 @@ export async function regenerateRepurposePost(
     post.id,
   );
 
-  run('UPDATE newsite_repurpose_articles SET last_repurposed_at = unixepoch() WHERE id = ?', article.id);
+  run("UPDATE newsite_repurpose_articles SET status = 'generated', last_repurposed_at = unixepoch() WHERE id = ?", article.id);
 
   let updatedPost = getRepurposePost(post.id)!;
 
@@ -1373,8 +1402,9 @@ export async function kickRepurpose(deps: RepurposeDeps): Promise<void> {
       // Pick the oldest never-repurposed or least-recently-repurposed article
       const candidate = get<RepurposeArticleRow>(
         `SELECT * FROM newsite_repurpose_articles
-         WHERE website_id = ? AND status = 'active' AND (last_repurposed_at = 0 OR last_repurposed_at < ?)
-         ORDER BY last_repurposed_at ASC,
+         WHERE website_id = ? AND status IN ('active', 'generated') AND (last_repurposed_at = 0 OR last_repurposed_at < ?)
+         ORDER BY (status = 'generated') ASC,
+                  last_repurposed_at ASC,
                   CASE WHEN published_at > 0 THEN published_at ELSE site_post_id END ASC,
                   site_post_id ASC
          LIMIT 1`,

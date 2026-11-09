@@ -982,4 +982,116 @@ describe('New dashboard: content repurposing', () => {
     expect(board3Again.serviceId).toBe('b_new_desserts');
     expect(bufferChannelsCalls).toBe(0);
   });
+
+  it('toggles discovered articles and repurposed posts tables, marks generated articles clearly with status and counts, and supports filter pills', async () => {
+    const a = Fastify();
+    await a.register(formbody);
+
+    const siteId = createSite('Bake House', 'bake.example.com');
+    const { run } = await import('../src/db/index.js');
+
+    // Add 2 articles
+    run(
+      `INSERT INTO newsite_repurpose_articles
+         (website_id, site_post_id, title, slug, url, cover_url, excerpt, content_text, category, published_at, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch())`,
+      siteId, 1, 'Artisan Baguette Secrets', 'artisan-baguette', 'https://bake.example.com/baguette',
+      'https://bake.example.com/cover1.jpg', 'Excerpt 1', 'Content 1', 'Breads', 1700000001,
+    );
+    run(
+      `INSERT INTO newsite_repurpose_articles
+         (website_id, site_post_id, title, slug, url, cover_url, excerpt, content_text, category, published_at, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch())`,
+      siteId, 2, 'Classic Brioche Loaf', 'classic-brioche', 'https://bake.example.com/brioche',
+      'https://bake.example.com/cover2.jpg', 'Excerpt 2', 'Content 2', 'Breads', 1700000002,
+    );
+
+    const chId = saveBufferChannel(
+      {
+        platform: 'pinterest',
+        name: 'Pinterest Bakes',
+        bufferToken: 'tok_test',
+        bufferChannelId: 'buf_1',
+        postImage: true,
+        postReel: false,
+        multiWebsite: false,
+        boards: [{ serviceId: 'b_bread', name: 'Breads & Loaves' }],
+      },
+      KEY,
+    );
+    setChannelWebsites(chId, [siteId]);
+
+    registerRepurposeRoutes(a, {
+      encryptionKey: KEY,
+      readFlash: () => null,
+      ask: async () => JSON.stringify({
+        headline: 'Fresh Baguettes',
+        cta: 'Bake Now',
+        title: 'Master French Baguettes',
+        description: 'Crispy crust and chewy crumb recipe secrets.',
+        alt: 'Freshly baked baguette',
+      }),
+      fetchImpl: (async () => ({})) as any,
+    });
+
+    // 1. Initial view: both articles are ready/un-generated, both tables are toggleable
+    const initialRes = await a.inject({ url: `/new-website/repurpose?website=${siteId}` });
+    expect(initialRes.statusCode).toBe(200);
+    // Discovered articles table is toggleable
+    expect(initialRes.body).toContain(`details class="rp-table-card" open id="discovered-card-${siteId}"`);
+    expect(initialRes.body).toContain('Discovered articles (2)');
+    expect(initialRes.body).toContain('0 generated');
+    expect(initialRes.body).toContain('2 ready');
+    expect(initialRes.body).toContain('Active · Ready');
+    expect(initialRes.body).toContain('Never repurposed');
+
+    // Repurposed posts table is toggleable
+    expect(initialRes.body).toContain(`details class="rp-table-card" open id="posts-card-${siteId}"`);
+    expect(initialRes.body).toContain('Repurposed social posts (0)');
+
+    // 2. Generate a post for article 1
+    const articles = listRepurposeArticles(siteId);
+    const genRes = await generateRepurposePost(articles[0]!.id, chId, {
+      encryptionKey: KEY,
+      ask: async () => JSON.stringify({
+        headline: 'Fresh Baguettes',
+        cta: 'Bake Now',
+        title: 'Master French Baguettes',
+        description: 'Crispy crust and chewy crumb recipe secrets.',
+        alt: 'Freshly baked baguette',
+      }),
+    });
+    expect(genRes.post).toBeTruthy();
+
+    // Verify DB status updated to 'generated' and post_count = 1
+    const art1 = getRepurposeArticle(articles[0]!.id)!;
+    expect(art1.status).toBe('generated');
+    expect(art1.post_count).toBe(1);
+    expect(art1.last_repurposed_at).toBeGreaterThan(0);
+
+    // 3. Render page again: article 1 clearly displays "✓ Generated (1 post)" in good badge
+    const afterGenRes = await a.inject({ url: `/new-website/repurpose?website=${siteId}` });
+    expect(afterGenRes.statusCode).toBe(200);
+    expect(afterGenRes.body).toContain('1 generated');
+    expect(afterGenRes.body).toContain('1 ready');
+    expect(afterGenRes.body).toContain('✓ Generated (1 post)');
+    expect(afterGenRes.body).toContain('Repurposed today');
+    // Article 2 remains Active · Ready
+    expect(afterGenRes.body).toContain('Active · Ready');
+    expect(afterGenRes.body).toContain('Never repurposed');
+
+    // Repurposed posts table now shows 1 post
+    expect(afterGenRes.body).toContain('Repurposed social posts (1)');
+
+    // 4. Test filter pills: filter=generated vs filter=ready
+    const genFilterRes = await a.inject({ url: `/new-website/repurpose?website=${siteId}&filter=generated` });
+    expect(genFilterRes.statusCode).toBe(200);
+    expect(genFilterRes.body).toContain(`name="articleIds" value="${articles[0]!.id}"`);
+    expect(genFilterRes.body).not.toContain(`name="articleIds" value="${articles[1]!.id}"`);
+
+    const readyFilterRes = await a.inject({ url: `/new-website/repurpose?website=${siteId}&filter=ready` });
+    expect(readyFilterRes.statusCode).toBe(200);
+    expect(readyFilterRes.body).not.toContain(`name="articleIds" value="${articles[0]!.id}"`);
+    expect(readyFilterRes.body).toContain(`name="articleIds" value="${articles[1]!.id}"`);
+  });
 });

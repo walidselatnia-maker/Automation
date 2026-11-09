@@ -1293,6 +1293,18 @@ export const MIGRATIONS: Migration[] = [
       addColumn(db, 'newsite_channels', 'boards_json', "TEXT NOT NULL DEFAULT '[]'");
     },
   },
+  {
+    id: '069-newsite-repurpose-article-status',
+    description: 'New websites: update existing repurposed articles to status generated',
+    up(db) {
+      db.exec(`
+        UPDATE newsite_repurpose_articles
+        SET status = 'generated'
+        WHERE id IN (SELECT DISTINCT article_id FROM newsite_repurpose_posts)
+           OR last_repurposed_at > 0;
+      `);
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */

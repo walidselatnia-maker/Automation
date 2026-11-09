@@ -42,13 +42,14 @@ export function registerRepurposeRoutes(
     const q = (request.query as Record<string, unknown>) ?? {};
     const selectedSiteId = q.website ? Number(q.website) : undefined;
     const page = Math.max(1, Number(q.page) || 1);
+    const filter = String(q.filter ?? 'all');
 
     const articlesOf = new Map(websites.map((s) => [s.id, listRepurposeArticles(s.id)]));
     const postsOf = new Map(websites.map((s) => [s.id, listRepurposePosts(s.id)]));
     const channelsOf = new Map(websites.map((s) => [s.id, websiteChannels(s.id)]));
     const sentTodayOf = new Map(websites.map((s) => [s.id, repurposeSentToday(s.id)]));
 
-    const body = repurposePage(websites, selectedSiteId, articlesOf, postsOf, channelsOf, sentTodayOf, page);
+    const body = repurposePage(websites, selectedSiteId, articlesOf, postsOf, channelsOf, sentTodayOf, page, filter);
 
     return send(
       reply,
@@ -132,6 +133,7 @@ export function registerRepurposeRoutes(
     const b = (request.body as Record<string, unknown>) ?? {};
     const channelId = Number(b.channelId);
     const pageParam = b.page ? `&page=${encodeURIComponent(String(b.page))}` : '';
+    const filterParam = b.filter ? `&filter=${encodeURIComponent(String(b.filter))}` : '';
 
     const article = getRepurposeArticle(articleId);
     if (!article) return reply.redirect('/new-website/repurpose', 303);
@@ -139,15 +141,15 @@ export function registerRepurposeRoutes(
     const res = await generateRepurposePost(articleId, channelId, deps);
     if (!res.post) {
       return reply.redirect(
-        `/new-website/repurpose?website=${article.website_id}${pageParam}&error=${encodeURIComponent(
+        `/new-website/repurpose?website=${article.website_id}${pageParam}${filterParam}&error=${encodeURIComponent(
           `Could not generate post: ${res.problems.join(' ')}`,
-        )}#discovered-articles`,
+        )}#discovered-card-${article.website_id}`,
         303,
       );
     }
 
     return reply.redirect(
-      `/new-website/repurpose?website=${article.website_id}${pageParam}&ok=${encodeURIComponent('Fresh post generated.')}#discovered-articles`,
+      `/new-website/repurpose?website=${article.website_id}${pageParam}${filterParam}&ok=${encodeURIComponent('Fresh post generated.')}#discovered-card-${article.website_id}`,
       303,
     );
   });
@@ -159,6 +161,7 @@ export function registerRepurposeRoutes(
 
     const b = (request.body as Record<string, unknown>) ?? {};
     const pageParam = b.page ? `&page=${encodeURIComponent(String(b.page))}` : '';
+    const filterParam = b.filter ? `&filter=${encodeURIComponent(String(b.filter))}` : '';
     const rawIds = b.articleIds;
     const articleIds: number[] = Array.isArray(rawIds)
       ? rawIds.map((x) => Number(x)).filter(Number.isFinite)
@@ -168,9 +171,9 @@ export function registerRepurposeRoutes(
 
     if (!articleIds.length) {
       return reply.redirect(
-        `/new-website/repurpose?website=${siteId}${pageParam}&error=${encodeURIComponent(
+        `/new-website/repurpose?website=${siteId}${pageParam}${filterParam}&error=${encodeURIComponent(
           'No articles were selected.',
-        )}#discovered-articles`,
+        )}#discovered-card-${siteId}`,
         303,
       );
     }
@@ -181,9 +184,9 @@ export function registerRepurposeRoutes(
     const res = await bulkEditArticles(articleIds, action, { channelId, deps });
     if (!res.ok) {
       return reply.redirect(
-        `/new-website/repurpose?website=${siteId}${pageParam}&error=${encodeURIComponent(
+        `/new-website/repurpose?website=${siteId}${pageParam}${filterParam}&error=${encodeURIComponent(
           res.error ?? 'Bulk action failed.',
-        )}#discovered-articles`,
+        )}#discovered-card-${siteId}`,
         303,
       );
     }
@@ -198,7 +201,7 @@ export function registerRepurposeRoutes(
             : `Removed ${res.affected} article${res.affected === 1 ? '' : 's'}.`;
 
     return reply.redirect(
-      `/new-website/repurpose?website=${siteId}${pageParam}&ok=${encodeURIComponent(msg)}#discovered-articles`,
+      `/new-website/repurpose?website=${siteId}${pageParam}${filterParam}&ok=${encodeURIComponent(msg)}#discovered-card-${siteId}`,
       303,
     );
   });
