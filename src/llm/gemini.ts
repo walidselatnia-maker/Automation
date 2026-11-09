@@ -60,16 +60,28 @@ interface GeminiSetup {
  * Prompts for the same conversation, one after another. The second prompt of a new article has
  * to wait for the first one's answer, because only then does the article's chat have an id; sent
  * together, each would open a chat of its own.
+ *
+ * In addition, all calls to Gemini are serialized through a global lock so that concurrent
+ * background tasks (e.g. content repurposing vs. autopilot article generation) never send
+ * overlapping jobs to the single Gemini browser session in the image service container.
  */
 const queues = new Map<string, Promise<unknown>>();
+let globalGeminiLock: Promise<unknown> = Promise.resolve();
 
 function inTurn<T>(key: string | undefined, work: () => Promise<T>): Promise<T> {
-  if (!key) return work();
-  const run = (queues.get(key) ?? Promise.resolve()).catch(() => {}).then(work);
-  queues.set(key, run);
-  void run.catch(() => {}).finally(() => {
-    if (queues.get(key) === run) queues.delete(key);
-  });
+  const run = globalGeminiLock
+    .catch(() => {})
+    .then(async () => {
+      if (!key) return work();
+      const perKeyRun = (queues.get(key) ?? Promise.resolve()).catch(() => {}).then(work);
+      queues.set(key, perKeyRun);
+      try {
+        return await perKeyRun;
+      } finally {
+        if (queues.get(key) === perKeyRun) queues.delete(key);
+      }
+    });
+  globalGeminiLock = run.catch(() => {});
   return run;
 }
 

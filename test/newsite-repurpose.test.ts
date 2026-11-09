@@ -3,14 +3,16 @@ import Fastify from 'fastify';
 import formbody from '@fastify/formbody';
 import { openDatabase, closeDatabase } from '../src/db/index.js';
 import { createNewWebsite } from '../src/newsite/repo.js';
-import { saveBufferChannel } from '../src/newsite/channels.js';
+import { saveBufferChannel, setChannelWebsites } from '../src/newsite/channels.js';
 import {
   generateRepurposePost,
   getRepurposeArticle,
   getRepurposePost,
+  isMainPipelineBusy,
   kickRepurpose,
   listRepurposeArticles,
   listRepurposePosts,
+  repurposeCountToday,
   repurposeSentToday,
   syncWebsiteArticles,
   updateRepurposeSettings,
@@ -189,6 +191,150 @@ describe('New dashboard: content repurposing', () => {
 
     // Initial sent today is 0
     expect(repurposeSentToday(siteId)).toBe(0);
+    expect(repurposeCountToday(siteId)).toBe(0);
+  });
+
+  it('enforces strict daily limit and does not over-generate posts', async () => {
+    const siteId = createSite();
+    const site = get<NewWebsiteRow>('SELECT * FROM new_websites WHERE id = ?', siteId)!;
+
+    // Set daily target = 1
+    updateRepurposeSettings(siteId, {
+      status: 'active',
+      dailyTarget: 1,
+      cooldownDays: 30,
+      autoPublish: false,
+    });
+
+    await syncWebsiteArticles(site, 'sk_test_mock', (async () => mockPostsResponse()) as any);
+
+    const channelId = saveBufferChannel(
+      {
+        platform: 'pinterest',
+        name: 'Baking Inspiration',
+        bufferToken: 'buf_test',
+        bufferChannelId: 'buf_pin_1',
+        postImage: true,
+        postReel: false,
+        multiWebsite: false,
+      },
+      KEY,
+    );
+    setChannelWebsites(channelId, [siteId]);
+
+    const deps = {
+      encryptionKey: KEY,
+      readFlash: () => null,
+      ask: async () =>
+        JSON.stringify({
+          headline: 'Chewy Cookies',
+          cta: 'Save Recipe',
+          title: 'Fresh Artisan Sourdough Secrets and Homemade Baking Tips',
+          description: 'Learn how to achieve a perfectly crispy golden crust and an airy chewy crumb at home using natural sourdough starter with our simple masterclass.',
+          alt: 'Golden brown loaf of freshly baked artisan sourdough bread cooling on a rustic wire rack',
+        }),
+      fetchImpl: (async () => ({ ok: true, status: 200, arrayBuffer: async () => new ArrayBuffer(8) })) as any,
+    };
+
+    // First kick: generates 1 post
+    await kickRepurpose(deps);
+    expect(repurposeCountToday(siteId)).toBe(1);
+    expect(listRepurposePosts(siteId)).toHaveLength(1);
+
+    // Second kick: limit of 1 is already reached today, MUST NOT generate another post
+    await kickRepurpose(deps);
+    expect(repurposeCountToday(siteId)).toBe(1);
+    expect(listRepurposePosts(siteId)).toHaveLength(1);
+
+    // Third kick: still strictly 1 post
+    await kickRepurpose(deps);
+    expect(repurposeCountToday(siteId)).toBe(1);
+    expect(listRepurposePosts(siteId)).toHaveLength(1);
+  });
+
+  it('steps aside when main article generation pipeline or Flow is active', async () => {
+    const siteId = createSite();
+    const site = get<NewWebsiteRow>('SELECT * FROM new_websites WHERE id = ?', siteId)!;
+
+    updateRepurposeSettings(siteId, {
+      status: 'active',
+      dailyTarget: 1,
+      cooldownDays: 30,
+      autoPublish: false,
+    });
+
+    await syncWebsiteArticles(site, 'sk_test_mock', (async () => mockPostsResponse()) as any);
+
+    const channelId = saveBufferChannel(
+      {
+        platform: 'pinterest',
+        name: 'Baking Inspiration',
+        bufferToken: 'buf_test',
+        bufferChannelId: 'buf_pin_1',
+        postImage: true,
+        postReel: false,
+        multiWebsite: false,
+      },
+      KEY,
+    );
+    setChannelWebsites(channelId, [siteId]);
+
+    const deps = {
+      encryptionKey: KEY,
+      readFlash: () => null,
+      ask: async () =>
+        JSON.stringify({
+          headline: 'Chewy Cookies',
+          cta: 'Save Recipe',
+          title: 'Fresh Artisan Sourdough Secrets and Homemade Baking Tips',
+          description: 'Learn how to achieve a perfectly crispy golden crust and an airy chewy crumb at home using natural sourdough starter with our simple masterclass.',
+          alt: 'Golden brown loaf of freshly baked artisan sourdough bread cooling on a rustic wire rack',
+        }),
+      fetchImpl: (async () => ({ ok: true, status: 200, arrayBuffer: async () => new ArrayBuffer(8) })) as any,
+    };
+
+    const { run } = await import('../src/db/index.js');
+
+    // 1. Simulate an active keyword in keyword_seo being written by the main pipeline
+    run("INSERT INTO keyword_plans (website_id, pillar) VALUES (?, 'Baking')", siteId);
+    const planId = get<{ id: number }>('SELECT last_insert_rowid() AS id')!.id;
+    run(
+      `INSERT INTO keyword_seo (plan_id, keyword, role, position, status, auto_active)
+       VALUES (?, 'sourdough bread', 'pillar', 1, 'writing', 1)`,
+      planId,
+    );
+
+    // Pipeline is busy!
+    expect(isMainPipelineBusy()).toBe(true);
+
+    // kickRepurpose must step aside and NOT generate anything
+    await kickRepurpose(deps);
+    expect(listRepurposePosts(siteId)).toHaveLength(0);
+
+    // 2. Mark article finished, but simulate Flow pictures actively making
+    run("UPDATE keyword_seo SET status = 'done', auto_active = 0");
+    const seoId = get<{ id: number }>('SELECT id FROM keyword_seo LIMIT 1')!.id;
+    run(
+      `INSERT INTO newsite_pictures (seo_id, slot, position, prompt, alt, status)
+       VALUES (?, 'feature', 1, 'bread prompt', 'alt', 'making')`,
+      seoId,
+    );
+
+    // Flow is busy!
+    expect(isMainPipelineBusy()).toBe(true);
+
+    // kickRepurpose must still step aside
+    await kickRepurpose(deps);
+    expect(listRepurposePosts(siteId)).toHaveLength(0);
+
+    // 3. Clear Flow pictures: pipeline is now completely idle
+    run("UPDATE newsite_pictures SET status = 'done'");
+    expect(isMainPipelineBusy()).toBe(false);
+
+    // Now kickRepurpose runs and generates the 1 post allowed by dailyTarget
+    await kickRepurpose(deps);
+    expect(listRepurposePosts(siteId)).toHaveLength(1);
+    expect(repurposeCountToday(siteId)).toBe(1);
   });
 
   it('provides web routes for repurposing management', async () => {

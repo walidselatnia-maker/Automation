@@ -129,15 +129,25 @@ export const listRepurposePosts = (
 export const getRepurposePost = (id: number): RepurposePostRow | undefined =>
   get<RepurposePostRow>('SELECT * FROM newsite_repurpose_posts WHERE id = ?', id);
 
-/** How many repurposed posts were sent today for this website. */
-export function repurposeSentToday(websiteId: number): number {
+/**
+ * How many repurposed posts were created or sent today for this website.
+ * Counts all posts generated or sent today so that the daily limit
+ * is strictly enforced regardless of publishing status (waiting, sent, or failed).
+ */
+export function repurposeCountToday(websiteId: number): number {
   const row = get<{ count: number }>(
     `SELECT COUNT(*) AS count FROM newsite_repurpose_posts
-     WHERE website_id = ? AND status = 'sent' AND sent_at >= unixepoch('start of day')`,
+     WHERE website_id = ? AND (
+       created_at >= unixepoch('now', 'start of day')
+       OR (sent_at > 0 AND sent_at >= unixepoch('now', 'start of day'))
+     )`,
     websiteId,
   );
   return Number(row?.count ?? 0);
 }
+
+/** Backward-compatible alias for repurposeCountToday. */
+export const repurposeSentToday = repurposeCountToday;
 
 export function updateRepurposeSettings(
   websiteId: number,
@@ -669,41 +679,122 @@ export async function bulkEditArticles(
   return { ok: false, affected: 0, error: 'Unknown action.' };
 }
 
-/* -- Background Repurposing Worker ---------------------------------------- */
+/* -- Conflict Avoidance & Background Worker ------------------------------- */
+
+/**
+ * Checks whether the main article generation pipeline or Flow image generation is active.
+ * Repurposing steps aside whenever the main pipeline is writing an article or generating Flow images
+ * so that they never collide on Gemini Chrome sessions or Flow rate limits.
+ */
+export function isMainPipelineBusy(): boolean {
+  // 1. Check if any old pipeline runs are actively running
+  try {
+    const activeRun = get<{ id: number }>("SELECT id FROM runs WHERE status = 'running' LIMIT 1");
+    if (activeRun) return true;
+  } catch {
+    // runs table may not exist
+  }
+
+  // 2. Check if any new dashboard keyword is actively writing or publishing right now
+  try {
+    const activeKeyword = get<{ id: number }>(
+      `SELECT id FROM keyword_seo
+       WHERE auto_active = 1
+          OR (generate_now = 1 AND COALESCE(post_status, '') != 'published')
+          OR status = 'writing'
+          OR recipe_status = 'writing'
+          OR skeleton_status = 'writing'
+          OR article_status = 'writing'
+          OR images_status = 'writing'
+          OR post_status = 'publishing'
+       LIMIT 1`,
+    );
+    if (activeKeyword) return true;
+  } catch {
+    // keyword_seo table may not exist
+  }
+
+  // 3. Check if Flow pictures are actively making right now
+  try {
+    const activePictures = get<{ id: number }>(
+      `SELECT id FROM newsite_pictures WHERE status = 'making' LIMIT 1`,
+    );
+    if (activePictures) return true;
+  } catch {
+    // newsite_pictures table may not exist
+  }
+
+  // 4. Check if Flow video reels are actively making right now
+  try {
+    const activeReels = get<{ id: number }>(
+      `SELECT id FROM newsite_reels WHERE status = 'making' LIMIT 1`,
+    );
+    if (activeReels) return true;
+  } catch {
+    // newsite_reels table may not exist
+  }
+
+  return false;
+}
+
+let kickInProgress = false;
 
 export async function kickRepurpose(deps: RepurposeDeps): Promise<void> {
-  const activeSites = all<NewWebsiteRow>("SELECT * FROM new_websites WHERE repurpose_status = 'active'");
-  const now = Math.floor(Date.now() / 1000);
+  if (kickInProgress) return;
+  kickInProgress = true;
 
-  for (const site of activeSites) {
-    const dailyTarget = site.repurpose_daily_target ?? 1;
-    if (dailyTarget <= 0) continue;
+  try {
+    // Step aside if the main article generator or Flow image maker is busy
+    if (isMainPipelineBusy()) {
+      return;
+    }
 
-    const sentToday = repurposeSentToday(site.id);
-    if (sentToday >= dailyTarget) continue;
+    const activeSites = all<NewWebsiteRow>("SELECT * FROM new_websites WHERE repurpose_status = 'active'");
+    const now = Math.floor(Date.now() / 1000);
 
-    const cooldownSeconds = (site.repurpose_cooldown_days ?? 30) * 86400;
-    const cutoff = now - cooldownSeconds;
+    for (const site of activeSites) {
+      const dailyTarget = site.repurpose_daily_target ?? 1;
+      if (dailyTarget <= 0) continue;
 
-    // Pick the oldest never-repurposed or least-recently-repurposed article
-    const candidate = get<RepurposeArticleRow>(
-      `SELECT * FROM newsite_repurpose_articles
-       WHERE website_id = ? AND status = 'active' AND (last_repurposed_at = 0 OR last_repurposed_at < ?)
-       ORDER BY last_repurposed_at ASC,
-                CASE WHEN published_at > 0 THEN published_at ELSE site_post_id END ASC,
-                site_post_id ASC
-       LIMIT 1`,
-      site.id,
-      cutoff,
-    );
+      // Count all posts created or sent today against the daily limit
+      const countToday = repurposeCountToday(site.id);
+      if (countToday >= dailyTarget) continue;
 
-    if (!candidate) continue;
+      const cooldownSeconds = (site.repurpose_cooldown_days ?? 30) * 86400;
+      const cutoff = now - cooldownSeconds;
 
-    const channels = websiteChannels(site.id);
-    if (!channels.length) continue;
+      // Pick the oldest never-repurposed or least-recently-repurposed article
+      const candidate = get<RepurposeArticleRow>(
+        `SELECT * FROM newsite_repurpose_articles
+         WHERE website_id = ? AND status = 'active' AND (last_repurposed_at = 0 OR last_repurposed_at < ?)
+         ORDER BY last_repurposed_at ASC,
+                  CASE WHEN published_at > 0 THEN published_at ELSE site_post_id END ASC,
+                  site_post_id ASC
+         LIMIT 1`,
+        site.id,
+        cutoff,
+      );
 
-    // Pick channel that has the fewest posts for this article or next in line
-    const channel = channels[0]!;
-    await generateRepurposePost(candidate.id, channel.id, deps);
+      if (!candidate) continue;
+
+      const channels = websiteChannels(site.id);
+      if (!channels.length) continue;
+
+      // Rotate evenly across channels: pick the channel with fewest posts for this website
+      const channelCounts = all<{ channel_id: number; count: number }>(
+        `SELECT channel_id, COUNT(*) AS count FROM newsite_repurpose_posts WHERE website_id = ? GROUP BY channel_id`,
+        site.id,
+      );
+      const countMap = new Map(channelCounts.map((c) => [c.channel_id, c.count]));
+      const sortedChannels = [...channels].sort((a, b) => (countMap.get(a.id) ?? 0) - (countMap.get(b.id) ?? 0));
+      const channel = sortedChannels[0]!;
+
+      // Double-check pipeline busy status before firing Gemini prompt
+      if (isMainPipelineBusy()) return;
+
+      await generateRepurposePost(candidate.id, channel.id, deps);
+    }
+  } finally {
+    kickInProgress = false;
   }
 }
