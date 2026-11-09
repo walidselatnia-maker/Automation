@@ -1211,6 +1211,58 @@ export const MIGRATIONS: Migration[] = [
       addColumn(db, 'new_websites', 'social_auto_publish', 'INTEGER NOT NULL DEFAULT 1');
     },
   },
+  {
+    id: '064-newsite-repurpose',
+    description: 'New websites: old content repurposing from connected website and automated fresh social reposting',
+    up(db) {
+      addColumn(db, 'new_websites', 'repurpose_status', "TEXT NOT NULL DEFAULT 'paused'");
+      addColumn(db, 'new_websites', 'repurpose_daily_target', 'INTEGER NOT NULL DEFAULT 1');
+      addColumn(db, 'new_websites', 'repurpose_cooldown_days', 'INTEGER NOT NULL DEFAULT 30');
+      addColumn(db, 'new_websites', 'repurpose_auto_publish', 'INTEGER NOT NULL DEFAULT 1');
+
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS newsite_repurpose_articles (
+          id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+          website_id         INTEGER NOT NULL REFERENCES new_websites(id) ON DELETE CASCADE,
+          site_post_id       INTEGER NOT NULL,
+          title              TEXT NOT NULL,
+          slug               TEXT NOT NULL,
+          url                TEXT NOT NULL,
+          cover_url          TEXT NOT NULL DEFAULT '',
+          excerpt            TEXT NOT NULL DEFAULT '',
+          content_text       TEXT NOT NULL DEFAULT '',
+          category           TEXT NOT NULL DEFAULT '',
+          published_at       INTEGER NOT NULL DEFAULT 0,
+          last_repurposed_at INTEGER NOT NULL DEFAULT 0,
+          status             TEXT NOT NULL DEFAULT 'active',
+          created_at         INTEGER NOT NULL DEFAULT (unixepoch()),
+          UNIQUE(website_id, site_post_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_repurpose_articles_site ON newsite_repurpose_articles(website_id);
+
+        CREATE TABLE IF NOT EXISTS newsite_repurpose_posts (
+          id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+          website_id         INTEGER NOT NULL REFERENCES new_websites(id) ON DELETE CASCADE,
+          article_id         INTEGER NOT NULL REFERENCES newsite_repurpose_articles(id) ON DELETE CASCADE,
+          channel_id         INTEGER NOT NULL REFERENCES newsite_channels(id) ON DELETE CASCADE,
+          platform           TEXT NOT NULL,
+          status             TEXT NOT NULL DEFAULT 'pending',
+          fields_json        TEXT NOT NULL DEFAULT '{}',
+          title              TEXT NOT NULL DEFAULT '',
+          text               TEXT NOT NULL DEFAULT '',
+          alt                TEXT NOT NULL DEFAULT '',
+          post_link          TEXT NOT NULL DEFAULT '',
+          external_id        TEXT NOT NULL DEFAULT '',
+          error              TEXT NOT NULL DEFAULT '',
+          scheduled_for      INTEGER NOT NULL DEFAULT 0,
+          sent_at            INTEGER NOT NULL DEFAULT 0,
+          created_at         INTEGER NOT NULL DEFAULT (unixepoch())
+        );
+        CREATE INDEX IF NOT EXISTS idx_repurpose_posts_site ON newsite_repurpose_posts(website_id);
+        CREATE INDEX IF NOT EXISTS idx_repurpose_posts_article ON newsite_repurpose_posts(article_id);
+      `);
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */

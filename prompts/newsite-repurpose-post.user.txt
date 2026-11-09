@@ -1,0 +1,19 @@
+Target platform: {{label}}
+Platform rules:
+{{platformRules}}
+
+Required fields: {{fields}}
+Expected JSON shape: {{shape}}
+
+Source article from {{domain}}:
+Title: {{articleTitle}}
+Topic/Niche: {{niche}}
+Author voice: {{persona}}
+Summary/Excerpt: {{excerpt}}
+
+Article Content:
+{{articleContent}}
+
+Write a fresh, engaging social media post for {{label}} that introduces this article from an interesting angle. Do NOT copy the article title verbatim for the post title or headline.
+
+Answer with the JSON only.

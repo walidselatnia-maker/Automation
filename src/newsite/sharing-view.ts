@@ -270,6 +270,7 @@ export function sharingSitePage(s: SharingSite, plan: { id: number; pillar: stri
           <button class="ns-btn ${s.site.social_status === 'paused' ? 'primary' : 'quiet'}">${s.site.social_status === 'paused' ? 'Resume social' : 'Pause social'}</button>
         </form>
         <a class="ns-btn quiet" href="/new-website/channels?website=${String(s.site.id)}">Manage channels</a>
+        <a class="ns-btn quiet" href="/new-website/repurpose?website=${String(s.site.id)}">Repurpose</a>
         <a class="ns-btn primary" href="/new-website/sharing/new?website=${String(s.site.id)}">Share articles</a>
       </div>
     </div>

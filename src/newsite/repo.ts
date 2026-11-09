@@ -28,6 +28,10 @@ export interface NewWebsiteRow {
   social_status: 'active' | 'paused';
   social_daily_target: number;
   social_auto_publish: number;
+  repurpose_status: 'active' | 'paused';
+  repurpose_daily_target: number;
+  repurpose_cooldown_days: number;
+  repurpose_auto_publish: number;
   pin_username: string;
   project_id: string;
   api_key_encrypted: string;

@@ -441,6 +441,7 @@ export function channelsPage(
               </div>
               <div class="ch-site-section-actions">
                 <a class="ns-btn small primary" href="/new-website/channels/add?website=${String(s.id)}">+ Add channel</a>
+                <a class="ns-btn small quiet" href="/new-website/repurpose?website=${String(s.id)}">Repurpose</a>
                 <a class="ns-btn small quiet" href="/new-website/${String(s.id)}/edit?section=4">Channel settings</a>
                 <a class="ns-btn small quiet" href="/new-website/sharing/site/${String(s.id)}">Social posts</a>
               </div>

@@ -22,6 +22,7 @@ import { getSeoRow } from './seo.js';
 import { AUTOMATION_KEY, AUTOMATION_ON_AT, automationOn, automationOnAt, autopilotTick, START_DELAY_MS } from './autopilot.js';
 import { createSocialPosts, kickSocial, onPinPicture, type SocialDeps } from './social.js';
 import { registerSocialRoutes } from './social-routes.js';
+import { registerRepurposeRoutes } from './repurpose-routes.js';
 import { registerPromptRoutes } from './prompts-page.js';
 import { registerPinDesignRoutes } from './pin-designs.js';
 import { NEXT_STEP_KEY } from './pictures.js';
@@ -193,6 +194,7 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
       setInterval(clusters, 6 * 60 * 60_000).unref();
     }
     registerSocialRoutes(app, { ...social, readFlash, autoStart: deps.autoPictures });
+    registerRepurposeRoutes(app, { settings: deps.settings, encryptionKey: deps.encryptionKey, ask, fetchImpl: deps.fetchImpl, readFlash, autoStart: deps.autoPictures });
     registerPhotoJobRoutes(app, { settings: deps.settings, encryptionKey: deps.encryptionKey, readFlash, fetchImpl: deps.fetchImpl, dataDir: deps.dataDir, autoStart: deps.autoPictures, make: deps.makePicture });
   }
 

@@ -166,6 +166,11 @@ export const NAV: NavGroup[] = [
         label: 'Social posts',
         icon: ICON('<path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7"/><path d="M12 3v12M7 8l5-5 5 5"/>'),
       },
+      {
+        href: '/new-website/repurpose',
+        label: 'Repurpose content',
+        icon: ICON('<path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>'),
+      },
     ],
   },
 ];
