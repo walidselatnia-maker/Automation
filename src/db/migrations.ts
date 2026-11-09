@@ -1286,6 +1286,13 @@ export const MIGRATIONS: Migration[] = [
       addColumn(db, 'newsite_repurpose_posts', 'media_status', "TEXT NOT NULL DEFAULT 'pending'");
     },
   },
+  {
+    id: '068-newsite-channel-boards',
+    description: 'New websites: cache discovered Pinterest boards on channels to save Buffer API requests',
+    up(db) {
+      addColumn(db, 'newsite_channels', 'boards_json', "TEXT NOT NULL DEFAULT '[]'");
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */

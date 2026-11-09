@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Fastify from 'fastify';
 import formbody from '@fastify/formbody';
 import { openDatabase, closeDatabase } from '../src/db/index.js';
-import { createNewWebsite } from '../src/newsite/repo.js';
+import { createNewWebsite, getNewWebsite } from '../src/newsite/repo.js';
 import { saveBufferChannel, setChannelWebsites } from '../src/newsite/channels.js';
 import {
   generateRepurposePost,
@@ -806,5 +806,180 @@ describe('New dashboard: content repurposing', () => {
     const posts2 = listRepurposePosts(siteId);
     expect(posts2).toHaveLength(2);
     expect(posts2[0]!.post_kind).toBe('reel');
+  });
+
+  it('Pinterest boards: uses cached DB boards without Buffer API calls, immediately selects if single board, and falls back to Buffer API when AI does not match', async () => {
+    const siteId = createSite('Baking Site', 'baking.example.com');
+    const site = getNewWebsite(siteId)!;
+    const { getOrSelectPinterestBoard } = await import('../src/newsite/repurpose.js');
+    const { getChannel, channelBoards } = await import('../src/newsite/channels.js');
+    const { run } = await import('../src/db/index.js');
+
+    run(
+      `INSERT INTO newsite_repurpose_articles
+         (website_id, site_post_id, title, slug, url, cover_url, excerpt, content_text, category, published_at, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch())`,
+      siteId,
+      101,
+      'Crispy Chocolate Chip Cookies',
+      'crispy-cookies',
+      'https://baking.example.com/crispy-cookies',
+      'https://baking.example.com/cover.jpg',
+      'The best chocolate chip cookies',
+      'Full chocolate chip cookies recipe text',
+      'Desserts',
+      1700000000,
+    );
+    const [article] = listRepurposeArticles(siteId);
+
+    // Case 1: Channel has 1 board cached in DB
+    const chId1 = saveBufferChannel(
+      {
+        platform: 'pinterest',
+        name: 'Single Board Pinterest',
+        bufferToken: 'tok1',
+        bufferChannelId: 'buf_ch_1',
+        postImage: true,
+        postReel: false,
+        multiWebsite: false,
+        boards: [{ serviceId: 'b_only', name: 'All Recipes' }],
+      },
+      KEY,
+    );
+    const ch1 = getChannel(chId1)!;
+    expect(channelBoards(ch1)).toHaveLength(1);
+
+    let bufferChannelsCalls = 0;
+    let aiCalls = 0;
+    const deps1: any = {
+      encryptionKey: KEY,
+      buffer: () => ({
+        channels: async () => {
+          bufferChannelsCalls++;
+          return [];
+        },
+      }),
+      ask: async () => {
+        aiCalls++;
+        return JSON.stringify({ board: 'All Recipes' });
+      },
+    };
+
+    // Selecting board for single-board channel: NO Buffer API call, NO AI call!
+    const board1 = await getOrSelectPinterestBoard(ch1, site, article, deps1);
+    expect(board1.serviceId).toBe('b_only');
+    expect(board1.name).toBe('All Recipes');
+    expect(bufferChannelsCalls).toBe(0);
+    expect(aiCalls).toBe(0);
+
+    // Case 2: Channel has multiple boards cached in DB, and AI matches one
+    const chId2 = saveBufferChannel(
+      {
+        platform: 'pinterest',
+        name: 'Multi Board Pinterest',
+        bufferToken: 'tok2',
+        bufferChannelId: 'buf_ch_2',
+        postImage: true,
+        postReel: false,
+        multiWebsite: false,
+        boards: [
+          { serviceId: 'b_dinners', name: 'Quick Dinners' },
+          { serviceId: 'b_desserts', name: 'Sweet Desserts' },
+        ],
+      },
+      KEY,
+    );
+    const ch2 = getChannel(chId2)!;
+    bufferChannelsCalls = 0;
+    aiCalls = 0;
+    const deps2: any = {
+      encryptionKey: KEY,
+      buffer: () => ({
+        channels: async () => {
+          bufferChannelsCalls++;
+          return [];
+        },
+      }),
+      ask: async () => {
+        aiCalls++;
+        return JSON.stringify({ board: 'Sweet Desserts' });
+      },
+    };
+
+    const board2 = await getOrSelectPinterestBoard(ch2, site, article, deps2);
+    expect(board2.serviceId).toBe('b_desserts');
+    expect(board2.name).toBe('Sweet Desserts');
+    expect(bufferChannelsCalls).toBe(0); // NO Buffer API calls!
+    expect(aiCalls).toBe(1);
+
+    // Case 3: Fallback when AI does NOT match any cached boards
+    // The channel only has 'Quick Dinners' and 'Healthy Salads' cached.
+    // AI fails to match either, so Buffer API is queried as fallback, discovers 'Sweet Treats', and updates DB!
+    const chId3 = saveBufferChannel(
+      {
+        platform: 'pinterest',
+        name: 'Outdated Board Pinterest',
+        bufferToken: 'tok3',
+        bufferChannelId: 'buf_ch_3',
+        postImage: true,
+        postReel: false,
+        multiWebsite: false,
+        boards: [
+          { serviceId: 'b_dinners', name: 'Quick Dinners' },
+          { serviceId: 'b_salads', name: 'Healthy Salads' },
+        ],
+      },
+      KEY,
+    );
+    const ch3 = getChannel(chId3)!;
+    bufferChannelsCalls = 0;
+    aiCalls = 0;
+
+    const deps3: any = {
+      encryptionKey: KEY,
+      buffer: () => ({
+        channels: async () => {
+          bufferChannelsCalls++;
+          return [
+            {
+              id: 'buf_ch_3',
+              name: 'Outdated Board Pinterest',
+              service: 'pinterest',
+              boards: [
+                { serviceId: 'b_dinners', name: 'Quick Dinners' },
+                { serviceId: 'b_salads', name: 'Healthy Salads' },
+                { serviceId: 'b_new_desserts', name: 'Sweet Treats' },
+              ],
+            },
+          ];
+        },
+      }),
+      ask: async (_promptName: string, vars: any) => {
+        aiCalls++;
+        const boardsJson = String(vars?.boardsJson ?? '');
+        if (boardsJson.includes('Sweet Treats')) {
+          return JSON.stringify({ board: 'Sweet Treats' });
+        }
+        // AI returns no matching board for initial outdated boards
+        return JSON.stringify({ board: 'NonExistentBoard' });
+      },
+    };
+
+    const board3 = await getOrSelectPinterestBoard(ch3, site, article, deps3);
+    expect(bufferChannelsCalls).toBe(1); // Buffer API queried as fallback!
+    expect(board3.serviceId).toBe('b_new_desserts');
+    expect(board3.name).toBe('Sweet Treats');
+
+    // Verify DB was updated with fresh boards
+    const updatedCh3 = getChannel(chId3)!;
+    expect(channelBoards(updatedCh3)).toHaveLength(3);
+    expect(channelBoards(updatedCh3).map((b) => b.serviceId)).toContain('b_new_desserts');
+
+    // Next time, it uses the cached boards in DB and doesn't call Buffer API!
+    bufferChannelsCalls = 0;
+    aiCalls = 0;
+    const board3Again = await getOrSelectPinterestBoard(updatedCh3, site, article, deps3);
+    expect(board3Again.serviceId).toBe('b_new_desserts');
+    expect(bufferChannelsCalls).toBe(0);
   });
 });

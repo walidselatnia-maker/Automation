@@ -58,6 +58,7 @@ export interface ChannelRow {
   next_template: number;
   /** The channel's own rules, edited on its page; empty means its platform's default rules. */
   rules_text: string;
+  boards_json?: string;
   created_at: string;
   /** As one of a website's channels: the categories it shares (lower case); empty = all categories. */
   categories?: string[];
@@ -111,6 +112,12 @@ export const apiName = (platform: string): string =>
 
 export const viaLabel = (via: string): string => (via === 'buffer' ? 'Buffer' : 'API');
 
+export interface ChannelBoard {
+  id?: string;
+  serviceId: string;
+  name: string;
+}
+
 export interface BufferChannelInput {
   platform: Platform;
   name: string;
@@ -120,14 +127,16 @@ export interface BufferChannelInput {
   postImage: boolean;
   postReel: boolean;
   multiWebsite: boolean;
+  boards?: ChannelBoard[];
 }
 
 /** Add a channel that posts through a Buffer account, or update the one for the same Buffer channel. */
 export function saveBufferChannel(input: BufferChannelInput, key: Buffer): number {
-  const old = get<{ id: number }>(
-    `SELECT id FROM newsite_channels WHERE platform = ? AND via = 'buffer' AND buffer_channel_id = ?`,
+  const old = get<{ id: number; boards_json?: string }>(
+    `SELECT id, boards_json FROM newsite_channels WHERE platform = ? AND via = 'buffer' AND buffer_channel_id = ?`,
     input.platform, input.bufferChannelId,
   );
+  const boardsJson = input.boards !== undefined ? JSON.stringify(input.boards) : (old?.boards_json ?? '[]');
   const values = [
     input.name,
     encrypt(input.bufferToken, key),
@@ -135,21 +144,36 @@ export function saveBufferChannel(input: BufferChannelInput, key: Buffer): numbe
     input.postImage ? 1 : 0,
     input.postReel ? 1 : 0,
     input.multiWebsite ? 1 : 0,
+    boardsJson,
   ];
   if (old) {
     run(
-      `UPDATE newsite_channels SET name = ?, buffer_token_enc = ?, paid_buffer = ?, post_image = ?, post_reel = ?, multi_website = ? WHERE id = ?`,
+      `UPDATE newsite_channels SET name = ?, buffer_token_enc = ?, paid_buffer = ?, post_image = ?, post_reel = ?, multi_website = ?, boards_json = ? WHERE id = ?`,
       ...values, old.id,
     );
     return old.id;
   }
   return Number(
     run(
-      `INSERT INTO newsite_channels (name, buffer_token_enc, paid_buffer, post_image, post_reel, multi_website, platform, via, buffer_channel_id, rules_text)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'buffer', ?, ?)`,
+      `INSERT INTO newsite_channels (name, buffer_token_enc, paid_buffer, post_image, post_reel, multi_website, boards_json, platform, via, buffer_channel_id, rules_text)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'buffer', ?, ?)`,
       ...values, input.platform, input.bufferChannelId, defaultRulesText(input.platform, platformName(input.platform)),
     ).lastInsertRowid,
   );
+}
+
+export function channelBoards(channel: ChannelRow): ChannelBoard[] {
+  if (!channel.boards_json) return [];
+  try {
+    const parsed = JSON.parse(channel.boards_json);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveChannelBoards(channelId: number, boards: ChannelBoard[]): void {
+  run('UPDATE newsite_channels SET boards_json = ? WHERE id = ?', JSON.stringify(boards), channelId);
 }
 
 export interface FacebookApiChannelInput {

@@ -11,7 +11,7 @@ import { channelRules, type PlatformRules } from './platform-rules.js';
 import { bufferMetadata, checkFields, isQueueFull, realInstagram, realThreads, type BufferApi as SocialBufferApi, type InstagramApi, type ThreadsApi } from './social.js';
 import { correctUntilRight } from './rounds.js';
 import { BufferClient, type BufferChannel } from '../integrations/buffer.js';
-import { bufferTokenOf, fbTokenOf, getChannel, websiteChannels } from './channels.js';
+import { bufferTokenOf, fbTokenOf, getChannel, websiteChannels, channelBoards, saveChannelBoards, type ChannelBoard } from './channels.js';
 import { FacebookClient } from '../integrations/facebook.js';
 import { ThreadsClient } from '../integrations/threads.js';
 import { commentsThroughApi } from './first-comment.js';
@@ -634,11 +634,21 @@ export async function generateRepurposePost(
   const postTitle = f.title ?? '';
   const initialImgUrl = article.cover_url;
 
+  let selectedBoardName = '';
+  if (channel.platform === 'pinterest') {
+    try {
+      const b = await getOrSelectPinterestBoard(channel, site, article, deps);
+      selectedBoardName = b.name;
+    } catch {
+      // Board selection can also be performed/retried at publish time
+    }
+  }
+
   const id = Number(
     run(
       `INSERT INTO newsite_repurpose_posts
-         (website_id, article_id, channel_id, platform, post_kind, status, fields_json, title, text, alt, image_url, media_file, media_status, created_at)
-       VALUES (?, ?, ?, ?, ?, 'waiting', ?, ?, ?, ?, ?, '', 'pending', unixepoch())`,
+         (website_id, article_id, channel_id, platform, post_kind, status, fields_json, title, text, alt, board_name, image_url, media_file, media_status, created_at)
+       VALUES (?, ?, ?, ?, ?, 'waiting', ?, ?, ?, ?, ?, ?, '', 'pending', unixepoch())`,
       site.id,
       article.id,
       channel.id,
@@ -648,6 +658,7 @@ export async function generateRepurposePost(
       postTitle,
       postText,
       alt,
+      selectedBoardName,
       initialImgUrl,
     ).lastInsertRowid,
   );
@@ -676,7 +687,7 @@ export async function generateRepurposePost(
 
 /* -- Post Sending & Publishing -------------------------------------------- */
 
-export async function pickRepurposeBoard(
+export async function matchBoardWithAi(
   article: RepurposeArticleRow,
   site: NewWebsiteRow,
   boards: { serviceId: string; name: string; id?: string }[],
@@ -699,8 +710,22 @@ export async function pickRepurposeBoard(
       if (match) return match;
     }
   } catch {
-    // fallback to category/general
+    // AI failed or returned unparseable
   }
+  return undefined;
+}
+
+export async function pickRepurposeBoard(
+  article: RepurposeArticleRow,
+  site: NewWebsiteRow,
+  boards: { serviceId: string; name: string; id?: string }[],
+  deps: Pick<RepurposeDeps, 'ask'>,
+): Promise<{ serviceId: string; name: string; id?: string } | undefined> {
+  if (!boards.length) return undefined;
+  if (boards.length === 1) return boards[0];
+
+  const aiMatch = await matchBoardWithAi(article, site, boards, deps);
+  if (aiMatch) return aiMatch;
 
   // Fallback 1: match category name
   if (article.category) {
@@ -718,6 +743,74 @@ export async function pickRepurposeBoard(
 
   // Fallback 3: first board
   return boards[0];
+}
+
+export async function getOrSelectPinterestBoard(
+  channel: ChannelRow,
+  site: NewWebsiteRow,
+  article: RepurposeArticleRow,
+  deps: RepurposeDeps,
+): Promise<{ serviceId: string; name: string; id?: string }> {
+  const boards = channelBoards(channel);
+
+  // 1. If account has only 1 board stored in DB, select it immediately without calling Buffer API or AI
+  if (boards.length === 1 && boards[0]) {
+    return boards[0];
+  }
+
+  // 2. If existing cached boards > 1, try matching with AI
+  if (boards.length > 1) {
+    const aiMatch = await matchBoardWithAi(article, site, boards, deps);
+    if (aiMatch) return aiMatch;
+  }
+
+  // 3. Fallback: boards were empty, OR the AI did not match any of the existing boards.
+  // Query Buffer API for active boards on this channel and update the database.
+  let freshBoards: { serviceId: string; name: string; id?: string }[] = boards;
+  try {
+    const api = (deps.buffer ?? realBuffer)(bufferTokenOf(channel, deps.encryptionKey));
+    const channels = await api.channels();
+    const found = channels.find((c) => c.id === channel.buffer_channel_id);
+    if (found?.boards?.length) {
+      freshBoards = found.boards;
+      saveChannelBoards(channel.id, freshBoards);
+      channel.boards_json = JSON.stringify(freshBoards);
+    }
+  } catch (err) {
+    if (!freshBoards.length) throw err;
+  }
+
+  if (!freshBoards.length) {
+    throw new Error('This Pinterest channel has no boards. Create a board on Pinterest first.');
+  }
+
+  // If account has only 1 board discovered, select it immediately
+  if (freshBoards.length === 1 && freshBoards[0]) {
+    return freshBoards[0];
+  }
+
+  // If freshBoards were newly discovered, try AI matching on them
+  if (!boards.length || freshBoards.length !== boards.length) {
+    const freshAi = await matchBoardWithAi(article, site, freshBoards, deps);
+    if (freshAi) return freshAi;
+  }
+
+  // Fallback 1: match category name
+  if (article.category) {
+    const cat = article.category.toLowerCase().trim();
+    const catMatch = freshBoards.find((b) => {
+      const bn = b.name.toLowerCase();
+      return bn.includes(cat) || cat.includes(bn);
+    });
+    if (catMatch) return catMatch;
+  }
+
+  // Fallback 2: "general" board
+  const general = freshBoards.find((b) => /general/i.test(b.name));
+  if (general) return general;
+
+  // Fallback 3: first board
+  return freshBoards[0]!;
 }
 
 export async function sendRepurposePost(
@@ -755,12 +848,7 @@ export async function sendRepurposePost(
         const api = (deps.buffer ?? realBuffer)(bufferTokenOf(channel, deps.encryptionKey));
         let board: { serviceId: string; name: string; id?: string } | undefined;
         if (channel.platform === 'pinterest') {
-          const channels = await api.channels();
-          const found = channels.find((c) => c.id === channel.buffer_channel_id);
-          if (!found) throw new Error(`Buffer no longer lists this ${rules.label} channel.`);
-          if (found.boards?.length) {
-            board = await pickRepurposeBoard(article, site, found.boards, deps);
-          }
+          board = await getOrSelectPinterestBoard(channel, site, article, deps);
         }
 
         const firstComment = rules.link === 'first_comment' && channel.paid_buffer && !commentsThroughApi(channel) ? article.url : '';
@@ -887,16 +975,7 @@ export async function sendRepurposePost(
       const api = (deps.buffer ?? realBuffer)(bufferTokenOf(channel, deps.encryptionKey));
       let board: { serviceId: string; name: string; id?: string } | undefined;
       if (channel.platform === 'pinterest') {
-        const channels = await api.channels();
-        const found = channels.find((c) => c.id === channel.buffer_channel_id);
-        if (!found) throw new Error(`Buffer no longer lists this ${rules.label} channel. Check it on the Channels page.`);
-        if (!found.boards || !found.boards.length) {
-          throw new Error('This Pinterest channel has no boards. Create a board on Pinterest first.');
-        }
-        board = await pickRepurposeBoard(article, site, found.boards, deps);
-        if (!board) {
-          throw new Error('No Pinterest board fits this article, and the account has no board with “general” in its name.');
-        }
+        board = await getOrSelectPinterestBoard(channel, site, article, deps);
       }
 
       const firstComment = rules.link === 'first_comment' && channel.paid_buffer && !commentsThroughApi(channel) ? article.url : '';

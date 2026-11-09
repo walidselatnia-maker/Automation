@@ -4,7 +4,7 @@ import formbody from '@fastify/formbody';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { closeDatabase, openDatabase } from '../src/db/index.js';
 import { registerChannelRoutes, type ChannelLookups } from '../src/newsite/channels-routes.js';
-import { bufferTokenOf, channelsFor, fbTokenOf, getChannel, listChannels, saveBufferChannel, setWebsiteChannels, websiteChannels } from '../src/newsite/channels.js';
+import { bufferTokenOf, channelBoards, channelsFor, fbTokenOf, getChannel, listChannels, saveBufferChannel, setWebsiteChannels, websiteChannels } from '../src/newsite/channels.js';
 import { createNewWebsite } from '../src/newsite/repo.js';
 
 const KEY = randomBytes(32);
@@ -195,6 +195,7 @@ describe('New dashboard: channels', () => {
     expect(c).toMatchObject({ platform: 'pinterest', via: 'buffer', name: 'longlivo', buffer_channel_id: 'ch-pin', multi_website: 0, post_image: 1, post_reel: 1 });
     expect(c!.buffer_token_enc).not.toContain(BUFFER_TOKEN);
     expect(bufferTokenOf(c!, KEY)).toBe(BUFFER_TOKEN);
+    expect(channelBoards(c!)).toEqual([{ serviceId: 'b1', name: 'Cakes' }, { serviceId: 'b2', name: 'Cookies' }]);
     expect(websiteChannels(one).map((x) => x.id)).toEqual([c!.id]);
 
     const checked = await a.inject({ url: saved.headers.location as string });

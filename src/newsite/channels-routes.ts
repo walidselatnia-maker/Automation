@@ -105,7 +105,7 @@ interface Draft {
   token: string;
   /** What step 2 offered: Buffer channels or Facebook pages. */
   choices: PickChoice[];
-  picked: { id: string; name: string }[];
+  picked: { id: string; name: string; boards?: { id?: string; serviceId: string; name: string }[] }[];
   paidBuffer: boolean;
   postImage: boolean;
   postReel: boolean;
@@ -257,6 +257,7 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
           id: c.id,
           name: c.name,
           note: w.platform === 'pinterest' ? (c.boards.length === 1 ? '1 board' : `${c.boards.length} boards`) : `${platformLabel(w.platform)} in Buffer`,
+          boards: c.boards,
         }));
       } else if (w.platform === 'instagram') {
         choices = (await (lookups.instagramAccounts ?? realLookups.instagramAccounts!)(token)).map((a) => ({
@@ -394,6 +395,7 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
               postImage: takesImages(w.platform) && (!takesReels(w.platform) || d.postImage),
               postReel: takesReels(w.platform) && (videoOnly(w.platform) || d.postReel),
               multiWebsite: multi,
+              boards: p.boards,
             },
             deps.encryptionKey,
           )

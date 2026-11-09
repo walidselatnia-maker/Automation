@@ -216,6 +216,7 @@ export interface PickChoice {
   name: string;
   /** A line under the name: boards, page id, or "already a channel". */
   note: string;
+  boards?: { id?: string; serviceId: string; name: string }[];
 }
 
 /** Pick the channel (Pinterest, one) or the pages (Facebook, one or more). */
