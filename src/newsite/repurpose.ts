@@ -418,7 +418,11 @@ export async function makeRepurposeImage(
       shape = 'PORTRAIT_9_16';
     }
 
-    run(`UPDATE newsite_repurpose_posts SET media_status = 'making' WHERE id = ?`, post.id);
+    const curFields = postFields(post);
+    if (design?.name) {
+      curFields.pin_design = design.name;
+    }
+    run(`UPDATE newsite_repurpose_posts SET media_status = 'making', fields_json = ? WHERE id = ?`, JSON.stringify(curFields), post.id);
 
     const dataDir = deps.dataDir ?? resolveDataDir();
     const dir = repurposeDir(dataDir);

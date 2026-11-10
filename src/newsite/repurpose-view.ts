@@ -1,6 +1,6 @@
 import { html, raw, type Html } from '../web/views/layout.js';
 import type { NewWebsiteRow } from './repo.js';
-import type { RepurposeArticleRow, RepurposePostRow } from './repurpose.js';
+import { postFields, type RepurposeArticleRow, type RepurposePostRow } from './repurpose.js';
 import { channelColor, platformName as platformLabel, type ChannelRow } from './channels.js';
 
 const CSS = `
@@ -406,6 +406,8 @@ export function repurposePage(
                           const rawImg = p.image_url || p.article_cover_url;
                           const img = rawImg && rawImg.startsWith('/new-website/repurpose/') ? `${rawImg}?t=${Date.now()}` : rawImg;
                           const videoFileUrl = p.media_file ? `/new-website/repurpose/post/${String(p.id)}/file?t=${Date.now()}` : img;
+                          const fields = postFields(p);
+                          const pinDesign = fields.pin_design || '';
                           return html`<tr>
                           <td>
                             <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
@@ -413,6 +415,7 @@ export function repurposePage(
                               <span class="ns-badge ${isReel ? 'info' : 'idle'}" style="font-size:11px;padding:1px 6px">
                                 ${isReel ? '🎬 Reel' : '🖼️ Image'}
                               </span>
+                              ${pinDesign ? html`<span class="ns-badge ok" style="font-size:11px;padding:1px 6px" title="Design style: ${pinDesign}">${pinDesign}</span>` : raw('')}
                             </div>
                             <div style="font-size:12px;color:var(--soft);margin-top:2px">${platformLabel(p.platform)}</div>
                             ${p.board_name ? html`<div style="font-size:12px;color:var(--soft);margin-top:2px">Board: <b>${p.board_name}</b></div>` : raw('')}
