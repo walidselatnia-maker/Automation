@@ -743,7 +743,7 @@ export const rulesPart = (c: ChannelRow, text: string, errors: string[] = []): H
     'rules',
     html`<h2>Rules</h2>
       <p>What this channel writes and makes for each published article. Change the text and click Save: this channel’s next post uses it. Other channels keep their own rules.</p>
-      <p class="ch-editor-help">The lines between the two <code>---</code> say what to make: <b>fields</b> are what the AI writes, <b>post_text</b> is the field that becomes the post, <b>picture_shape</b> is PORTRAIT_3_4 or HORIZONTAL, <b>link</b> is pin_link, first_comment or none. Under <b>## Limits</b>, a line like <code>- title_chars: 40-100</code> is checked on every post.</p>
+      <p class="ch-editor-help">The lines between the two <code>---</code> say what to make: <b>fields</b> are what the AI writes, <b>post_text</b> is the field that becomes the post, <b>picture_shape</b> is PORTRAIT_9_16 (9:16), PORTRAIT_3_4 (3:4), or HORIZONTAL (16:9), <b>link</b> is pin_link, first_comment or none. Under <b>## Limits</b>, a line like <code>- title_chars: 40-100</code> is checked on every post.</p>
       <textarea id="ch-rules-text" name="rules" class="ch-editor" spellcheck="false" aria-label="Rules">${text}</textarea>
       <label class="wz-check" style="margin:12px 0 0"><input type="checkbox" name="reset" value="1" /> Replace them with the default rules for ${platformLabel(c.platform)}</label>`,
     { error: errors, wide: true },

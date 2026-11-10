@@ -5,7 +5,7 @@ post_label: Pin
 fields: headline, cta, title, description, alt
 post_text: description
 alt_field: alt
-picture_shape: PORTRAIT_3_4
+picture_shape: PORTRAIT_9_16
 picture_templates: newsite-pin-1.template.txt, newsite-pin-2.template.txt, newsite-pin-3.template.txt, newsite-pin-4.template.txt
 link: pin_link
 ---
@@ -35,7 +35,7 @@ Pinterest is a search engine: people find pins by the words in the title and des
 
 ## The pin picture
 
-- Made by Google Flow, in a 3:4 portrait frame (896 x 1200), the closest Flow gets to Pinterest's 2:3.
+- Made by Google Flow, in a 9:16 portrait frame (768 x 1376), full vertical pin size.
 - Its own picture, not one of the article's pictures. The scene comes from the article's own picture descriptions (the feature and close-up pictures).
 - Made from one of four Pinterest templates, used one after another per channel. Each template prints the headline, the call to action and the website's domain on the picture.
 

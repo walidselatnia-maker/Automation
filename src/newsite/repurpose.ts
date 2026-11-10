@@ -410,7 +410,13 @@ export async function makeRepurposeImage(
     const prompt = design
       ? renderDesign(design, context)
       : (rules.pictureTemplates[index] ? loadTemplate(rules.pictureTemplates[index]!, context) : `A high-end photograph of ${article.title}`);
-    const shape = (rules.pictureShape as PictureShape) || 'PORTRAIT_3_4';
+    let shape = (rules.pictureShape as PictureShape) || (channel.platform === 'pinterest' ? 'PORTRAIT_9_16' : 'PORTRAIT_3_4');
+    if (channel.platform === 'pinterest' && (shape === 'PORTRAIT_3_4' || !shape)) {
+      shape = 'PORTRAIT_9_16';
+    }
+    if (prompt.includes('9:16') || prompt.includes('9/16')) {
+      shape = 'PORTRAIT_9_16';
+    }
 
     run(`UPDATE newsite_repurpose_posts SET media_status = 'making' WHERE id = ?`, post.id);
 

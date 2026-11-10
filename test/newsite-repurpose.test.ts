@@ -639,8 +639,8 @@ describe('New dashboard: content repurposing', () => {
     expect(res.post?.media_file).toMatch(/^post-\d+\.png$/);
     expect(res.post?.image_url).toBe(`/new-website/repurpose/post/${res.post!.id}/file`);
 
-    // Verified Pinterest shape is PORTRAIT_3_4
-    expect(madeShape).toBe('PORTRAIT_3_4');
+    // Verified Pinterest shape is PORTRAIT_9_16
+    expect(madeShape).toBe('PORTRAIT_9_16');
     expect(madePrompt).toBeTruthy();
 
     // Verify file route serves the generated image

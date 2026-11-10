@@ -1317,6 +1317,17 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    id: '071-newsite-pinterest-aspect-ratio-9-16',
+    description: 'New websites: update Pinterest channels rules to 9:16 portrait aspect ratio',
+    up(db) {
+      db.exec(`
+        UPDATE newsite_channels
+        SET rules_text = REPLACE(REPLACE(rules_text, 'picture_shape: PORTRAIT_3_4', 'picture_shape: PORTRAIT_9_16'), 'in a 3:4 portrait frame', 'in a 9:16 portrait frame')
+        WHERE platform = 'pinterest' AND rules_text LIKE '%picture_shape: PORTRAIT_3_4%';
+      `);
+    },
+  },
 ];
 
 /* -- The runner ----------------------------------------------------------- */

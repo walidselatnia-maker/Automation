@@ -433,7 +433,7 @@ export function registerSocialRoutes(
                 <dt>Each post</dt><dd>${check.rules.postLabel}</dd>
                 <dt>Fields the AI writes</dt><dd>${check.rules.fields.join(', ')}</dd>
                 <dt>Post text</dt><dd>${check.rules.postText}</dd>
-                <dt>Picture</dt><dd>${check.rules.pictureShape === 'PORTRAIT_3_4' ? '3:4 portrait' : '16:9 wide'}, from ${check.rules.pictureTemplates.join(', ')}</dd>
+                <dt>Picture</dt><dd>${check.rules.pictureShape === 'PORTRAIT_9_16' ? '9:16 vertical' : check.rules.pictureShape === 'PORTRAIT_3_4' ? '3:4 portrait' : '16:9 wide'}, from ${check.rules.pictureTemplates.join(', ')}</dd>
                 <dt>The article link</dt><dd>${{ pin_link: 'The post’s own link', first_comment: 'The first comment', none: 'Not added' }[check.rules.link]}</dd>
                 <dt>Limits</dt><dd>${Object.entries(check.rules.limits).map(([k, [a, b]]) => `${k} ${a}–${b}`).join(' · ') || 'None'}</dd>
               </dl>

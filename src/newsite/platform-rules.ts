@@ -33,7 +33,7 @@ import { promptsDirectory, readShippedPrompt } from '../pipeline/prompts.js';
  */
 
 export type LinkMode = 'pin_link' | 'first_comment' | 'none';
-export type PictureShape = 'PORTRAIT_3_4' | 'HORIZONTAL';
+export type PictureShape = 'PORTRAIT_9_16' | 'PORTRAIT_3_4' | 'HORIZONTAL';
 
 export interface PlatformRules {
   platform: string;
@@ -60,7 +60,7 @@ export interface RulesCheck {
   errors: string[];
 }
 
-const SHAPES: PictureShape[] = ['PORTRAIT_3_4', 'HORIZONTAL'];
+const SHAPES: PictureShape[] = ['PORTRAIT_9_16', 'PORTRAIT_3_4', 'HORIZONTAL'];
 const LINKS: LinkMode[] = ['pin_link', 'first_comment', 'none'];
 const MEASURES = ['chars', 'words', 'emoji', 'hashtags', 'exclamations'];
 

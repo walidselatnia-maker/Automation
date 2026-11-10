@@ -223,12 +223,12 @@ describe('Sharing an article on its channels', () => {
     expect(item).toMatchObject({ kind: 'pinterest', status: 'picture', template: 1, title: GOOD_PIN.title, text: GOOD_PIN.description, alt: GOOD_PIN.alt });
     expect(postFields(item!)).toEqual(GOOD_PIN);
     const pic = get<{ slot: string; prompt: string; shape: string }>('SELECT slot, prompt, shape FROM newsite_pictures WHERE id = ?', item!.picture_id)!;
-    expect(pic).toMatchObject({ slot: `social-${item!.id}`, shape: 'PORTRAIT_3_4' });
+    expect(pic).toMatchObject({ slot: `social-${item!.id}`, shape: 'PORTRAIT_9_16' });
     expect(pic.prompt).toContain('"Fresh Strawberry Cake"');
     expect(pic.prompt).toContain('FEATURE SCENE');
     expect(pic.prompt).toContain('f.longlivo.com');
 
-    expect(await makeSocialPictures()).toEqual(['PORTRAIT_3_4']);
+    expect(await makeSocialPictures()).toEqual(['PORTRAIT_9_16']);
 
     expect(bufferPosts).toHaveLength(1);
     const sent = bufferPosts[0]!;
@@ -542,7 +542,7 @@ describe('Sharing an article on its channels', () => {
     const found = listPlatformRules();
     expect(found.map((r) => r.platform)).toEqual(expect.arrayContaining(['facebook', 'pinterest']));
     expect(found.every((r) => r.errors.length === 0)).toBe(true);
-    expect(loadPlatformRules('pinterest')).toMatchObject({ postText: 'description', pictureShape: 'PORTRAIT_3_4', link: 'pin_link' });
+    expect(loadPlatformRules('pinterest')).toMatchObject({ postText: 'description', pictureShape: 'PORTRAIT_9_16', link: 'pin_link' });
   });
 
   it('says exactly what is wrong with a broken rules file', () => {

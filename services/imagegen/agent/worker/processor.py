@@ -59,11 +59,16 @@ logger = logging.getLogger(__name__)
 ASPECT_RATIOS = {
     "VERTICAL": "IMAGE_ASPECT_RATIO_PORTRAIT",
     "HORIZONTAL": "IMAGE_ASPECT_RATIO_LANDSCAPE",
-    # Pinterest pins on the new websites: 3:4 (896 x 1200), the closest Flow
-    # gets to Pinterest's 2:3.
+    # Pinterest vertical pins: 9:16 (768 x 1376)
+    "PORTRAIT_9_16": "IMAGE_ASPECT_RATIO_PORTRAIT",
+    "9:16": "IMAGE_ASPECT_RATIO_PORTRAIT",
+    # 3:4 portrait frame (896 x 1200)
     "PORTRAIT_3_4": "IMAGE_ASPECT_RATIO_PORTRAIT_FOUR_THREE",
+    "3:4": "IMAGE_ASPECT_RATIO_PORTRAIT_FOUR_THREE",
     # Recipe step pictures on the new websites: 1:1 (1024 x 1024).
     "SQUARE": "IMAGE_ASPECT_RATIO_SQUARE",
+    "1:1": "IMAGE_ASPECT_RATIO_SQUARE",
+    "16:9": "IMAGE_ASPECT_RATIO_LANDSCAPE",
 }
 
 # The same shapes as Flow's composer labels them, for picking one by clicking.

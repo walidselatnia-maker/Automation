@@ -376,12 +376,19 @@ function queuePicture(w: Work, deps: SocialDeps): void {
   run('UPDATE newsite_channels SET next_template = next_template + 1 WHERE id = ?', w.channel.id);
   const design = designs[index];
   const prompt = design ? renderDesign(design, context) : loadTemplate(rules.pictureTemplates[index]!, context);
+  let shape = rules.pictureShape;
+  if (rules.platform === 'pinterest' && (shape === 'PORTRAIT_3_4' || !shape)) {
+    shape = 'PORTRAIT_9_16';
+  }
+  if (prompt.includes('9:16') || prompt.includes('9/16')) {
+    shape = 'PORTRAIT_9_16';
+  }
   const slot = `social-${w.item.id}`;
   run(`DELETE FROM newsite_pictures WHERE seo_id = ? AND slot IN (?, ?, ?)`, w.row.id, slot, `pin-${w.item.id}`, `fb-${w.item.id}`);
   const pictureId = Number(
     run(
       `INSERT INTO newsite_pictures (seo_id, slot, position, prompt, alt, status, shape) VALUES (?, ?, 1000, ?, ?, 'queued', ?)`,
-      w.row.id, slot, prompt, w.item.alt, rules.pictureShape,
+      w.row.id, slot, prompt, w.item.alt, shape,
     ).lastInsertRowid,
   );
   run(`UPDATE newsite_social_posts SET status = 'picture', picture_id = ?, template = ? WHERE id = ?`, pictureId, design ? design.id : index + 1, w.item.id);

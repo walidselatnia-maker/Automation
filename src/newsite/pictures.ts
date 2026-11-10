@@ -71,9 +71,17 @@ export const isPinSlot = (slot: string): boolean => /^(pin|fb|social)-/.test(slo
 /** One of the article's main pictures (not a step, not a pin). */
 export const isMainSlot = (slot: string): boolean => !isStepSlot(slot) && !isPinSlot(slot);
 
-/** The shape Flow is asked for: recipe steps square, every other picture 3:4 portrait. */
-export type PictureShape = 'HORIZONTAL' | 'PORTRAIT_3_4' | 'SQUARE';
-export const shapeOf = (slot: string): PictureShape => (isStepSlot(slot) ? 'SQUARE' : 'PORTRAIT_3_4');
+/** The shape Flow is asked for: recipe steps square, Pinterest pins 9:16 portrait, article pictures 3:4 portrait. */
+export type PictureShape =
+  | 'HORIZONTAL'
+  | 'PORTRAIT_3_4'
+  | 'PORTRAIT_9_16'
+  | 'SQUARE'
+  | 'VERTICAL'
+  | '9:16'
+  | '3:4';
+export const shapeOf = (slot: string): PictureShape =>
+  isStepSlot(slot) ? 'SQUARE' : isPinSlot(slot) ? 'PORTRAIT_9_16' : 'PORTRAIT_3_4';
 
 /** Minutes between two step pictures: a random wait in this range. */
 export const STEP_GAP_MINUTES = [15, 30] as const;
