@@ -625,19 +625,34 @@ export async function generateRepurposePost(
   const isReel = kind === 'reel';
   const platformRulesText = isReel ? `${r.text}\n\n${REEL_NOTE}` : r.text;
 
+  const articleOutline = article.content_text
+    ? article.content_text.split('\n').filter((l) => /^#{1,3}\s/.test(l)).map((l) => l.replace(/^#+\s*/, '- ')).join('\n') || '- (no headings)'
+    : '- (no headings)';
+  const articleStart = (article.content_text || article.excerpt || article.title).slice(0, 1500);
+
   const outcome = await correctUntilRight<Record<string, string>>({
     ask: async (corrections) =>
-      deps.ask('newsite-repurpose-post', {
+      deps.ask('newsite-social-post', {
+        language: site.language,
         label: isReel ? `${r.label} (Reel)` : r.label,
-        platformRules: corrections ? `${platformRulesText}\n\nCORRECTIONS REQUIRED:\n${corrections}` : platformRulesText,
+        platformRules: corrections
+          ? `${platformRulesText}\n\nIMPORTANT: Do NOT reuse the original article title verbatim. Write a fresh, original headline for this post.\n\nCORRECTIONS REQUIRED:\n${corrections}`
+          : `${platformRulesText}\n\nIMPORTANT: Do NOT reuse the original article title verbatim. Write a fresh, original headline for this post.`,
         fields: r.fields.join(', '),
         shape: JSON.stringify(Object.fromEntries(r.fields.map((f: string) => [f, '...']))),
         domain: site.domain,
+        title: article.title,
         articleTitle: article.title,
+        focusKeyword: article.category || site.niche,
+        keyword: article.title,
+        description: article.excerpt || article.title,
+        excerpt: article.excerpt || article.title,
         niche: site.niche,
         persona: site.persona,
-        excerpt: article.excerpt || article.title,
+        articleOutline,
+        articleStart,
         articleContent: (article.content_text || article.excerpt || article.title).slice(0, 4000),
+        problemsJson: corrections || '',
       }),
     parse: (raw) => {
       const o = parseJson(raw);
@@ -1143,19 +1158,34 @@ export async function regenerateRepurposePost(
   const isReel = post.post_kind === 'reel';
   const platformRulesText = isReel ? `${r.text}\n\n${REEL_NOTE}` : r.text;
 
+  const articleOutline = article.content_text
+    ? article.content_text.split('\n').filter((l) => /^#{1,3}\s/.test(l)).map((l) => l.replace(/^#+\s*/, '- ')).join('\n') || '- (no headings)'
+    : '- (no headings)';
+  const articleStart = (article.content_text || article.excerpt || article.title).slice(0, 1500);
+
   const outcome = await correctUntilRight<Record<string, string>>({
     ask: (corrections) =>
-      deps.ask('newsite-repurpose-post', {
+      deps.ask('newsite-social-post', {
+        language: site.language,
         label: isReel ? `${r.label} (Reel)` : r.label,
-        platformRules: corrections ? `${platformRulesText}\n\nCORRECTIONS REQUIRED:\n${corrections}` : platformRulesText,
+        platformRules: corrections
+          ? `${platformRulesText}\n\nIMPORTANT: Do NOT reuse the original article title verbatim. Write a fresh, original headline for this post.\n\nCORRECTIONS REQUIRED:\n${corrections}`
+          : `${platformRulesText}\n\nIMPORTANT: Do NOT reuse the original article title verbatim. Write a fresh, original headline for this post.`,
         fields: r.fields.join(', '),
         shape: JSON.stringify(Object.fromEntries(r.fields.map((f: string) => [f, '...']))),
         domain: site.domain,
+        title: article.title,
         articleTitle: article.title,
+        focusKeyword: article.category || site.niche,
+        keyword: article.title,
+        description: article.excerpt || article.title,
+        excerpt: article.excerpt || article.title,
         niche: site.niche,
         persona: site.persona,
-        excerpt: article.excerpt || article.title,
+        articleOutline,
+        articleStart,
         articleContent: (article.content_text || article.excerpt || article.title).slice(0, 4000),
+        problemsJson: corrections || '',
       }),
     parse: (raw) => {
       const o = parseJson(raw);
