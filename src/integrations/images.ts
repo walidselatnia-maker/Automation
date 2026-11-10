@@ -95,12 +95,19 @@ export class ImageClient {
     orientation = 'VERTICAL',
     options: { referenceUrls?: string[]; referenceMediaIds?: string[] } = {},
   ): Promise<string> {
+    const apiOrientation =
+      orientation === 'PORTRAIT_9_16' || orientation === '9:16'
+        ? 'VERTICAL'
+        : orientation === '3:4'
+          ? 'PORTRAIT_3_4'
+          : orientation;
+
     const response = await fetch(this.url('/v1/generate'), {
       method: 'POST',
       headers: this.headers(),
       body: JSON.stringify({
         prompt,
-        orientation,
+        orientation: apiOrientation,
         ...(options.referenceUrls?.length ? { reference_urls: options.referenceUrls } : {}),
         // Beside each url, its Flow media id when it is in the project already: picked, not uploaded.
         ...(options.referenceMediaIds?.some(Boolean) ? { reference_media_ids: options.referenceMediaIds } : {}),
@@ -162,7 +169,10 @@ export class ImageClient {
         reference_urls: input.referenceUrls,
         ...(input.characterMediaId ? { character_media_id: input.characterMediaId } : {}),
         ...(input.voiceMediaId ? { voice_media_id: input.voiceMediaId } : {}),
-        orientation: input.orientation ?? 'VERTICAL',
+        orientation:
+          input.orientation === 'PORTRAIT_9_16' || input.orientation === '9:16'
+            ? 'VERTICAL'
+            : input.orientation ?? 'VERTICAL',
         ...(input.projectId ? { project_id: input.projectId } : {}),
         ...(input.videoMode ? { video_mode: input.videoMode } : {}),
         ...(input.seconds ? { video_seconds: input.seconds } : {}),
