@@ -403,7 +403,9 @@ export function repurposePage(
                       <tbody>
                         ${posts.slice(0, 50).map((p) => {
                           const isReel = p.post_kind === 'reel';
-                          const img = p.image_url || p.article_cover_url;
+                          const rawImg = p.image_url || p.article_cover_url;
+                          const img = rawImg && rawImg.startsWith('/new-website/repurpose/') ? `${rawImg}?t=${Date.now()}` : rawImg;
+                          const videoFileUrl = p.media_file ? `/new-website/repurpose/post/${String(p.id)}/file?t=${Date.now()}` : img;
                           return html`<tr>
                           <td>
                             <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
@@ -422,8 +424,8 @@ export function repurposePage(
                                   <span style="font-size:10px;color:var(--soft)">Flow</span>
                                 </div>`
                               : isReel
-                                ? html`<div class="rp-thumb-box" style="position:relative;cursor:pointer" onclick="openVideoLightbox(event, '${p.media_file ? `/new-website/repurpose/post/${String(p.id)}/file` : img}')" title="Click to play video">
-                                    <video src="${p.media_file ? `/new-website/repurpose/post/${String(p.id)}/file` : img}" class="rp-thumb" preload="metadata"></video>
+                                ? html`<div class="rp-thumb-box" style="position:relative;cursor:pointer" onclick="openVideoLightbox(event, '${videoFileUrl}')" title="Click to play video">
+                                    <video src="${videoFileUrl}" class="rp-thumb" preload="metadata"></video>
                                     <span style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.35);border-radius:6px;color:#fff;font-size:16px">▶</span>
                                   </div>`
                                 : img

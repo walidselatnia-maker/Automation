@@ -223,7 +223,7 @@ export function registerRepurposeRoutes(
             : post.media_file.endsWith('.webp')
               ? 'image/webp'
               : 'image/jpeg';
-        return reply.type(type).header('Cache-Control', 'private, max-age=86400').send(createReadStream(p));
+        return reply.type(type).header('Cache-Control', 'no-cache, must-revalidate').send(createReadStream(p));
       }
     }
 
