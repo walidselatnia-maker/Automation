@@ -1092,4 +1092,43 @@ describe('New dashboard: content repurposing', () => {
     expect(readyFilterRes.body).not.toContain(`name="articleIds" value="${articles[0]!.id}"`);
     expect(readyFilterRes.body).toContain(`name="articleIds" value="${articles[1]!.id}"`);
   });
+
+  it('Pinterest board fallback routes dishes to broad food boards instead of unrelated boards like bread', async () => {
+    const { resolveBoardFallback } = await import('../src/newsite/repurpose.js');
+    const boards = [
+      { serviceId: 'b1', name: 'Homemade Bread Recipes & Baking Tips' },
+      { serviceId: 'b2', name: 'Breakfast and Brunch Recipes & Ideas' },
+      { serviceId: 'b3', name: 'Chocolate Desserts and Sweet Recipes' },
+      { serviceId: 'b4', name: 'Easy Homemade Dessert Recipes' },
+      { serviceId: 'b5', name: 'Food' },
+      { serviceId: 'b6', name: 'Homemade Ice Cream and Frozen Treats' },
+      { serviceId: 'b7', name: 'Pizza type recipes' },
+      { serviceId: 'b8', name: 'Easy Snacks and Homemade Treats' },
+      { serviceId: 'b9', name: 'Best Chicken Recipes' },
+    ];
+
+    const soupArticle: any = {
+      title: 'Cheeseburger Soup – Easy Comfort Food Recipe',
+      category: 'Soup',
+    };
+    expect(resolveBoardFallback(soupArticle, boards).name).toBe('Food');
+
+    const spaghettiSauceArticle: any = {
+      title: 'Best Ever Homemade Spaghetti Sauce',
+      category: 'Pasta',
+    };
+    expect(resolveBoardFallback(spaghettiSauceArticle, boards).name).toBe('Food');
+
+    const chickenArticle: any = {
+      title: 'Crispy Garlic Butter Chicken Thighs',
+      category: 'Dinner',
+    };
+    expect(resolveBoardFallback(chickenArticle, boards).name).toBe('Best Chicken Recipes');
+
+    const pizzaArticle: any = {
+      title: 'Authentic White Pizza with Garlic and Ricotta',
+      category: 'Dinner',
+    };
+    expect(resolveBoardFallback(pizzaArticle, boards).name).toBe('Pizza type recipes');
+  });
 });

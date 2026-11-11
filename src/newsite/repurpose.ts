@@ -741,6 +741,65 @@ export async function generateRepurposePost(
 
 /* -- Post Sending & Publishing -------------------------------------------- */
 
+const RECIPE_STOP_WORDS = new Set([
+  'recipe', 'recipes', 'homemade', 'best', 'easy', 'quick', 'ever', 'simple',
+  'make', 'cook', 'cooking', 'delicious', 'tasty', 'with', 'from', 'good',
+  'great', 'style', 'dish', 'dishes', 'bowl', 'perfect', 'ultimate', 'favorite',
+  'classic', 'ideas', 'tips', 'ready', 'minutes', 'hours', 'secret',
+]);
+
+export function resolveBoardFallback(
+  article: RepurposeArticleRow,
+  boards: { serviceId: string; name: string; id?: string }[],
+): { serviceId: string; name: string; id?: string } {
+  if (!boards.length) throw new Error('No boards available');
+  if (boards.length === 1) return boards[0]!;
+
+  const cat = (article.category || '').toLowerCase().trim();
+  const title = (article.title || '').toLowerCase().trim();
+
+  // 1. Direct category match in board name or vice versa (e.g. category "Snacks" -> "Easy Snacks")
+  if (cat) {
+    const catMatch = boards.find((b) => {
+      const bn = b.name.toLowerCase();
+      return bn.includes(cat) || cat.includes(bn);
+    });
+    if (catMatch) return catMatch;
+  }
+
+  // 2. Keyword matching from article title, excluding generic adjectives/stop words
+  const titleWords = title
+    .split(/[\s,–—\-:]+/)
+    .map((w) => w.replace(/[^a-z0-9]/gi, '').toLowerCase())
+    .filter((w) => w.length > 3 && !RECIPE_STOP_WORDS.has(w));
+
+  for (const word of titleWords) {
+    const wordMatch = boards.find((b) => {
+      const bn = b.name.toLowerCase();
+      return new RegExp(`\\b${word}\\b`, 'i').test(bn);
+    });
+    if (wordMatch) return wordMatch;
+  }
+
+  // 3. Fallback to broad / general food boards:
+  // e.g. "Food", "All Recipes", "General", "Recipes", "Dinner"
+  // Exclude boards that have specific dish or ingredient qualifiers (like bread, dessert, chicken, etc.)
+  const SPECIFIC_BOARD_QUALIFIERS = /\b(bread|dessert|sweet|bake|baking|snack|treat|chicken|pizza|ice cream|soup|salad|breakfast|brunch|cookie|cake|pastr|pie|drinks?|smoothie|cocktail|appetizer|dip)\b/i;
+
+  const broadBoard = boards.find((b) => {
+    const bn = b.name.toLowerCase().trim();
+    if (SPECIFIC_BOARD_QUALIFIERS.test(bn)) return false;
+    return (
+      /^(food|recipes?|all recipes|dinners?|dinner recipes|meals?|cooking|general|main dishes|main courses)$/i.test(bn) ||
+      /\b(food|recipes?|dinners?|meals)\b/i.test(bn)
+    );
+  });
+  if (broadBoard) return broadBoard;
+
+  // 4. Default to first board if no broad board exists
+  return boards[0]!;
+}
+
 export async function matchBoardWithAi(
   article: RepurposeArticleRow,
   site: NewWebsiteRow,
@@ -762,6 +821,11 @@ export async function matchBoardWithAi(
     if (chosenName) {
       const match = boards.find((b) => b.name.toLowerCase() === chosenName);
       if (match) return match;
+      const partialMatch = boards.find((b) => {
+        const bn = b.name.toLowerCase();
+        return bn.includes(chosenName) || chosenName.includes(bn);
+      });
+      if (partialMatch) return partialMatch;
     }
   } catch {
     // AI failed or returned unparseable
@@ -781,22 +845,7 @@ export async function pickRepurposeBoard(
   const aiMatch = await matchBoardWithAi(article, site, boards, deps);
   if (aiMatch) return aiMatch;
 
-  // Fallback 1: match category name
-  if (article.category) {
-    const cat = article.category.toLowerCase().trim();
-    const catMatch = boards.find((b) => {
-      const bn = b.name.toLowerCase();
-      return bn.includes(cat) || cat.includes(bn);
-    });
-    if (catMatch) return catMatch;
-  }
-
-  // Fallback 2: "general" board
-  const general = boards.find((b) => /general/i.test(b.name));
-  if (general) return general;
-
-  // Fallback 3: first board
-  return boards[0];
+  return resolveBoardFallback(article, boards);
 }
 
 export async function getOrSelectPinterestBoard(
@@ -849,22 +898,8 @@ export async function getOrSelectPinterestBoard(
     if (freshAi) return freshAi;
   }
 
-  // Fallback 1: match category name
-  if (article.category) {
-    const cat = article.category.toLowerCase().trim();
-    const catMatch = freshBoards.find((b) => {
-      const bn = b.name.toLowerCase();
-      return bn.includes(cat) || cat.includes(bn);
-    });
-    if (catMatch) return catMatch;
-  }
-
-  // Fallback 2: "general" board
-  const general = freshBoards.find((b) => /general/i.test(b.name));
-  if (general) return general;
-
-  // Fallback 3: first board
-  return freshBoards[0]!;
+  // Fallback to intelligent category/keyword/broad board heuristics
+  return resolveBoardFallback(article, freshBoards);
 }
 
 export async function sendRepurposePost(
