@@ -55,10 +55,11 @@ html:not(.dark) .rp-badge-paused { background: #fef2f2; color: #b91c1c; border-c
 .rp-lightbox-inner img { max-width: 90vw; max-height: 85vh; border-radius: 8px; box-shadow: 0 10px 40px rgba(0,0,0,0.6); object-fit: contain; }
 .rp-lightbox-close { position: absolute; top: -38px; right: 0; font-size: 32px; color: #fff; cursor: pointer; line-height: 1; user-select: none; }
 .rp-lightbox-close:hover { color: #f87171; }
-.rp-posts-table { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 14px; }
-.rp-posts-table th, .rp-posts-table td { padding: 12px 14px; text-align: left; border-bottom: 1px solid var(--line); }
-.rp-posts-table th { color: var(--soft); font-weight: 600; font-size: 13px; }
-.rp-post-text { font-family: var(--mono); font-size: 13px; color: var(--ink); max-height: 60px; overflow: hidden; text-overflow: ellipsis; white-space: pre-wrap; }
+.rp-posts-table { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 13px; }
+.rp-posts-table th, .rp-posts-table td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: middle; }
+.rp-posts-table th { color: var(--soft); font-weight: 600; font-size: 12px; }
+.rp-post-text { font-size: 12px; line-height: 1.4; color: var(--soft); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; text-overflow: ellipsis; }
+.rp-post-error { font-size: 11px; line-height: 1.3; color: #f87171; background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.25); border-radius: 4px; padding: 3px 8px; margin-top: 4px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; width: fit-content; max-width: 100%; }
 .rp-empty { border: 1px dashed var(--line); border-radius: var(--r-ctl); padding: 32px; text-align: center; color: var(--soft); font-size: 14px; }
 .rp-pagination { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px; margin: 24px 0 16px; }
 .rp-page-btn { display: inline-flex; align-items: center; justify-content: center; min-width: 36px; height: 36px; padding: 0 10px; border-radius: var(--r-ctl); font-size: 13px; font-weight: 500; text-decoration: none; background: var(--raised); color: var(--ink); border: 1px solid var(--line); transition: all .15s ease; }
@@ -392,12 +393,12 @@ export function repurposePage(
                   ? html`<table class="rp-posts-table">
                       <thead>
                         <tr>
-                          <th style="width:190px">Channel & Type</th>
-                          <th style="width:76px">Media</th>
-                          <th style="width:200px">Source article</th>
-                          <th>Fresh generated copy</th>
-                          <th style="width:90px">Status</th>
-                          <th style="width:190px">Actions</th>
+                          <th style="width:160px">Channel</th>
+                          <th style="width:68px">Media</th>
+                          <th style="width:180px">Article</th>
+                          <th>Generated Copy</th>
+                          <th style="width:85px">Status</th>
+                          <th style="width:170px">Actions</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -410,15 +411,17 @@ export function repurposePage(
                           const pinDesign = fields.pin_design || '';
                           return html`<tr>
                           <td>
-                            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-                              <b>${p.channel_name}</b>
-                              <span class="ns-badge ${isReel ? 'info' : 'idle'}" style="font-size:11px;padding:1px 6px">
+                            <div style="font-weight:600;font-size:13px;color:var(--ink)">
+                              ${p.channel_name}
+                              <span style="font-size:11px;font-weight:400;color:var(--soft);margin-left:2px">(${platformLabel(p.platform)})</span>
+                            </div>
+                            <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;margin-top:3px">
+                              <span class="ns-badge ${isReel ? 'info' : 'idle'}" style="font-size:10px;padding:1px 5px">
                                 ${isReel ? '🎬 Reel' : '🖼️ Image'}
                               </span>
-                              ${pinDesign ? html`<span class="ns-badge ok" style="font-size:11px;padding:1px 6px" title="Design style: ${pinDesign}">${pinDesign}</span>` : raw('')}
+                              ${pinDesign ? html`<span class="ns-badge ok" style="font-size:10px;padding:1px 5px" title="Design style: ${pinDesign}">${pinDesign}</span>` : raw('')}
                             </div>
-                            <div style="font-size:12px;color:var(--soft);margin-top:2px">${platformLabel(p.platform)}</div>
-                            ${p.board_name ? html`<div style="font-size:12px;color:var(--soft);margin-top:2px">Board: <b>${p.board_name}</b></div>` : raw('')}
+                            ${p.board_name ? html`<div style="font-size:11px;color:var(--soft);margin-top:3px;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${p.board_name}">📌 ${p.board_name}</div>` : raw('')}
                           </td>
                           <td>
                             ${p.media_status === 'making'
@@ -435,13 +438,17 @@ export function repurposePage(
                                   ? html`<div class="rp-thumb-box">
                                       <img src="${img}" alt="${p.title || p.article_title}" class="rp-thumb" onclick="openLightbox(event, '${img}')" title="Click to enlarge" loading="lazy" />
                                     </div>`
-                                  : html`<span style="font-size:12px;color:var(--soft)">No media</span>`}
+                                  : html`<span style="font-size:11px;color:var(--soft)">No media</span>`}
                           </td>
-                          <td><a href="${p.article_url}" target="_blank" rel="noopener" style="color:var(--accent-text);text-decoration:none">${p.article_title}</a></td>
                           <td>
-                            ${p.title ? html`<div style="font-weight:600;margin-bottom:4px">${p.title}</div>` : raw('')}
-                            <div class="rp-post-text">${p.text}</div>
-                            ${p.error ? html`<div style="color:var(--bad);font-size:12px;margin-top:4px">${p.error}</div>` : raw('')}
+                            <a href="${p.article_url}" target="_blank" rel="noopener" style="color:var(--accent-text);text-decoration:none;font-size:13px;line-height:1.35;font-weight:500;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden" title="${p.article_title}">
+                              ${p.article_title}
+                            </a>
+                          </td>
+                          <td>
+                            ${p.title ? html`<div style="font-weight:600;font-size:13px;color:var(--ink);margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:440px" title="${p.title}">${p.title}</div>` : raw('')}
+                            <div class="rp-post-text" title="${p.text}">${p.text}</div>
+                            ${p.error ? html`<div class="rp-post-error" title="${p.error}">⚠️ ${p.error}</div>` : raw('')}
                           </td>
                           <td><span class="ns-badge ${p.status === 'sent' ? 'ok' : p.status === 'failed' ? 'bad' : 'idle'}">${p.status}</span></td>
                           <td>

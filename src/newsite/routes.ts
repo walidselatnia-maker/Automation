@@ -142,13 +142,17 @@ export function registerNewWebsiteRoutes(app: FastifyInstance, deps: NewWebsiteD
     // Runs after the login check, so only a signed-in visit can set it, and it
     // shows on Platform settings → Images, where the owner can change it.
     app.addHook('preHandler', async (request) => {
-      if (!request.url.startsWith('/new-website') || settings.get('public_base_url').trim()) return;
+      if (!request.url.startsWith('/new-website')) return;
       const header = (name: string) => String(request.headers[name] ?? '').split(',')[0]!.trim();
       const proto = header('x-forwarded-proto') || request.protocol;
-      // The real Host only: a forwarded host header is easy to fake, so it is never trusted here.
-      const host = header('host');
+      const host = header('x-forwarded-host') || header('host');
       const origin = `${proto}://${host}`;
-      if (host && !publicBaseUrlProblem(origin)) settings.set('public_base_url', origin);
+      if (host && !publicBaseUrlProblem(origin)) {
+        const current = settings.get('public_base_url').trim();
+        if (!current || current !== origin) {
+          settings.set('public_base_url', origin);
+        }
+      }
     });
     registerPlatformRoutes(app, { settings: deps.settings, encryptionKey: deps.encryptionKey, readFlash, fetchImpl: deps.fetchImpl, account: deps.account });
     registerImageModelRoutes(app, deps.settings);
