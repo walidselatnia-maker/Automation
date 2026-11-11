@@ -199,7 +199,7 @@ describe('Pictures, made the old dashboard way', () => {
     queuePictures(seoId, dataDir);
     await kickPictureMaker({ settings, dataDir, now: () => clock, sleep: async () => {} });
     expect(generate).toHaveBeenCalledWith('prompt for feature', 'PORTRAIT_3_4');
-    expect([shapeOf('feature'), shapeOf('section-2'), shapeOf('step-3'), shapeOf('pin-4')]).toEqual(['PORTRAIT_3_4', 'PORTRAIT_3_4', 'SQUARE', 'PORTRAIT_3_4']);
+    expect([shapeOf('feature'), shapeOf('section-2'), shapeOf('step-3'), shapeOf('pin-4')]).toEqual(['PORTRAIT_3_4', 'PORTRAIT_3_4', 'SQUARE', 'PORTRAIT_9_16']);
     expect(listPictures(seoId)[0]).toMatchObject({ status: 'done' });
   });
 

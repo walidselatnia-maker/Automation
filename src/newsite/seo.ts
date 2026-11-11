@@ -420,13 +420,14 @@ export async function writeOne(row: SeoRow, deps: WriterDeps): Promise<void> {
   );
 }
 
-let running: Promise<void> | null = null;
+let running: Promise<number> | null = null;
 
 /**
  * Work through every waiting row, one at a time. Calling it while it runs
  * does nothing extra: the running pass picks up rows added meanwhile.
+ * Returns the number of writing steps that were processed in this pass.
  */
-export function kickSeoWriter(deps: WriterDeps): Promise<void> {
+export function kickSeoWriter(deps: WriterDeps): Promise<number> {
   if (running) return running;
   // Started on the next tick, so `running` is set before the loop can finish
   // and clear it. (Done the other way round, an empty queue cleared it first
@@ -438,11 +439,13 @@ export function kickSeoWriter(deps: WriterDeps): Promise<void> {
       : '';
   running = Promise.resolve()
     .then(async () => {
+      let written = 0;
       for (;;) {
         // AI#1 first, so every keyword of a plan has its title before any
         // skeleton is made; then AI#2 on the keywords whose metadata is done.
         const next = get<SeoRow>(`SELECT * FROM keyword_seo WHERE status = 'pending' ${turn()} ORDER BY generate_now DESC, plan_id, position LIMIT 1`);
         if (next) {
+          written++;
           try {
             await writeOne(next, deps);
           } catch (err) {
@@ -455,6 +458,7 @@ export function kickSeoWriter(deps: WriterDeps): Promise<void> {
           `SELECT * FROM keyword_seo WHERE status = 'done' AND recipe_status = 'pending' ${turn()} ORDER BY generate_now DESC, plan_id, position LIMIT 1`,
         );
         if (dish) {
+          written++;
           try {
             await makeRecipe(dish, deps);
           } catch (err) {
@@ -467,6 +471,7 @@ export function kickSeoWriter(deps: WriterDeps): Promise<void> {
           `SELECT * FROM keyword_seo WHERE status = 'done' AND skeleton_status = 'pending' ${turn()} ORDER BY generate_now DESC, plan_id, position LIMIT 1`,
         );
         if (outline) {
+          written++;
           try {
             await makeSkeleton(outline, deps);
           } catch (err) {
@@ -479,6 +484,7 @@ export function kickSeoWriter(deps: WriterDeps): Promise<void> {
           `SELECT * FROM keyword_seo WHERE skeleton_status = 'done' AND article_status = 'pending' ${turn()} ORDER BY generate_now DESC, plan_id, position LIMIT 1`,
         );
         if (piece) {
+          written++;
           try {
             await writeArticle(piece, deps);
           } catch (err) {
@@ -491,6 +497,7 @@ export function kickSeoWriter(deps: WriterDeps): Promise<void> {
           `SELECT * FROM keyword_seo WHERE article_status = 'done' AND images_status = 'pending' ${turn()} ORDER BY generate_now DESC, plan_id, position LIMIT 1`,
         );
         if (!pictures) break;
+        written++;
         try {
           await makeImagePrompts(pictures, deps);
         } catch (err) {
@@ -498,6 +505,7 @@ export function kickSeoWriter(deps: WriterDeps): Promise<void> {
           run(`UPDATE keyword_seo SET images_status = 'failed', images_problems = ? WHERE id = ?`, 'Something went wrong while writing the image prompts. Try again.', pictures.id);
         }
       }
+      return written;
     })
     .finally(() => {
       running = null;

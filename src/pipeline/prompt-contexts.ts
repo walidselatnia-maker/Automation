@@ -246,6 +246,18 @@ export const STEP_CONTEXTS: Record<string, Record<string, unknown>> = {
     niche: 'n',
     boardsJson: '[]',
   },
+  'newsite-repurpose-post': {
+    label: 'l',
+    platformRules: 'r',
+    fields: 'f',
+    shape: 's',
+    domain: 'd',
+    articleTitle: 't',
+    niche: 'n',
+    persona: 'p',
+    excerpt: 'e',
+    articleContent: 'c',
+  },
   'pick-category': {
     title: 't',
     keyword: 'k',

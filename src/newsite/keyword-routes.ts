@@ -96,7 +96,11 @@ export function registerKeywordRoutes(app: FastifyInstance, deps: KeywordRouteDe
   const NOT_READY = 'Set up the platform first: keywords need a working AI key.';
   const writer = { ask: deps.ask, suggest: deps.suggest, automationOn: deps.automationOn };
   const startSeo = () => {
-    if (deps.autoSeo !== false) void kickSeoWriter(writer).then(() => deps.afterWriting?.());
+    if (deps.autoSeo !== false) {
+      void kickSeoWriter(writer).then((written) => {
+        if (written > 0) setImmediate(() => deps.afterWriting?.());
+      });
+    }
   };
   // Imported keywords without sub-keywords: found one plan at a time, then on to the SEO step.
   const startFinder = () => {

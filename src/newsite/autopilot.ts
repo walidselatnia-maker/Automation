@@ -247,6 +247,7 @@ function release(row: SeoRow, event: string, note = ''): void {
 /** Move the active keyword one stage on: writing, pictures, publishing. */
 function advance(row: SeoRow, site: NewWebsiteRow, deps: ConductorDeps, now: number, tz: string): void {
   if (row.post_status === 'publishing' || publishQueued(row.id)) return;
+  if (TEXT_STEPS.some(([, column]) => row[column] === 'failed')) return;
   if (row.images_status !== 'done') {
     // Still being written: make sure its next step is queued and the writer is awake.
     queueNotStartedSteps();
