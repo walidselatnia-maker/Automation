@@ -14,7 +14,7 @@ import { channelRules, type PlatformRules } from './platform-rules.js';
 import { loadTemplate } from '../pipeline/prompts.js';
 import { pickedPinDesigns, renderDesign } from './pin-designs.js';
 import type { Settings } from '../settings.js';
-import { bufferTokenOf, channelTakes, fbTokenOf, getChannel, videoOnly, websiteChannels, type ChannelRow } from './channels.js';
+import { bufferTokenOf, channelBoards, channelTakes, fbTokenOf, getChannel, saveChannelBoards, videoOnly, websiteChannels, type ChannelBoard, type ChannelRow } from './channels.js';
 import type { Fetch } from './client.js';
 import { claimSocialSlot, lastSocialSent, socialDueAt, socialSentToday } from './gaps.js';
 import { parseImageSet } from './images.js';
@@ -395,22 +395,240 @@ function queuePicture(w: Work, deps: SocialDeps): void {
   deps.startPictures?.();
 }
 
+export interface BoardArticleTarget {
+  title: string;
+  keyword?: string;
+  category?: string;
+  subject?: string;
+  content?: string;
+}
+
+const RECIPE_STOP_WORDS = new Set([
+  'recipe', 'recipes', 'homemade', 'best', 'easy', 'quick', 'ever', 'simple',
+  'make', 'cook', 'cooking', 'delicious', 'tasty', 'with', 'from', 'good',
+  'great', 'style', 'dish', 'dishes', 'bowl', 'perfect', 'ultimate', 'favorite',
+  'classic', 'ideas', 'tips', 'ready', 'minutes', 'hours', 'secret',
+]);
+
+/**
+ * Fallback board selection logic:
+ * 1. Exact or highly relevant match (specialized board prioritized).
+ * 2. Only one board available: automatically use that board.
+ * 3. Fall back to a general-purpose board (Food & Drinks, General Food, General Recipes, Food, etc.).
+ * 4. No boards available: handle gracefully (returns undefined).
+ * If multiple specialized boards exist but none fits, returns undefined so it is not randomly posted to an unrelated board.
+ */
+export function resolveBoardFallback(
+  article: BoardArticleTarget,
+  boards: { serviceId: string; name: string; id?: string }[],
+): { serviceId: string; name: string; id?: string } | undefined {
+  if (!boards.length) return undefined;
+  if (boards.length === 1) return boards[0]!;
+
+  const cat = (article.category || '').toLowerCase().trim();
+  const title = (article.title || '').toLowerCase().trim();
+  const subject = (article.subject || article.keyword || '').toLowerCase().trim();
+
+  // 1. Direct subject match in board name or vice versa (e.g. "mini cheesecake" -> "Mini Cheesecake Desserts")
+  if (subject) {
+    const subjectMatch = boards.find((b) => {
+      const bn = b.name.toLowerCase();
+      return bn.includes(subject) || subject.includes(bn);
+    });
+    if (subjectMatch) return subjectMatch;
+  }
+
+  // 2. Direct category match in board name or vice versa (e.g. category "Snacks" -> "Easy Snacks")
+  if (cat) {
+    const catMatch = boards.find((b) => {
+      const bn = b.name.toLowerCase();
+      return bn.includes(cat) || cat.includes(bn);
+    });
+    if (catMatch) return catMatch;
+  }
+
+  // 3. Keyword matching from article title / subject, excluding generic stop words
+  const titleWords = `${title} ${subject}`
+    .split(/[\s,–—\-:]+/)
+    .map((w) => w.replace(/[^a-z0-9]/gi, '').toLowerCase())
+    .filter((w) => w.length > 3 && !RECIPE_STOP_WORDS.has(w));
+
+  for (const word of titleWords) {
+    const wordMatch = boards.find((b) => {
+      const bn = b.name.toLowerCase();
+      return new RegExp(`\\b${word}\\b`, 'i').test(bn);
+    });
+    if (wordMatch) return wordMatch;
+  }
+
+  // 4. Fallback to broad / general-purpose boards:
+  // e.g. "Food & Drinks", "General Food", "General Recipes", "Food", "All Recipes", "General", "Recipes", "Dinner"
+  const SPECIFIC_BOARD_QUALIFIERS = /\b(bread|dessert|sweet|bake|baking|snack|treat|chicken|pizza|ice cream|soup|salad|breakfast|brunch|cookie|cake|pastr|pie|drinks?|smoothie|cocktail|appetizer|dip)\b/i;
+
+  const explicitGeneral = boards.find((b) => {
+    const bn = b.name.toLowerCase().trim();
+    return (
+      /^(general|general food|general recipes|food & drinks?|food and drinks?)$/i.test(bn) ||
+      /\b(general food|general recipes|food & drinks?|food and drinks?)\b/i.test(bn) ||
+      /\bgeneral\b/i.test(bn)
+    );
+  });
+  if (explicitGeneral) return explicitGeneral;
+
+  const broadBoard = boards.find((b) => {
+    const bn = b.name.toLowerCase().trim();
+    if (SPECIFIC_BOARD_QUALIFIERS.test(bn)) return false;
+    return (
+      /^(food|recipes?|all recipes|dinners?|dinner recipes|meals?|cooking|main dishes|main courses)$/i.test(bn) ||
+      /\b(food|recipes?|dinners?|meals)\b/i.test(bn)
+    );
+  });
+  if (broadBoard) return broadBoard;
+
+  // No fitting board and no general board
+  return undefined;
+}
+
+/**
+ * AI Pinterest board matching: analyzes actual article subject, title, keyword, and content
+ * to identify the most relevant Pinterest board, prioritizing specialized boards over general ones.
+ */
+export async function matchBoardWithAi(
+  article: BoardArticleTarget,
+  site: NewWebsiteRow,
+  boards: { serviceId: string; name: string; id?: string }[],
+  deps: Pick<SocialDeps, 'ask'>,
+  chatId?: number,
+): Promise<{ serviceId: string; name: string; id?: string } | undefined> {
+  if (!boards.length) return undefined;
+  if (boards.length === 1) return boards[0];
+
+  try {
+    const raw = await deps.ask(
+      'newsite-pick-board',
+      {
+        keyword: article.keyword || article.subject || article.category || article.title,
+        title: article.title,
+        subject: article.subject || article.keyword || article.title,
+        category: article.category || '',
+        content: (article.content || '').slice(0, 1000),
+        niche: site.niche || article.category || '',
+        boardsJson: JSON.stringify(boards.map((b) => b.name)),
+      },
+      chatId ? articleChat(chatId) : undefined,
+    );
+    const parsed = parseObject(raw);
+    const chosenName = String(parsed?.board ?? '').trim().toLowerCase();
+    if (chosenName) {
+      const match = boards.find((b) => b.name.toLowerCase() === chosenName);
+      if (match) return match;
+      const partialMatch = boards.find((b) => {
+        const bn = b.name.toLowerCase();
+        return bn.includes(chosenName) || chosenName.includes(bn);
+      });
+      if (partialMatch) return partialMatch;
+    }
+  } catch {
+    // AI failed or returned unparseable
+  }
+  return undefined;
+}
+
+/**
+ * Pinterest Board Database Management and Smart Matching:
+ * 1. Use the database first: retrieve available boards from DB and use them for AI matching.
+ * 2. No boards found in the database: query Buffer API, save in DB, and use for matching.
+ * 3. No suitable matching board found: refresh board-list via Buffer API to discover new boards.
+ * 4. New boards discovered: update DB and re-run AI matching on refreshed list.
+ * 5. Still no suitable match: use general-board fallback logic (Food & Drinks, General Food, General Recipes, etc.).
+ * 6. API failure: continue using DB boards whenever possible without failing the pipeline.
+ * 7. Graceful fallback when no boards exist.
+ */
+export async function getOrSelectPinterestBoard(
+  channel: ChannelRow,
+  site: NewWebsiteRow,
+  article: BoardArticleTarget,
+  deps: Pick<SocialDeps, 'ask' | 'encryptionKey'> & { buffer?: (token: string) => { channels: () => Promise<BufferChannel[]> } },
+  chatId?: number,
+): Promise<{ serviceId: string; name: string; id?: string } | undefined> {
+  // 1. Retrieve cached boards from database
+  const boards = channelBoards(channel);
+
+  // If only 1 board stored in DB, select it immediately
+  if (boards.length === 1 && boards[0]) {
+    return boards[0];
+  }
+
+  // If existing cached boards > 1, try matching with AI
+  let aiMatch: { serviceId: string; name: string; id?: string } | undefined;
+  if (boards.length > 1) {
+    aiMatch = await matchBoardWithAi(article, site, boards, deps, chatId);
+    if (aiMatch) return aiMatch;
+  }
+
+  // 2 & 3. No boards in DB, OR no suitable matching board found among DB boards:
+  // Refresh board list through the API
+  let freshBoards: { serviceId: string; name: string; id?: string }[] = boards;
+  try {
+    const api = (deps.buffer ?? realBuffer)(bufferTokenOf(channel, deps.encryptionKey));
+    const channels = await api.channels();
+    const found = channels.find((c) => c.id === channel.buffer_channel_id);
+    if (found?.boards?.length) {
+      freshBoards = found.boards;
+      saveChannelBoards(channel.id, freshBoards);
+      channel.boards_json = JSON.stringify(freshBoards);
+    }
+  } catch {
+    // 6. API failure: continue using boards already stored in DB whenever possible
+    if (!freshBoards.length) {
+      return undefined;
+    }
+  }
+
+  if (!freshBoards.length) {
+    return undefined;
+  }
+
+  // If only 1 board exists after refresh, automatically use it
+  if (freshBoards.length === 1 && freshBoards[0]) {
+    return freshBoards[0];
+  }
+
+  // 4. If new boards were discovered, run matching process again using refreshed list
+  if (!boards.length || freshBoards.length !== boards.length || freshBoards.some((fb) => !boards.some((b) => b.serviceId === fb.serviceId))) {
+    const freshAi = await matchBoardWithAi(article, site, freshBoards, deps, chatId);
+    if (freshAi) return freshAi;
+  }
+
+  // 5. Still no suitable match after refresh: general-board fallback logic
+  return resolveBoardFallback(article, freshBoards);
+}
+
 /**
  * The board for this keyword, from the boards on the channel's Pinterest
  * account: the AI's pick, or, when none fits, the account's "general" board.
  * None when there is no such board: the pin is not posted.
  */
-export async function pickBoard(w: { row: SeoRow; site: NewWebsiteRow }, boards: { serviceId: string; name: string }[], deps: Pick<SocialDeps, 'ask'>) {
-  const raw = await deps
-    .ask('newsite-pick-board', {
-      keyword: w.row.keyword,
-      title: w.row.title,
-      niche: w.site.niche,
-      boardsJson: JSON.stringify(boards.map((b) => b.name)),
-    }, articleChat(w.row.id))
-    .catch(() => '');
-  const name = String(parseObject(raw)?.board ?? '').trim().toLowerCase();
-  return boards.find((b) => b.name.toLowerCase() === name) ?? generalBoard(boards);
+export async function pickBoard(
+  w: { row: SeoRow; site: NewWebsiteRow },
+  boards: { serviceId: string; name: string }[],
+  deps: Pick<SocialDeps, 'ask'>,
+): Promise<{ serviceId: string; name: string } | undefined> {
+  if (!boards.length) return undefined;
+  if (boards.length === 1) return boards[0];
+
+  const target: BoardArticleTarget = {
+    title: w.row.title,
+    keyword: w.row.keyword,
+    category: w.row.post_category,
+    subject: w.row.focus_keyword || w.row.keyword,
+    content: articleStart(w.row.article_md),
+  };
+
+  const aiMatch = await matchBoardWithAi(target, w.site, boards, deps, w.row.id);
+  if (aiMatch) return aiMatch;
+
+  return resolveBoardFallback(target, boards) ?? generalBoard(boards);
 }
 
 /** The account's catch-all board: the first whose name contains "general". Boards cannot be created from here. */
@@ -528,12 +746,21 @@ export function bufferMetadata(
 async function sendThroughBuffer(w: Work, picture: PictureRow, deps: SocialDeps, now: number): Promise<void> {
   const api = (deps.buffer ?? realBuffer)(bufferTokenOf(w.channel, deps.encryptionKey));
   try {
-    const found = (await api.channels()).find((c) => c.id === w.channel.buffer_channel_id);
-    if (!found) throw new Error(`Buffer no longer lists this ${w.rules.label} channel. Check it on the Channels page.`);
     let board: { serviceId: string; name: string } | undefined;
     if (w.channel.platform === 'pinterest') {
-      if (!found.boards.length) throw new Error('This Pinterest channel has no boards. Create one on Pinterest first.');
-      board = await pickBoard(w, found.boards, deps);
+      board = await getOrSelectPinterestBoard(
+        w.channel,
+        w.site,
+        {
+          title: w.row.title,
+          keyword: w.row.keyword,
+          category: w.row.post_category,
+          subject: w.row.focus_keyword || w.row.keyword,
+          content: articleStart(w.row.article_md),
+        },
+        deps,
+        w.row.id,
+      );
       if (!board) return fail(w.item.id, NO_BOARD);
     }
     // The link, only ever where the rules put it: the pin's own link, or the first comment (paid Buffer plans only).

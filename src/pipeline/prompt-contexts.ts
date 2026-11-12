@@ -243,6 +243,9 @@ export const STEP_CONTEXTS: Record<string, Record<string, unknown>> = {
   'newsite-pick-board': {
     keyword: 'k',
     title: 't',
+    subject: 's',
+    category: 'c',
+    content: 'c',
     niche: 'n',
     boardsJson: '[]',
   },

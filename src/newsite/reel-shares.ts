@@ -12,7 +12,7 @@ import { channelRules } from './platform-rules.js';
 import { getReel, reelDir, withDomain, type ReelRow } from './reels.js';
 import { getSeoRow } from './seo.js';
 import { socialSentToday } from './gaps.js';
-import { NO_BOARD, bufferMetadata, holdForSocialGap, isQueueFull, pickBoard, realInstagram, realThreads, websiteOf, writePostWords, type InstagramApi, type ThreadsApi } from './social.js';
+import { NO_BOARD, bufferMetadata, getOrSelectPinterestBoard, holdForSocialGap, isQueueFull, pickBoard, realInstagram, realThreads, websiteOf, writePostWords, type InstagramApi, type ThreadsApi } from './social.js';
 import { threadsTokenOf, type Renew } from './threads-token.js';
 
 /**
@@ -179,12 +179,21 @@ async function work(share: ReelShareRow, deps: ReelShareDeps, now: number): Prom
   if (channel.via === 'buffer') {
     const api = (deps.buffer ?? realBuffer)(bufferTokenOf(channel, deps.encryptionKey));
     try {
-      const found = (await api.channels()).find((c) => c.id === channel.buffer_channel_id);
-      if (!found) throw new Error(`Buffer no longer lists this ${rules.label} channel. Check it on the Channels page.`);
       let board: { serviceId: string; name: string } | undefined;
       if (channel.platform === 'pinterest') {
-        if (!found.boards.length) throw new Error('This Pinterest channel has no boards. Create one on Pinterest first.');
-        board = await pickBoard({ row, site }, found.boards, deps);
+        board = await getOrSelectPinterestBoard(
+          channel,
+          site,
+          {
+            title: share.title || row.title,
+            keyword: row.keyword,
+            category: row.post_category,
+            subject: row.focus_keyword || row.keyword,
+            content: share.text,
+          },
+          deps,
+          row.id,
+        );
         if (!board) return fail(share.id, NO_BOARD);
       }
       const base = deps.settings.get('public_base_url').trim();

@@ -1,6 +1,11 @@
 Keyword: {{keyword}}
 Article title: {{title}}
+Subject: {{subject}}
+Category: {{category}}
 Website niche: {{niche}}
+
+Article content:
+{{content}}
 
 The boards on this Pinterest account:
 {{boardsJson}}

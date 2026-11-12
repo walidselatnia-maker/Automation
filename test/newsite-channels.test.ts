@@ -4,7 +4,7 @@ import formbody from '@fastify/formbody';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { closeDatabase, openDatabase } from '../src/db/index.js';
 import { registerChannelRoutes, type ChannelLookups } from '../src/newsite/channels-routes.js';
-import { bufferTokenOf, channelBoards, channelsFor, fbTokenOf, getChannel, listChannels, saveBufferChannel, setWebsiteChannels, websiteChannels } from '../src/newsite/channels.js';
+import { bufferTokenOf, channelBoards, channelsFor, fbTokenOf, getChannel, listChannels, saveBufferChannel, setChannelWebsiteCategories, setWebsiteChannels, websiteChannels } from '../src/newsite/channels.js';
 import { createNewWebsite } from '../src/newsite/repo.js';
 
 const KEY = randomBytes(32);
@@ -384,5 +384,68 @@ describe('New dashboard: channels', () => {
     expect(filterA.statusCode).toBe(200);
     expect(filterA.body).toContain('id="website-' + siteA + '"');
     expect(filterA.body).not.toContain('id="website-' + siteB + '"');
+  });
+
+  it('assigns channels to specific categories during channel creation and displays them', async () => {
+    const a = await app();
+    const siteA = site('Website A', 'website-a.com');
+
+    const pickPin = await post(a, '/new-website/channels/pinterest/buffer/connect', { token: BUFFER_TOKEN });
+    const draftPin = draftIn(pickPin.body);
+    await post(a, '/new-website/channels/pinterest/buffer/pick', { draft: draftPin, pick: 'ch-pin' });
+    await post(a, '/new-website/channels/pinterest/buffer/what', { draft: draftPin, postImage: '1' });
+    await post(a, '/new-website/channels/pinterest/buffer/save', {
+      draft: draftPin,
+      websiteId: String(siteA),
+      [`cat-${siteA}`]: ['desserts', 'baking'],
+    });
+
+    const channels = websiteChannels(siteA);
+    expect(channels).toHaveLength(1);
+    expect(channels[0]!.categories).toEqual(['desserts', 'baking']);
+
+    const page = await a.inject({ url: '/new-website/channels' });
+    expect(page.statusCode).toBe(200);
+    expect(page.body).toContain('desserts');
+    expect(page.body).toContain('baking');
+    expect(page.body).toContain(`/new-website/channels/${channels[0]!.id}/edit/categories?website=${siteA}`);
+  });
+
+  it('manages channel category assignments via dedicated categories route and setChannelWebsiteCategories', async () => {
+    const a = await app();
+    const siteA = site('Website A', 'website-a.com');
+    const id = await addPin(a);
+    setWebsiteChannels(siteA, [id]);
+
+    // Initially all categories
+    expect(websiteChannels(siteA)[0]!.categories).toEqual([]);
+
+    // Open category edit page
+    const editPage = await a.inject({ url: `/new-website/channels/${id}/edit/categories?website=${siteA}` });
+    expect(editPage.statusCode).toBe(200);
+    expect(editPage.body).toContain('Category assignments');
+    expect(editPage.body).toContain('Website A');
+
+    // Update categories via POST
+    const updateRes = await post(a, `/new-website/channels/${id}/edit/categories`, {
+      websiteId: String(siteA),
+      categories: ['Main Dishes', 'Breakfast'],
+    });
+    expect(updateRes.statusCode).toBe(303);
+    expect(websiteChannels(siteA)[0]!.categories).toEqual(['main dishes', 'breakfast']);
+
+    // Programmatic update via setChannelWebsiteCategories
+    setChannelWebsiteCategories(id, siteA, ['Soups']);
+    expect(websiteChannels(siteA)[0]!.categories).toEqual(['soups']);
+
+    // Clear back to all categories
+    await post(a, `/new-website/channels/${id}/edit/categories`, {
+      websiteId: String(siteA),
+      categories: [],
+    });
+    expect(websiteChannels(siteA)[0]!.categories).toEqual([]);
+
+    const page = await a.inject({ url: '/new-website/channels' });
+    expect(page.body).toContain('All categories (entire website)');
   });
 });

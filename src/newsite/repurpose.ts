@@ -6,12 +6,35 @@ import { resolveDataDir } from '../config.js';
 import type { Settings } from '../settings.js';
 import type { NewWebsiteRow } from './repo.js';
 import { getNewWebsite, websiteApiKey } from './repo.js';
-import { takesReels, videoOnly, type ChannelRow, type Platform } from './channels.js';
+import { takesReels, videoOnly, type Platform } from './channels.js';
 import { channelRules, type PlatformRules } from './platform-rules.js';
-import { bufferMetadata, checkFields, isQueueFull, realInstagram, realThreads, type BufferApi as SocialBufferApi, type InstagramApi, type ThreadsApi } from './social.js';
+import {
+  bufferMetadata,
+  checkFields,
+  getOrSelectPinterestBoard as getOrSelectBoardShared,
+  isQueueFull,
+  matchBoardWithAi,
+  realInstagram,
+  realThreads,
+  resolveBoardFallback as resolveBoardFallbackShared,
+  type BoardArticleTarget,
+  type BufferApi as SocialBufferApi,
+  type InstagramApi,
+  type ThreadsApi,
+} from './social.js';
 import { correctUntilRight } from './rounds.js';
 import { BufferClient, type BufferChannel } from '../integrations/buffer.js';
-import { bufferTokenOf, fbTokenOf, getChannel, websiteChannels, channelBoards, saveChannelBoards, type ChannelBoard } from './channels.js';
+import {
+  bufferTokenOf,
+  channelBoards,
+  channelTakes,
+  fbTokenOf,
+  getChannel,
+  saveChannelBoards,
+  websiteChannels,
+  type ChannelBoard,
+  type ChannelRow,
+} from './channels.js';
 import { FacebookClient } from '../integrations/facebook.js';
 import { ThreadsClient } from '../integrations/threads.js';
 import { commentsThroughApi } from './first-comment.js';
@@ -741,96 +764,21 @@ export async function generateRepurposePost(
 
 /* -- Post Sending & Publishing -------------------------------------------- */
 
-const RECIPE_STOP_WORDS = new Set([
-  'recipe', 'recipes', 'homemade', 'best', 'easy', 'quick', 'ever', 'simple',
-  'make', 'cook', 'cooking', 'delicious', 'tasty', 'with', 'from', 'good',
-  'great', 'style', 'dish', 'dishes', 'bowl', 'perfect', 'ultimate', 'favorite',
-  'classic', 'ideas', 'tips', 'ready', 'minutes', 'hours', 'secret',
-]);
+export { matchBoardWithAi } from './social.js';
 
 export function resolveBoardFallback(
   article: RepurposeArticleRow,
   boards: { serviceId: string; name: string; id?: string }[],
 ): { serviceId: string; name: string; id?: string } {
   if (!boards.length) throw new Error('No boards available');
-  if (boards.length === 1) return boards[0]!;
-
-  const cat = (article.category || '').toLowerCase().trim();
-  const title = (article.title || '').toLowerCase().trim();
-
-  // 1. Direct category match in board name or vice versa (e.g. category "Snacks" -> "Easy Snacks")
-  if (cat) {
-    const catMatch = boards.find((b) => {
-      const bn = b.name.toLowerCase();
-      return bn.includes(cat) || cat.includes(bn);
-    });
-    if (catMatch) return catMatch;
-  }
-
-  // 2. Keyword matching from article title, excluding generic adjectives/stop words
-  const titleWords = title
-    .split(/[\s,–—\-:]+/)
-    .map((w) => w.replace(/[^a-z0-9]/gi, '').toLowerCase())
-    .filter((w) => w.length > 3 && !RECIPE_STOP_WORDS.has(w));
-
-  for (const word of titleWords) {
-    const wordMatch = boards.find((b) => {
-      const bn = b.name.toLowerCase();
-      return new RegExp(`\\b${word}\\b`, 'i').test(bn);
-    });
-    if (wordMatch) return wordMatch;
-  }
-
-  // 3. Fallback to broad / general food boards:
-  // e.g. "Food", "All Recipes", "General", "Recipes", "Dinner"
-  // Exclude boards that have specific dish or ingredient qualifiers (like bread, dessert, chicken, etc.)
-  const SPECIFIC_BOARD_QUALIFIERS = /\b(bread|dessert|sweet|bake|baking|snack|treat|chicken|pizza|ice cream|soup|salad|breakfast|brunch|cookie|cake|pastr|pie|drinks?|smoothie|cocktail|appetizer|dip)\b/i;
-
-  const broadBoard = boards.find((b) => {
-    const bn = b.name.toLowerCase().trim();
-    if (SPECIFIC_BOARD_QUALIFIERS.test(bn)) return false;
-    return (
-      /^(food|recipes?|all recipes|dinners?|dinner recipes|meals?|cooking|general|main dishes|main courses)$/i.test(bn) ||
-      /\b(food|recipes?|dinners?|meals)\b/i.test(bn)
-    );
-  });
-  if (broadBoard) return broadBoard;
-
-  // 4. Default to first board if no broad board exists
-  return boards[0]!;
-}
-
-export async function matchBoardWithAi(
-  article: RepurposeArticleRow,
-  site: NewWebsiteRow,
-  boards: { serviceId: string; name: string; id?: string }[],
-  deps: Pick<RepurposeDeps, 'ask'>,
-): Promise<{ serviceId: string; name: string; id?: string } | undefined> {
-  if (!boards.length) return undefined;
-  if (boards.length === 1) return boards[0];
-
-  try {
-    const raw = await deps.ask('newsite-pick-board', {
-      keyword: article.category || article.title,
-      title: article.title,
-      niche: site.niche || article.category,
-      boardsJson: JSON.stringify(boards.map((b) => b.name)),
-    });
-    const parsed = parseObject(raw);
-    const chosenName = String(parsed?.board ?? '').trim().toLowerCase();
-    if (chosenName) {
-      const match = boards.find((b) => b.name.toLowerCase() === chosenName);
-      if (match) return match;
-      const partialMatch = boards.find((b) => {
-        const bn = b.name.toLowerCase();
-        return bn.includes(chosenName) || chosenName.includes(bn);
-      });
-      if (partialMatch) return partialMatch;
-    }
-  } catch {
-    // AI failed or returned unparseable
-  }
-  return undefined;
+  const target: BoardArticleTarget = {
+    title: article.title,
+    category: article.category,
+    content: article.content_text || article.excerpt,
+    subject: article.title,
+  };
+  const result = resolveBoardFallbackShared(target, boards);
+  return result ?? boards[0]!;
 }
 
 export async function pickRepurposeBoard(
@@ -842,7 +790,13 @@ export async function pickRepurposeBoard(
   if (!boards.length) return undefined;
   if (boards.length === 1) return boards[0];
 
-  const aiMatch = await matchBoardWithAi(article, site, boards, deps);
+  const target: BoardArticleTarget = {
+    title: article.title,
+    category: article.category,
+    content: article.content_text || article.excerpt,
+    subject: article.title,
+  };
+  const aiMatch = await matchBoardWithAi(target, site, boards, deps);
   if (aiMatch) return aiMatch;
 
   return resolveBoardFallback(article, boards);
@@ -854,52 +808,19 @@ export async function getOrSelectPinterestBoard(
   article: RepurposeArticleRow,
   deps: RepurposeDeps,
 ): Promise<{ serviceId: string; name: string; id?: string }> {
-  const boards = channelBoards(channel);
-
-  // 1. If account has only 1 board stored in DB, select it immediately without calling Buffer API or AI
-  if (boards.length === 1 && boards[0]) {
-    return boards[0];
-  }
-
-  // 2. If existing cached boards > 1, try matching with AI
-  if (boards.length > 1) {
-    const aiMatch = await matchBoardWithAi(article, site, boards, deps);
-    if (aiMatch) return aiMatch;
-  }
-
-  // 3. Fallback: boards were empty, OR the AI did not match any of the existing boards.
-  // Query Buffer API for active boards on this channel and update the database.
-  let freshBoards: { serviceId: string; name: string; id?: string }[] = boards;
-  try {
-    const api = (deps.buffer ?? realBuffer)(bufferTokenOf(channel, deps.encryptionKey));
-    const channels = await api.channels();
-    const found = channels.find((c) => c.id === channel.buffer_channel_id);
-    if (found?.boards?.length) {
-      freshBoards = found.boards;
-      saveChannelBoards(channel.id, freshBoards);
-      channel.boards_json = JSON.stringify(freshBoards);
-    }
-  } catch (err) {
-    if (!freshBoards.length) throw err;
-  }
-
-  if (!freshBoards.length) {
+  const target: BoardArticleTarget = {
+    title: article.title,
+    category: article.category,
+    content: article.content_text || article.excerpt,
+    subject: article.title,
+  };
+  const board = await getOrSelectBoardShared(channel, site, target, deps);
+  if (!board) {
+    const existing = channelBoards(channel);
+    if (existing.length) return existing[0]!;
     throw new Error('This Pinterest channel has no boards. Create a board on Pinterest first.');
   }
-
-  // If account has only 1 board discovered, select it immediately
-  if (freshBoards.length === 1 && freshBoards[0]) {
-    return freshBoards[0];
-  }
-
-  // If freshBoards were newly discovered, try AI matching on them
-  if (!boards.length || freshBoards.length !== boards.length) {
-    const freshAi = await matchBoardWithAi(article, site, freshBoards, deps);
-    if (freshAi) return freshAi;
-  }
-
-  // Fallback to intelligent category/keyword/broad board heuristics
-  return resolveBoardFallback(article, freshBoards);
+  return board;
 }
 
 export async function sendRepurposePost(
@@ -1345,6 +1266,7 @@ export async function bulkEditArticles(
 
       if (options.channelId === 'all') {
         for (const ch of channels) {
+          if (!channelTakes(ch, art.category)) continue;
           if (ch.post_image && !videoOnly(ch.platform)) {
             const res = await generateRepurposePost(artId, ch.id, options.deps, 'image');
             if (res.post) generated++;
@@ -1357,7 +1279,7 @@ export async function bulkEditArticles(
       } else {
         const chId = Number(options.channelId);
         const validCh = channels.find((c) => c.id === chId) ?? channels[0];
-        if (validCh) {
+        if (validCh && channelTakes(validCh, art.category)) {
           if (options.kind) {
             const res = await generateRepurposePost(artId, validCh.id, options.deps, options.kind);
             if (res.post) generated++;
@@ -1492,9 +1414,10 @@ export async function kickRepurpose(deps: RepurposeDeps): Promise<void> {
       const channels = websiteChannels(site.id);
       if (!channels.length) continue;
 
-      // Build options: for each channel, determine valid post kinds (image, reel, or both)
+      // Build options: for each channel, determine valid post kinds (image, reel, or both) if the channel takes this category
       const options: { channel: ChannelRow; kind: 'image' | 'reel' }[] = [];
       for (const ch of channels) {
+        if (!channelTakes(ch, candidate.category)) continue;
         if (ch.post_image && !videoOnly(ch.platform)) {
           options.push({ channel: ch, kind: 'image' });
         }

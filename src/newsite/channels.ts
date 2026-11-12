@@ -427,7 +427,7 @@ export const websiteChannels = (websiteId: number): ChannelRow[] =>
  * set to "multiple websites" may serve one website only; asking for more is
  * refused with a message and nothing is changed.
  */
-export function setChannelWebsites(channelId: number, websiteIds: number[]): string | null {
+export function setChannelWebsites(channelId: number, websiteIds: number[], categoriesByWebsite?: Map<number, string[]>): string | null {
   const c = getChannel(channelId);
   if (!c) return 'That channel no longer exists.';
   const ids = [...new Set(websiteIds.filter(Boolean))];
@@ -443,12 +443,24 @@ export function setChannelWebsites(channelId: number, websiteIds: number[]): str
   run('DELETE FROM newsite_website_channels WHERE channel_id = ?', channelId);
   for (const w of ids) {
     const old = before.get(w);
+    let catsJson = old?.categories ?? '';
+    if (categoriesByWebsite && categoriesByWebsite.has(w)) {
+      const cats = cleanCategories(categoriesByWebsite.get(w) ?? []);
+      catsJson = cats.length ? JSON.stringify(cats) : '';
+    }
     run(
       'INSERT OR IGNORE INTO newsite_website_channels (website_id, channel_id, post_image, post_reel, categories) VALUES (?, ?, ?, ?, ?)',
-      w, channelId, old?.post_image ?? c.post_image, old?.post_reel ?? c.post_reel, old?.categories ?? '',
+      w, channelId, old?.post_image ?? c.post_image, old?.post_reel ?? c.post_reel, catsJson,
     );
   }
   return null;
+}
+
+/** Update the categories assigned to a channel for a specific website. Empty array = all categories. */
+export function setChannelWebsiteCategories(channelId: number, websiteId: number, categories: string[]): void {
+  const cats = cleanCategories(categories);
+  const catsJson = cats.length ? JSON.stringify(cats) : '';
+  run('UPDATE newsite_website_channels SET categories = ? WHERE channel_id = ? AND website_id = ?', catsJson, channelId, websiteId);
 }
 
 /**

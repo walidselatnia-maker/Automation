@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { run } from '../db/index.js';
+import { all, run } from '../db/index.js';
 import { BufferClient, type BufferChannel } from '../integrations/buffer.js';
 import { FacebookClient, type FacebookPage, type InstagramAccount } from '../integrations/facebook.js';
 import { ThreadsClient, type ThreadsProfile } from '../integrations/threads.js';
@@ -21,6 +21,9 @@ import {
   saveThreadsApiChannel,
   setChannelContent,
   setChannelWebsites,
+  setChannelWebsiteCategories,
+  knownCategories,
+  websiteChannels,
   takesImages,
   takesReels,
   videoOnly,
@@ -35,6 +38,7 @@ import {
   takesApiComment,
   addPlatformStep,
   addViaStep,
+  categoriesPart,
   connectionPart,
   PART_TITLE,
   planPart,
@@ -155,10 +159,32 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
   const lost = '/new-website/channels?error=' + encodeURIComponent('That setup expired. Start it again.');
   const title = (w: WizardContext) => `Add ${platformLabel(w.platform)}`;
 
-  /** Every website, ticked when it is in `ids`. */
-  const websiteChoices = (ids: number[]): WebsiteChoice[] => {
+  const many = (value: unknown): string[] => (Array.isArray(value) ? value.map(String) : value === undefined ? [] : [String(value)]);
+
+  /** Every website, ticked when it is in `ids`. Includes category choices when `channelId` is known. */
+  const websiteChoices = (ids: number[], channelId?: number): WebsiteChoice[] => {
     const set = new Set(ids);
-    return listNewWebsites().map((s) => ({ id: s.id, name: s.name, domain: s.domain, checked: set.has(s.id) }));
+    const catMap = new Map<number, string[]>();
+    if (channelId) {
+      const rows = all<{ website_id: number; categories: string }>(
+        'SELECT website_id, categories FROM newsite_website_channels WHERE channel_id = ?',
+        channelId,
+      );
+      for (const r of rows) {
+        try {
+          const list = JSON.parse(r.categories || '[]');
+          if (Array.isArray(list)) catMap.set(r.website_id, list.map(String));
+        } catch {}
+      }
+    }
+    return listNewWebsites().map((s) => ({
+      id: s.id,
+      name: s.name,
+      domain: s.domain,
+      checked: set.has(s.id),
+      knownCategories: knownCategories(s.id),
+      selectedCategories: catMap.get(s.id) ?? [],
+    }));
   };
 
   /** The draft of this wizard, if it is still there. */
@@ -411,7 +437,16 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
               )
             : saveFacebookApiChannel({ name: p.name, fbToken: d.token, pageId: p.id, postImage: d.postImage, postReel: d.postReel, multiWebsite: multi }, deps.encryptionKey),
     );
-    for (const id of ids) setChannelWebsites(id, websiteIds);
+    const categoriesByWebsite = new Map<number, string[]>();
+    for (const wId of websiteIds) {
+      const ticked = many(b[`cat-${wId}`]);
+      const custom = String(b[`cat-custom-${wId}`] ?? '').split(',').map((x) => x.trim()).filter(Boolean);
+      const combined = [...ticked, ...custom];
+      if (combined.length) {
+        categoriesByWebsite.set(wId, combined);
+      }
+    }
+    for (const id of ids) setChannelWebsites(id, websiteIds, categoriesByWebsite);
     sharingChanged();
     drafts.delete(String(b.draft));
 
@@ -488,7 +523,22 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
       case 'connection':
         return send(reply, page(title, connectionPart(c, await check(c.id)), request));
       case 'websites':
-        return send(reply, page(title, websitesPart(c, websiteChoices(channelWebsiteIds(c.id))), request));
+        return send(reply, page(title, websitesPart(c, websiteChoices(channelWebsiteIds(c.id), c.id)), request));
+      case 'categories': {
+        const q = (request.query ?? {}) as Record<string, unknown>;
+        const websiteId = q.website ? Number(q.website) : undefined;
+        const connectedWebsites = channelWebsiteIds(c.id);
+        const sites = listNewWebsites().filter((s) => connectedWebsites.includes(s.id));
+        const websitesWithCats = sites.map((s) => {
+          const ch = websiteChannels(s.id).find((x) => x.id === c.id);
+          return {
+            website: s,
+            known: knownCategories(s.id),
+            selected: ch?.categories ?? [],
+          };
+        });
+        return send(reply, page(title, categoriesPart(c, websitesWithCats, websiteId), request));
+      }
       case 'posts':
         return takesReels(c.platform) && !videoOnly(c.platform) ? send(reply, page(title, postsPart(c), request)) : reply.redirect(`/new-website/channels/${c.id}`, 303);
       case 'plan':
@@ -515,13 +565,37 @@ export function registerChannelRoutes(app: FastifyInstance, deps: ChannelRouteDe
         const websiteIds = list(b.websiteId).map(Number).filter(Boolean);
         const multi = on(b.multiWebsite);
         if (websiteIds.length > 1 && !multi) {
-          return send(reply, page(title, websitesPart({ ...c, multi_website: 0 }, websiteChoices(websiteIds), 'You picked more than one website. Tick “Connect this channel to multiple websites”, or pick one.'), request));
+          return send(reply, page(title, websitesPart({ ...c, multi_website: 0 }, websiteChoices(websiteIds, c.id), 'You picked more than one website. Tick “Connect this channel to multiple websites”, or pick one.'), request));
         }
         run('UPDATE newsite_channels SET multi_website = ? WHERE id = ?', multi ? 1 : 0, c.id);
-        const refused = setChannelWebsites(c.id, websiteIds);
+        const categoriesByWebsite = new Map<number, string[]>();
+        for (const wId of websiteIds) {
+          const ticked = many(b[`cat-${wId}`]);
+          const custom = String(b[`cat-custom-${wId}`] ?? '').split(',').map((x) => x.trim()).filter(Boolean);
+          const combined = [...ticked, ...custom];
+          categoriesByWebsite.set(wId, combined);
+        }
+        const refused = setChannelWebsites(c.id, websiteIds, categoriesByWebsite);
         sharingChanged();
-        if (refused) return send(reply, page(title, websitesPart(getChannel(c.id)!, websiteChoices(websiteIds), refused), request));
+        if (refused) return send(reply, page(title, websitesPart(getChannel(c.id)!, websiteChoices(websiteIds, c.id), refused), request));
         return toChannel(reply, c.id, 'Websites saved.');
+      }
+      case 'categories': {
+        const q = (request.query ?? {}) as Record<string, unknown>;
+        const websiteId = Number(b.websiteId || q.website) || undefined;
+        const connectedWebsites = channelWebsiteIds(c.id);
+        const targetSiteIds = websiteId ? [websiteId] : connectedWebsites;
+        for (const wId of targetSiteIds) {
+          const ticked = many(b[`cat-${wId}`] ?? (targetSiteIds.length === 1 ? b.categories : undefined));
+          const custom = String(b[`cat-custom-${wId}`] ?? (targetSiteIds.length === 1 ? b.customCategories : '') ?? '').split(',').map((x) => x.trim()).filter(Boolean);
+          const combined = [...ticked, ...custom];
+          setChannelWebsiteCategories(c.id, wId, combined);
+        }
+        sharingChanged();
+        if (websiteId) {
+          return reply.redirect(`/new-website/channels?website=${websiteId}&ok=${encodeURIComponent('Category assignments saved.')}`, 303);
+        }
+        return toChannel(reply, c.id, 'Category assignments saved.');
       }
       case 'posts': {
         if (!on(b.postImage) && !on(b.postReel)) {

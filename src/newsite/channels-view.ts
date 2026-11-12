@@ -1,5 +1,5 @@
 import { html, raw, type Html } from '../web/views/layout.js';
-import { apiName, channelColor, PLATFORMS, takesReels, videoOnly, viasOf, viaLabel, type ChannelRow, type Platform, type Via } from './channels.js';
+import { apiName, channelColor, PLATFORMS, takesReels, videoOnly, viasOf, viaLabel, websiteChannels, type ChannelRow, type Platform, type Via } from './channels.js';
 import type { RulesCheck } from './platform-rules.js';
 import { commentsThroughApi, COMMENT_PLATFORMS } from './first-comment.js';
 import { WIZARD_CSS, field } from './view.js';
@@ -321,15 +321,38 @@ export interface WebsiteChoice {
   name: string;
   domain: string;
   checked: boolean;
+  knownCategories?: string[];
+  selectedCategories?: string[];
 }
 
 /** The websites boxes and the multiple-websites box, shared by the wizards and the channel page. */
-function websiteBoxes(websites: WebsiteChoice[], multi: boolean): Html {
+export function websiteBoxes(websites: WebsiteChoice[], multi: boolean): Html {
   return html`
     ${websites.length
       ? html`<div class="ch-pick">${websites.map(
-          (s) => html`<label class="ch-option"><input type="checkbox" name="websiteId" value="${String(s.id)}" ${checked(s.checked)} />
-            <div><b>${s.name}</b><span class="ns-mono">${s.domain}</span></div></label>`,
+          (s) => html`<div class="ch-option" style="flex-direction:column;align-items:stretch">
+            <label style="display:flex;align-items:flex-start;gap:12px;cursor:pointer">
+              <input type="checkbox" name="websiteId" value="${String(s.id)}" ${checked(s.checked)} />
+              <div><b>${s.name}</b><span class="ns-mono">${s.domain}</span></div>
+            </label>
+            ${s.knownCategories?.length ? html`
+              <div class="ch-site-cats" style="margin-top:10px;padding-top:8px;border-top:1px dashed var(--line);padding-left:28px">
+                <div style="font-size:13px;color:var(--soft);margin-bottom:6px">Categories for this channel (leave unticked for all categories):</div>
+                <div style="display:flex;flex-wrap:wrap;gap:8px">
+                  ${s.knownCategories.map((cat) => {
+                    const isChecked = s.selectedCategories?.includes(cat.toLowerCase());
+                    return html`<label style="font-size:13px;font-weight:normal;cursor:pointer;display:inline-flex;align-items:center;gap:4px">
+                      <input type="checkbox" name="cat-${String(s.id)}" value="${cat.toLowerCase()}" ${checked(Boolean(isChecked))} />
+                      <span>${cat}</span>
+                    </label>`;
+                  })}
+                </div>
+                <div style="margin-top:6px">
+                  <input type="text" name="cat-custom-${String(s.id)}" placeholder="Additional categories (comma-separated)" style="font-size:12px;padding:4px 8px;border:1px solid var(--line);border-radius:var(--r-ctl);width:100%;max-width:320px;background:var(--surface);color:var(--ink)" />
+                </div>
+              </div>
+            ` : raw('')}
+          </div>`,
         )}</div>`
       : html`<p class="ch-none" style="margin-bottom:16px">No website yet. Add one on the <a href="/new-website">Websites</a> page; you can then pick this channel there or here.</p>`}
     <label class="wz-check" style="margin:0 0 4px"><input type="checkbox" name="multiWebsite" value="1" ${checked(multi)} /> Connect this channel to multiple websites</label>
@@ -380,10 +403,10 @@ export function channelsPage(
   // Sort channels by platform order for consistent display
   const sortedChannels = sortChannelsByPlatform(channels);
 
-  // Group channels by website
+  // Group channels by website, with per-website settings (categories, post_image, post_reel)
   const siteChannelsMap = new Map<number, ChannelRow[]>();
   for (const site of websites) {
-    const siteChs = sortedChannels.filter((c) => (websitesOf.get(c.id) ?? []).includes(site.name));
+    const siteChs = sortChannelsByPlatform(websiteChannels(site.id));
     siteChannelsMap.set(site.id, siteChs);
   }
 
@@ -448,7 +471,43 @@ export function channelsPage(
               </div>
             </div>
             ${mine.length
-              ? html`<div class="ch-cards">${mine.map((c) => channelCard(c, websitesOf.get(c.id) ?? [], rulesOf.get(c.id)!))}</div>`
+              ? html`
+                <div class="ch-cat-summary" style="margin: 0 0 16px; padding: 12px 16px; background: color-mix(in srgb, var(--surface) 80%, transparent); border: 1px solid var(--line); border-radius: var(--r-card);">
+                  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                    <b style="font-size:14px">Category-to-channel assignments</b>
+                    <span style="font-size:13px;color:var(--soft)">Articles are published only to channels assigned to their category</span>
+                  </div>
+                  <div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(240px, 1fr));gap:8px">
+                    ${(() => {
+                      const catChannelMap = new Map<string, string[]>();
+                      const allCatsChannels: string[] = [];
+                      for (const ch of mine) {
+                        if (!ch.categories || ch.categories.length === 0) {
+                          allCatsChannels.push(ch.name);
+                        } else {
+                          for (const cat of ch.categories) {
+                            const list = catChannelMap.get(cat) ?? [];
+                            list.push(ch.name);
+                            catChannelMap.set(cat, list);
+                          }
+                        }
+                      }
+                      const items: Html[] = [];
+                      for (const [cat, chs] of catChannelMap.entries()) {
+                        items.push(html`<div style="font-size:13px;padding:6px 10px;background:var(--raised);border:1px solid var(--line);border-radius:var(--r-ctl)">
+                          <span style="font-weight:600">${cat}:</span> <span style="color:var(--soft)">${chs.join(', ')}</span>
+                        </div>`);
+                      }
+                      if (allCatsChannels.length) {
+                        items.push(html`<div style="font-size:13px;padding:6px 10px;background:var(--raised);border:1px solid var(--line);border-radius:var(--r-ctl)">
+                          <span style="font-weight:600">All categories:</span> <span style="color:var(--soft)">${allCatsChannels.join(', ')}</span>
+                        </div>`);
+                      }
+                      return items.length ? items : [html`<div style="font-size:13px;color:var(--faint)">All channels post for the entire website.</div>`];
+                    })()}
+                  </div>
+                </div>
+                <div class="ch-cards">${mine.map((c) => channelCard(c, websitesOf.get(c.id) ?? [], rulesOf.get(c.id)!, false, s.id))}</div>`
               : html`<div class="ch-site-empty">
                   <p>No social media channels connected to <b>${s.name}</b> yet.</p>
                   <a class="ns-btn small primary" href="/new-website/channels/add?website=${String(s.id)}">Connect a channel for ${s.name}</a>
@@ -519,7 +578,7 @@ const part = (c: ChannelRow, key: string, title: string, rows: [string, string |
   </section>`;
 
 /** A channel's card: its name, then its settings in parts. */
-export function channelCard(c: ChannelRow, websites: string[], rules: RulesCheck, alwaysOpen = false): Html {
+export function channelCard(c: ChannelRow, websites: string[], rules: RulesCheck, alwaysOpen = false, websiteId?: number): Html {
   const reels = takesReels(c.platform);
   const firstComment = rules.rules?.link === 'first_comment';
   return html`<article class="ch-site ${alwaysOpen ? 'open' : ''}" id="channel-${String(c.id)}" data-id="${String(c.id)}" ${raw(alwaysOpen ? '' : 'data-toggle')}
@@ -547,6 +606,13 @@ export function channelCard(c: ChannelRow, websites: string[], rules: RulesCheck
         ['Shares articles of', websites.length ? websites.join(', ') : 'No website yet'],
         ['Several websites', c.multi_website ? 'Yes' : 'No, one only'],
       ])}
+      ${websiteId !== undefined
+        ? part(c, `categories?website=${String(websiteId)}`, 'Category assignment', [
+            ['Assigned categories', c.categories?.length
+              ? html`<div style="display:flex;flex-wrap:wrap;gap:4px">${c.categories.map((cat) => html`<span class="ns-badge ok">${cat}</span>`)}</div>`
+              : 'All categories (entire website)'],
+          ])
+        : raw('')}
       ${reels
         ? part(c, 'posts', 'What to post', [['Each article gets', [c.post_image ? 'An image post' : '', c.post_reel ? 'A reel' : ''].filter(Boolean).join(' and ') || 'Nothing']])
         : raw('')}
@@ -644,6 +710,7 @@ export function addViaStep(platform: string, website = ''): Html {
 export const PART_TITLE: Record<string, string> = {
   connection: 'Connection',
   websites: 'Websites',
+  categories: 'Category assignments',
   posts: 'What to post',
   plan: 'Buffer plan',
   comment: 'First comment through the API',
@@ -653,15 +720,16 @@ export const PART_TITLE: Record<string, string> = {
 /** The wizard frame for one part of a saved channel: its title, the part, Cancel and Save. */
 export function partPage(c: ChannelRow, key: string, body: Html, opts: { error?: string | string[]; save?: boolean; wide?: boolean } = {}): Html {
   const errors = Array.isArray(opts.error) ? opts.error : opts.error ? [opts.error] : [];
+  const cleanKey = key.split('?')[0]!;
   const back = `/new-website/channels/${String(c.id)}`;
   return html`
     <style>${raw(WIZARD_CSS)}${raw(CSS)}</style>
     <div class="wz ${opts.wide ? 'ch-wz-wide' : ''}">
       <div class="wz-head">
-        <h1>${c.name}: ${PART_TITLE[key] ?? key}</h1>
+        <h1>${c.name}: ${PART_TITLE[cleanKey] ?? cleanKey}</h1>
         <p class="wz-id">${platformLabel(c.platform)} channel. Only this part changes.</p>
       </div>
-      <form id="ch-form" method="post" action="${back}/edit/${key}">
+      <form id="ch-form" method="post" action="${back}/edit/${cleanKey}">
         <div class="wz-body">
           ${errors.length
             ? html`<div class="ch-bad" role="alert"><b>Not saved. Fix this and save again:</b><ul>${errors.map((e) => html`<li>${e}</li>`)}</ul></div>`
@@ -674,6 +742,47 @@ export function partPage(c: ChannelRow, key: string, body: Html, opts: { error?:
         </div>
       </form>
     </div>`;
+}
+
+export function categoriesPart(
+  c: ChannelRow,
+  websites: { website: NewWebsiteRow; known: string[]; selected: string[] }[],
+  websiteId?: number,
+  error = '',
+): Html {
+  return partPage(
+    c,
+    websiteId ? `categories?website=${String(websiteId)}` : 'categories',
+    html`
+      <h2>Category assignments</h2>
+      <p>Choose which website categories <b>${c.name}</b> is assigned to.</p>
+      <div class="wz-hint" style="margin-bottom:18px">
+        Only articles in the selected categories will be published to this channel. If no categories are selected, the channel receives articles from the entire website (all categories).
+      </div>
+      ${websiteId ? html`<input type="hidden" name="websiteId" value="${String(websiteId)}" />` : raw('')}
+      ${websites.map(({ website, known, selected }) => html`
+        <div style="background:var(--surface);border:1px solid var(--line);border-radius:var(--r-card);padding:18px 20px;margin-bottom:16px">
+          <h3 style="margin:0 0 6px;font-size:16px">${website.name} <span class="ns-mono" style="font-weight:400;font-size:13px;color:var(--soft)">(${website.domain})</span></h3>
+          <p style="font-size:13px;color:var(--soft);margin:0 0 12px">Select which categories this channel receives:</p>
+          ${known.length ? html`
+            <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px">
+              ${known.map((cat) => html`
+                <label class="ch-option" style="padding:8px 14px;margin:0;cursor:pointer;display:inline-flex;align-items:center;gap:6px">
+                  <input type="checkbox" name="cat-${String(website.id)}" value="${cat.toLowerCase()}" ${checked(selected.includes(cat.toLowerCase()))} />
+                  <b>${cat}</b>
+                </label>
+              `)}
+            </div>
+          ` : html`<p class="ch-none" style="margin-bottom:12px">No categories recorded for this website yet.</p>`}
+          <div>
+            <label style="display:block;font-size:13px;font-weight:500;margin-bottom:4px">Additional categories (comma-separated):</label>
+            <input class="ns-input" name="cat-custom-${String(website.id)}" placeholder="e.g. Desserts, Breakfast, Quick Meals" style="width:100%;max-width:400px" />
+          </div>
+        </div>
+      `)}
+    `,
+    { error },
+  );
 }
 
 export const connectionPart = (c: ChannelRow, result: { ok: boolean; text: string }): Html =>

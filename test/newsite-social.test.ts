@@ -16,7 +16,7 @@ import { createNewWebsite, getNewWebsite, listKeywordPlans, saveKeywordPlan } fr
 import { registerSocialRoutes } from '../src/newsite/social-routes.js';
 import { shareStepPage } from '../src/newsite/keywords-view.js';
 import { listPlanSeo, queuePlanSeo } from '../src/newsite/seo.js';
-import { listChannels, saveBufferChannel, saveChannelRules, saveFacebookApiChannel, saveInstagramApiChannel, saveThreadsApiChannel, setWebsiteChannels, websiteChannels } from '../src/newsite/channels.js';
+import { channelBoards, getChannel, listChannels, saveBufferChannel, saveChannelRules, saveFacebookApiChannel, saveInstagramApiChannel, saveThreadsApiChannel, setWebsiteChannels, websiteChannels } from '../src/newsite/channels.js';
 import { kickPictureMaker, resetPictureMakerState } from '../src/newsite/pictures.js';
 import { addPinDesign, pickedPinDesigns, setPinDesignPicked } from '../src/newsite/pin-designs.js';
 import { checkPlatformRules, listPlatformRules, loadPlatformRules, parseRules } from '../src/newsite/platform-rules.js';
@@ -77,14 +77,20 @@ describe('Sharing an article on its channels', () => {
   let clock: number;
   let pinBoards: { serviceId: string; name: string }[];
   let boardAnswer: string;
+  let bufferChannelsCalls = 0;
+  let bufferChannelsFail = false;
 
   const buffer = (): BufferApi => ({
-    channels: async () => [
-      { id: 'ch-pin', name: 'longlivo', service: 'pinterest', boards: pinBoards },
-      { id: 'ch-fb', name: 'Easy Cakes', service: 'facebook', boards: [] },
-      { id: 'ch-ig', name: 'longlivo.kitchen', service: 'instagram', boards: [] },
-      { id: 'ch-threads', name: 'longlivo threads', service: 'threads', boards: [] },
-    ],
+    channels: async () => {
+      bufferChannelsCalls++;
+      if (bufferChannelsFail) throw new Error('Buffer API 500 error');
+      return [
+        { id: 'ch-pin', name: 'longlivo', service: 'pinterest', boards: pinBoards },
+        { id: 'ch-fb', name: 'Easy Cakes', service: 'facebook', boards: [] },
+        { id: 'ch-ig', name: 'longlivo.kitchen', service: 'instagram', boards: [] },
+        { id: 'ch-threads', name: 'longlivo threads', service: 'threads', boards: [] },
+      ];
+    },
     createImagePost: async (input) => {
       if (bufferFull) throw new Error('Buffer rejected the post: You have reached the limit of 10 posts in your queue');
       // The real client throws on an answer without a post id; this stands in for it.
@@ -185,6 +191,8 @@ describe('Sharing an article on its channels', () => {
     clock = 1_000_000;
     pinBoards = [{ serviceId: 'b1', name: 'Recipes' }, { serviceId: 'b2', name: 'Strawberry Desserts' }];
     boardAnswer = '{"board": "Strawberry Desserts"}';
+    bufferChannelsCalls = 0;
+    bufferChannelsFail = false;
     resetPictureMakerState();
   });
 
@@ -194,9 +202,9 @@ describe('Sharing an article on its channels', () => {
     rmSync(dataDir, { recursive: true, force: true });
   });
 
-  const pinChannel = () =>
+  const pinChannel = (boards?: { serviceId: string; name: string }[]) =>
     saveBufferChannel(
-      { platform: 'pinterest', name: 'longlivo', bufferToken: 'tok', bufferChannelId: 'ch-pin', paidBuffer: false, postImage: true, postReel: false, multiWebsite: false },
+      { platform: 'pinterest', name: 'longlivo', bufferToken: 'tok', bufferChannelId: 'ch-pin', paidBuffer: false, postImage: true, postReel: false, multiWebsite: false, boards },
       KEY,
     );
   const fbChannel = (postImage = true) =>
@@ -252,7 +260,7 @@ describe('Sharing an article on its channels', () => {
   });
 
   it('Pinterest: with no fitting board and no “general” board, the pin is not posted and the Dashboard names the keyword', async () => {
-    pinBoards = [{ serviceId: 'b1', name: 'Recipes' }];
+    pinBoards = [{ serviceId: 'b1', name: 'Auto Tools' }, { serviceId: 'b2', name: 'Gardening' }];
     boardAnswer = '{"board": "Cakes"}'; // not on the account
     setWebsiteChannels(websiteId, [pinChannel()]);
     await share();
@@ -261,6 +269,114 @@ describe('Sharing an article on its channels', () => {
     const d = dashboardData(30, 'UTC');
     expect(d.notes.map((n) => n.text)).toEqual(['No Pinterest board for “strawberry cake” (Long Livo): add a board with “general” in its name']);
     expect(String(dashboardPage(d))).toContain('No Pinterest board for “strawberry cake”');
+  });
+
+  it('Pinterest: uses database cached boards first without calling Buffer channels API', async () => {
+    const cachedBoards = [{ serviceId: 'b1', name: 'Recipes' }, { serviceId: 'b2', name: 'Strawberry Desserts' }];
+    const chId = pinChannel(cachedBoards);
+    setWebsiteChannels(websiteId, [chId]);
+    boardAnswer = '{"board": "Strawberry Desserts"}';
+    bufferChannelsCalls = 0;
+
+    await share();
+
+    expect(bufferPosts).toHaveLength(1);
+    expect(bufferPosts[0]!.metadata).toContain('boardServiceId: "b2"');
+    expect(bufferChannelsCalls).toBe(0);
+  });
+
+  it('Pinterest: automatically uses single available board without AI or Buffer API call', async () => {
+    const singleBoard = [{ serviceId: 'b1', name: 'My Only Board' }];
+    const chId = pinChannel(singleBoard);
+    setWebsiteChannels(websiteId, [chId]);
+    boardAnswer = '{"board": "Something Else"}';
+    bufferChannelsCalls = 0;
+    const askedBefore = asked.length;
+
+    await share();
+
+    expect(bufferPosts).toHaveLength(1);
+    expect(bufferPosts[0]!.metadata).toContain('boardServiceId: "b1"');
+    expect(bufferChannelsCalls).toBe(0);
+    expect(asked.slice(askedBefore).some((a) => a.name === 'newsite-pick-board')).toBe(false);
+  });
+
+  it('Pinterest: when database has no boards, Buffer API is called to fetch, save in DB, and match', async () => {
+    pinBoards = [{ serviceId: 'b1', name: 'Recipes' }, { serviceId: 'b2', name: 'Strawberry Desserts' }];
+    const chId = pinChannel([]);
+    expect(channelBoards(getChannel(chId)!)).toHaveLength(0);
+    setWebsiteChannels(websiteId, [chId]);
+    boardAnswer = '{"board": "Strawberry Desserts"}';
+    bufferChannelsCalls = 0;
+
+    await share();
+
+    expect(bufferPosts).toHaveLength(1);
+    expect(bufferPosts[0]!.metadata).toContain('boardServiceId: "b2"');
+    expect(bufferChannelsCalls).toBe(1);
+    expect(channelBoards(getChannel(chId)!)).toHaveLength(2);
+  });
+
+  it('Pinterest: when AI cannot match cached DB boards, API refresh is triggered and new board is matched', async () => {
+    const chId = pinChannel([{ serviceId: 'b1', name: 'Auto Tools' }, { serviceId: 'b2', name: 'Gardening' }]);
+    setWebsiteChannels(websiteId, [chId]);
+
+    pinBoards = [
+      { serviceId: 'b1', name: 'Auto Tools' },
+      { serviceId: 'b2', name: 'Gardening' },
+      { serviceId: 'b3', name: 'Strawberry Cake Ideas' },
+    ];
+    boardAnswer = '{"board": "Strawberry Cake Ideas"}';
+    bufferChannelsCalls = 0;
+
+    await share();
+
+    expect(bufferChannelsCalls).toBe(1);
+    expect(bufferPosts).toHaveLength(1);
+    expect(bufferPosts[0]!.metadata).toContain('boardServiceId: "b3"');
+    expect(channelBoards(getChannel(chId)!)).toHaveLength(3);
+  });
+
+  it('Pinterest: continues using DB boards and general fallback if API fails during refresh', async () => {
+    const chId = pinChannel([
+      { serviceId: 'b1', name: 'Woodworking' },
+      { serviceId: 'b2', name: 'General Recipes' },
+    ]);
+    setWebsiteChannels(websiteId, [chId]);
+    boardAnswer = '{"board": "Not Existing"}';
+    bufferChannelsFail = true;
+
+    await share();
+
+    expect(bufferPosts).toHaveLength(1);
+    expect(bufferPosts[0]!.metadata).toContain('boardServiceId: "b2"');
+    expect(listSocialPosts()[0]).toMatchObject({ status: 'sent', board_name: 'General Recipes' });
+  });
+
+  it('Category-based publishing: only posts to channels assigned to the article category or all categories', async () => {
+    run(`UPDATE keyword_seo SET post_category = 'Desserts' WHERE id = ?`, seoId);
+
+    const chDesserts = pinChannel([{ serviceId: 'b1', name: 'Desserts' }]);
+    const chBreakfast = saveFacebookApiChannel({ name: 'Breakfast Page', fbToken: 'fbtok', pageId: 'p1', postImage: true, postReel: false, multiWebsite: false }, KEY);
+    const chAll = fbBufferChannel(true);
+
+    setWebsiteChannels(
+      websiteId,
+      [chDesserts, chBreakfast, chAll],
+      new Map([
+        [chDesserts, { image: true, reel: false, categories: ['desserts'] }],
+        [chBreakfast, { image: true, reel: false, categories: ['breakfast'] }],
+        [chAll, { image: true, reel: false, categories: [] }],
+      ]),
+    );
+
+    await share();
+
+    const posts = listSocialPosts();
+    const postedChannelIds = posts.map((p) => p.channel_id);
+    expect(postedChannelIds).toContain(chDesserts);
+    expect(postedChannelIds).toContain(chAll);
+    expect(postedChannelIds).not.toContain(chBreakfast);
   });
 
   it('never records a post as sent when Buffer does not confirm it', async () => {
